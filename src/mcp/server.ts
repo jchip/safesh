@@ -17,18 +17,21 @@ import { executeCode } from "../runtime/executor.ts";
 import { loadConfig } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
 import { validateExternal } from "../external/validator.ts";
+import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 
 // Tool schemas
 const ExecSchema = z.object({
   code: z.string().describe("JavaScript/TypeScript code to execute"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
+  env: z.record(z.string()).optional().describe("Additional environment variables"),
 });
 
 const RunSchema = z.object({
   command: z.string().describe("External command to run"),
   args: z.array(z.string()).optional().describe("Command arguments"),
   cwd: z.string().optional().describe("Working directory"),
+  timeout: z.number().optional().describe("Timeout in milliseconds"),
 });
 
 /**
@@ -49,6 +52,15 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
   const registry = createRegistry(config);
 
+  // Build permission summary for tool descriptions
+  const perms = config.permissions ?? {};
+  const permSummary = [
+    perms.read?.length ? `read: ${perms.read.slice(0, 3).join(", ")}${perms.read.length > 3 ? "..." : ""}` : null,
+    perms.write?.length ? `write: ${perms.write.slice(0, 3).join(", ")}${perms.write.length > 3 ? "..." : ""}` : null,
+    perms.net === true ? "net: all" : (Array.isArray(perms.net) && perms.net.length ? `net: ${perms.net.slice(0, 2).join(", ")}...` : null),
+    perms.run?.length ? `run: ${perms.run.slice(0, 3).join(", ")}${perms.run.length > 3 ? "..." : ""}` : null,
+  ].filter(Boolean).join("; ");
+
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
@@ -57,7 +69,8 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           name: "exec",
           description:
             "Execute JavaScript/TypeScript code in a sandboxed Deno runtime. " +
-            "Code runs with configured permissions and has access to Deno APIs.",
+            "Code has access to Deno APIs and auto-imported: fs (file ops), text (processing), $ (shell). " +
+            (permSummary ? `Permissions: ${permSummary}` : "No permissions configured."),
           inputSchema: {
             type: "object",
             properties: {
@@ -69,6 +82,11 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 type: "number",
                 description: "Timeout in milliseconds (default: 30000)",
               },
+              env: {
+                type: "object",
+                additionalProperties: { type: "string" },
+                description: "Additional environment variables to set",
+              },
             },
             required: ["code"],
           },
@@ -76,14 +94,16 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         {
           name: "run",
           description:
-            "Execute a whitelisted external command. " +
-            `Available commands: ${registry.list().join(", ") || "(none configured)"}`,
+            "Execute a whitelisted external command with validation. " +
+            "Commands are validated against whitelist and denied flags. " +
+            "Path arguments are validated against sandbox. " +
+            `Available: ${registry.list().join(", ") || "(none configured)"}`,
           inputSchema: {
             type: "object",
             properties: {
               command: {
                 type: "string",
-                description: "External command to run",
+                description: "External command to run (must be whitelisted)",
               },
               args: {
                 type: "array",
@@ -92,7 +112,11 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
               cwd: {
                 type: "string",
-                description: "Working directory",
+                description: "Working directory (defaults to project root)",
+              },
+              timeout: {
+                type: "number",
+                description: "Timeout in milliseconds (default: 30000)",
               },
             },
             required: ["command"],
@@ -110,10 +134,25 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
       switch (name) {
         case "exec": {
           const parsed = ExecSchema.parse(args);
-          const result = await executeCode(parsed.code, config, {
-            timeout: parsed.timeout,
-            cwd,
-          });
+
+          // Create a temporary session if env vars provided
+          const session = parsed.env
+            ? {
+                id: crypto.randomUUID(),
+                cwd,
+                env: parsed.env,
+                vars: {},
+                jobs: new Map(),
+                createdAt: new Date(),
+              }
+            : undefined;
+
+          const result = await executeCode(
+            parsed.code,
+            config,
+            { timeout: parsed.timeout, cwd },
+            session,
+          );
 
           return {
             content: [
@@ -122,6 +161,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 text: formatExecResult(result),
               },
             ],
+            isError: !result.success,
           };
         }
 
@@ -129,6 +169,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           const parsed = RunSchema.parse(args);
           const cmdArgs = parsed.args ?? [];
           const workDir = parsed.cwd ?? cwd;
+          const timeoutMs = parsed.timeout ?? config.timeout ?? 30000;
 
           // Validate command before execution
           const validation = await validateExternal(
@@ -151,21 +192,22 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             };
           }
 
-          // Execute the command
+          // Execute the command with timeout
           const result = await runCommand(
             parsed.command,
             cmdArgs,
             workDir,
-            config,
+            timeoutMs,
           );
 
           return {
             content: [
               {
                 type: "text",
-                text: formatExecResult(result),
+                text: formatRunResult(parsed.command, cmdArgs, result),
               },
             ],
+            isError: !result.success,
           };
         }
 
@@ -181,6 +223,20 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           };
       }
     } catch (error) {
+      // Handle SafeShellError with full formatting
+      if (error instanceof SafeShellError) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: formatError(error),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Handle other errors
       return {
         content: [
           {
@@ -197,13 +253,13 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 }
 
 /**
- * Run an external command
+ * Run an external command with timeout
  */
 async function runCommand(
   command: string,
   args: string[],
   cwd: string,
-  _config: SafeShellConfig,
+  timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string; code: number; success: boolean }> {
   const cmd = new Deno.Command(command, {
     args,
@@ -212,15 +268,78 @@ async function runCommand(
     stderr: "piped",
   });
 
-  const output = await cmd.output();
+  const process = cmd.spawn();
   const decoder = new TextDecoder();
 
-  return {
-    stdout: decoder.decode(output.stdout),
-    stderr: decoder.decode(output.stderr),
-    code: output.code,
-    success: output.code === 0,
-  };
+  // Create timeout abort controller
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    // Collect output with timeout
+    const outputPromise = (async () => {
+      const [status, stdoutData, stderrData] = await Promise.all([
+        process.status,
+        collectOutput(process.stdout),
+        collectOutput(process.stderr),
+      ]);
+      return { status, stdout: stdoutData, stderr: stderrData };
+    })();
+
+    // Race against timeout
+    const result = await Promise.race([
+      outputPromise,
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener("abort", () => {
+          reject(new Error(`Command timed out after ${timeoutMs}ms`));
+        });
+      }),
+    ]);
+
+    clearTimeout(timeoutId);
+
+    return {
+      stdout: decoder.decode(result.stdout),
+      stderr: decoder.decode(result.stderr),
+      code: result.status.code,
+      success: result.status.code === 0,
+    };
+  } catch (error) {
+    clearTimeout(timeoutId);
+
+    // Kill the process on timeout
+    try {
+      process.kill("SIGKILL");
+    } catch {
+      // Process may have already exited
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Collect stream output into Uint8Array
+ */
+async function collectOutput(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
 }
 
 /**
@@ -244,6 +363,36 @@ function formatExecResult(result: {
 
   if (!result.success) {
     parts.push(`[exit code: ${result.code}]`);
+  }
+
+  return parts.join("\n") || "(no output)";
+}
+
+/**
+ * Format run command result with command info
+ */
+function formatRunResult(
+  command: string,
+  args: string[],
+  result: { stdout: string; stderr: string; code: number; success: boolean },
+): string {
+  const parts: string[] = [];
+
+  // Show command that was run
+  const cmdLine = args.length > 0 ? `${command} ${args.join(" ")}` : command;
+  parts.push(`$ ${cmdLine}`);
+  parts.push("");
+
+  if (result.stdout) {
+    parts.push(result.stdout);
+  }
+
+  if (result.stderr) {
+    parts.push(`[stderr]\n${result.stderr}`);
+  }
+
+  if (!result.success) {
+    parts.push(`\n[exit code: ${result.code}]`);
   }
 
   return parts.join("\n") || "(no output)";
