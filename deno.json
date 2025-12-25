@@ -10,7 +10,7 @@
   },
   "tasks": {
     "dev": "deno run --watch src/cli/main.ts",
-    "test": "deno test --allow-read --allow-write=/tmp --allow-run",
+    "test": "deno test --allow-read --allow-write --allow-run --allow-env=HOME",
     "check": "deno check src/**/*.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
