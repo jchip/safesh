@@ -24,6 +24,13 @@ import { createRegistry } from "../external/registry.ts";
 import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig, Session } from "../core/types.ts";
+import {
+  launchCodeJob,
+  launchCommandJob,
+  getJobOutput,
+  killJob,
+  streamJobOutput,
+} from "../runtime/jobs.ts";
 
 // Tool schemas
 const ExecSchema = z.object({
@@ -54,6 +61,31 @@ const UpdateSessionSchema = z.object({
 
 const EndSessionSchema = z.object({
   sessionId: z.string().describe("Session ID to end"),
+});
+
+const BgSchema = z.object({
+  code: z.string().optional().describe("JS/TS code to run in background"),
+  command: z.string().optional().describe("External command to run in background"),
+  args: z.array(z.string()).optional().describe("Command arguments"),
+  sessionId: z.string().optional().describe("Session ID to use"),
+});
+
+const JobsSchema = z.object({
+  sessionId: z.string().optional().describe("Filter by session ID"),
+});
+
+const JobOutputSchema = z.object({
+  jobId: z.string().describe("Job ID"),
+  since: z.number().optional().describe("Byte offset to start from"),
+});
+
+const KillSchema = z.object({
+  jobId: z.string().describe("Job ID to kill"),
+  signal: z.string().optional().describe("Signal to send (default: SIGTERM)"),
+});
+
+const FgSchema = z.object({
+  jobId: z.string().describe("Job ID to bring to foreground"),
 });
 
 /**
@@ -222,6 +254,106 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           inputSchema: {
             type: "object",
             properties: {},
+          },
+        },
+        {
+          name: "bg",
+          description:
+            "Launch a background job (code or external command). " +
+            "Jobs run asynchronously and their output is buffered. " +
+            "Use jobs() to list, jobOutput() to get buffered output, " +
+            "fg() to stream output, or kill() to stop.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              code: {
+                type: "string",
+                description: "JS/TS code to run in background (exclusive with command)",
+              },
+              command: {
+                type: "string",
+                description: "External command to run (exclusive with code)",
+              },
+              args: {
+                type: "array",
+                items: { type: "string" },
+                description: "Command arguments",
+              },
+              sessionId: {
+                type: "string",
+                description: "Session ID for cwd/env context",
+              },
+            },
+          },
+        },
+        {
+          name: "jobs",
+          description:
+            "List all running background jobs with their status and basic info.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                description: "Filter jobs by session ID",
+              },
+            },
+          },
+        },
+        {
+          name: "jobOutput",
+          description:
+            "Get buffered output from a background job. " +
+            "Returns stdout and stderr captured since job started (or since offset).",
+          inputSchema: {
+            type: "object",
+            properties: {
+              jobId: {
+                type: "string",
+                description: "Job ID to get output from",
+              },
+              since: {
+                type: "number",
+                description: "Byte offset to start reading from (for incremental reads)",
+              },
+            },
+            required: ["jobId"],
+          },
+        },
+        {
+          name: "kill",
+          description:
+            "Stop a background job by sending a signal. " +
+            "Default signal is SIGTERM. Use SIGKILL for force kill.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              jobId: {
+                type: "string",
+                description: "Job ID to kill",
+              },
+              signal: {
+                type: "string",
+                description: "Signal to send (SIGTERM, SIGKILL, etc.)",
+              },
+            },
+            required: ["jobId"],
+          },
+        },
+        {
+          name: "fg",
+          description:
+            "Bring a background job to foreground by streaming its output. " +
+            "Returns an async stream of stdout/stderr chunks and exit code.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              jobId: {
+                type: "string",
+                description: "Job ID to bring to foreground",
+              },
+            },
+            required: ["jobId"],
           },
         },
       ],
@@ -419,6 +551,254 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 text: JSON.stringify(serialized, null, 2),
               },
             ],
+          };
+        }
+
+        case "bg": {
+          const parsed = BgSchema.parse(args);
+
+          // Must provide either code or command (but not both)
+          if ((!parsed.code && !parsed.command) || (parsed.code && parsed.command)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Must provide either 'code' or 'command' (but not both)",
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          // Get or create session
+          const { session } = sessionManager.getOrTemp(parsed.sessionId, { cwd });
+
+          let job;
+          if (parsed.code) {
+            // Launch code job
+            job = await launchCodeJob(parsed.code, config, session);
+          } else if (parsed.command) {
+            // Validate command
+            const cmdArgs = parsed.args ?? [];
+            const validation = await validateExternal(
+              parsed.command,
+              cmdArgs,
+              registry,
+              config,
+              session.cwd,
+            );
+
+            if (!validation.valid) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: formatError(validation.error!),
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            // Launch command job
+            job = await launchCommandJob(parsed.command, cmdArgs, config, session);
+          }
+
+          // Add job to session
+          if (job) {
+            sessionManager.addJob(session.id, job);
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    jobId: job.id,
+                    pid: job.pid,
+                    sessionId: session.id,
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Failed to launch job",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        case "jobs": {
+          const parsed = JobsSchema.parse(args);
+
+          let allJobs;
+          if (parsed.sessionId) {
+            // Filter by session
+            allJobs = sessionManager.listJobs(parsed.sessionId);
+          } else {
+            // List all jobs from all sessions
+            allJobs = sessionManager.list().flatMap((s) =>
+              Array.from(s.jobs.values())
+            );
+          }
+
+          if (allJobs.length === 0) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "No jobs",
+                },
+              ],
+            };
+          }
+
+          // Serialize jobs (exclude process handle)
+          const serialized = allJobs.map((j) => ({
+            id: j.id,
+            pid: j.pid,
+            command: j.command,
+            code: j.code ? `${j.code.slice(0, 50)}...` : undefined,
+            status: j.status,
+            startedAt: j.startedAt,
+            exitCode: j.exitCode,
+            stdoutLength: j.stdout.length,
+            stderrLength: j.stderr.length,
+          }));
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(serialized, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "jobOutput": {
+          const parsed = JobOutputSchema.parse(args);
+
+          // Find job across all sessions
+          let job;
+          for (const session of sessionManager.list()) {
+            job = session.jobs.get(parsed.jobId);
+            if (job) break;
+          }
+
+          if (!job) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Job not found: ${parsed.jobId}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          const output = getJobOutput(job, parsed.since);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  jobId: job.id,
+                  status: job.status,
+                  stdout: output.stdout,
+                  stderr: output.stderr,
+                  offset: output.offset,
+                  exitCode: job.exitCode,
+                }, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "kill": {
+          const parsed = KillSchema.parse(args);
+
+          // Find job across all sessions
+          let job;
+          for (const session of sessionManager.list()) {
+            job = session.jobs.get(parsed.jobId);
+            if (job) break;
+          }
+
+          if (!job) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Job not found: ${parsed.jobId}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          // Parse signal
+          const signal = (parsed.signal ?? "SIGTERM") as Deno.Signal;
+
+          await killJob(job, signal);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Job ${parsed.jobId} killed with ${signal}`,
+              },
+            ],
+          };
+        }
+
+        case "fg": {
+          const parsed = FgSchema.parse(args);
+
+          // Find job across all sessions
+          let job;
+          for (const session of sessionManager.list()) {
+            job = session.jobs.get(parsed.jobId);
+            if (job) break;
+          }
+
+          if (!job) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Job not found: ${parsed.jobId}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          // Stream job output
+          let output = "";
+          for await (const chunk of streamJobOutput(job)) {
+            if (chunk.type === "stdout" || chunk.type === "stderr") {
+              output += chunk.data ?? "";
+            } else if (chunk.type === "exit") {
+              output += `\n[exit code: ${chunk.code}]`;
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: output || "(no output)",
+              },
+            ],
+            isError: job.status === "failed",
           };
         }
 
