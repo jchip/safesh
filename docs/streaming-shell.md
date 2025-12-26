@@ -5,11 +5,13 @@ A Gulp-inspired streaming API for TypeScript shell operations with lazy evaluati
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [MCP Server Integration](#mcp-server-integration)
 - [Core Concepts](#core-concepts)
 - [API Reference](#api-reference)
 - [Common Patterns](#common-patterns)
 - [Performance](#performance)
 - [Migration Guide](#migration-guide)
+- [Example Scripts](#example-scripts)
 
 ## Quick Start
 
@@ -31,6 +33,175 @@ await src("src/**/*.ts")
 const result = await git("status").exec();
 console.log(result.stdout);
 ```
+
+## MCP Server Integration
+
+The streaming shell API is fully available when SafeShell runs as an MCP server. All streaming functions are auto-imported and ready to use in the `exec` tool.
+
+### Using Through MCP Tools
+
+```typescript
+// Through Claude Desktop or other MCP clients
+// Use the 'exec' tool with streaming shell code
+
+{
+  "code": `
+    const errors = await cat("app.log")
+      .pipe(lines())
+      .pipe(grep(/ERROR/))
+      .pipe(take(10))
+      .collect();
+
+    console.log("Found errors:", errors);
+  `
+}
+```
+
+### Real-World MCP Examples
+
+#### Code Analysis Tasks
+
+```typescript
+// Find SSH-related commits
+{
+  "code": `
+    const commits = await git("log", "--oneline")
+      .stdout()
+      .pipe(lines())
+      .pipe(grep(/SSH/))
+      .pipe(take(10))
+      .collect();
+
+    console.log("SSH commits:", commits);
+  `
+}
+
+// Extract TODO comments
+{
+  "code": `
+    const todos = await glob("**/*.ts")
+      .pipe(flatMap(file =>
+        cat(file.path)
+          .pipe(lines())
+          .pipe(grep(/TODO/))
+          .pipe(map(line => ({ file: file.path, line })))
+      ))
+      .collect();
+
+    console.log("Found TODOs:", todos);
+  `
+}
+```
+
+#### Metrics & Reporting
+
+```typescript
+// Count lines of code by module
+{
+  "code": `
+    const modules = ["core", "stdlib", "mcp"];
+    const metrics = {};
+
+    for (const module of modules) {
+      const count = await glob(\`src/\${module}/**/*.ts\`)
+        .pipe(filter(f => !f.path.includes(".test.")))
+        .pipe(flatMap(file => cat(file.path).pipe(lines())))
+        .count();
+
+      metrics[module] = count;
+    }
+
+    console.log("Lines of code:", metrics);
+  `
+}
+
+// Find large files needing refactoring
+{
+  "code": `
+    const largeFiles = await glob("src/**/*.ts")
+      .pipe(filter(async file => {
+        const lineCount = await cat(file.path).pipe(lines()).count();
+        return lineCount > 400;
+      }))
+      .pipe(map(async file => ({
+        path: file.path,
+        lines: await cat(file.path).pipe(lines()).count()
+      })))
+      .collect();
+
+    console.log("Large files:", largeFiles);
+  `
+}
+```
+
+#### Git Operations
+
+```typescript
+// Check repository status
+{
+  "code": `
+    const status = await git("status", "--short")
+      .stdout()
+      .pipe(lines())
+      .collect();
+
+    console.log("Modified files:", status);
+  `
+}
+
+// Analyze commit history
+{
+  "code": `
+    const commitTypes = new Map();
+
+    await git("log", "--oneline", "--since='1 month ago'")
+      .stdout()
+      .pipe(lines())
+      .pipe(map(line => {
+        const match = line.match(/^[a-f0-9]+ (\\w+):/);
+        return match ? match[1] : "other";
+      }))
+      .forEach(type => {
+        commitTypes.set(type, (commitTypes.get(type) || 0) + 1);
+      });
+
+    console.log("Commit breakdown:", Object.fromEntries(commitTypes));
+  `
+}
+```
+
+### Benefits Over Traditional Bash Tool
+
+| Traditional Bash | Streaming Shell via MCP |
+|-----------------|------------------------|
+| `git log --oneline \| grep SSH \| head -10` | `await git('log', '--oneline').stdout().pipe(lines()).pipe(grep(/SSH/)).pipe(take(10)).collect()` |
+| No type safety | Full TypeScript support |
+| String manipulation only | Rich data transformations |
+| Sequential execution | Composable pipelines |
+| Manual error handling | Automatic error propagation |
+| Limited debugging | Stack traces and breakpoints |
+
+### Auto-imported Functions
+
+When using the MCP `exec` tool, these streaming shell functions are automatically available:
+
+**Core Streams:**
+- `createStream()`, `fromArray()`, `empty()`
+
+**Transforms:**
+- `filter()`, `map()`, `flatMap()`, `take()`
+- `lines()`, `grep()`
+
+**I/O:**
+- `stdout()`, `stderr()`, `tee()`
+
+**File System:**
+- `glob()`, `src()`, `cat()`, `dest()`
+
+**Commands:**
+- `cmd()`, `git()`, `docker()`, `deno()`
+
+No imports needed - just start using them!
 
 ## Core Concepts
 
@@ -553,9 +724,47 @@ const strings: Stream<string> = numbers.pipe(map((n) => n.toString()));
 const filtered: Stream<string> = strings.pipe(filter((s) => s.length > 0));
 ```
 
+## Example Scripts
+
+The `scripts/` directory contains real-world examples of the streaming shell API in action:
+
+### `code-audit.ts`
+
+Comprehensive codebase audit tool that demonstrates:
+
+- Finding debug statements with `grep()` and `filter()`
+- Extracting TODO comments across files
+- Checking test coverage
+- Identifying long files for refactoring
+- Git status checks
+- Anti-pattern detection
+
+Run with:
+```bash
+deno run --allow-all scripts/code-audit.ts
+```
+
+### `dev-tasks.ts`
+
+Common development tasks showcasing how to replace bash commands:
+
+- Git log analysis: `git log | grep | head` → streaming pipeline
+- File counting: `find | wc -l` → `glob().count()`
+- TODO extraction: `grep -r` → `flatMap()` with `cat()`
+- Log processing: `cat | grep | sed` → chained transforms
+- File copying with transforms: `cp` + modifications → `src().pipe(dest())`
+
+Run with:
+```bash
+deno run --allow-all scripts/dev-tasks.ts
+```
+
+Both scripts demonstrate how the streaming shell API provides a more powerful, type-safe alternative to traditional shell scripts while maintaining composability and readability.
+
 ## See Also
 
 - [Core Stream Implementation](../src/stdlib/stream.ts)
 - [Transform Functions](../src/stdlib/transforms.ts)
 - [File System Streams](../src/stdlib/fs-streams.ts)
 - [Command Execution](../src/stdlib/command.ts)
+- [Example Scripts](../scripts/)
