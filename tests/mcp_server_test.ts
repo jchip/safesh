@@ -333,3 +333,135 @@ Deno.test({
     assertEquals(result.stdout.includes("Should not run"), false);
   },
 });
+
+// ============================================================================
+// xrun Syntax Integration Tests
+// ============================================================================
+
+Deno.test({
+  name: "task tool - executes xrun parallel syntax [a, b, c]",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { runTask } = await import("../src/runner/tasks.ts");
+
+    const configWithTask: SafeShellConfig = {
+      tasks: {
+        a: { cmd: 'console.log("Task A");' },
+        b: { cmd: 'console.log("Task B");' },
+        c: { cmd: 'console.log("Task C");' },
+        xrun: "[a, b, c]",
+      },
+    };
+
+    const result = await runTask("xrun", configWithTask);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "Task A");
+    assertStringIncludes(result.stdout, "Task B");
+    assertStringIncludes(result.stdout, "Task C");
+  },
+});
+
+Deno.test({
+  name: "task tool - executes xrun serial syntax [-s, a, b, c]",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { runTask } = await import("../src/runner/tasks.ts");
+
+    const configWithTask: SafeShellConfig = {
+      tasks: {
+        a: { cmd: 'console.log("First");' },
+        b: { cmd: 'console.log("Second");' },
+        c: { cmd: 'console.log("Third");' },
+        xrun: "[-s, a, b, c]",
+      },
+    };
+
+    const result = await runTask("xrun", configWithTask);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "First");
+    assertStringIncludes(result.stdout, "Second");
+    assertStringIncludes(result.stdout, "Third");
+  },
+});
+
+Deno.test({
+  name: "task tool - executes nested xrun syntax [a, [-s, b, c], d]",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { runTask } = await import("../src/runner/tasks.ts");
+
+    const configWithTask: SafeShellConfig = {
+      tasks: {
+        a: { cmd: 'console.log("Task A");' },
+        b: { cmd: 'console.log("Task B");' },
+        c: { cmd: 'console.log("Task C");' },
+        d: { cmd: 'console.log("Task D");' },
+        nested: "[a, [-s, b, c], d]",
+      },
+    };
+
+    const result = await runTask("nested", configWithTask);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "Task A");
+    assertStringIncludes(result.stdout, "Task B");
+    assertStringIncludes(result.stdout, "Task C");
+    assertStringIncludes(result.stdout, "Task D");
+  },
+});
+
+Deno.test({
+  name: "task tool - xrun serial stops on failure",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { runTask } = await import("../src/runner/tasks.ts");
+
+    const configWithTask: SafeShellConfig = {
+      tasks: {
+        first: { cmd: 'console.log("First");' },
+        fail: { cmd: 'throw new Error("Task failed");' },
+        third: { cmd: 'console.log("Should not run");' },
+        serial: "[-s, first, fail, third]",
+      },
+    };
+
+    const result = await runTask("serial", configWithTask);
+
+    assertEquals(result.success, false);
+    assertStringIncludes(result.stdout, "First");
+    assertEquals(result.stdout.includes("Should not run"), false);
+  },
+});
+
+Deno.test({
+  name: "task tool - build pipeline example with xrun",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { runTask } = await import("../src/runner/tasks.ts");
+
+    const configWithTask: SafeShellConfig = {
+      tasks: {
+        clean: { cmd: 'console.log("Cleaning...");' },
+        lint: { cmd: 'console.log("Linting...");' },
+        test: { cmd: 'console.log("Testing...");' },
+        build: { cmd: 'console.log("Building...");' },
+        pipeline: "[-s, clean, [lint, test], build]",
+      },
+    };
+
+    const result = await runTask("pipeline", configWithTask);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "Cleaning...");
+    assertStringIncludes(result.stdout, "Linting...");
+    assertStringIncludes(result.stdout, "Testing...");
+    assertStringIncludes(result.stdout, "Building...");
+  },
+});

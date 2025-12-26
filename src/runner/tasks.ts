@@ -6,10 +6,12 @@
  * - Parallel task execution (parallel: string[])
  * - Serial task execution (serial: string[])
  * - Task references (string aliases)
+ * - xrun-style array syntax ([a, b, c] or [-s, a, b, c])
  */
 
 import { executeCode } from "../runtime/executor.ts";
 import type { SafeShellConfig, Session, TaskConfig } from "../core/types.ts";
+import { isXrunSyntax, parseXrun } from "./xrun-parser.ts";
 
 export interface TaskResult {
   /** Whether the task completed successfully */
@@ -50,6 +52,25 @@ export async function runTask(
 
   // Handle task reference (string alias)
   if (typeof taskDef === "string") {
+    // Check if it's xrun syntax
+    if (isXrunSyntax(taskDef)) {
+      const { mainTask, additionalTasks } = parseXrun(taskDef);
+
+      // Create a temporary config with the parsed tasks
+      const tempConfig: SafeShellConfig = {
+        ...config,
+        tasks: {
+          ...config.tasks,
+          ...additionalTasks,
+          [`__xrun_main_${taskName}`]: mainTask,
+        },
+      };
+
+      // Run the main task
+      return await runTask(`__xrun_main_${taskName}`, tempConfig, options);
+    }
+
+    // Regular task reference
     return await runTask(taskDef, config, options);
   }
 
