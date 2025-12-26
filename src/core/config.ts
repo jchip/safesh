@@ -260,5 +260,44 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
     }
   }
 
+  // Check for dangerous import policy settings
+  const imports = config.imports ?? {};
+  const trusted = imports.trusted ?? [];
+  const allowed = imports.allowed ?? [];
+  const blocked = imports.blocked ?? [];
+
+  // Warn if no blocked patterns (too permissive)
+  if (blocked.length === 0) {
+    result.warnings.push(
+      "imports.blocked is empty - consider blocking 'npm:*', 'http:*', 'https:*' for security",
+    );
+  }
+
+  // Warn if allowing npm:* entirely
+  if (allowed.includes("npm:*") || trusted.includes("npm:*")) {
+    result.warnings.push(
+      "imports allows 'npm:*' - this permits arbitrary npm packages which may be a security risk",
+    );
+  }
+
+  // Warn if allowing http/https imports entirely
+  if (
+    allowed.includes("http:*") || trusted.includes("http:*") ||
+    allowed.includes("https:*") || trusted.includes("https:*")
+  ) {
+    result.warnings.push(
+      "imports allows 'http:*' or 'https:*' - remote code execution risk",
+    );
+  }
+
+  // Error if trusted and blocked have overlapping patterns
+  for (const pattern of blocked) {
+    if (trusted.includes(pattern)) {
+      result.errors.push(
+        `imports: pattern '${pattern}' is both trusted and blocked`,
+      );
+    }
+  }
+
   return result;
 }

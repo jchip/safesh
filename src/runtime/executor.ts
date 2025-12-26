@@ -8,6 +8,7 @@ import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { deadline } from "@std/async";
 import { executionError, timeout as timeoutError } from "../core/errors.ts";
+import { generateImportMap, validateImports } from "../core/import_map.ts";
 import type { ExecOptions, ExecResult, SafeShellConfig, Session } from "../core/types.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
@@ -171,6 +172,10 @@ export async function executeCode(
   const cwd = options.cwd ?? session?.cwd ?? Deno.cwd();
   const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT;
 
+  // Validate imports against security policy
+  const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
+  validateImports(code, importPolicy);
+
   // Ensure temp directory exists
   await ensureDir(TEMP_DIR);
 
@@ -185,6 +190,9 @@ export async function executeCode(
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
 
+  // Generate import map from policy
+  const importMapPath = await generateImportMap(importPolicy);
+
   // Build command
   const permFlags = buildPermissionFlags(config, cwd);
   const configPath = await findConfig(cwd);
@@ -192,6 +200,7 @@ export async function executeCode(
   const args = [
     "run",
     "--no-prompt", // Never prompt for permissions
+    `--import-map=${importMapPath}`,
     ...permFlags,
   ];
 
@@ -325,6 +334,22 @@ export async function executeFile(
   // Resolve file path - if already absolute, use as-is, otherwise resolve from cwd
   const absolutePath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
 
+  // Read and validate file imports
+  let fileCode: string;
+  try {
+    fileCode = await Deno.readTextFile(absolutePath);
+  } catch (error) {
+    throw executionError(
+      `Failed to read file '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
+  validateImports(fileCode, importPolicy);
+
+  // Generate import map from policy
+  const importMapPath = await generateImportMap(importPolicy);
+
   // Build command
   const permFlags = buildPermissionFlags(config, cwd);
   const configPath = await findConfig(cwd);
@@ -332,6 +357,7 @@ export async function executeFile(
   const args = [
     "run",
     "--no-prompt",
+    `--import-map=${importMapPath}`,
     ...permFlags,
   ];
 
@@ -412,6 +438,10 @@ export async function* executeCodeStreaming(
 ): AsyncGenerator<{ type: "stdout" | "stderr" | "exit"; data?: string; code?: number }> {
   const cwd = options.cwd ?? session?.cwd ?? Deno.cwd();
 
+  // Validate imports against security policy
+  const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
+  validateImports(code, importPolicy);
+
   // Ensure temp directory exists
   await ensureDir(TEMP_DIR);
 
@@ -426,6 +456,9 @@ export async function* executeCodeStreaming(
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
 
+  // Generate import map from policy
+  const importMapPath = await generateImportMap(importPolicy);
+
   // Build command
   const permFlags = buildPermissionFlags(config, cwd);
   const configPath = await findConfig(cwd);
@@ -433,6 +466,7 @@ export async function* executeCodeStreaming(
   const args = [
     "run",
     "--no-prompt",
+    `--import-map=${importMapPath}`,
     ...permFlags,
   ];
 
