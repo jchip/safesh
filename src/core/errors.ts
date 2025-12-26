@@ -162,3 +162,16 @@ export function importNotAllowed(importPath: string, blocked: string[]): SafeShe
     "Use imports from jsr:@std/* or safesh:* instead",
   );
 }
+
+export function importError(
+  importPath: string,
+  blocked: string[],
+  allowed: string[],
+): SafeShellError {
+  return new SafeShellError(
+    "IMPORT_NOT_ALLOWED",
+    `Import '${importPath}' matches blocked pattern and is not in the allowed list`,
+    { import: importPath, denied: blocked, allowed },
+    `Blocked patterns: ${blocked.join(", ")}. Allowed patterns: ${allowed.join(", ")}. Add to imports.allowed in safesh.config.ts if needed.`,
+  );
+}
