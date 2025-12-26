@@ -68,7 +68,12 @@ export interface TaskConfig {
   cwd?: string;
 }
 
+export type SecurityPreset = "strict" | "standard" | "permissive";
+
 export interface SafeShellConfig {
+  /** Security preset to start from (optional) */
+  preset?: SecurityPreset;
+
   /** Deno permission configuration */
   permissions?: PermissionsConfig;
 
