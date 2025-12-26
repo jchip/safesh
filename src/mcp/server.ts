@@ -133,12 +133,14 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             "Execute JavaScript/TypeScript code in a sandboxed Deno runtime - MCPU usage: infoc\n\n" +
             "Use sessionId for persistent state between calls. " +
             (permSummary ? `Permissions: ${permSummary}` : "No permissions configured.") +
-            "\n\nAUTO-IMPORTED FUNCTIONS:\n" +
+            "\n\nIMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.\n" +
+            "❌ BAD: cmd('sh', ['-c', 'git log | grep ERROR'])\n" +
+            "✅ GOOD: git('log').stdout().pipe(lines()).pipe(grep(/ERROR/)).collect()\n\n" +
+            "AUTO-IMPORTED FUNCTIONS:\n" +
             "• fs: read, write, readJson, writeJson, exists, copy, remove, readDir, walk\n" +
             "• text: read, grep, head, tail, wc\n" +
             "• Streaming: cat, glob, src, dest, lines, grep, filter, map, flatMap, take, stdout, stderr, tee, pipe, collect, forEach, count\n" +
-            "• Commands: git, docker, deno, cmd - each returns Command with .exec(), .stdout(), .stderr()\n" +
-            "• Legacy: $(cmd, args) for simple command execution\n\n" +
+            "• Commands: git, docker, deno, cmd - each returns Command with .exec(), .stdout(), .stderr()\n\n" +
             "STREAMING EXAMPLES:\n" +
             "await cat('file.log').pipe(lines()).pipe(grep(/ERROR/)).collect()\n" +
             "await glob('**/*.ts').pipe(filter(f => !f.path.includes('test'))).count()\n" +
