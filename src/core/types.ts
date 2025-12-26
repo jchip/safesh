@@ -112,14 +112,22 @@ export interface Job {
   id: string;
   /** Process ID */
   pid: number;
-  /** Command or code that started the job */
-  command: string;
+  /** External command (if any) */
+  command?: string;
+  /** JS/TS code (if any) */
+  code?: string;
   /** Current status */
-  status: "running" | "stopped" | "exited";
-  /** Exit code if exited */
+  status: "running" | "completed" | "failed";
+  /** Buffered stdout */
+  stdout: string;
+  /** Buffered stderr */
+  stderr: string;
+  /** Start timestamp */
+  startedAt: number;
+  /** Exit code if completed/failed */
   exitCode?: number;
-  /** Start time */
-  startedAt: Date;
+  /** Child process handle (internal use) */
+  process?: Deno.ChildProcess;
 }
 
 // ============================================================================
