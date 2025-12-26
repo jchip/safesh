@@ -173,7 +173,9 @@ describe("SessionManager", () => {
         pid: 12345,
         command: "sleep 10",
         status: "running" as const,
-        startedAt: new Date(),
+        startedAt: Date.now(),
+        stdout: "",
+        stderr: "",
       };
 
       manager.addJob(session.id, job);
@@ -189,13 +191,15 @@ describe("SessionManager", () => {
         pid: 12345,
         command: "sleep 10",
         status: "running",
-        startedAt: new Date(),
+        startedAt: Date.now(),
+        stdout: "",
+        stderr: "",
       });
 
-      manager.updateJob(session.id, "job-1", { status: "exited", exitCode: 0 });
+      manager.updateJob(session.id, "job-1", { status: "completed", exitCode: 0 });
       const job = manager.getJob(session.id, "job-1");
 
-      assertEquals(job?.status, "exited");
+      assertEquals(job?.status, "completed");
       assertEquals(job?.exitCode, 0);
     });
 
@@ -206,14 +210,18 @@ describe("SessionManager", () => {
         pid: 123,
         command: "cmd1",
         status: "running",
-        startedAt: new Date(),
+        startedAt: Date.now(),
+        stdout: "",
+        stderr: "",
       });
       manager.addJob(session.id, {
         id: "job-2",
         pid: 456,
         command: "cmd2",
-        status: "exited",
-        startedAt: new Date(),
+        status: "completed",
+        startedAt: Date.now(),
+        stdout: "",
+        stderr: "",
       });
 
       const jobs = manager.listJobs(session.id);
@@ -287,7 +295,9 @@ describe("SessionManager", () => {
         pid: 123,
         command: "test",
         status: "running",
-        startedAt: new Date(),
+        startedAt: Date.now(),
+        stdout: "",
+        stderr: "",
       });
 
       const serialized = manager.serialize(session);

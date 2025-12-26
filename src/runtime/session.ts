@@ -227,9 +227,13 @@ export class SessionManager {
 
     // Clean up any running jobs
     for (const job of session.jobs.values()) {
-      if (job.status === "running") {
-        // Job cleanup would go here in full implementation
-        job.status = "stopped";
+      if (job.status === "running" && job.process) {
+        try {
+          job.process.kill("SIGTERM");
+          job.status = "failed";
+        } catch {
+          // Process may have already exited
+        }
       }
     }
 
@@ -276,7 +280,7 @@ export class SessionManager {
     cwd: string;
     env: Record<string, string>;
     vars: Record<string, unknown>;
-    jobs: { id: string; command: string; status: string }[];
+    jobs: { id: string; command?: string; code?: string; status: string }[];
     createdAt: string;
   } {
     return {
@@ -287,6 +291,7 @@ export class SessionManager {
       jobs: Array.from(session.jobs.values()).map((j) => ({
         id: j.id,
         command: j.command,
+        code: j.code,
         status: j.status,
       })),
       createdAt: session.createdAt.toISOString(),
