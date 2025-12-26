@@ -10,7 +10,7 @@
  * Permissions merge as union, deny rules also merge as union.
  */
 
-import { join } from "@std/path";
+import { join, fromFileUrl } from "@std/path";
 import type {
   EnvConfig,
   ExternalCommandConfig,
@@ -276,13 +276,15 @@ export function mergeConfigs(
  */
 async function loadConfigFile(path: string): Promise<SafeShellConfig | null> {
   try {
-    await Deno.stat(path);
+    // Convert file:// URL to path for stat
+    const filePath = path.startsWith("file://") ? fromFileUrl(path) : path;
+    await Deno.stat(filePath);
   } catch {
     return null; // File doesn't exist
   }
 
   try {
-    // Dynamic import the config file
+    // Dynamic import the config file (needs file:// URL)
     const module = await import(path);
     return module.default as SafeShellConfig;
   } catch (error) {
