@@ -42,7 +42,6 @@ function buildPreamble(session?: Session): string {
     "// Import standard library",
     `import * as fs from 'file://${stdlibPath}fs.ts';`,
     `import * as text from 'file://${stdlibPath}text.ts';`,
-    `import { $ } from 'file://${stdlibPath}shell.ts';`,
     "",
     "// Import streaming shell API",
     `import { createStream, fromArray, empty } from 'file://${stdlibPath}stream.ts';`,
