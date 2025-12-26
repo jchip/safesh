@@ -27,27 +27,49 @@ async function hashCode(code: string): Promise<string> {
 /**
  * Build the preamble that gets prepended to user code
  *
- * The preamble injects session context as a global variable.
- * User code can import safesh modules explicitly if needed.
+ * The preamble injects:
+ * - Session context as $session
+ * - Standard library (fs, text, $)
+ * - Streaming shell API (cat, glob, git, lines, grep, map, filter, etc.)
  */
 function buildPreamble(session?: Session): string {
-  if (!session) {
-    return "";
-  }
+  // Get absolute path to stdlib directory
+  const stdlibPath = new URL("../stdlib/", import.meta.url).pathname;
 
   const lines: string[] = [
     "// SafeShell auto-generated preamble",
-    "// Session context available as $session",
-    `const $session = ${JSON.stringify({
-      id: session.id,
-      cwd: session.cwd,
-      env: session.env,
-      vars: session.vars,
-    })};`,
     "",
-    "// User code starts here",
+    "// Import standard library",
+    `import * as fs from 'file://${stdlibPath}fs.ts';`,
+    `import * as text from 'file://${stdlibPath}text.ts';`,
+    `import { $ } from 'file://${stdlibPath}shell.ts';`,
+    "",
+    "// Import streaming shell API",
+    `import { createStream, fromArray, empty } from 'file://${stdlibPath}stream.ts';`,
+    `import { filter, map, flatMap, take, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
+    `import { stdout, stderr, tee } from 'file://${stdlibPath}io.ts';`,
+    `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
+    `import { cmd, git, docker, deno } from 'file://${stdlibPath}command.ts';`,
     "",
   ];
+
+  if (session) {
+    lines.push(
+      "// Session context available as $session",
+      `const $session = ${JSON.stringify({
+        id: session.id,
+        cwd: session.cwd,
+        env: session.env,
+        vars: session.vars,
+      })};`,
+      "",
+    );
+  }
+
+  lines.push(
+    "// User code starts here",
+    "",
+  );
 
   return lines.join("\n");
 }
