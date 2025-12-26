@@ -2,12 +2,13 @@
  * SafeShell MCP Server
  *
  * Exposes SafeShell capabilities as MCP tools:
- * - exec: Execute JS/TS code in sandboxed Deno runtime
- * - run: Execute whitelisted external commands
+ * - exec: Execute JS/TS code in sandboxed Deno runtime with streaming shell API
  * - startSession: Create a new persistent session
  * - endSession: Destroy a session
  * - updateSession: Modify session state (cwd, env)
  * - listSessions: List active sessions
+ * - bg, jobs, jobOutput, kill, fg: Background job management
+ * - task: Execute configured tasks
  */
 
 import { Server } from "@mcp/sdk/server/index.js";
@@ -21,7 +22,6 @@ import { executeCode } from "../runtime/executor.ts";
 import { createSessionManager, type SessionManager } from "../runtime/session.ts";
 import { loadConfig } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
-import { runExternal } from "../external/runner.ts";
 import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig, Session } from "../core/types.ts";
@@ -40,14 +40,6 @@ const ExecSchema = z.object({
   sessionId: z.string().optional().describe("Session ID to use"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
-});
-
-const RunSchema = z.object({
-  command: z.string().describe("External command to run"),
-  args: z.array(z.string()).optional().describe("Command arguments"),
-  sessionId: z.string().optional().describe("Session ID to use"),
-  cwd: z.string().optional().describe("Working directory override"),
-  timeout: z.number().optional().describe("Timeout in milliseconds"),
 });
 
 const StartSessionSchema = z.object({
@@ -171,45 +163,9 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           },
         },
         {
-          name: "run",
-          description:
-            "Execute a whitelisted external command with validation. " +
-            "Commands are validated against whitelist and denied flags. " +
-            "Path arguments are validated against sandbox. " +
-            "Use sessionId to inherit session's cwd and env. " +
-            `Available: ${registry.list().join(", ") || "(none configured)"}`,
-          inputSchema: {
-            type: "object",
-            properties: {
-              command: {
-                type: "string",
-                description: "External command to run (must be whitelisted)",
-              },
-              args: {
-                type: "array",
-                items: { type: "string" },
-                description: "Command arguments",
-              },
-              sessionId: {
-                type: "string",
-                description: "Session ID for cwd and env",
-              },
-              cwd: {
-                type: "string",
-                description: "Working directory override (ignores session)",
-              },
-              timeout: {
-                type: "number",
-                description: "Timeout in milliseconds (default: 30000)",
-              },
-            },
-            required: ["command"],
-          },
-        },
-        {
           name: "startSession",
           description:
-            "Create a new session for persistent state between exec/run calls. " +
+            "Create a new session for persistent state between exec calls. " +
             "Sessions maintain: cwd (working directory), env (environment variables), " +
             "and vars (persisted JS variables accessible via $session).",
           inputSchema: {
@@ -444,55 +400,6 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             ],
             isError: !result.success,
           };
-        }
-
-        case "run": {
-          const parsed = RunSchema.parse(args);
-          const cmdArgs = parsed.args ?? [];
-
-          // Get session for cwd/env
-          const { session } = sessionManager.getOrTemp(parsed.sessionId, { cwd });
-
-          // Working directory: explicit > session > default
-          const workDir = parsed.cwd ?? session.cwd;
-
-          try {
-            // Execute the validated command
-            const result = await runExternal(
-              parsed.command,
-              cmdArgs,
-              config,
-              {
-                cwd: workDir,
-                timeout: parsed.timeout,
-              },
-              session,
-            );
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: formatRunResult(parsed.command, cmdArgs, result),
-                },
-              ],
-              isError: !result.success,
-            };
-          } catch (error) {
-            // Handle validation and execution errors
-            if (error instanceof SafeShellError) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: formatError(error),
-                  },
-                ],
-                isError: true,
-              };
-            }
-            throw error;
-          }
         }
 
         case "startSession": {
@@ -944,36 +851,6 @@ function formatExecResult(
 
   if (sessionId) {
     parts.push(`[session: ${sessionId}]`);
-  }
-
-  return parts.join("\n") || "(no output)";
-}
-
-/**
- * Format run command result with command info
- */
-function formatRunResult(
-  command: string,
-  args: string[],
-  result: { stdout: string; stderr: string; code: number; success: boolean },
-): string {
-  const parts: string[] = [];
-
-  // Show command that was run
-  const cmdLine = args.length > 0 ? `${command} ${args.join(" ")}` : command;
-  parts.push(`$ ${cmdLine}`);
-  parts.push("");
-
-  if (result.stdout) {
-    parts.push(result.stdout);
-  }
-
-  if (result.stderr) {
-    parts.push(`[stderr]\n${result.stderr}`);
-  }
-
-  if (!result.success) {
-    parts.push(`\n[exit code: ${result.code}]`);
   }
 
   return parts.join("\n") || "(no output)";
