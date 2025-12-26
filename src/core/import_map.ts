@@ -65,9 +65,24 @@ export async function generateImportMap(
     imports: {},
   };
 
-  // Future: Add mappings for safesh:* imports here
-  // Example:
-  // importMap.imports!["safesh:fs"] = "file:///path/to/safesh/src/stdlib/fs.ts";
+  // Map safesh:* imports to actual file paths
+  // Resolve from this file's location (src/core/import_map.ts -> src/)
+  const safeshSrcDir = new URL("../", import.meta.url).pathname;
+
+  importMap.imports!["safesh:fs"] = `file://${safeshSrcDir}stdlib/fs.ts`;
+  importMap.imports!["safesh:text"] = `file://${safeshSrcDir}stdlib/text.ts`;
+  importMap.imports!["safesh:glob"] = `file://${safeshSrcDir}stdlib/glob.ts`;
+  importMap.imports!["safesh:shell"] = `file://${safeshSrcDir}stdlib/shell.ts`;
+
+  // Include @std imports - map specific subpaths that stdlib uses
+  // Import maps require explicit subpath mappings
+  importMap.imports!["@std/fs/walk"] = "jsr:@std/fs@^1/walk";
+  importMap.imports!["@std/fs/copy"] = "jsr:@std/fs@^1/copy";
+  importMap.imports!["@std/fs/ensure-dir"] = "jsr:@std/fs@^1/ensure-dir";
+  importMap.imports!["@std/fs/expand-glob"] = "jsr:@std/fs@^1/expand-glob";
+  importMap.imports!["@std/path"] = "jsr:@std/path@^1";
+  importMap.imports!["@std/streams"] = "jsr:@std/streams@^1";
+  importMap.imports!["@std/async"] = "jsr:@std/async@^1";
 
   const importMapPath = join(TEMP_DIR, "import-map.json");
   await Deno.writeTextFile(
