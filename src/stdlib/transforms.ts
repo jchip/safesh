@@ -1,0 +1,203 @@
+/**
+ * Common Transform Functions for Stream API
+ *
+ * Provides composable transform functions for filtering, mapping, and
+ * manipulating streams. All transforms are pure functions that return
+ * async generators for lazy evaluation.
+ *
+ * @module
+ */
+
+import type { Transform } from "./stream.ts";
+
+/**
+ * Filter items in a stream based on a predicate
+ *
+ * Only items that pass the predicate test are yielded to the output stream.
+ * The predicate can be synchronous or asynchronous.
+ *
+ * @param predicate - Function that returns true for items to keep
+ * @returns Transform that filters items
+ *
+ * @example
+ * ```ts
+ * // Filter even numbers
+ * const evens = stream.pipe(filter(x => x % 2 === 0));
+ *
+ * // Async predicate
+ * const valid = stream.pipe(filter(async x => await validate(x)));
+ * ```
+ */
+export function filter<T>(
+  predicate: (item: T) => boolean | Promise<boolean>,
+): Transform<T, T> {
+  return async function* (stream) {
+    for await (const item of stream) {
+      if (await predicate(item)) {
+        yield item;
+      }
+    }
+  };
+}
+
+/**
+ * Transform each item in a stream
+ *
+ * Applies a function to each item, yielding the transformed result.
+ * The function can be synchronous or asynchronous.
+ *
+ * @param fn - Function to transform each item
+ * @returns Transform that maps items from T to U
+ *
+ * @example
+ * ```ts
+ * // Double each number
+ * const doubled = stream.pipe(map(x => x * 2));
+ *
+ * // Parse JSON
+ * const objects = stream.pipe(map(line => JSON.parse(line)));
+ *
+ * // Async transformation
+ * const processed = stream.pipe(map(async x => await process(x)));
+ * ```
+ */
+export function map<T, U>(
+  fn: (item: T) => U | Promise<U>,
+): Transform<T, U> {
+  return async function* (stream) {
+    for await (const item of stream) {
+      yield await fn(item);
+    }
+  };
+}
+
+/**
+ * Transform each item into multiple items and flatten the result
+ *
+ * Each item is transformed into an async iterable, and all items from
+ * each iterable are yielded in sequence. Useful for expanding streams
+ * or performing one-to-many transformations.
+ *
+ * @param fn - Function that returns an async iterable for each item
+ * @returns Transform that flattens nested iterables
+ *
+ * @example
+ * ```ts
+ * // Split each string into characters
+ * const chars = stream.pipe(flatMap(async function* (str) {
+ *   for (const char of str) {
+ *     yield char;
+ *   }
+ * }));
+ *
+ * // Expand each file into its lines
+ * const allLines = files.pipe(flatMap(file =>
+ *   readLines(file.path)
+ * ));
+ * ```
+ */
+export function flatMap<T, U>(
+  fn: (item: T) => AsyncIterable<U>,
+): Transform<T, U> {
+  return async function* (stream) {
+    for await (const item of stream) {
+      for await (const subItem of fn(item)) {
+        yield subItem;
+      }
+    }
+  };
+}
+
+/**
+ * Take only the first n items from a stream
+ *
+ * Stops iteration after n items have been yielded. If the stream
+ * has fewer than n items, all items are yielded.
+ *
+ * @param n - Number of items to take
+ * @returns Transform that limits stream to n items
+ *
+ * @example
+ * ```ts
+ * // Get first 10 items
+ * const first10 = stream.pipe(take(10));
+ *
+ * // Get first item (alternative to .first())
+ * const firstArray = await stream.pipe(take(1)).collect();
+ * ```
+ */
+export function take<T>(n: number): Transform<T, T> {
+  return async function* (stream) {
+    let count = 0;
+    for await (const item of stream) {
+      if (count++ >= n) break;
+      yield item;
+    }
+  };
+}
+
+/**
+ * Split text chunks into individual lines
+ *
+ * Each text chunk is split on newline characters, yielding each
+ * non-empty line. Useful for processing text files or command output.
+ *
+ * @returns Transform that splits text into lines
+ *
+ * @example
+ * ```ts
+ * // Process log file line by line
+ * const logLines = cat("app.log")
+ *   .pipe(lines())
+ *   .pipe(filter(line => line.includes("ERROR")));
+ *
+ * // Process command output
+ * const gitFiles = cmd("git", ["ls-files"])
+ *   .stdout()
+ *   .pipe(lines())
+ *   .collect();
+ * ```
+ */
+export function lines(): Transform<string, string> {
+  return async function* (stream) {
+    for await (const text of stream) {
+      for (const line of text.split("\n")) {
+        if (line) {
+          yield line;
+        }
+      }
+    }
+  };
+}
+
+/**
+ * Filter lines matching a pattern
+ *
+ * Only lines that match the pattern (string or RegExp) are yielded.
+ * String patterns are converted to RegExp for testing.
+ *
+ * @param pattern - String or RegExp pattern to match
+ * @returns Transform that filters lines by pattern
+ *
+ * @example
+ * ```ts
+ * // Find error lines
+ * const errors = cat("app.log")
+ *   .pipe(lines())
+ *   .pipe(grep(/ERROR/));
+ *
+ * // String pattern
+ * const todos = cat("README.md")
+ *   .pipe(lines())
+ *   .pipe(grep("TODO"));
+ *
+ * // Case insensitive
+ * const matches = stream
+ *   .pipe(lines())
+ *   .pipe(grep(/error/i));
+ * ```
+ */
+export function grep(pattern: RegExp | string): Transform<string, string> {
+  const regex = typeof pattern === "string" ? new RegExp(pattern) : pattern;
+  return filter((line) => regex.test(line));
+}
