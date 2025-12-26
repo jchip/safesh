@@ -32,6 +32,7 @@ import {
   killJob,
   streamJobOutput,
 } from "../runtime/jobs.ts";
+import { runTask, listTasks } from "../runner/tasks.ts";
 
 // Tool schemas
 const ExecSchema = z.object({
@@ -87,6 +88,11 @@ const KillSchema = z.object({
 
 const FgSchema = z.object({
   jobId: z.string().describe("Job ID to bring to foreground"),
+});
+
+const TaskSchema = z.object({
+  name: z.string().describe("Task name from config"),
+  sessionId: z.string().optional().describe("Session ID for persistent state"),
 });
 
 /**
@@ -355,6 +361,28 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
             },
             required: ["jobId"],
+          },
+        },
+        {
+          name: "task",
+          description:
+            "Execute a task defined in config. " +
+            "Tasks can be simple commands (cmd), parallel execution (parallel), " +
+            "or serial execution (serial). Supports task references (string aliases). " +
+            `Available tasks: ${Object.keys(config.tasks ?? {}).join(", ") || "(none configured)"}`,
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: {
+                type: "string",
+                description: "Task name from config.tasks",
+              },
+              sessionId: {
+                type: "string",
+                description: "Session ID for persistent state and cwd/env context",
+              },
+            },
+            required: ["name"],
           },
         },
       ],
@@ -800,6 +828,41 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           };
         }
 
+        case "task": {
+          const parsed = TaskSchema.parse(args);
+
+          // Get session for context
+          const { session } = sessionManager.getOrTemp(parsed.sessionId, { cwd });
+
+          try {
+            const result = await runTask(parsed.name, config, {
+              cwd: session.cwd,
+              session,
+            });
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: formatTaskResult(parsed.name, result),
+                },
+              ],
+              isError: !result.success,
+            };
+          } catch (error) {
+            // Handle task errors
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: error instanceof Error ? error.message : String(error),
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+
         default:
           return {
             content: [
@@ -887,6 +950,33 @@ function formatRunResult(
   // Show command that was run
   const cmdLine = args.length > 0 ? `${command} ${args.join(" ")}` : command;
   parts.push(`$ ${cmdLine}`);
+  parts.push("");
+
+  if (result.stdout) {
+    parts.push(result.stdout);
+  }
+
+  if (result.stderr) {
+    parts.push(`[stderr]\n${result.stderr}`);
+  }
+
+  if (!result.success) {
+    parts.push(`\n[exit code: ${result.code}]`);
+  }
+
+  return parts.join("\n") || "(no output)";
+}
+
+/**
+ * Format task result for MCP response
+ */
+function formatTaskResult(
+  taskName: string,
+  result: { stdout: string; stderr: string; code: number; success: boolean },
+): string {
+  const parts: string[] = [];
+
+  parts.push(`Task: ${taskName}`);
   parts.push("");
 
   if (result.stdout) {
