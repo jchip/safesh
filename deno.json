@@ -5,6 +5,7 @@
     ".": "./src/mod.ts",
     "./fs": "./src/stdlib/fs.ts",
     "./text": "./src/stdlib/text.ts",
+    "./glob": "./src/stdlib/glob.ts",
     "./shell": "./src/stdlib/shell.ts",
     "./streams": "./src/streams/mod.ts"
   },
@@ -32,6 +33,7 @@
     "@deno-library/compress": "jsr:@deno-library/compress@^0.5",
     "safesh:fs": "./src/stdlib/fs.ts",
     "safesh:text": "./src/stdlib/text.ts",
+    "safesh:glob": "./src/stdlib/glob.ts",
     "safesh:shell": "./src/stdlib/shell.ts",
     "safesh:streams": "./src/streams/mod.ts",
     "safesh:stdlib": "./src/stdlib/mod.ts"
