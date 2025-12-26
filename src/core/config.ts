@@ -17,23 +17,55 @@ import type {
   ImportPolicy,
   PermissionsConfig,
   SafeShellConfig,
+  SecurityPreset,
 } from "./types.ts";
 import { configError } from "./errors.ts";
 
+// ============================================================================
+// Security Presets
+// ============================================================================
+
 /**
- * Default configuration - minimal safe defaults
+ * Strict preset - maximum security, minimal permissions
+ * Use for untrusted code or production environments
  */
-export const DEFAULT_CONFIG: SafeShellConfig = {
+export const STRICT_PRESET: SafeShellConfig = {
   permissions: {
     read: ["${CWD}", "/tmp"],
-    write: ["${CWD}", "/tmp"],
+    write: ["/tmp"],
     net: [],
     run: [],
     env: ["HOME", "PATH", "TERM"],
   },
   external: {},
   env: {
-    allow: ["HOME", "PATH", "TERM", "EDITOR", "SHELL"],
+    allow: ["HOME", "PATH", "TERM"],
+    mask: ["*_KEY", "*_SECRET", "*_TOKEN", "*_PASSWORD", "*_API*", "AWS_*", "GITHUB_*"],
+  },
+  imports: {
+    trusted: ["jsr:@std/*", "safesh:*"],
+    allowed: [],
+    blocked: ["npm:*", "http:*", "https:*", "file:*"],
+  },
+  tasks: {},
+  timeout: 30000,
+};
+
+/**
+ * Standard preset - balanced security and functionality
+ * Good default for most projects
+ */
+export const STANDARD_PRESET: SafeShellConfig = {
+  permissions: {
+    read: ["${CWD}", "/tmp"],
+    write: ["${CWD}", "/tmp"],
+    net: [],
+    run: [],
+    env: ["HOME", "PATH", "TERM", "USER", "LANG"],
+  },
+  external: {},
+  env: {
+    allow: ["HOME", "PATH", "TERM", "EDITOR", "SHELL", "USER", "LANG"],
     mask: ["*_KEY", "*_SECRET", "*_TOKEN", "*_PASSWORD", "AWS_*", "GITHUB_TOKEN"],
   },
   imports: {
@@ -44,6 +76,88 @@ export const DEFAULT_CONFIG: SafeShellConfig = {
   tasks: {},
   timeout: 30000,
 };
+
+/**
+ * Permissive preset - more relaxed for development
+ * Enables common dev tools and broader access
+ */
+export const PERMISSIVE_PRESET: SafeShellConfig = {
+  permissions: {
+    read: ["${CWD}", "/tmp", "${HOME}"],
+    write: ["${CWD}", "/tmp"],
+    net: true,
+    run: ["git", "deno", "node", "npm", "pnpm", "yarn", "docker", "make"],
+    env: ["HOME", "PATH", "TERM", "USER", "LANG", "EDITOR", "SHELL"],
+  },
+  external: {
+    git: { allow: true },
+    deno: { allow: true },
+    node: { allow: true },
+    npm: { allow: true },
+    pnpm: { allow: true },
+    yarn: { allow: true },
+    docker: {
+      allow: true,
+      pathArgs: { autoDetect: true, validateSandbox: true },
+    },
+    make: { allow: true },
+  },
+  env: {
+    allow: [
+      "HOME",
+      "PATH",
+      "TERM",
+      "EDITOR",
+      "SHELL",
+      "USER",
+      "LANG",
+      "LC_*",
+      "DENO_*",
+      "NODE_*",
+    ],
+    mask: [
+      "*_KEY",
+      "*_SECRET",
+      "*_TOKEN",
+      "*_PASSWORD",
+      "*_PRIVATE*",
+      "AWS_*",
+      "GITHUB_TOKEN",
+    ],
+  },
+  imports: {
+    trusted: ["jsr:@std/*", "safesh:*"],
+    allowed: ["jsr:*"],
+    blocked: ["http:*", "https:*"],
+  },
+  tasks: {},
+  timeout: 60000,
+};
+
+/**
+ * Default configuration - uses standard preset
+ */
+export const DEFAULT_CONFIG: SafeShellConfig = STANDARD_PRESET;
+
+/**
+ * Get a preset configuration by name
+ */
+export function getPreset(preset: SecurityPreset): SafeShellConfig {
+  switch (preset) {
+    case "strict":
+      return { ...STRICT_PRESET };
+    case "standard":
+      return { ...STANDARD_PRESET };
+    case "permissive":
+      return { ...PERMISSIVE_PRESET };
+    default:
+      throw configError(`Unknown preset: ${preset}`);
+  }
+}
+
+// ============================================================================
+// Config Merging
+// ============================================================================
 
 /**
  * Merge two permission configs (union)
@@ -205,14 +319,51 @@ export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
   const globalPath = getGlobalConfigPath();
   const globalConfig = await loadConfigFile(`file://${globalPath}`);
   if (globalConfig) {
-    config = mergeConfigs(config, globalConfig);
+    // If global config specifies a preset, start from that preset
+    if (globalConfig.preset) {
+      config = mergeConfigs(getPreset(globalConfig.preset), globalConfig);
+    } else {
+      config = mergeConfigs(config, globalConfig);
+    }
   }
 
   // Load project config
   const projectPath = getProjectConfigPath(cwd);
   const projectConfig = await loadConfigFile(`file://${projectPath}`);
   if (projectConfig) {
-    config = mergeConfigs(config, projectConfig);
+    // If project config specifies a preset, it takes precedence
+    if (projectConfig.preset) {
+      config = mergeConfigs(getPreset(projectConfig.preset), projectConfig);
+    } else {
+      config = mergeConfigs(config, projectConfig);
+    }
+  }
+
+  return config;
+}
+
+/**
+ * Load and validate config - throws on validation errors
+ * Use this when you want strict validation (e.g., in MCP server startup)
+ */
+export async function loadAndValidateConfig(
+  cwd: string,
+): Promise<SafeShellConfig> {
+  const config = await loadConfig(cwd);
+
+  const validation = validateConfig(config);
+
+  // Throw on errors
+  if (validation.errors.length > 0) {
+    throw configError(
+      `Config validation failed:\n${validation.errors.join("\n")}`,
+    );
+  }
+
+  // Log warnings
+  if (validation.warnings.length > 0) {
+    console.warn("⚠️  Config warnings:");
+    validation.warnings.forEach((w) => console.warn(`   ${w}`));
   }
 
   return config;
@@ -230,37 +381,94 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
   const result: ConfigValidation = { errors: [], warnings: [] };
   const perms = config.permissions ?? {};
 
+  // ========== Permission Validation ==========
+
   // Check for overly permissive read
   if (perms.read?.includes("/")) {
-    result.warnings.push("read: ['/'] allows reading entire filesystem");
+    result.warnings.push(
+      "permissions.read: ['/'] allows reading entire filesystem - consider limiting to specific directories",
+    );
+  }
+
+  // Check for sensitive directories in read permissions
+  const sensitiveReadDirs = ["/etc", "/var", "/usr", "/System"];
+  for (const dir of sensitiveReadDirs) {
+    if (perms.read?.includes(dir)) {
+      result.warnings.push(
+        `permissions.read: includes '${dir}' which may contain sensitive files`,
+      );
+    }
   }
 
   // Check for overly permissive write
   if (perms.write?.includes("/")) {
-    result.errors.push("write: ['/'] is extremely dangerous - not allowed");
+    result.errors.push(
+      "permissions.write: ['/'] is extremely dangerous - never allow root write access",
+    );
+  }
+
+  // Check for dangerous write paths
+  const dangerousWriteDirs = ["/etc", "/var", "/usr", "/bin", "/sbin", "/System"];
+  for (const dir of dangerousWriteDirs) {
+    if (perms.write?.includes(dir)) {
+      result.errors.push(
+        `permissions.write: includes '${dir}' - this can compromise system security`,
+      );
+    }
   }
 
   // Check for wildcard run permission
   if (perms.run?.includes("*")) {
-    result.errors.push("run: ['*'] is not allowed - explicitly list commands");
+    result.errors.push(
+      "permissions.run: ['*'] is not allowed - must explicitly list allowed commands",
+    );
   }
 
-  // Check for conflicting external command settings
+  // Warn about unrestricted network access
+  if (perms.net === true) {
+    result.warnings.push(
+      "permissions.net: true allows unrestricted network access - consider specifying allowed hosts",
+    );
+  }
+
+  // Check for too many allowed commands (might indicate misconfiguration)
+  if (Array.isArray(perms.run) && perms.run.length > 20) {
+    result.warnings.push(
+      `permissions.run: ${perms.run.length} commands allowed - this might be too permissive`,
+    );
+  }
+
+  // ========== External Command Validation ==========
+
   const external = config.external ?? {};
   for (const [cmd, cmdConfig] of Object.entries(external)) {
     const deny = cmdConfig.denyFlags ?? [];
     const require = cmdConfig.requireFlags ?? [];
 
+    // Check for conflicting flags
     for (const flag of require) {
       if (deny.includes(flag)) {
         result.errors.push(
-          `${cmd}: flag '${flag}' is both denied and required`,
+          `external.${cmd}: flag '${flag}' is both denied and required`,
         );
       }
     }
+
+    // Warn about commands with no restrictions
+    if (
+      cmdConfig.allow === true &&
+      (deny.length === 0) &&
+      (require.length === 0) &&
+      !cmdConfig.pathArgs
+    ) {
+      result.warnings.push(
+        `external.${cmd}: has no restrictions - consider adding flag controls or path validation`,
+      );
+    }
   }
 
-  // Check for dangerous import policy settings
+  // ========== Import Policy Validation ==========
+
   const imports = config.imports ?? {};
   const trusted = imports.trusted ?? [];
   const allowed = imports.allowed ?? [];
@@ -269,14 +477,14 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
   // Warn if no blocked patterns (too permissive)
   if (blocked.length === 0) {
     result.warnings.push(
-      "imports.blocked is empty - consider blocking 'npm:*', 'http:*', 'https:*' for security",
+      "imports.blocked: empty - highly recommend blocking 'npm:*', 'http:*', 'https:*' for security",
     );
   }
 
   // Warn if allowing npm:* entirely
   if (allowed.includes("npm:*") || trusted.includes("npm:*")) {
     result.warnings.push(
-      "imports allows 'npm:*' - this permits arbitrary npm packages which may be a security risk",
+      "imports: allows 'npm:*' - permits arbitrary npm packages (security risk)",
     );
   }
 
@@ -286,7 +494,7 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
     allowed.includes("https:*") || trusted.includes("https:*")
   ) {
     result.warnings.push(
-      "imports allows 'http:*' or 'https:*' - remote code execution risk",
+      "imports: allows 'http:*' or 'https:*' - remote code execution risk",
     );
   }
 
@@ -297,6 +505,37 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
         `imports: pattern '${pattern}' is both trusted and blocked`,
       );
     }
+  }
+
+  // Warn if allowed and blocked have overlapping patterns
+  for (const pattern of blocked) {
+    if (allowed.includes(pattern)) {
+      result.errors.push(
+        `imports: pattern '${pattern}' is both allowed and blocked`,
+      );
+    }
+  }
+
+  // ========== Cross-Concern Validation ==========
+
+  // Check for dangerous combination: unrestricted net + npm imports
+  if (
+    perms.net === true &&
+    (allowed.includes("npm:*") || trusted.includes("npm:*"))
+  ) {
+    result.warnings.push(
+      "dangerous combination: unrestricted network + npm:* imports can allow arbitrary remote code execution",
+    );
+  }
+
+  // Check for write access to CWD without import restrictions
+  if (
+    perms.write?.includes("${CWD}") &&
+    blocked.length === 0
+  ) {
+    result.warnings.push(
+      "write access to ${CWD} + no import blocks can allow malicious code to persist",
+    );
   }
 
   return result;
