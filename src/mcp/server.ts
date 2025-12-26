@@ -4,6 +4,10 @@
  * Exposes SafeShell capabilities as MCP tools:
  * - exec: Execute JS/TS code in sandboxed Deno runtime
  * - run: Execute whitelisted external commands
+ * - startSession: Create a new persistent session
+ * - endSession: Destroy a session
+ * - updateSession: Modify session state (cwd, env)
+ * - listSessions: List active sessions
  */
 
 import { Server } from "@mcp/sdk/server/index.js";
@@ -14,15 +18,17 @@ import {
 } from "@mcp/sdk/types.js";
 import { z } from "zod";
 import { executeCode } from "../runtime/executor.ts";
+import { createSessionManager, type SessionManager } from "../runtime/session.ts";
 import { loadConfig } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
 import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
-import type { SafeShellConfig } from "../core/types.ts";
+import type { SafeShellConfig, Session } from "../core/types.ts";
 
 // Tool schemas
 const ExecSchema = z.object({
   code: z.string().describe("JavaScript/TypeScript code to execute"),
+  sessionId: z.string().optional().describe("Session ID to use"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
 });
@@ -30,8 +36,24 @@ const ExecSchema = z.object({
 const RunSchema = z.object({
   command: z.string().describe("External command to run"),
   args: z.array(z.string()).optional().describe("Command arguments"),
-  cwd: z.string().optional().describe("Working directory"),
+  sessionId: z.string().optional().describe("Session ID to use"),
+  cwd: z.string().optional().describe("Working directory override"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
+});
+
+const StartSessionSchema = z.object({
+  cwd: z.string().optional().describe("Initial working directory"),
+  env: z.record(z.string()).optional().describe("Initial environment variables"),
+});
+
+const UpdateSessionSchema = z.object({
+  sessionId: z.string().describe("Session ID to update"),
+  cwd: z.string().optional().describe("New working directory"),
+  env: z.record(z.string()).optional().describe("Environment variables to set/update"),
+});
+
+const EndSessionSchema = z.object({
+  sessionId: z.string().describe("Session ID to end"),
 });
 
 /**
@@ -51,6 +73,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
   );
 
   const registry = createRegistry(config);
+  const sessionManager = createSessionManager(cwd);
 
   // Build permission summary for tool descriptions
   const perms = config.permissions ?? {};
@@ -70,6 +93,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           description:
             "Execute JavaScript/TypeScript code in a sandboxed Deno runtime. " +
             "Code has access to Deno APIs and auto-imported: fs (file ops), text (processing), $ (shell). " +
+            "Use sessionId for persistent state between calls. " +
             (permSummary ? `Permissions: ${permSummary}` : "No permissions configured."),
           inputSchema: {
             type: "object",
@@ -77,6 +101,10 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               code: {
                 type: "string",
                 description: "JavaScript/TypeScript code to execute",
+              },
+              sessionId: {
+                type: "string",
+                description: "Session ID for persistent state (env, cwd, vars)",
               },
               timeout: {
                 type: "number",
@@ -97,6 +125,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             "Execute a whitelisted external command with validation. " +
             "Commands are validated against whitelist and denied flags. " +
             "Path arguments are validated against sandbox. " +
+            "Use sessionId to inherit session's cwd and env. " +
             `Available: ${registry.list().join(", ") || "(none configured)"}`,
           inputSchema: {
             type: "object",
@@ -110,9 +139,13 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 items: { type: "string" },
                 description: "Command arguments",
               },
+              sessionId: {
+                type: "string",
+                description: "Session ID for cwd and env",
+              },
               cwd: {
                 type: "string",
-                description: "Working directory (defaults to project root)",
+                description: "Working directory override (ignores session)",
               },
               timeout: {
                 type: "number",
@@ -120,6 +153,75 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
             },
             required: ["command"],
+          },
+        },
+        {
+          name: "startSession",
+          description:
+            "Create a new session for persistent state between exec/run calls. " +
+            "Sessions maintain: cwd (working directory), env (environment variables), " +
+            "and vars (persisted JS variables accessible via $session).",
+          inputSchema: {
+            type: "object",
+            properties: {
+              cwd: {
+                type: "string",
+                description: "Initial working directory (defaults to project root)",
+              },
+              env: {
+                type: "object",
+                additionalProperties: { type: "string" },
+                description: "Initial environment variables",
+              },
+            },
+          },
+        },
+        {
+          name: "updateSession",
+          description:
+            "Update session state: change working directory or set environment variables.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                description: "Session ID to update",
+              },
+              cwd: {
+                type: "string",
+                description: "New working directory",
+              },
+              env: {
+                type: "object",
+                additionalProperties: { type: "string" },
+                description: "Environment variables to set/update (merged with existing)",
+              },
+            },
+            required: ["sessionId"],
+          },
+        },
+        {
+          name: "endSession",
+          description:
+            "End a session and clean up resources. Stops any background jobs.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                description: "Session ID to end",
+              },
+            },
+            required: ["sessionId"],
+          },
+        },
+        {
+          name: "listSessions",
+          description:
+            "List all active sessions with their current state.",
+          inputSchema: {
+            type: "object",
+            properties: {},
           },
         },
       ],
@@ -135,30 +237,36 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         case "exec": {
           const parsed = ExecSchema.parse(args);
 
-          // Create a temporary session if env vars provided
-          const session = parsed.env
-            ? {
-                id: crypto.randomUUID(),
-                cwd,
-                env: parsed.env,
-                vars: {},
-                jobs: new Map(),
-                createdAt: new Date(),
-              }
-            : undefined;
+          // Get or create session
+          const { session, isTemporary } = sessionManager.getOrTemp(
+            parsed.sessionId,
+            { cwd, env: parsed.env },
+          );
+
+          // Merge additional env vars
+          const sessionEnv = parsed.env
+            ? { ...session.env, ...parsed.env }
+            : session.env;
+
+          const execSession: Session = { ...session, env: sessionEnv };
 
           const result = await executeCode(
             parsed.code,
             config,
-            { timeout: parsed.timeout, cwd },
-            session,
+            { timeout: parsed.timeout, cwd: session.cwd },
+            execSession,
           );
+
+          // Update session vars if not temporary
+          if (!isTemporary && result.success && execSession.vars) {
+            sessionManager.update(session.id, { vars: execSession.vars });
+          }
 
           return {
             content: [
               {
                 type: "text",
-                text: formatExecResult(result),
+                text: formatExecResult(result, parsed.sessionId),
               },
             ],
             isError: !result.success,
@@ -168,7 +276,12 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         case "run": {
           const parsed = RunSchema.parse(args);
           const cmdArgs = parsed.args ?? [];
-          const workDir = parsed.cwd ?? cwd;
+
+          // Get session for cwd/env
+          const { session } = sessionManager.getOrTemp(parsed.sessionId, { cwd });
+
+          // Working directory: explicit > session > default
+          const workDir = parsed.cwd ?? session.cwd;
           const timeoutMs = parsed.timeout ?? config.timeout ?? 30000;
 
           // Validate command before execution
@@ -192,12 +305,13 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             };
           }
 
-          // Execute the command with timeout
+          // Execute the command with session env
           const result = await runCommand(
             parsed.command,
             cmdArgs,
             workDir,
             timeoutMs,
+            session.env,
           );
 
           return {
@@ -208,6 +322,103 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
             ],
             isError: !result.success,
+          };
+        }
+
+        case "startSession": {
+          const parsed = StartSessionSchema.parse(args);
+          const session = sessionManager.create({
+            cwd: parsed.cwd,
+            env: parsed.env,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(sessionManager.serialize(session), null, 2),
+              },
+            ],
+          };
+        }
+
+        case "updateSession": {
+          const parsed = UpdateSessionSchema.parse(args);
+          const session = sessionManager.update(parsed.sessionId, {
+            cwd: parsed.cwd,
+            env: parsed.env,
+          });
+
+          if (!session) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Session not found: ${parsed.sessionId}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(sessionManager.serialize(session), null, 2),
+              },
+            ],
+          };
+        }
+
+        case "endSession": {
+          const parsed = EndSessionSchema.parse(args);
+          const ended = sessionManager.end(parsed.sessionId);
+
+          if (!ended) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Session not found: ${parsed.sessionId}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Session ended: ${parsed.sessionId}`,
+              },
+            ],
+          };
+        }
+
+        case "listSessions": {
+          const sessions = sessionManager.list();
+
+          if (sessions.length === 0) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "No active sessions",
+                },
+              ],
+            };
+          }
+
+          const serialized = sessions.map((s) => sessionManager.serialize(s));
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(serialized, null, 2),
+              },
+            ],
           };
         }
 
@@ -260,10 +471,15 @@ async function runCommand(
   args: string[],
   cwd: string,
   timeoutMs: number,
+  env: Record<string, string> = {},
 ): Promise<{ stdout: string; stderr: string; code: number; success: boolean }> {
+  // Merge session env with process env
+  const processEnv = { ...Deno.env.toObject(), ...env };
+
   const cmd = new Deno.Command(command, {
     args,
     cwd,
+    env: processEnv,
     stdout: "piped",
     stderr: "piped",
   });
@@ -345,12 +561,15 @@ async function collectOutput(stream: ReadableStream<Uint8Array>): Promise<Uint8A
 /**
  * Format execution result for MCP response
  */
-function formatExecResult(result: {
-  stdout: string;
-  stderr: string;
-  code: number;
-  success: boolean;
-}): string {
+function formatExecResult(
+  result: {
+    stdout: string;
+    stderr: string;
+    code: number;
+    success: boolean;
+  },
+  sessionId?: string,
+): string {
   const parts: string[] = [];
 
   if (result.stdout) {
@@ -363,6 +582,10 @@ function formatExecResult(result: {
 
   if (!result.success) {
     parts.push(`[exit code: ${result.code}]`);
+  }
+
+  if (sessionId) {
+    parts.push(`[session: ${sessionId}]`);
   }
 
   return parts.join("\n") || "(no output)";
