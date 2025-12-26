@@ -9,6 +9,7 @@ import { executeCode } from "../runtime/executor.ts";
 import { runExternal } from "../external/runner.ts";
 import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
+import { runTask as executeTask } from "../runner/tasks.ts";
 
 const VERSION = "0.1.0";
 
@@ -40,86 +41,25 @@ EXAMPLES:
 `;
 
 /**
- * Execute a task from the config
+ * Execute a task from the config (CLI wrapper)
  */
 async function runTask(
   taskName: string,
   config: SafeShellConfig,
   verbose: boolean,
 ): Promise<void> {
-  const taskDef = config.tasks?.[taskName];
+  const result = await executeTask(taskName, config, { verbose });
 
-  if (!taskDef) {
-    console.error(`Task '${taskName}' not found in config`);
-    console.error(`Available tasks: ${Object.keys(config.tasks ?? {}).join(", ")}`);
-    Deno.exit(1);
+  if (result.stdout) {
+    console.log(result.stdout);
+  }
+  if (result.stderr) {
+    console.error(result.stderr);
   }
 
-  // Handle task reference (string)
-  if (typeof taskDef === "string") {
-    await runTask(taskDef, config, verbose);
-    return;
+  if (!result.success) {
+    Deno.exit(result.code);
   }
-
-  const task = taskDef;
-
-  if (verbose) {
-    console.log(`Running task: ${taskName}`);
-  }
-
-  // Handle simple command task
-  if (task.cmd) {
-    const result = await executeCode(task.cmd, config, {
-      cwd: task.cwd,
-    });
-
-    if (result.stdout) {
-      console.log(result.stdout);
-    }
-    if (result.stderr) {
-      console.error(result.stderr);
-    }
-
-    if (!result.success) {
-      Deno.exit(result.code);
-    }
-    return;
-  }
-
-  // Handle parallel tasks
-  if (task.parallel) {
-    if (verbose) {
-      console.log(`Running tasks in parallel: ${task.parallel.join(", ")}`);
-    }
-
-    const results = await Promise.allSettled(
-      task.parallel.map((t: string) => runTask(t, config, verbose)),
-    );
-
-    const failed = results.filter(
-      (r: PromiseSettledResult<void>) => r.status === "rejected",
-    );
-    if (failed.length > 0) {
-      console.error(`${failed.length} parallel task(s) failed`);
-      Deno.exit(1);
-    }
-    return;
-  }
-
-  // Handle serial tasks
-  if (task.serial) {
-    if (verbose) {
-      console.log(`Running tasks in series: ${task.serial.join(", ")}`);
-    }
-
-    for (const t of task.serial) {
-      await runTask(t, config, verbose);
-    }
-    return;
-  }
-
-  console.error(`Task '${taskName}' has no executable configuration`);
-  Deno.exit(1);
 }
 
 /**
