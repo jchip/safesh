@@ -36,7 +36,12 @@
     "safesh:glob": "./src/stdlib/glob.ts",
     "safesh:shell": "./src/stdlib/shell.ts",
     "safesh:streams": "./src/streams/mod.ts",
-    "safesh:stdlib": "./src/stdlib/mod.ts"
+    "safesh:stdlib": "./src/stdlib/mod.ts",
+    "safesh:stream": "./src/stdlib/stream.ts",
+    "safesh:transforms": "./src/stdlib/transforms.ts",
+    "safesh:io": "./src/stdlib/io.ts",
+    "safesh:fs-streams": "./src/stdlib/fs-streams.ts",
+    "safesh:command": "./src/stdlib/command.ts"
   },
   "compilerOptions": {
     "strict": true,
