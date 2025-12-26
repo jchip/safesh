@@ -21,6 +21,7 @@ import { executeCode } from "../runtime/executor.ts";
 import { createSessionManager, type SessionManager } from "../runtime/session.ts";
 import { loadConfig } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
+import { runExternal } from "../external/runner.ts";
 import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig, Session } from "../core/types.ts";
@@ -414,47 +415,44 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
           // Working directory: explicit > session > default
           const workDir = parsed.cwd ?? session.cwd;
-          const timeoutMs = parsed.timeout ?? config.timeout ?? 30000;
 
-          // Validate command before execution
-          const validation = await validateExternal(
-            parsed.command,
-            cmdArgs,
-            registry,
-            config,
-            workDir,
-          );
+          try {
+            // Execute the validated command
+            const result = await runExternal(
+              parsed.command,
+              cmdArgs,
+              config,
+              {
+                cwd: workDir,
+                timeout: parsed.timeout,
+              },
+              session,
+            );
 
-          if (!validation.valid) {
             return {
               content: [
                 {
                   type: "text",
-                  text: formatError(validation.error!),
+                  text: formatRunResult(parsed.command, cmdArgs, result),
                 },
               ],
-              isError: true,
+              isError: !result.success,
             };
+          } catch (error) {
+            // Handle validation and execution errors
+            if (error instanceof SafeShellError) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: formatError(error),
+                  },
+                ],
+                isError: true,
+              };
+            }
+            throw error;
           }
-
-          // Execute the command with session env
-          const result = await runCommand(
-            parsed.command,
-            cmdArgs,
-            workDir,
-            timeoutMs,
-            session.env,
-          );
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: formatRunResult(parsed.command, cmdArgs, result),
-              },
-            ],
-            isError: !result.success,
-          };
         }
 
         case "startSession": {
@@ -841,101 +839,6 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
   });
 
   return server;
-}
-
-/**
- * Run an external command with timeout
- */
-async function runCommand(
-  command: string,
-  args: string[],
-  cwd: string,
-  timeoutMs: number,
-  env: Record<string, string> = {},
-): Promise<{ stdout: string; stderr: string; code: number; success: boolean }> {
-  // Merge session env with process env
-  const processEnv = { ...Deno.env.toObject(), ...env };
-
-  const cmd = new Deno.Command(command, {
-    args,
-    cwd,
-    env: processEnv,
-    stdout: "piped",
-    stderr: "piped",
-  });
-
-  const process = cmd.spawn();
-  const decoder = new TextDecoder();
-
-  // Create timeout abort controller
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    // Collect output with timeout
-    const outputPromise = (async () => {
-      const [status, stdoutData, stderrData] = await Promise.all([
-        process.status,
-        collectOutput(process.stdout),
-        collectOutput(process.stderr),
-      ]);
-      return { status, stdout: stdoutData, stderr: stderrData };
-    })();
-
-    // Race against timeout
-    const result = await Promise.race([
-      outputPromise,
-      new Promise<never>((_, reject) => {
-        controller.signal.addEventListener("abort", () => {
-          reject(new Error(`Command timed out after ${timeoutMs}ms`));
-        });
-      }),
-    ]);
-
-    clearTimeout(timeoutId);
-
-    return {
-      stdout: decoder.decode(result.stdout),
-      stderr: decoder.decode(result.stderr),
-      code: result.status.code,
-      success: result.status.code === 0,
-    };
-  } catch (error) {
-    clearTimeout(timeoutId);
-
-    // Kill the process on timeout
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Process may have already exited
-    }
-
-    throw error;
-  }
-}
-
-/**
- * Collect stream output into Uint8Array
- */
-async function collectOutput(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) chunks.push(value);
-  }
-
-  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return result;
 }
 
 /**
