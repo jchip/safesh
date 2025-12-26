@@ -28,9 +28,10 @@ SafeShell is a security-first execution environment built on Deno that provides:
 
 - **Full TypeScript** - Write real code, not just shell scripts
 - **Auto-imported Standard Library** - `fs`, `text`, `glob`, `$` available automatically
+- **Streaming Shell API** - Gulp-inspired chainable pipelines with lazy evaluation
 - **Task Runner** - Define and execute parallel/serial task workflows
 - **REPL** - Interactive development environment
-- **Streaming Output** - Real-time output for long-running commands
+- **Real-time Streaming** - Live output for long-running commands
 
 ### AI Assistant Integration
 
@@ -465,6 +466,43 @@ const last20 = await text.tail("log.txt", 20);
 // Word count
 const wc = await text.wc("document.txt");
 console.log(`Lines: ${wc.lines}, Words: ${wc.words}`);
+```
+
+### Streaming Shell API
+
+```javascript
+// Process log files with streaming pipeline
+const errors = await cat("app.log")
+  .pipe(lines())
+  .pipe(grep(/ERROR/))
+  .pipe(take(10))
+  .collect();
+
+// Find and analyze code
+await glob("src/**/*.ts")
+  .pipe(filter(f => !f.path.includes(".test.")))
+  .pipe(flatMap(file =>
+    cat(file.path)
+      .pipe(lines())
+      .pipe(grep(/TODO/))
+      .pipe(map(line => ({ file: file.path, line })))
+  ))
+  .forEach(({ file, line }) => {
+    console.log(`${file}: ${line}`);
+  });
+
+// Stream git command output
+const commits = await git("log", "--oneline")
+  .stdout()
+  .pipe(lines())
+  .pipe(grep(/fix:/))
+  .collect();
+
+// Count lines of code across modules
+const loc = await glob("src/**/*.ts")
+  .pipe(filter(f => !f.path.includes(".test.")))
+  .pipe(flatMap(file => cat(file.path).pipe(lines())))
+  .count();
 ```
 
 ### Shell Operations
