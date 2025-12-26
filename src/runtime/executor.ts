@@ -25,30 +25,28 @@ async function hashCode(code: string): Promise<string> {
 
 /**
  * Build the preamble that gets prepended to user code
+ *
+ * The preamble injects session context as a global variable.
+ * User code can import safesh modules explicitly if needed.
  */
 function buildPreamble(session?: Session): string {
+  if (!session) {
+    return "";
+  }
+
   const lines: string[] = [
     "// SafeShell auto-generated preamble",
-    'import * as fs from "safesh:fs";',
-    'import * as text from "safesh:text";',
-    'import $ from "safesh:shell";',
-  ];
-
-  // Inject session as a global if provided
-  if (session) {
-    lines.push("");
-    lines.push("// Session context");
-    lines.push(`const $session = ${JSON.stringify({
+    "// Session context available as $session",
+    `const $session = ${JSON.stringify({
       id: session.id,
       cwd: session.cwd,
       env: session.env,
       vars: session.vars,
-    })};`);
-  }
-
-  lines.push("");
-  lines.push("// User code starts here");
-  lines.push("");
+    })};`,
+    "",
+    "// User code starts here",
+    "",
+  ];
 
   return lines.join("\n");
 }
@@ -69,15 +67,31 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
       .replace(/\$HOME/g, Deno.env.get("HOME") ?? "");
   };
 
-  // Read permissions
-  if (perms.read?.length) {
-    const paths = perms.read.map(expandPath).join(",");
+  // Read permissions - always include temp dir and safesh source for imports
+  const readPaths = [...(perms.read ?? [])];
+  if (!readPaths.includes("/tmp") && !readPaths.includes(TEMP_DIR)) {
+    readPaths.push(TEMP_DIR);
+  }
+
+  // Add safesh source directory for imports (resolve from this file's location)
+  const safeshSrcDir = new URL("../../", import.meta.url).pathname;
+  if (!readPaths.includes(safeshSrcDir)) {
+    readPaths.push(safeshSrcDir);
+  }
+
+  if (readPaths.length) {
+    const paths = readPaths.map(expandPath).join(",");
     flags.push(`--allow-read=${paths}`);
   }
 
-  // Write permissions
-  if (perms.write?.length) {
-    const paths = perms.write.map(expandPath).join(",");
+  // Write permissions - always include temp dir
+  const writePaths = [...(perms.write ?? [])];
+  if (!writePaths.includes("/tmp") && !writePaths.includes(TEMP_DIR)) {
+    writePaths.push(TEMP_DIR);
+  }
+
+  if (writePaths.length) {
+    const paths = writePaths.map(expandPath).join(",");
     flags.push(`--allow-write=${paths}`);
   }
 
@@ -173,7 +187,7 @@ export async function executeCode(
 
   // Build command
   const permFlags = buildPermissionFlags(config, cwd);
-  const importMapPath = await findImportMap(cwd);
+  const configPath = await findConfig(cwd);
 
   const args = [
     "run",
@@ -181,8 +195,8 @@ export async function executeCode(
     ...permFlags,
   ];
 
-  if (importMapPath) {
-    args.push(`--import-map=${importMapPath}`);
+  if (configPath) {
+    args.push(`--config=${configPath}`);
   }
 
   args.push(scriptPath);
@@ -272,9 +286,9 @@ async function collectStream(stream: ReadableStream<Uint8Array>): Promise<string
 }
 
 /**
- * Find import map file (deno.json or import_map.json)
+ * Find Deno config file (deno.json or deno.jsonc)
  */
-async function findImportMap(cwd: string): Promise<string | undefined> {
+export async function findConfig(cwd: string): Promise<string | undefined> {
   // Check for deno.json in cwd
   const denoJson = join(cwd, "deno.json");
   try {
@@ -284,16 +298,107 @@ async function findImportMap(cwd: string): Promise<string | undefined> {
     // Not found
   }
 
-  // Check for import_map.json
-  const importMap = join(cwd, "import_map.json");
+  // Check for deno.jsonc
+  const denoJsonc = join(cwd, "deno.jsonc");
   try {
-    await Deno.stat(importMap);
-    return importMap;
+    await Deno.stat(denoJsonc);
+    return denoJsonc;
   } catch {
     // Not found
   }
 
   return undefined;
+}
+
+/**
+ * Execute a JS/TS file directly
+ */
+export async function executeFile(
+  filePath: string,
+  config: SafeShellConfig,
+  options: ExecOptions = {},
+  session?: Session,
+): Promise<ExecResult> {
+  const cwd = options.cwd ?? session?.cwd ?? Deno.cwd();
+  const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT;
+
+  // Resolve file path - if already absolute, use as-is, otherwise resolve from cwd
+  const absolutePath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
+
+  // Build command
+  const permFlags = buildPermissionFlags(config, cwd);
+  const configPath = await findConfig(cwd);
+
+  const args = [
+    "run",
+    "--no-prompt",
+    ...permFlags,
+  ];
+
+  if (configPath) {
+    args.push(`--config=${configPath}`);
+  }
+
+  args.push(absolutePath);
+
+  // Create command
+  const command = new Deno.Command("deno", {
+    args,
+    cwd,
+    env: buildEnv(config, session),
+    stdout: "piped",
+    stderr: "piped",
+  });
+
+  // Spawn process so we can kill it on timeout
+  const process = command.spawn();
+
+  try {
+    // Create a promise that collects output
+    const outputPromise = (async () => {
+      const [status, stdout, stderr] = await Promise.all([
+        process.status,
+        collectStream(process.stdout),
+        collectStream(process.stderr),
+      ]);
+      return { status, stdout, stderr };
+    })();
+
+    const { status, stdout, stderr } = await deadline(outputPromise, timeoutMs);
+
+    return {
+      stdout,
+      stderr,
+      code: status.code,
+      success: status.code === 0,
+    };
+  } catch (error) {
+    // Kill the process and cancel streams on timeout or error
+    try {
+      process.kill("SIGKILL");
+    } catch {
+      // Process may have already exited
+    }
+
+    // Cancel the streams to prevent leaks
+    try {
+      await process.stdout.cancel();
+    } catch {
+      // Stream may already be closed
+    }
+    try {
+      await process.stderr.cancel();
+    } catch {
+      // Stream may already be closed
+    }
+
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw timeoutError(timeoutMs, "exec");
+    }
+    throw executionError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 /**
@@ -323,7 +428,7 @@ export async function* executeCodeStreaming(
 
   // Build command
   const permFlags = buildPermissionFlags(config, cwd);
-  const importMapPath = await findImportMap(cwd);
+  const configPath = await findConfig(cwd);
 
   const args = [
     "run",
@@ -331,8 +436,8 @@ export async function* executeCodeStreaming(
     ...permFlags,
   ];
 
-  if (importMapPath) {
-    args.push(`--import-map=${importMapPath}`);
+  if (configPath) {
+    args.push(`--config=${configPath}`);
   }
 
   args.push(scriptPath);
