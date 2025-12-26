@@ -95,11 +95,6 @@ const TaskSchema = z.object({
   sessionId: z.string().optional().describe("Session ID for persistent state"),
 });
 
-const ListHelpersSchema = z.object({
-  category: z.enum(["all", "fs", "text", "stream", "commands"]).optional()
-    .describe("Filter by category (default: all)"),
-});
-
 /**
  * Create and configure the MCP server
  */
@@ -136,10 +131,18 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           name: "exec",
           description:
             "Execute JavaScript/TypeScript code in a sandboxed Deno runtime. " +
-            "Auto-imported: fs, text, $, plus streaming shell API (cat, glob, git, lines, grep, map, filter, flatMap, take, stdout, stderr). " +
-            "Streaming API enables Gulp-style pipelines with lazy evaluation for efficient data processing. " +
             "Use sessionId for persistent state between calls. " +
-            (permSummary ? `Permissions: ${permSummary}` : "No permissions configured."),
+            (permSummary ? `Permissions: ${permSummary}` : "No permissions configured.") +
+            "\n\nAUTO-IMPORTED FUNCTIONS:\n" +
+            "• fs: read, write, readJson, writeJson, exists, copy, remove, readDir, walk\n" +
+            "• text: read, grep, head, tail, wc\n" +
+            "• Streaming: cat, glob, src, dest, lines, grep, filter, map, flatMap, take, stdout, stderr, tee, pipe, collect, forEach, count\n" +
+            "• Commands: git, docker, deno, cmd - each returns Command with .exec(), .stdout(), .stderr()\n" +
+            "• Legacy: $(cmd, args) for simple command execution\n\n" +
+            "STREAMING EXAMPLES:\n" +
+            "await cat('file.log').pipe(lines()).pipe(grep(/ERROR/)).collect()\n" +
+            "await glob('**/*.ts').pipe(filter(f => !f.path.includes('test'))).count()\n" +
+            "await git('log', '--oneline').stdout().pipe(lines()).pipe(take(10)).collect()",
           inputSchema: {
             type: "object",
             properties: {
@@ -390,23 +393,6 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
             },
             required: ["name"],
-          },
-        },
-        {
-          name: "listHelpers",
-          description:
-            "List auto-imported helper functions available in exec code. " +
-            "Returns standard library (fs, text) and streaming shell API (cat, glob, git, pipes). " +
-            "Use this to discover what functions are available without importing.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              category: {
-                type: "string",
-                enum: ["all", "fs", "text", "stream", "commands"],
-                description: "Filter by category: fs (file ops), text (processing), stream (transforms), commands (git/cmd)",
-              },
-            },
           },
         },
       ],
@@ -885,114 +871,6 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               isError: true,
             };
           }
-        }
-
-        case "listHelpers": {
-          const parsed = ListHelpersSchema.parse(args);
-          const category = parsed.category ?? "all";
-
-          const helpers = {
-            fs: {
-              description: "File system operations",
-              functions: [
-                "fs.read(path) - Read file contents",
-                "fs.write(path, content) - Write file",
-                "fs.readJson(path) - Read and parse JSON",
-                "fs.writeJson(path, obj) - Write object as JSON",
-                "fs.exists(path) - Check if file exists",
-                "fs.copy(src, dest) - Copy file",
-                "fs.remove(path) - Delete file/directory",
-                "fs.readDir(path) - List directory entries",
-                "fs.walk(path, opts) - Recursively walk directory tree",
-              ],
-            },
-            text: {
-              description: "Text processing utilities",
-              functions: [
-                "text.read(path) - Read file as line array",
-                "text.grep(pattern, pattern) - Search files for pattern",
-                "text.head(path, n) - Get first n lines",
-                "text.tail(path, n) - Get last n lines",
-                "text.wc(path) - Count lines/words/chars",
-              ],
-            },
-            stream: {
-              description: "Streaming shell API - Gulp-style pipelines",
-              functions: [
-                "createStream(iterable) - Create stream from async iterable",
-                "fromArray(items) - Create stream from array",
-                "filter(predicate) - Filter stream items",
-                "map(fn) - Transform stream items",
-                "flatMap(fn) - Transform and flatten",
-                "take(n) - Take first n items",
-                "lines() - Split text into lines",
-                "grep(pattern) - Filter lines by pattern",
-                "cat(path) - Read file as stream",
-                "glob(pattern) - Stream files matching pattern",
-                "src(...patterns) - Stream files from multiple patterns",
-                "dest(outDir) - Write files to directory",
-                "stdout() - Write to stdout",
-                "stderr() - Write to stderr",
-                "tee(transform) - Apply side effect",
-                ".pipe(transform) - Chain transforms",
-                ".collect() - Collect stream to array",
-                ".forEach(fn) - Execute for each item",
-                ".count() - Count items",
-              ],
-            },
-            commands: {
-              description: "External command execution with streaming",
-              functions: [
-                "$(cmd, args) - Execute command (legacy)",
-                "cmd(command, args, opts) - Create command",
-                "git(...args) - Create git command",
-                "docker(...args) - Create docker command",
-                "deno(...args) - Create deno command",
-                "command.exec() - Execute and buffer output",
-                "command.stdout() - Stream stdout",
-                "command.stderr() - Stream stderr",
-              ],
-            },
-          };
-
-          let output = "# Auto-imported Helper Functions\n\n";
-
-          if (category === "all") {
-            for (const [cat, info] of Object.entries(helpers)) {
-              output += `## ${cat.toUpperCase()}\n${info.description}\n\n`;
-              output += info.functions.map((f) => `- ${f}`).join("\n") + "\n\n";
-            }
-
-            output += "## Examples\n\n";
-            output += "```javascript\n";
-            output += "// File operations\n";
-            output += "const data = await fs.readJson('config.json');\n\n";
-            output += "// Streaming shell\n";
-            output += "const errors = await cat('app.log')\n";
-            output += "  .pipe(lines())\n";
-            output += "  .pipe(grep(/ERROR/))\n";
-            output += "  .collect();\n\n";
-            output += "// Git commands\n";
-            output += "const commits = await git('log', '--oneline')\n";
-            output += "  .stdout()\n";
-            output += "  .pipe(lines())\n";
-            output += "  .pipe(take(10))\n";
-            output += "  .collect();\n";
-            output += "```\n";
-          } else {
-            const info = helpers[category as keyof typeof helpers];
-            output += `## ${category.toUpperCase()}\n${info.description}\n\n`;
-            output += info.functions.map((f) => `- ${f}`).join("\n") + "\n";
-          }
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: output,
-              },
-            ],
-          };
         }
 
         default:
