@@ -195,18 +195,18 @@ export async function executeCode(
 
   // Build command
   const permFlags = buildPermissionFlags(config, cwd);
-  const configPath = await findConfig(cwd);
+
+  // Always use SafeShell's deno.json for stdlib imports
+  const safeshRoot = new URL("../../", import.meta.url).pathname;
+  const safeshConfig = join(safeshRoot, "deno.json");
 
   const args = [
     "run",
     "--no-prompt", // Never prompt for permissions
     `--import-map=${importMapPath}`,
+    `--config=${safeshConfig}`, // Use SafeShell's config for @std imports
     ...permFlags,
   ];
-
-  if (configPath) {
-    args.push(`--config=${configPath}`);
-  }
 
   args.push(scriptPath);
 
