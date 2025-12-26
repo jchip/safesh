@@ -130,7 +130,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         {
           name: "exec",
           description:
-            "Execute JavaScript/TypeScript code in a sandboxed Deno runtime. " +
+            "Execute JavaScript/TypeScript code in a sandboxed Deno runtime - MCPU usage: infoc\n\n" +
             "Use sessionId for persistent state between calls. " +
             (permSummary ? `Permissions: ${permSummary}` : "No permissions configured.") +
             "\n\nAUTO-IMPORTED FUNCTIONS:\n" +
