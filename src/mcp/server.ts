@@ -65,6 +65,35 @@ const BgSchema = z.object({
   sessionId: z.string().optional().describe("Session ID to use"),
 });
 
+// New job management schemas (SSH-61/62)
+const ListJobsSchema = z.object({
+  sessionId: z.string().describe("Session ID to list jobs from"),
+  filter: z.object({
+    status: z.enum(["running", "completed", "failed"]).optional(),
+    background: z.boolean().optional(),
+    limit: z.number().optional(),
+  }).optional().describe("Optional filter criteria"),
+});
+
+const GetJobOutputSchema = z.object({
+  sessionId: z.string().describe("Session ID"),
+  jobId: z.string().describe("Job ID"),
+  since: z.number().optional().describe("Byte offset to start from"),
+});
+
+const KillJobSchema = z.object({
+  sessionId: z.string().describe("Session ID"),
+  jobId: z.string().describe("Job ID to kill"),
+  signal: z.string().optional().describe("Signal to send (default: SIGTERM)"),
+});
+
+const WaitJobSchema = z.object({
+  sessionId: z.string().describe("Session ID"),
+  jobId: z.string().describe("Job ID to wait for"),
+  timeout: z.number().optional().describe("Timeout in milliseconds"),
+});
+
+// Legacy schemas (will be removed in SSH-64)
 const JobsSchema = z.object({
   sessionId: z.string().optional().describe("Filter by session ID"),
 });
@@ -357,6 +386,114 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
             },
             required: ["name"],
+          },
+        },
+        // New job management tools (SSH-61/62)
+        {
+          name: "listJobs",
+          description:
+            "List jobs in a session with optional filtering. " +
+            "Returns jobs sorted by start time (newest first).",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                description: "Session ID to list jobs from",
+              },
+              filter: {
+                type: "object",
+                properties: {
+                  status: {
+                    type: "string",
+                    enum: ["running", "completed", "failed"],
+                    description: "Filter by job status",
+                  },
+                  background: {
+                    type: "boolean",
+                    description: "Filter by background/foreground jobs",
+                  },
+                  limit: {
+                    type: "number",
+                    description: "Maximum number of jobs to return",
+                  },
+                },
+                description: "Optional filter criteria",
+              },
+            },
+            required: ["sessionId"],
+          },
+        },
+        {
+          name: "getJobOutput",
+          description:
+            "Get buffered output from a job. " +
+            "Supports incremental reads via 'since' offset.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                description: "Session ID containing the job",
+              },
+              jobId: {
+                type: "string",
+                description: "Job ID to get output from",
+              },
+              since: {
+                type: "number",
+                description: "Byte offset to start reading from (for incremental reads)",
+              },
+            },
+            required: ["sessionId", "jobId"],
+          },
+        },
+        {
+          name: "killJob",
+          description:
+            "Kill a running job by sending a signal. " +
+            "Default signal is SIGTERM. Use SIGKILL for force kill.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                description: "Session ID containing the job",
+              },
+              jobId: {
+                type: "string",
+                description: "Job ID to kill",
+              },
+              signal: {
+                type: "string",
+                description: "Signal to send (SIGTERM, SIGKILL, etc.)",
+              },
+            },
+            required: ["sessionId", "jobId"],
+          },
+        },
+        {
+          name: "waitJob",
+          description:
+            "Wait for a background job to complete. " +
+            "Returns the job output and exit status when done.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                description: "Session ID containing the job",
+              },
+              jobId: {
+                type: "string",
+                description: "Job ID to wait for",
+              },
+              timeout: {
+                type: "number",
+                description: "Maximum time to wait in milliseconds",
+              },
+            },
+            required: ["sessionId", "jobId"],
           },
         },
       ],
@@ -822,6 +959,194 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               isError: true,
             };
           }
+        }
+
+        // New job management tools (SSH-61/62)
+        case "listJobs": {
+          const parsed = ListJobsSchema.parse(args);
+          const jobs = sessionManager.listJobs(parsed.sessionId, parsed.filter);
+
+          if (jobs.length === 0) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "No jobs found",
+                },
+              ],
+            };
+          }
+
+          // Serialize jobs (newest first, already sorted by listJobs)
+          const serialized = jobs.map((j) => ({
+            id: j.id,
+            code: j.code.length > 100 ? `${j.code.slice(0, 100)}...` : j.code,
+            pid: j.pid,
+            status: j.status,
+            background: j.background,
+            startedAt: j.startedAt.toISOString(),
+            duration: j.duration,
+            exitCode: j.exitCode,
+            truncated: {
+              stdout: j.stdoutTruncated,
+              stderr: j.stderrTruncated,
+            },
+          }));
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(serialized, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "getJobOutput": {
+          const parsed = GetJobOutputSchema.parse(args);
+          const job = sessionManager.getJob(parsed.sessionId, parsed.jobId);
+
+          if (!job) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Job not found: ${parsed.jobId}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          const output = getJobOutput(job, parsed.since);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  jobId: job.id,
+                  status: output.status,
+                  stdout: output.stdout,
+                  stderr: output.stderr,
+                  offset: output.offset,
+                  exitCode: output.exitCode,
+                  truncated: output.truncated,
+                }, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "killJob": {
+          const parsed = KillJobSchema.parse(args);
+          const job = sessionManager.getJob(parsed.sessionId, parsed.jobId);
+
+          if (!job) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Job not found: ${parsed.jobId}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          const signal = (parsed.signal ?? "SIGTERM") as Deno.Signal;
+          await killJob(job, signal);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Job ${parsed.jobId} killed with ${signal}`,
+              },
+            ],
+          };
+        }
+
+        case "waitJob": {
+          const parsed = WaitJobSchema.parse(args);
+          const job = sessionManager.getJob(parsed.sessionId, parsed.jobId);
+
+          if (!job) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Job not found: ${parsed.jobId}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          if (job.status !== "running") {
+            // Job already completed
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    jobId: job.id,
+                    status: job.status,
+                    stdout: job.stdout,
+                    stderr: job.stderr,
+                    exitCode: job.exitCode,
+                    duration: job.duration,
+                    truncated: {
+                      stdout: job.stdoutTruncated,
+                      stderr: job.stderrTruncated,
+                    },
+                  }, null, 2),
+                },
+              ],
+              isError: job.status === "failed",
+            };
+          }
+
+          // Wait for job completion with optional timeout
+          const startTime = Date.now();
+          const timeoutMs = parsed.timeout ?? 30000;
+
+          while (job.status === "running") {
+            if (Date.now() - startTime > timeoutMs) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Timeout waiting for job ${parsed.jobId}`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+            await new Promise((r) => setTimeout(r, 100));
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  jobId: job.id,
+                  status: job.status,
+                  stdout: job.stdout,
+                  stderr: job.stderr,
+                  exitCode: job.exitCode,
+                  duration: job.duration,
+                  truncated: {
+                    stdout: job.stdoutTruncated,
+                    stderr: job.stderrTruncated,
+                  },
+                }, null, 2),
+              },
+            ],
+            isError: job.status === "failed",
+          };
         }
 
         default:
