@@ -1,12 +1,12 @@
 # Session and Job Management Design
 
-**Status**: Design Document
+**Status**: Design Document (Revised)
 **Author**: AI Assistant
 **Date**: 2025-12-26
 
 ## Overview
 
-Redesign session management to work like a shell prompt with automatic job tracking. Every command execution creates a job that's tracked in the session history.
+Redesign session management to work like a shell environment with automatic job tracking. Every command execution creates a job that's tracked in the session history for posterity and debugging.
 
 ## Current State
 
@@ -25,25 +25,28 @@ Redesign session management to work like a shell prompt with automatic job track
 
 ## Proposed Design
 
-### Mental Model: Session = Shell Prompt
+### Mental Model
 
-A session is like a shell prompt where every command execution is automatically tracked as a job.
+A session is like a shell environment where every command execution is automatically tracked as a job. This provides complete execution history for debugging and auditing.
 
 ### Data Structures
 
 ```typescript
 interface Job {
-  id: string;              // "job-1", "job-2" (auto-increment)
-  command: string;         // Code/command that was executed
-  pid?: number;            // Process ID for external commands
+  id: string;                // "job-{sessionId}-{seq}" (globally unique)
+  code: string;              // Code that was executed
+  pid: number;               // Process ID (always present for spawned processes)
   status: 'running' | 'completed' | 'failed';
   exitCode?: number;
-  stdout: string;
-  stderr: string;
+  stdout: string;            // Capped at 1MB, truncated from start if exceeded
+  stderr: string;            // Capped at 1MB, truncated from start if exceeded
+  stdoutTruncated: boolean;  // True if stdout exceeded 1MB
+  stderrTruncated: boolean;  // True if stderr exceeded 1MB
   startedAt: Date;
   completedAt?: Date;
-  duration?: number;       // milliseconds
-  background: boolean;     // Foreground or background execution
+  duration?: number;         // milliseconds
+  background: boolean;       // Foreground or background execution
+  process?: Deno.ChildProcess; // Internal: cleared after completion
 }
 
 interface Session {
@@ -51,13 +54,26 @@ interface Session {
   cwd: string;
   env: Record<string, string>;
   vars: Record<string, unknown>;
+  createdAt: Date;
+  lastActivityAt: Date;      // Updated on each exec
 
   // Job tracking
-  jobs: Map<string, Job>;         // "job-1" -> Job (primary index)
-  jobsByPid: Map<number, string>; // PID -> job-id (reverse lookup)
-  jobSequence: number;             // Auto-increment counter
+  jobs: Map<string, Job>;         // job-id -> Job (primary index)
+  jobsByPid: Map<number, string>; // PID -> job-id (alternative lookup)
+  jobSequence: number;            // Auto-increment counter
 }
 ```
+
+### Memory Limits
+
+- **Per-session limit**: 50MB total (jobs + vars)
+- **Per-job output limit**: 1MB each for stdout/stderr
+- **Session count limit**: 10 active sessions (LRU eviction when exceeded)
+
+When output exceeds 1MB:
+1. Truncate from the start (keep most recent output)
+2. Set `stdoutTruncated`/`stderrTruncated` flags
+3. Log truncation event
 
 ### Tool Changes
 
@@ -85,12 +101,25 @@ exec({
 → Job stored in session.jobs with status: 'running'
 ```
 
-#### 2. New `sessionJobs` Tool
+**External Commands:** Must be invoked through `cmd()` function in code:
+```typescript
+// Execute external command
+exec({ code: "await cmd('ls', ['-la']).exec()", sessionId: "..." })
 
-View and manage jobs within a session:
+// Background external command
+exec({
+  code: "await cmd('npm', ['run', 'build']).exec()",
+  sessionId: "...",
+  background: true
+})
+```
+
+#### 2. `listJobs` Tool
+
+View jobs within a session:
 
 ```typescript
-sessionJobs({
+listJobs({
   sessionId: string,
   filter?: {
     status?: 'running' | 'completed' | 'failed',
@@ -99,85 +128,95 @@ sessionJobs({
   }
 })
 
-→ Returns array of jobs in execution order
+→ Returns array of jobs in execution order (newest first)
 ```
 
 #### 3. Job Management Tools
 
-Update existing tools to work with session context:
-
 ```typescript
-// Get job output (buffered)
+// Get job output (with optional offset for incremental reads)
 getJobOutput({
   sessionId: string,
   jobId: string,
   since?: number  // byte offset
 })
+→ { stdout, stderr, offset, status, exitCode, truncated: { stdout, stderr } }
 
 // Kill running job
 killJob({
   sessionId: string,
   jobId: string,
-  signal?: string
+  signal?: string  // default: SIGTERM
 })
 
-// Wait for background job (like shell `fg`)
+// Wait for background job to complete
 waitJob({
   sessionId: string,
   jobId: string,
-  stream?: boolean  // Stream output while waiting
+  timeout?: number  // optional timeout in ms
 })
+→ { stdout, stderr, code, success, duration }
 ```
 
 #### 4. Remove Obsolete Tools
 
-- ~~`bg`~~ - Merged into `exec` with `background` parameter
-- ~~`jobs`~~ - Replaced by `sessionJobs`
-- ~~`fg`~~ - Replaced by `waitJob`
-
-Keep but update:
-- `jobOutput` → `getJobOutput` (add sessionId)
-- `kill` → `killJob` (add sessionId)
+- ~~`bg`~~ → Use `exec` with `background: true`
+- ~~`jobs`~~ → Use `listJobs`
+- ~~`fg`~~ → Use `waitJob`
+- ~~`jobOutput`~~ → Use `getJobOutput`
+- ~~`kill`~~ → Use `killJob`
 
 ### Automatic Job Creation
 
 Every `exec` call automatically:
 
-1. Creates job record: `job-${session.jobSequence++}`
-2. Records command, start time, status: 'running'
-3. Executes code (sync or async)
-4. Updates job with result (exit code, stdout, stderr, completion time)
-5. Stores in `session.jobs` Map
+1. Creates job record with ID: `job-${sessionId}-${session.jobSequence++}`
+2. Records code, start time, status: 'running', background flag
+3. Updates `lastActivityAt` on session
+4. Executes code (sync or async)
+5. For sync: updates job with result immediately
+6. For async: job updated when process completes (via background collector)
+7. Clears `job.process` handle after completion
 
 ### Command Tracking in Exec Code
 
-Commands executed via streaming shell API (git, cmd, etc.) also tracked:
+Commands executed via streaming shell API (git, cmd, etc.) are also tracked when running in a session context:
 
 ```typescript
 // In Command.exec()
 if (globalThis.$session) {
-  const job = {
-    id: `job-${$session.jobSequence++}`,
-    command: `${this.cmd} ${this.args.join(' ')}`,
+  const job: Job = {
+    id: `job-${$session.id}-${$session.jobSequence++}`,
+    code: `${this.cmd} ${this.args.join(' ')}`,
+    pid: 0,  // Set after spawn
     status: 'running',
     startedAt: new Date(),
     background: false,
     stdout: '',
-    stderr: ''
+    stderr: '',
+    stdoutTruncated: false,
+    stderrTruncated: false,
   };
 
   $session.jobs.set(job.id, job);
 
   try {
+    const process = command.spawn();
+    job.pid = process.pid;
+
     const result = await this.execSeparate();
-    job.status = 'completed';
+    job.status = result.success ? 'completed' : 'failed';
     job.exitCode = result.code;
-    job.stdout = result.stdout;
-    job.stderr = result.stderr;
+    job.stdout = truncateOutput(result.stdout, 1024 * 1024);
+    job.stderr = truncateOutput(result.stderr, 1024 * 1024);
+    job.stdoutTruncated = result.stdout.length > 1024 * 1024;
+    job.stderrTruncated = result.stderr.length > 1024 * 1024;
     job.completedAt = new Date();
+    job.duration = job.completedAt.getTime() - job.startedAt.getTime();
     return result;
   } catch (error) {
     job.status = 'failed';
+    job.completedAt = new Date();
     throw error;
   }
 }
@@ -195,77 +234,124 @@ if (globalThis.$session) {
 - Jobs only accumulated in explicit sessions
 
 **Cleanup:**
-- Manual: `endSession` removes session
-- Automatic: Not implemented initially (future: timeout-based cleanup)
+- Manual: `endSession` removes session and all its jobs
+- Automatic LRU: When session count > 10, remove least recently active session
+- Memory pressure: When session exceeds 50MB, trim oldest completed jobs
 
-**History Limits:**
-- Keep last N jobs per session (configurable, default 100)
-- Truncate old jobs when limit exceeded
+**Activity Tracking:**
+- `lastActivityAt` updated on every `exec` call
+- Used for LRU eviction decisions
+
+### Background Job Completion
+
+Background jobs have no callback mechanism (agents invoke jobs, no easy way to callback). Agents must poll for completion:
+
+```typescript
+// Recommended polling pattern
+const { jobId } = await exec({ code: "...", background: true, sessionId });
+
+// Poll for completion
+let result;
+while (true) {
+  const output = await getJobOutput({ sessionId, jobId });
+  if (output.status !== 'running') {
+    result = output;
+    break;
+  }
+  await sleep(1000);  // Poll every second
+}
+```
+
+Alternative: Use `waitJob` which blocks until completion:
+```typescript
+const result = await waitJob({ sessionId, jobId, timeout: 60000 });
+```
 
 ## Implementation Plan
 
 ### Phase 1: Core Infrastructure
-1. Update Session type with job tracking
-2. Update SessionManager to handle jobs
-3. Implement automatic job creation in executor
+1. Update Session type with new fields (lastActivityAt, memory tracking)
+2. Update Job type (pid required, truncation flags, process cleanup)
+3. Update SessionManager with LRU eviction and memory limits
+4. Implement automatic job creation in executor
 
 ### Phase 2: Tool Updates
 1. Add `background` parameter to `exec` tool
-2. Implement `sessionJobs` tool
-3. Update `getJobOutput`, `killJob`, `waitJob` with sessionId
+2. Rename/implement `listJobs` tool
+3. Implement `getJobOutput`, `killJob`, `waitJob` tools
+4. Remove obsolete tools (bg, jobs, fg, jobOutput, kill)
 
 ### Phase 3: Command Tracking
-1. Make Command class session-aware
+1. Make Command class session-aware via globalThis.$session
 2. Auto-track commands in $session.jobs
-3. Sync job state back to SessionManager
+3. Implement output truncation in Command class
 
-### Phase 4: Cleanup
-1. Remove `bg`, `jobs`, `fg` tools
-2. Update documentation
-3. Update examples
+### Phase 4: Documentation
+1. Update tool descriptions
+2. Add examples for new patterns
+3. Document polling pattern for background jobs
 
-## Migration Guide
+## Implementation Notes
 
-**Before:**
+### Thread Safety
+
+`jobSequence++` operations should be safe in Deno's single-threaded async model. However, ensure job creation is atomic:
+
 ```typescript
-// Background execution
-bg({ code: "await longTask()", sessionId: "sess-1" })
-→ { jobId: "job-3" }
-
-jobs({ sessionId: "sess-1" })
-→ [{ id: "job-3", status: "running", ... }]
-
-fg({ jobId: "job-3" })
-→ streams output
+// Atomic job ID generation
+const jobId = `job-${session.id}-${session.jobSequence}`;
+session.jobSequence++;
 ```
 
-**After:**
+### Process Handle Cleanup
+
+Critical: Clear `job.process` after completion to allow GC:
+
 ```typescript
-// Background execution
-exec({ code: "await longTask()", sessionId: "sess-1", background: true })
-→ { jobId: "job-3", pid: 12345 }
+// In background collector
+job.process!.status.then((status) => {
+  job.status = status.code === 0 ? 'completed' : 'failed';
+  job.exitCode = status.code;
+  job.completedAt = new Date();
+  job.process = undefined;  // Allow GC
+});
+```
 
-sessionJobs({ sessionId: "sess-1" })
-→ [{ id: "job-3", status: "running", ... }]
+### Memory Tracking
 
-waitJob({ sessionId: "sess-1", jobId: "job-3", stream: true })
-→ streams output
+Approximate session memory usage:
+
+```typescript
+function estimateSessionMemory(session: Session): number {
+  let size = 0;
+  for (const job of session.jobs.values()) {
+    size += job.stdout.length + job.stderr.length + job.code.length + 200; // overhead
+  }
+  size += JSON.stringify(session.vars).length;
+  return size;
+}
 ```
 
 ## Benefits
 
 1. **Unified API** - One way to execute code (sync or async)
-2. **Complete History** - All executions tracked automatically
+2. **Complete History** - All executions tracked for debugging/audit
 3. **Shell-like** - Familiar mental model from bash/zsh
-4. **Debuggable** - Full history of what happened in session
+4. **Memory Safe** - Bounded output storage, LRU session eviction
 5. **Efficient** - Map-based lookup for jobs by ID or PID
 
-## Open Questions
+## Design Decisions
 
-1. Should we limit job history size? (Propose: 100 jobs)
-2. Should we implement automatic session cleanup? (Propose: Future enhancement)
-3. Should temporary sessions have job tracking? (Propose: No - only explicit sessions)
-4. Should we expose PID in job info? (Propose: Yes - useful for debugging)
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Job ID format | `job-{sessionId}-{seq}` | Globally unique, human readable |
+| PID field | Required | Every spawned process has a PID |
+| Output limit | 1MB per stream | Balance between history and memory |
+| Session limit | 10 sessions | Prevent unbounded growth |
+| Session memory | 50MB max | Reasonable for job history |
+| Cleanup strategy | LRU by lastActivityAt | Fair, predictable eviction |
+| External commands | Via `cmd()` only | Consistent API, proper tracking |
+| Background polling | Agent responsibility | No callback mechanism available |
 
 ## References
 
@@ -273,3 +359,4 @@ waitJob({ sessionId: "sess-1", jobId: "job-3", stream: true })
 - Current SessionManager: `src/runtime/session.ts`
 - Current MCP tools: `src/mcp/server.ts`
 - Job management: `src/runtime/jobs.ts`
+- Command class: `src/stdlib/command.ts`
