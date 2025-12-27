@@ -6,7 +6,7 @@
  * 2. run() executes whitelisted commands with validation
  * 3. Permission violations are caught and reported
  * 4. Path sandbox works correctly
- * 5. Session state persists across calls
+ * 5. Shell state persists across calls
  */
 
 import {
@@ -17,7 +17,7 @@ import {
 } from "@std/assert";
 import { executeCode } from "../src/runtime/executor.ts";
 import { runExternal } from "../src/external/runner.ts";
-import { createSessionManager } from "../src/runtime/session.ts";
+import { createShellManager } from "../src/runtime/shell.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import { join } from "@std/path";
@@ -255,8 +255,8 @@ Deno.test("E2E: Path sandbox handles relative paths", async () => {
   await setupTestEnv();
 
   const now = new Date();
-  const session = {
-    id: "test-session",
+  const shell = {
+    id: "test-shell",
     cwd: "/tmp/safesh-test",
     env: {},
     vars: {},
@@ -272,7 +272,7 @@ Deno.test("E2E: Path sandbox handles relative paths", async () => {
     ["test.txt"], // Relative path
     testConfig,
     { cwd: "/tmp/safesh-test" },
-    session,
+    shell,
   );
 
   assertEquals(result.success, true);
@@ -282,21 +282,21 @@ Deno.test("E2E: Path sandbox handles relative paths", async () => {
 });
 
 /**
- * TEST SUITE 4: Session state persistence
+ * TEST SUITE 4: Shell state persistence
  */
 
-Deno.test("E2E: Session maintains working directory", async () => {
+Deno.test("E2E: Shell maintains working directory", async () => {
   await setupTestEnv();
 
-  const sessionManager = createSessionManager(Deno.cwd());
-  const session = sessionManager.create({ cwd: "/tmp/safesh-test" });
+  const shellManager = createShellManager(Deno.cwd());
+  const shell = shellManager.create({ cwd: "/tmp/safesh-test" });
 
-  // Execute code that uses session cwd
+  // Execute code that uses shell cwd
   const code = `
-    console.log("CWD:", $session.cwd);
+    console.log("CWD:", $shell.cwd);
   `;
 
-  const result = await executeCode(code, testConfig, {}, session);
+  const result = await executeCode(code, testConfig, {}, shell);
 
   assertEquals(result.success, true);
   assertStringIncludes(result.stdout, "/tmp/safesh-test");
@@ -304,40 +304,40 @@ Deno.test("E2E: Session maintains working directory", async () => {
   await cleanupTestEnv();
 });
 
-Deno.test("E2E: Session maintains environment variables", async () => {
-  const sessionManager = createSessionManager(Deno.cwd());
-  const session = sessionManager.create({
+Deno.test("E2E: Shell maintains environment variables", async () => {
+  const shellManager = createShellManager(Deno.cwd());
+  const shell = shellManager.create({
     env: { MY_VAR: "test_value" },
   });
 
   const code = `
-    console.log("MY_VAR:", $session.env.MY_VAR);
+    console.log("MY_VAR:", $shell.env.MY_VAR);
   `;
 
-  const result = await executeCode(code, testConfig, {}, session);
+  const result = await executeCode(code, testConfig, {}, shell);
 
   assertEquals(result.success, true);
   assertStringIncludes(result.stdout, "MY_VAR: test_value");
 });
 
-Deno.test("E2E: Session persists custom variables", async () => {
-  const sessionManager = createSessionManager(Deno.cwd());
-  const session = sessionManager.create();
+Deno.test("E2E: Shell persists custom variables", async () => {
+  const shellManager = createShellManager(Deno.cwd());
+  const shell = shellManager.create();
 
   // Set a variable
-  sessionManager.setVar(session.id, "counter", 42);
+  shellManager.setVar(shell.id, "counter", 42);
 
   // Retrieve it
-  const value = sessionManager.getVar(session.id, "counter");
+  const value = shellManager.getVar(shell.id, "counter");
   assertEquals(value, 42);
 });
 
-Deno.test("E2E: Session updates are persistent", async () => {
-  const sessionManager = createSessionManager(Deno.cwd());
-  const session = sessionManager.create({ cwd: "/tmp" });
+Deno.test("E2E: Shell updates are persistent", async () => {
+  const shellManager = createShellManager(Deno.cwd());
+  const shell = shellManager.create({ cwd: "/tmp" });
 
-  // Update session
-  const updated = sessionManager.update(session.id, {
+  // Update shell
+  const updated = shellManager.update(shell.id, {
     cwd: "/tmp/new",
     env: { NEW_VAR: "value" },
   });
@@ -347,35 +347,35 @@ Deno.test("E2E: Session updates are persistent", async () => {
   assertEquals(updated.env.NEW_VAR, "value");
 
   // Verify persistence
-  const retrieved = sessionManager.get(session.id);
+  const retrieved = shellManager.get(shell.id);
   assertExists(retrieved);
   assertEquals(retrieved.cwd, "/tmp/new");
   assertEquals(retrieved.env.NEW_VAR, "value");
 });
 
-Deno.test("E2E: Multiple sessions are isolated", async () => {
-  const sessionManager = createSessionManager(Deno.cwd());
+Deno.test("E2E: Multiple shells are isolated", async () => {
+  const shellManager = createShellManager(Deno.cwd());
 
-  const session1 = sessionManager.create({
-    env: { SESSION: "one" },
+  const shell1 = shellManager.create({
+    env: { SHELL: "one" },
   });
-  const session2 = sessionManager.create({
-    env: { SESSION: "two" },
+  const shell2 = shellManager.create({
+    env: { SHELL: "two" },
   });
 
-  assertEquals(session1.env.SESSION, "one");
-  assertEquals(session2.env.SESSION, "two");
+  assertEquals(shell1.env.SHELL, "one");
+  assertEquals(shell2.env.SHELL, "two");
 
-  // Update session1 shouldn't affect session2
-  sessionManager.update(session1.id, { env: { SESSION: "updated" } });
+  // Update shell1 shouldn't affect shell2
+  shellManager.update(shell1.id, { env: { SHELL: "updated" } });
 
-  const retrieved1 = sessionManager.get(session1.id);
-  const retrieved2 = sessionManager.get(session2.id);
+  const retrieved1 = shellManager.get(shell1.id);
+  const retrieved2 = shellManager.get(shell2.id);
 
   assertExists(retrieved1);
   assertExists(retrieved2);
-  assertEquals(retrieved1.env.SESSION, "updated");
-  assertEquals(retrieved2.env.SESSION, "two");
+  assertEquals(retrieved1.env.SHELL, "updated");
+  assertEquals(retrieved2.env.SHELL, "two");
 });
 
 /**
@@ -455,8 +455,8 @@ Deno.test("E2E: Environment masking prevents sensitive data leakage", async () =
 Deno.test("E2E: Complete workflow - file processing pipeline", async () => {
   await setupTestEnv();
 
-  const sessionManager = createSessionManager(Deno.cwd());
-  const session = sessionManager.create({
+  const shellManager = createShellManager(Deno.cwd());
+  const shell = shellManager.create({
     cwd: "/tmp/safesh-test",
   });
 
@@ -466,7 +466,7 @@ Deno.test("E2E: Complete workflow - file processing pipeline", async () => {
     console.log("Created input file");
   `;
 
-  const createResult = await executeCode(createCode, testConfig, {}, session);
+  const createResult = await executeCode(createCode, testConfig, {}, shell);
   assertEquals(createResult.success, true);
 
   // Step 2: Process file with external command
@@ -475,7 +475,7 @@ Deno.test("E2E: Complete workflow - file processing pipeline", async () => {
     ["/tmp/safesh-test/input.txt"],
     testConfig,
     {},
-    session,
+    shell,
   );
   assertEquals(catResult.success, true);
   assertStringIncludes(catResult.stdout, "line1");
@@ -489,43 +489,43 @@ Deno.test("E2E: Complete workflow - file processing pipeline", async () => {
     console.log(\`Processed \${count} lines\`);
   `;
 
-  const processResult = await executeCode(processCode, testConfig, {}, session);
+  const processResult = await executeCode(processCode, testConfig, {}, shell);
   assertEquals(processResult.success, true);
   assertStringIncludes(processResult.stdout, "Processed 3 lines");
 
   await cleanupTestEnv();
 });
 
-Deno.test("E2E: Cross-session isolation", async () => {
+Deno.test("E2E: Cross-shell isolation", async () => {
   await setupTestEnv();
 
-  const sessionManager = createSessionManager(Deno.cwd());
+  const shellManager = createShellManager(Deno.cwd());
 
-  // Session 1: Create a file
-  const session1 = sessionManager.create({ cwd: "/tmp/safesh-test" });
+  // Shell 1: Create a file
+  const shell1 = shellManager.create({ cwd: "/tmp/safesh-test" });
   const code1 = `
-    await Deno.writeTextFile("/tmp/safesh-test/session1.txt", "session 1 data");
-    console.log("Session 1 completed");
+    await Deno.writeTextFile("/tmp/safesh-test/shell1.txt", "shell 1 data");
+    console.log("Shell 1 completed");
   `;
-  const result1 = await executeCode(code1, testConfig, {}, session1);
+  const result1 = await executeCode(code1, testConfig, {}, shell1);
   assertEquals(result1.success, true);
 
-  // Session 2: Verify isolation (should not have session1 vars)
-  const session2 = sessionManager.create({ cwd: "/tmp/safesh-test" });
-  sessionManager.setVar(session2.id, "myvar", "session2-value");
+  // Shell 2: Verify isolation (should not have shell1 vars)
+  const shell2 = shellManager.create({ cwd: "/tmp/safesh-test" });
+  shellManager.setVar(shell2.id, "myvar", "shell2-value");
 
   const code2 = `
-    console.log("Session 2 ID:", $session.id);
+    console.log("Shell 2 ID:", $shell.id);
   `;
-  const result2 = await executeCode(code2, testConfig, {}, session2);
+  const result2 = await executeCode(code2, testConfig, {}, shell2);
   assertEquals(result2.success, true);
 
-  // Verify sessions are different
-  assertEquals(session1.id !== session2.id, true);
+  // Verify shells are different
+  assertEquals(shell1.id !== shell2.id, true);
 
   // Verify vars are isolated
-  assertEquals(sessionManager.getVar(session1.id, "myvar"), undefined);
-  assertEquals(sessionManager.getVar(session2.id, "myvar"), "session2-value");
+  assertEquals(shellManager.getVar(shell1.id, "myvar"), undefined);
+  assertEquals(shellManager.getVar(shell2.id, "myvar"), "shell2-value");
 
   await cleanupTestEnv();
 });

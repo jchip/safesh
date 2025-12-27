@@ -7,7 +7,7 @@
 
 import { deadline } from "@std/async";
 import { executionError, timeout as timeoutError } from "../core/errors.ts";
-import type { ExecResult, RunOptions, SafeShellConfig, Session } from "../core/types.ts";
+import type { ExecResult, RunOptions, SafeShellConfig, Shell } from "../core/types.ts";
 import { createRegistry } from "./registry.ts";
 import { validateExternal } from "./validator.ts";
 
@@ -19,8 +19,8 @@ const DEFAULT_TIMEOUT = 30000;
  * @param command - The command to execute
  * @param args - Command arguments
  * @param config - SafeShell configuration
- * @param options - Execution options (timeout, cwd, env, sessionId)
- * @param session - Optional session for context
+ * @param options - Execution options (timeout, cwd, env, shellId)
+ * @param shell - Optional shell for context
  * @returns Promise<ExecResult> with stdout, stderr, code, and success
  */
 export async function runExternal(
@@ -28,9 +28,9 @@ export async function runExternal(
   args: string[],
   config: SafeShellConfig,
   options: RunOptions = {},
-  session?: Session,
+  shell?: Shell,
 ): Promise<ExecResult> {
-  const cwd = options.cwd ?? session?.cwd ?? Deno.cwd();
+  const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
   const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT;
 
   // Create command registry and validate
@@ -42,7 +42,7 @@ export async function runExternal(
   }
 
   // Build environment variables
-  const processEnv = buildEnv(config, session, options.env);
+  const processEnv = buildEnv(config, shell, options.env);
 
   // Create Deno command
   const cmd = new Deno.Command(command, {
@@ -137,7 +137,7 @@ async function collectStream(stream: ReadableStream<Uint8Array>): Promise<string
  */
 function buildEnv(
   config: SafeShellConfig,
-  session?: Session,
+  shell?: Shell,
   additionalEnv?: Record<string, string>,
 ): Record<string, string> {
   const result: Record<string, string> = {};
@@ -166,9 +166,9 @@ function buildEnv(
     }
   }
 
-  // Merge session env vars (they override)
-  if (session?.env) {
-    for (const [key, value] of Object.entries(session.env)) {
+  // Merge shell env vars (they override)
+  if (shell?.env) {
+    for (const [key, value] of Object.entries(shell.env)) {
       if (!isMasked(key)) {
         result[key] = value;
       }

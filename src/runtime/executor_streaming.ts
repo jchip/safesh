@@ -7,7 +7,7 @@
 import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { timeout as timeoutError } from "../core/errors.ts";
-import type { ExecOptions, SafeShellConfig, Session, StreamChunk } from "../core/types.ts";
+import type { ExecOptions, SafeShellConfig, Shell, StreamChunk } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
@@ -26,19 +26,19 @@ async function hashCode(code: string): Promise<string> {
 /**
  * Build the preamble that gets prepended to user code
  */
-function buildPreamble(session?: Session): string {
-  if (!session) {
+function buildPreamble(shell?: Shell): string {
+  if (!shell) {
     return "";
   }
 
   const lines: string[] = [
     "// SafeShell auto-generated preamble",
-    "// Session context available as $session",
-    `const $session = ${JSON.stringify({
-      id: session.id,
-      cwd: session.cwd,
-      env: session.env,
-      vars: session.vars,
+    "// Session context available as $shell",
+    `const $shell = ${JSON.stringify({
+      id: shell.id,
+      cwd: shell.cwd,
+      env: shell.env,
+      vars: shell.vars,
     })};`,
     "",
     "// User code starts here",
@@ -53,7 +53,7 @@ function buildPreamble(session?: Session): string {
  */
 function buildEnv(
   config: SafeShellConfig,
-  session?: Session,
+  shell?: Shell,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   const envConfig = config.env ?? {};
@@ -80,9 +80,9 @@ function buildEnv(
     }
   }
 
-  // Merge session env vars (they override)
-  if (session?.env) {
-    for (const [key, value] of Object.entries(session.env)) {
+  // Merge shell env vars (they override)
+  if (shell?.env) {
+    for (const [key, value] of Object.entries(shell.env)) {
       if (!isMasked(key)) {
         result[key] = value;
       }
@@ -101,9 +101,9 @@ export async function* executeCodeStreaming(
   code: string,
   config: SafeShellConfig,
   options: ExecOptions = {},
-  session?: Session,
+  shell?: Shell,
 ): AsyncGenerator<StreamChunk> {
-  const cwd = options.cwd ?? session?.cwd ?? Deno.cwd();
+  const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
   const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT;
 
   // Ensure temp directory exists
@@ -114,7 +114,7 @@ export async function* executeCodeStreaming(
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
   // Build full code with preamble
-  const preamble = buildPreamble(session);
+  const preamble = buildPreamble(shell);
   const fullCode = preamble + code;
 
   // Write script to temp file
@@ -140,7 +140,7 @@ export async function* executeCodeStreaming(
   const command = new Deno.Command("deno", {
     args,
     cwd,
-    env: buildEnv(config, session),
+    env: buildEnv(config, shell),
     stdout: "piped",
     stderr: "piped",
   });
@@ -244,7 +244,7 @@ export async function* runCommandStreaming(
   timeoutMs: number,
   env: Record<string, string> = {},
 ): AsyncGenerator<StreamChunk> {
-  // Merge session env with process env
+  // Merge shell env with process env
   const processEnv = { ...Deno.env.toObject(), ...env };
 
   const cmd = new Deno.Command(command, {

@@ -10,7 +10,7 @@
  */
 
 import { executeCode } from "../runtime/executor.ts";
-import type { SafeShellConfig, Session, TaskConfig } from "../core/types.ts";
+import type { SafeShellConfig, Shell, TaskConfig } from "../core/types.ts";
 import { isXrunSyntax, parseXrun } from "./xrun-parser.ts";
 
 export interface TaskResult {
@@ -27,8 +27,8 @@ export interface TaskResult {
 export interface TaskRunOptions {
   /** Current working directory override */
   cwd?: string;
-  /** Session for persistent state */
-  session?: Session;
+  /** Shell for persistent state */
+  shell?: Shell;
   /** Verbose logging */
   verbose?: boolean;
 }
@@ -88,7 +88,7 @@ export async function runTask(
       {
         cwd: task.cwd ?? options.cwd,
       },
-      options.session,
+      options.shell,
     );
 
     return {

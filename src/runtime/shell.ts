@@ -1,18 +1,18 @@
 /**
- * Session management for SafeShell
+ * Shell management for SafeShell
  *
- * Sessions provide persistent state between MCP tool calls:
+ * Shells provide persistent state between MCP tool calls:
  * - Working directory (cwd)
  * - Environment variables
  * - Persisted JS variables
  * - Background jobs
  *
- * Sessions are stored in-memory and tied to the MCP server lifecycle.
+ * Shells are stored in-memory and tied to the MCP server lifecycle.
  *
  * @module
  */
 
-import type { Session, Job } from "../core/types.ts";
+import type { Shell, Job } from "../core/types.ts";
 import {
   JOB_OUTPUT_LIMIT,
   SESSION_MEMORY_LIMIT,
@@ -20,10 +20,10 @@ import {
 } from "../core/types.ts";
 
 /**
- * Session manager - stores and manages sessions
+ * Shell manager - stores and manages shells
  */
-export class SessionManager {
-  private sessions: Map<string, Session> = new Map();
+export class ShellManager {
+  private shells: Map<string, Shell> = new Map();
   private defaultCwd: string;
 
   constructor(defaultCwd: string) {
@@ -31,20 +31,21 @@ export class SessionManager {
   }
 
   /**
-   * Create a new session
+   * Create a new shell
    *
-   * @param options - Initial session options
-   * @returns New session
+   * @param options - Initial shell options
+   * @returns New shell
    */
-  create(options: { cwd?: string; env?: Record<string, string> } = {}): Session {
-    // Enforce session limit with LRU eviction
-    if (this.sessions.size >= MAX_SESSIONS) {
-      this.evictLeastRecentSession();
+  create(options: { cwd?: string; env?: Record<string, string>; description?: string } = {}): Shell {
+    // Enforce shell limit with LRU eviction
+    if (this.shells.size >= MAX_SESSIONS) {
+      this.evictLeastRecentShell();
     }
 
     const now = new Date();
-    const session: Session = {
+    const shell: Shell = {
       id: crypto.randomUUID(),
+      description: options.description,
       cwd: options.cwd ?? this.defaultCwd,
       env: options.env ?? {},
       vars: {},
@@ -55,41 +56,41 @@ export class SessionManager {
       lastActivityAt: now,
     };
 
-    this.sessions.set(session.id, session);
-    return session;
+    this.shells.set(shell.id, shell);
+    return shell;
   }
 
   /**
-   * Get an existing session by ID
+   * Get an existing shell by ID
    *
-   * @param id - Session ID
-   * @returns Session or undefined
+   * @param id - Shell ID
+   * @returns Shell or undefined
    */
-  get(id: string): Session | undefined {
-    return this.sessions.get(id);
+  get(id: string): Shell | undefined {
+    return this.shells.get(id);
   }
 
   /**
-   * Get session or create temporary one
+   * Get shell or create temporary one
    *
-   * @param id - Session ID or undefined
-   * @param fallback - Fallback options for temporary session
-   * @returns Session
+   * @param id - Shell ID or undefined
+   * @param fallback - Fallback options for temporary shell
+   * @returns Shell
    */
   getOrTemp(
     id: string | undefined,
     fallback: { cwd?: string; env?: Record<string, string> } = {},
-  ): { session: Session; isTemporary: boolean } {
+  ): { shell: Shell; isTemporary: boolean } {
     if (id) {
-      const session = this.get(id);
-      if (session) {
-        return { session, isTemporary: false };
+      const shell = this.get(id);
+      if (shell) {
+        return { shell, isTemporary: false };
       }
     }
 
-    // Create temporary session (not stored)
+    // Create temporary shell (not stored)
     const now = new Date();
-    const session: Session = {
+    const shell: Shell = {
       id: crypto.randomUUID(),
       cwd: fallback.cwd ?? this.defaultCwd,
       env: fallback.env ?? {},
@@ -101,15 +102,15 @@ export class SessionManager {
       lastActivityAt: now,
     };
 
-    return { session, isTemporary: true };
+    return { shell, isTemporary: true };
   }
 
   /**
-   * Update session properties
+   * Update shell properties
    *
-   * @param id - Session ID
+   * @param id - Shell ID
    * @param updates - Properties to update
-   * @returns Updated session or undefined if not found
+   * @returns Updated shell or undefined if not found
    */
   update(
     id: string,
@@ -117,35 +118,40 @@ export class SessionManager {
       cwd?: string;
       env?: Record<string, string>;
       vars?: Record<string, unknown>;
+      description?: string;
     },
-  ): Session | undefined {
-    const session = this.sessions.get(id);
-    if (!session) return undefined;
+  ): Shell | undefined {
+    const shell = this.shells.get(id);
+    if (!shell) return undefined;
 
     if (updates.cwd !== undefined) {
-      session.cwd = updates.cwd;
+      shell.cwd = updates.cwd;
     }
 
     if (updates.env !== undefined) {
       // Merge env vars
-      session.env = { ...session.env, ...updates.env };
+      shell.env = { ...shell.env, ...updates.env };
     }
 
     if (updates.vars !== undefined) {
       // Merge vars
-      session.vars = { ...session.vars, ...updates.vars };
+      shell.vars = { ...shell.vars, ...updates.vars };
     }
 
-    return session;
+    if (updates.description !== undefined) {
+      shell.description = updates.description;
+    }
+
+    return shell;
   }
 
   /**
    * Set a single environment variable
    */
   setEnv(id: string, key: string, value: string): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    session.env[key] = value;
+    const shell = this.shells.get(id);
+    if (!shell) return false;
+    shell.env[key] = value;
     return true;
   }
 
@@ -153,9 +159,9 @@ export class SessionManager {
    * Unset an environment variable
    */
   unsetEnv(id: string, key: string): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    delete session.env[key];
+    const shell = this.shells.get(id);
+    if (!shell) return false;
+    delete shell.env[key];
     return true;
   }
 
@@ -163,9 +169,9 @@ export class SessionManager {
    * Change working directory
    */
   cd(id: string, path: string): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    session.cwd = path;
+    const shell = this.shells.get(id);
+    if (!shell) return false;
+    shell.cwd = path;
     return true;
   }
 
@@ -173,9 +179,9 @@ export class SessionManager {
    * Store a persisted variable
    */
   setVar(id: string, key: string, value: unknown): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    session.vars[key] = value;
+    const shell = this.shells.get(id);
+    if (!shell) return false;
+    shell.vars[key] = value;
     return true;
   }
 
@@ -183,60 +189,60 @@ export class SessionManager {
    * Get a persisted variable
    */
   getVar(id: string, key: string): unknown {
-    const session = this.sessions.get(id);
-    return session?.vars[key];
+    const shell = this.shells.get(id);
+    return shell?.vars[key];
   }
 
   /**
-   * Touch session (update lastActivityAt)
+   * Touch shell (update lastActivityAt)
    */
   touch(id: string): void {
-    const session = this.sessions.get(id);
-    if (session) {
-      session.lastActivityAt = new Date();
+    const shell = this.shells.get(id);
+    if (shell) {
+      shell.lastActivityAt = new Date();
     }
   }
 
   /**
-   * Add a job to the session
+   * Add a job to the shell
    */
-  addJob(sessionId: string, job: Job): boolean {
-    const session = this.sessions.get(sessionId);
-    if (!session) return false;
+  addJob(shellId: string, job: Job): boolean {
+    const shell = this.shells.get(shellId);
+    if (!shell) return false;
 
-    session.jobs.set(job.id, job);
-    session.jobsByPid.set(job.pid, job.id);
-    session.lastActivityAt = new Date();
+    shell.jobs.set(job.id, job);
+    shell.jobsByPid.set(job.pid, job.id);
+    shell.lastActivityAt = new Date();
 
     // Check memory and trim if needed
-    this.trimSessionIfNeeded(session);
+    this.trimShellIfNeeded(shell);
 
     return true;
   }
 
   /**
-   * Get a job from a session
+   * Get a job from a shell
    */
-  getJob(sessionId: string, jobId: string): Job | undefined {
-    const session = this.sessions.get(sessionId);
-    return session?.jobs.get(jobId);
+  getJob(shellId: string, jobId: string): Job | undefined {
+    const shell = this.shells.get(shellId);
+    return shell?.jobs.get(jobId);
   }
 
   /**
    * Get a job by PID
    */
-  getJobByPid(sessionId: string, pid: number): Job | undefined {
-    const session = this.sessions.get(sessionId);
-    if (!session) return undefined;
-    const jobId = session.jobsByPid.get(pid);
-    return jobId ? session.jobs.get(jobId) : undefined;
+  getJobByPid(shellId: string, pid: number): Job | undefined {
+    const shell = this.shells.get(shellId);
+    if (!shell) return undefined;
+    const jobId = shell.jobsByPid.get(pid);
+    return jobId ? shell.jobs.get(jobId) : undefined;
   }
 
   /**
    * Update job with comprehensive fields
    */
   updateJob(
-    sessionId: string,
+    shellId: string,
     jobId: string,
     updates: Partial<
       Pick<
@@ -253,7 +259,7 @@ export class SessionManager {
       >
     >,
   ): boolean {
-    const job = this.getJob(sessionId, jobId);
+    const job = this.getJob(shellId, jobId);
     if (!job) return false;
 
     if (updates.status !== undefined) {
@@ -288,20 +294,20 @@ export class SessionManager {
   }
 
   /**
-   * List jobs in a session with optional filter
+   * List jobs in a shell with optional filter
    */
   listJobs(
-    sessionId: string,
+    shellId: string,
     filter?: {
       status?: "running" | "completed" | "failed";
       background?: boolean;
       limit?: number;
     },
   ): Job[] {
-    const session = this.sessions.get(sessionId);
-    if (!session) return [];
+    const shell = this.shells.get(shellId);
+    if (!shell) return [];
 
-    let jobs = Array.from(session.jobs.values());
+    let jobs = Array.from(shell.jobs.values());
 
     // Apply filters
     if (filter?.status !== undefined) {
@@ -323,52 +329,52 @@ export class SessionManager {
   }
 
   /**
-   * Estimate memory usage of a session
+   * Estimate memory usage of a shell
    */
-  estimateSessionMemory(session: Session): number {
+  estimateShellMemory(shell: Shell): number {
     let size = 0;
-    for (const job of session.jobs.values()) {
+    for (const job of shell.jobs.values()) {
       size += job.stdout.length + job.stderr.length + job.code.length + 200; // overhead
     }
-    size += JSON.stringify(session.vars).length;
+    size += JSON.stringify(shell.vars).length;
     return size;
   }
 
   /**
-   * Trim oldest completed jobs if session exceeds memory limit
+   * Trim oldest completed jobs if shell exceeds memory limit
    */
-  private trimSessionIfNeeded(session: Session): void {
-    const memoryUsage = this.estimateSessionMemory(session);
+  private trimShellIfNeeded(shell: Shell): void {
+    const memoryUsage = this.estimateShellMemory(shell);
     if (memoryUsage <= SESSION_MEMORY_LIMIT) return;
 
     // Get completed jobs sorted by startedAt (oldest first)
-    const completedJobs = Array.from(session.jobs.values())
+    const completedJobs = Array.from(shell.jobs.values())
       .filter((j) => j.status !== "running")
       .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
 
     // Remove oldest jobs until under limit
     for (const job of completedJobs) {
-      session.jobs.delete(job.id);
-      session.jobsByPid.delete(job.pid);
+      shell.jobs.delete(job.id);
+      shell.jobsByPid.delete(job.pid);
 
-      if (this.estimateSessionMemory(session) <= SESSION_MEMORY_LIMIT) {
+      if (this.estimateShellMemory(shell) <= SESSION_MEMORY_LIMIT) {
         break;
       }
     }
   }
 
   /**
-   * Evict the least recently used session
+   * Evict the least recently used shell
    */
-  private evictLeastRecentSession(): void {
-    let oldest: Session | undefined;
+  private evictLeastRecentShell(): void {
+    let oldest: Shell | undefined;
     let oldestTime = Infinity;
 
-    for (const session of this.sessions.values()) {
-      const activityTime = session.lastActivityAt.getTime();
+    for (const shell of this.shells.values()) {
+      const activityTime = shell.lastActivityAt.getTime();
       if (activityTime < oldestTime) {
         oldestTime = activityTime;
-        oldest = session;
+        oldest = shell;
       }
     }
 
@@ -378,17 +384,17 @@ export class SessionManager {
   }
 
   /**
-   * End a session and clean up
+   * End a shell and clean up
    *
-   * @param id - Session ID
-   * @returns True if session was found and ended
+   * @param id - Shell ID
+   * @returns True if shell was found and ended
    */
   end(id: string): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
+    const shell = this.shells.get(id);
+    if (!shell) return false;
 
     // Clean up any running jobs
-    for (const job of session.jobs.values()) {
+    for (const job of shell.jobs.values()) {
       if (job.status === "running" && job.process) {
         try {
           job.process.kill("SIGTERM");
@@ -399,33 +405,33 @@ export class SessionManager {
       }
     }
 
-    this.sessions.delete(id);
+    this.shells.delete(id);
     return true;
   }
 
   /**
-   * List all active sessions
+   * List all active shells
    */
-  list(): Session[] {
-    return Array.from(this.sessions.values());
+  list(): Shell[] {
+    return Array.from(this.shells.values());
   }
 
   /**
-   * Get session count
+   * Get shell count
    */
   count(): number {
-    return this.sessions.size;
+    return this.shells.size;
   }
 
   /**
-   * Clean up expired sessions (older than maxAge)
+   * Clean up expired shells (older than maxAge)
    */
   cleanup(maxAgeMs: number = 24 * 60 * 60 * 1000): number {
     const now = Date.now();
     let cleaned = 0;
 
-    for (const [id, session] of this.sessions) {
-      if (now - session.createdAt.getTime() > maxAgeMs) {
+    for (const [id, shell] of this.shells) {
+      if (now - shell.createdAt.getTime() > maxAgeMs) {
         this.end(id);
         cleaned++;
       }
@@ -435,10 +441,11 @@ export class SessionManager {
   }
 
   /**
-   * Serialize session for response
+   * Serialize shell for response
    */
-  serialize(session: Session): {
-    sessionId: string;
+  serialize(shell: Shell): {
+    shellId: string;
+    description?: string;
     cwd: string;
     env: Record<string, string>;
     vars: Record<string, unknown>;
@@ -454,11 +461,12 @@ export class SessionManager {
     lastActivityAt: string;
   } {
     return {
-      sessionId: session.id,
-      cwd: session.cwd,
-      env: session.env,
-      vars: session.vars,
-      jobs: Array.from(session.jobs.values()).map((j) => ({
+      shellId: shell.id,
+      description: shell.description,
+      cwd: shell.cwd,
+      env: shell.env,
+      vars: shell.vars,
+      jobs: Array.from(shell.jobs.values()).map((j) => ({
         id: j.id,
         code: j.code.length > 100 ? j.code.slice(0, 100) + "..." : j.code,
         status: j.status,
@@ -466,15 +474,15 @@ export class SessionManager {
         startedAt: j.startedAt.toISOString(),
         duration: j.duration,
       })),
-      createdAt: session.createdAt.toISOString(),
-      lastActivityAt: session.lastActivityAt.toISOString(),
+      createdAt: shell.createdAt.toISOString(),
+      lastActivityAt: shell.lastActivityAt.toISOString(),
     };
   }
 }
 
 /**
- * Create a session manager
+ * Create a shell manager
  */
-export function createSessionManager(defaultCwd: string): SessionManager {
-  return new SessionManager(defaultCwd);
+export function createShellManager(defaultCwd: string): ShellManager {
+  return new ShellManager(defaultCwd);
 }
