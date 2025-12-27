@@ -83,6 +83,25 @@ export class Command {
   ) {}
 
   /**
+   * Spawn a process with improved error handling
+   */
+  private spawnProcess(command: Deno.Command): Deno.ChildProcess {
+    try {
+      return command.spawn();
+    } catch (err: unknown) {
+      if (
+        err instanceof Deno.errors.NotCapable ||
+        (err instanceof Error && err.message.includes("NotCapable"))
+      ) {
+        throw new Error(
+          `Command "${this.cmd}" is not allowed. Add it to permissions.run in safesh.toml.`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Pipe this command's stdout to another command's stdin
    *
    * Creates a pipeline where this command's stdout becomes the next
@@ -157,7 +176,7 @@ export class Command {
       stdin: hasStdin ? "piped" : undefined,
     });
 
-    const process = command.spawn();
+    const process = this.spawnProcess(command);
     const decoder = new TextDecoder();
 
     // Write stdin, read outputs, and wait for status concurrently
@@ -247,7 +266,7 @@ export class Command {
       stdin: hasStdin ? "piped" : undefined,
     });
 
-    const process = command.spawn();
+    const process = this.spawnProcess(command);
 
     // Start writing stdin in background (don't await yet)
     let stdinPromise: Promise<void> | undefined;
@@ -307,7 +326,7 @@ export class Command {
           stdin: hasStdin ? "piped" : undefined,
         });
 
-        const process = command.spawn();
+        const process = self.spawnProcess(command);
         const decoder = new TextDecoder();
 
         // Start writing stdin in background
@@ -385,7 +404,7 @@ export class Command {
           stdin: hasStdin ? "piped" : undefined,
         });
 
-        const process = command.spawn();
+        const process = self.spawnProcess(command);
         const decoder = new TextDecoder();
 
         // Start writing stdin in background
