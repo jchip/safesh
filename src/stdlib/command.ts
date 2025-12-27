@@ -687,3 +687,120 @@ export function bytes(content: Uint8Array): Command {
   // Use 'cat' as a pass-through with stdin
   return new Command("cat", [], { stdin: content });
 }
+
+/**
+ * Transform type for stream operations
+ */
+type Transform<T, U> = (stream: AsyncIterable<T>) => AsyncIterable<U>;
+
+/**
+ * Create a transform that pipes stream content to a command
+ *
+ * Collects all items from the stream, joins them with newlines,
+ * and passes them as stdin to the specified command.
+ * Yields the command's stdout as output.
+ *
+ * @param command - Command to pipe to
+ * @param args - Command arguments
+ * @param options - Command options
+ * @returns Transform that pipes stream to command
+ *
+ * @example
+ * ```ts
+ * // Filter and sort with external command
+ * await cat("input.txt")
+ *   .pipe(lines())
+ *   .pipe(grep(/pattern/))
+ *   .pipe(toCmd("sort"))
+ *   .first();
+ *
+ * // Process stream through external tool
+ * await glob("*.json")
+ *   .pipe(map(f => f.contents))
+ *   .pipe(toCmd("jq", [".name"]))
+ *   .collect();
+ * ```
+ */
+export function toCmd(
+  command: string,
+  args: string[] = [],
+  options?: CommandOptions,
+): Transform<string, string> {
+  return async function* (stream: AsyncIterable<string>) {
+    // Collect all items from stream
+    const items: string[] = [];
+    for await (const item of stream) {
+      items.push(item);
+    }
+
+    // Join with newlines and pass as stdin
+    const input = items.join("\n");
+    const result = await cmd(command, args, {
+      ...options,
+      stdin: input,
+    }).exec();
+
+    if (!result.success) {
+      throw new Error(
+        `toCmd failed: ${command} exited with code ${result.code}`,
+      );
+    }
+
+    // Yield stdout
+    yield result.stdout;
+  };
+}
+
+/**
+ * Create a transform that pipes stream content to a command and yields lines
+ *
+ * Like toCmd, but splits the command's stdout into lines and yields each line.
+ *
+ * @param command - Command to pipe to
+ * @param args - Command arguments
+ * @param options - Command options
+ * @returns Transform that pipes stream to command and yields lines
+ *
+ * @example
+ * ```ts
+ * // Sort lines through external sort
+ * const sorted = await cat("input.txt")
+ *   .pipe(lines())
+ *   .pipe(toCmdLines("sort", ["-r"]))
+ *   .collect();
+ * ```
+ */
+export function toCmdLines(
+  command: string,
+  args: string[] = [],
+  options?: CommandOptions,
+): Transform<string, string> {
+  return async function* (stream: AsyncIterable<string>) {
+    // Collect all items from stream
+    const items: string[] = [];
+    for await (const item of stream) {
+      items.push(item);
+    }
+
+    // Join with newlines and pass as stdin
+    const input = items.join("\n");
+    const result = await cmd(command, args, {
+      ...options,
+      stdin: input,
+    }).exec();
+
+    if (!result.success) {
+      throw new Error(
+        `toCmdLines failed: ${command} exited with code ${result.code}`,
+      );
+    }
+
+    // Yield each line from stdout
+    const outputLines = result.stdout.split("\n");
+    for (const line of outputLines) {
+      if (line.length > 0) {
+        yield line;
+      }
+    }
+  };
+}
