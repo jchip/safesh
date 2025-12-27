@@ -307,3 +307,94 @@ Deno.test("integration - process both stdout and stderr", async () => {
   assert(stderrLines.join("").includes("err1"));
   assert(stderrLines.join("").includes("err2"));
 });
+
+// ==================== stdin tests ====================
+
+Deno.test("cmd() - stdin with string", async () => {
+  const result = await cmd("cat", [], { stdin: "hello world" }).exec();
+
+  assertEquals(result.stdout, "hello world");
+  assertEquals(result.success, true);
+});
+
+Deno.test("cmd() - stdin with multi-line string (heredoc style)", async () => {
+  const result = await cmd("sort", [], {
+    stdin: `cherry
+apple
+banana`,
+  }).exec();
+
+  assertEquals(result.stdout, "apple\nbanana\ncherry\n");
+  assertEquals(result.success, true);
+});
+
+Deno.test("cmd() - stdin with Uint8Array", async () => {
+  const data = new TextEncoder().encode("binary data");
+  const result = await cmd("cat", [], { stdin: data }).exec();
+
+  assertEquals(result.stdout, "binary data");
+  assertEquals(result.success, true);
+});
+
+Deno.test("cmd() - stdin with ReadableStream", async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("stream "));
+      controller.enqueue(new TextEncoder().encode("data"));
+      controller.close();
+    },
+  });
+
+  const result = await cmd("cat", [], { stdin: stream }).exec();
+
+  assertEquals(result.stdout, "stream data");
+  assertEquals(result.success, true);
+});
+
+Deno.test("cmd() - stdin with stream() method", async () => {
+  const chunks: StreamChunk[] = [];
+
+  for await (const chunk of cmd("cat", [], { stdin: "test input" }).stream()) {
+    chunks.push(chunk);
+  }
+
+  const stdout = chunks
+    .filter((c) => c.type === "stdout")
+    .map((c) => c.data)
+    .join("");
+  assertEquals(stdout, "test input");
+
+  const exitChunk = chunks.find((c) => c.type === "exit");
+  assertEquals(exitChunk?.code, 0);
+});
+
+Deno.test("cmd() - stdin with stdout() method", async () => {
+  const result = await cmd("cat", [], { stdin: "piped data" })
+    .stdout()
+    .collect();
+
+  assertEquals(result.join(""), "piped data");
+});
+
+Deno.test("cmd() - stdin piped through sort (practical example)", async () => {
+  const result = await cmd("sort", [], {
+    stdin: "z\na\nm\n",
+  })
+    .stdout()
+    .pipe(lines())
+    .collect();
+
+  assertEquals(result, ["a", "m", "z"]);
+});
+
+Deno.test("cmd() - stdin with large data (no deadlock)", async () => {
+  // Generate 100KB of data to verify no deadlock
+  const largeData = "x".repeat(100 * 1024);
+
+  const result = await cmd("wc", ["-c"], { stdin: largeData }).exec();
+
+  // wc -c should report the byte count
+  const count = parseInt(result.stdout.trim(), 10);
+  assertEquals(count, 100 * 1024);
+  assertEquals(result.success, true);
+});

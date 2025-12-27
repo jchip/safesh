@@ -44,6 +44,9 @@ export async function runExternal(
   // Build environment variables
   const processEnv = buildEnv(config, shell, options.env);
 
+  // Check if stdin is provided
+  const hasStdin = options.stdin !== undefined;
+
   // Create Deno command
   const cmd = new Deno.Command(command, {
     args,
@@ -52,19 +55,31 @@ export async function runExternal(
     clearEnv: true, // Don't inherit parent environment
     stdout: "piped",
     stderr: "piped",
+    stdin: hasStdin ? "piped" : undefined,
   });
 
   // Spawn process
   const process = cmd.spawn();
 
   try {
-    // Create a promise that collects output
+    // Create a promise that collects output (and writes stdin if provided)
     const outputPromise = (async () => {
-      const [status, stdout, stderr] = await Promise.all([
+      const promises: Promise<unknown>[] = [
         process.status,
         collectStream(process.stdout),
         collectStream(process.stderr),
-      ]);
+      ];
+
+      // Write stdin concurrently to avoid deadlock
+      if (hasStdin && process.stdin) {
+        promises.push(writeStdin(process.stdin, options.stdin!));
+      }
+
+      const [status, stdout, stderr] = (await Promise.all(promises)) as [
+        Deno.CommandStatus,
+        string,
+        string,
+      ];
       return { status, stdout, stderr };
     })();
 
@@ -95,6 +110,13 @@ export async function runExternal(
       await process.stderr.cancel();
     } catch {
       // Stream may already be closed
+    }
+    if (hasStdin) {
+      try {
+        await process.stdin.close();
+      } catch {
+        // Stream may already be closed
+      }
     }
 
     // Handle timeout errors
@@ -130,6 +152,28 @@ async function collectStream(stream: ReadableStream<Uint8Array>): Promise<string
   }
 
   return new TextDecoder().decode(result);
+}
+
+/**
+ * Write data to stdin and close it
+ */
+async function writeStdin(
+  stdin: WritableStream<Uint8Array>,
+  data: string | Uint8Array | ReadableStream<Uint8Array>,
+): Promise<void> {
+  if (data instanceof ReadableStream) {
+    // Pipe the readable stream to stdin
+    await data.pipeTo(stdin);
+  } else {
+    const writer = stdin.getWriter();
+    try {
+      const bytes =
+        typeof data === "string" ? new TextEncoder().encode(data) : data;
+      await writer.write(bytes);
+    } finally {
+      await writer.close();
+    }
+  }
 }
 
 /**

@@ -187,6 +187,9 @@ export interface ExecResult {
 export interface RunOptions extends ExecOptions {
   /** Additional environment variables */
   env?: Record<string, string>;
+
+  /** Standard input data to write to the command */
+  stdin?: string | Uint8Array | ReadableStream<Uint8Array>;
 }
 
 export interface StreamChunk {
