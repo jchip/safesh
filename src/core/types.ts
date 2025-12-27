@@ -178,6 +178,8 @@ export interface ExecResult {
   code: number;
   /** Whether execution succeeded (code === 0) */
   success: boolean;
+  /** Job ID if tracked in a session */
+  jobId?: string;
 }
 
 export interface RunOptions extends ExecOptions {
