@@ -52,6 +52,9 @@ function buildPreamble(shell?: Shell): string {
     `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
     `import { cmd, git, docker, deno } from 'file://${stdlibPath}command.ts';`,
     "",
+    "// Import shelljs-like commands",
+    `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
+    "",
   ];
 
   if (shell) {
@@ -127,8 +130,19 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   }
 
   // Run permissions (for external commands)
+  // Filter to only commands that exist to avoid Deno warnings
   if (perms.run?.length) {
-    flags.push(`--allow-run=${perms.run.join(",")}`);
+    const existingCommands = perms.run.filter((cmd) => {
+      try {
+        const result = new Deno.Command("which", { args: [cmd], stderr: "null", stdout: "null" }).outputSync();
+        return result.success;
+      } catch {
+        return false;
+      }
+    });
+    if (existingCommands.length) {
+      flags.push(`--allow-run=${existingCommands.join(",")}`);
+    }
   }
 
   // Env permissions
