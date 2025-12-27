@@ -9,7 +9,9 @@ import { ensureDir } from "@std/fs";
 import { deadline } from "@std/async";
 import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
-import type { ExecOptions, ExecResult, SafeShellConfig, Session } from "../core/types.ts";
+import type { ExecOptions, ExecResult, SafeShellConfig, Session, Job } from "../core/types.ts";
+import { JOB_OUTPUT_LIMIT } from "../core/types.ts";
+import { createJob, truncateOutput } from "./jobs.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
@@ -183,6 +185,9 @@ function buildEnv(
 
 /**
  * Execute JS/TS code in a sandboxed Deno subprocess
+ *
+ * When an explicit session is provided, automatically creates a job record
+ * for tracking execution history.
  */
 export async function executeCode(
   code: string,
@@ -196,6 +201,14 @@ export async function executeCode(
   // Validate imports against security policy
   const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
   validateImports(code, importPolicy);
+
+  // Create job for tracking if session provided
+  let job: Job | undefined;
+  if (session) {
+    job = createJob(session, code, false, 0);
+    session.jobs.set(job.id, job);
+    session.lastActivityAt = new Date();
+  }
 
   // Ensure temp directory exists
   await ensureDir(TEMP_DIR);
@@ -243,6 +256,12 @@ export async function executeCode(
   // Spawn process so we can kill it on timeout
   const process = command.spawn();
 
+  // Update job with PID
+  if (job) {
+    job.pid = process.pid;
+    session!.jobsByPid.set(process.pid, job.id);
+  }
+
   try {
     // Create a promise that collects output
     const outputPromise = (async () => {
@@ -256,11 +275,27 @@ export async function executeCode(
 
     const { status, stdout, stderr } = await deadline(outputPromise, timeoutMs);
 
+    // Update job with results
+    if (job) {
+      const stdoutResult = truncateOutput(stdout);
+      const stderrResult = truncateOutput(stderr);
+
+      job.status = status.code === 0 ? "completed" : "failed";
+      job.exitCode = status.code;
+      job.stdout = stdoutResult.text;
+      job.stderr = stderrResult.text;
+      job.stdoutTruncated = stdoutResult.truncated;
+      job.stderrTruncated = stderrResult.truncated;
+      job.completedAt = new Date();
+      job.duration = job.completedAt.getTime() - job.startedAt.getTime();
+    }
+
     return {
       stdout,
       stderr,
       code: status.code,
       success: status.code === 0,
+      jobId: job?.id,
     };
   } catch (error) {
     // Kill the process and cancel streams on timeout or error
@@ -280,6 +315,17 @@ export async function executeCode(
       await process.stderr.cancel();
     } catch {
       // Stream may already be closed
+    }
+
+    // Update job with failure
+    if (job) {
+      job.status = "failed";
+      job.completedAt = new Date();
+      job.duration = job.completedAt.getTime() - job.startedAt.getTime();
+      if (error instanceof DOMException && error.name === "TimeoutError") {
+        job.stderr = `Execution timed out after ${timeoutMs}ms`;
+        job.stderrTruncated = false;
+      }
     }
 
     if (error instanceof DOMException && error.name === "TimeoutError") {
