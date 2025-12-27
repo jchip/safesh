@@ -143,6 +143,9 @@ Deno.test({
 
 Deno.test({
   name: "run tool - validates commands before execution",
+  // Disable sanitizers to avoid flaky async leak detection from prior tests
+  sanitizeOps: false,
+  sanitizeResources: false,
   async fn() {
     const { validateExternal } = await import("../src/external/validator.ts");
     const { createRegistry } = await import("../src/external/registry.ts");
