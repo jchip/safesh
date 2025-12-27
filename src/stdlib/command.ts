@@ -631,3 +631,59 @@ export function git(...args: unknown[]): Command {
     return new Command("git", args as string[], {});
   }
 }
+
+/**
+ * Create a data source for piping text to commands (heredoc equivalent)
+ *
+ * Returns a Command-like object that can be piped to other commands.
+ * The text becomes stdin for the first command in the pipeline.
+ *
+ * @param content - Text content (string or template literal)
+ * @returns Command that can be piped
+ *
+ * @example
+ * ```ts
+ * // Heredoc-style: sort lines
+ * const result = await str(`cherry
+ * apple
+ * banana`).pipe("sort").exec();
+ *
+ * // With variable interpolation
+ * const name = "world";
+ * const result = await str(`Hello ${name}`).pipe("cat").exec();
+ *
+ * // Multi-stage pipeline
+ * const result = await str(`line1
+ * line2
+ * line3`).pipe("grep", ["line2"]).pipe("wc", ["-l"]).exec();
+ * ```
+ */
+export function str(content: string): Command {
+  // Use 'cat' as a pass-through with stdin
+  return new Command("cat", [], { stdin: content });
+}
+
+/**
+ * Create a data source for piping binary data to commands
+ *
+ * Returns a Command-like object that can be piped to other commands.
+ * The data becomes stdin for the first command in the pipeline.
+ *
+ * @param content - Binary data (Uint8Array)
+ * @returns Command that can be piped
+ *
+ * @example
+ * ```ts
+ * // Pipe binary data
+ * const raw = new TextEncoder().encode("hello");
+ * const result = await bytes(raw).pipe("xxd").exec();
+ *
+ * // Read file and process
+ * const content = await Deno.readFile("image.png");
+ * const result = await bytes(content).pipe("file", ["-"]).exec();
+ * ```
+ */
+export function bytes(content: Uint8Array): Command {
+  // Use 'cat' as a pass-through with stdin
+  return new Command("cat", [], { stdin: content });
+}
