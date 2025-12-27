@@ -409,16 +409,17 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             { cwd, env: parsed.env },
           );
 
-          // Merge additional env vars
-          const sessionEnv = parsed.env
-            ? { ...session.env, ...parsed.env }
-            : session.env;
-
-          const execSession: Session = { ...session, env: sessionEnv };
+          // Merge additional env vars into the actual session temporarily
+          const originalEnv = session.env;
+          if (parsed.env) {
+            session.env = { ...session.env, ...parsed.env };
+          }
 
           // Background execution: launch job and return immediately
           if (parsed.background) {
-            const job = await launchCodeJob(parsed.code, config, execSession);
+            const job = await launchCodeJob(parsed.code, config, session);
+            // Restore original env
+            session.env = originalEnv;
 
             return {
               content: [
@@ -440,12 +441,15 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             parsed.code,
             config,
             { timeout: parsed.timeout, cwd: session.cwd },
-            execSession,
+            session,
           );
 
+          // Restore original env
+          session.env = originalEnv;
+
           // Update session vars if not temporary
-          if (!isTemporary && result.success && execSession.vars) {
-            sessionManager.update(session.id, { vars: execSession.vars });
+          if (!isTemporary && result.success && session.vars) {
+            sessionManager.update(session.id, { vars: session.vars });
           }
 
           return {
