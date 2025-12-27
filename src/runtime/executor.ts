@@ -16,6 +16,36 @@ import { createJob, truncateOutput } from "./jobs.ts";
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
 
+// Cache for existing commands (checked once per unique command list)
+const existingCommandsCache = new Map<string, string[]>();
+
+/**
+ * Filter commands to only those that exist on the system (cached)
+ */
+function filterExistingCommands(commands: string[]): string[] {
+  const cacheKey = commands.sort().join(",");
+
+  if (existingCommandsCache.has(cacheKey)) {
+    return existingCommandsCache.get(cacheKey)!;
+  }
+
+  const existing = commands.filter((cmd) => {
+    try {
+      const result = new Deno.Command("which", {
+        args: [cmd],
+        stderr: "null",
+        stdout: "null"
+      }).outputSync();
+      return result.success;
+    } catch {
+      return false;
+    }
+  });
+
+  existingCommandsCache.set(cacheKey, existing);
+  return existing;
+}
+
 /**
  * Hash code to create a cache key
  */
@@ -130,16 +160,9 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   }
 
   // Run permissions (for external commands)
-  // Filter to only commands that exist to avoid Deno warnings
+  // Filter to only commands that exist to avoid Deno warnings (cached)
   if (perms.run?.length) {
-    const existingCommands = perms.run.filter((cmd) => {
-      try {
-        const result = new Deno.Command("which", { args: [cmd], stderr: "null", stdout: "null" }).outputSync();
-        return result.success;
-      } catch {
-        return false;
-      }
-    });
+    const existingCommands = filterExistingCommands(perms.run);
     if (existingCommands.length) {
       flags.push(`--allow-run=${existingCommands.join(",")}`);
     }
