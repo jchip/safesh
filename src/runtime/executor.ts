@@ -9,7 +9,7 @@ import { ensureDir } from "@std/fs";
 import { deadline } from "@std/async";
 import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
-import type { ExecOptions, ExecResult, SafeShellConfig, Session, Job } from "../core/types.ts";
+import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Job } from "../core/types.ts";
 import { JOB_OUTPUT_LIMIT } from "../core/types.ts";
 import { createJob, truncateOutput } from "./jobs.ts";
 
@@ -30,11 +30,11 @@ async function hashCode(code: string): Promise<string> {
  * Build the preamble that gets prepended to user code
  *
  * The preamble injects:
- * - Session context as $session
+ * - Shell context as $shell
  * - Standard library (fs, text, $)
  * - Streaming shell API (cat, glob, git, lines, grep, map, filter, etc.)
  */
-function buildPreamble(session?: Session): string {
+function buildPreamble(shell?: Shell): string {
   // Get absolute path to stdlib directory
   const stdlibPath = new URL("../stdlib/", import.meta.url).pathname;
 
@@ -54,14 +54,14 @@ function buildPreamble(session?: Session): string {
     "",
   ];
 
-  if (session) {
+  if (shell) {
     lines.push(
-      "// Session context available as $session",
-      `const $session = ${JSON.stringify({
-        id: session.id,
-        cwd: session.cwd,
-        env: session.env,
-        vars: session.vars,
+      "// Shell context available as $shell",
+      `const $shell = ${JSON.stringify({
+        id: shell.id,
+        cwd: shell.cwd,
+        env: shell.env,
+        vars: shell.vars,
       })};`,
       "",
     );
@@ -144,7 +144,7 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
  */
 function buildEnv(
   config: SafeShellConfig,
-  session?: Session,
+  shell?: Shell,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   const envConfig = config.env ?? {};
@@ -171,9 +171,9 @@ function buildEnv(
     }
   }
 
-  // Merge session env vars (they override)
-  if (session?.env) {
-    for (const [key, value] of Object.entries(session.env)) {
+  // Merge shell env vars (they override)
+  if (shell?.env) {
+    for (const [key, value] of Object.entries(shell.env)) {
       if (!isMasked(key)) {
         result[key] = value;
       }
@@ -186,28 +186,28 @@ function buildEnv(
 /**
  * Execute JS/TS code in a sandboxed Deno subprocess
  *
- * When an explicit session is provided, automatically creates a job record
+ * When an explicit shell is provided, automatically creates a job record
  * for tracking execution history.
  */
 export async function executeCode(
   code: string,
   config: SafeShellConfig,
   options: ExecOptions = {},
-  session?: Session,
+  shell?: Shell,
 ): Promise<ExecResult> {
-  const cwd = options.cwd ?? session?.cwd ?? Deno.cwd();
+  const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
   const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT;
 
   // Validate imports against security policy
   const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
   validateImports(code, importPolicy);
 
-  // Create job for tracking if session provided
+  // Create job for tracking if shell provided
   let job: Job | undefined;
-  if (session) {
-    job = createJob(session, code, false, 0);
-    session.jobs.set(job.id, job);
-    session.lastActivityAt = new Date();
+  if (shell) {
+    job = createJob(shell, code, false, 0);
+    shell.jobs.set(job.id, job);
+    shell.lastActivityAt = new Date();
   }
 
   // Ensure temp directory exists
@@ -218,7 +218,7 @@ export async function executeCode(
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
   // Build full code with preamble
-  const preamble = buildPreamble(session);
+  const preamble = buildPreamble(shell);
   const fullCode = preamble + code;
 
   // Write script to temp file
@@ -248,7 +248,7 @@ export async function executeCode(
   const command = new Deno.Command("deno", {
     args,
     cwd,
-    env: buildEnv(config, session),
+    env: buildEnv(config, shell),
     stdout: "piped",
     stderr: "piped",
   });
@@ -259,7 +259,7 @@ export async function executeCode(
   // Update job with PID
   if (job) {
     job.pid = process.pid;
-    session!.jobsByPid.set(process.pid, job.id);
+    shell!.jobsByPid.set(process.pid, job.id);
   }
 
   try {
@@ -393,9 +393,9 @@ export async function executeFile(
   filePath: string,
   config: SafeShellConfig,
   options: ExecOptions = {},
-  session?: Session,
+  shell?: Shell,
 ): Promise<ExecResult> {
-  const cwd = options.cwd ?? session?.cwd ?? Deno.cwd();
+  const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
   const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT;
 
   // Resolve file path - if already absolute, use as-is, otherwise resolve from cwd
@@ -438,7 +438,7 @@ export async function executeFile(
   const command = new Deno.Command("deno", {
     args,
     cwd,
-    env: buildEnv(config, session),
+    env: buildEnv(config, shell),
     stdout: "piped",
     stderr: "piped",
   });
@@ -501,9 +501,9 @@ export async function* executeCodeStreaming(
   code: string,
   config: SafeShellConfig,
   options: ExecOptions = {},
-  session?: Session,
+  shell?: Shell,
 ): AsyncGenerator<{ type: "stdout" | "stderr" | "exit"; data?: string; code?: number }> {
-  const cwd = options.cwd ?? session?.cwd ?? Deno.cwd();
+  const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
 
   // Validate imports against security policy
   const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
@@ -517,7 +517,7 @@ export async function* executeCodeStreaming(
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
   // Build full code with preamble
-  const preamble = buildPreamble(session);
+  const preamble = buildPreamble(shell);
   const fullCode = preamble + code;
 
   // Write script to temp file
@@ -547,7 +547,7 @@ export async function* executeCodeStreaming(
   const command = new Deno.Command("deno", {
     args,
     cwd,
-    env: buildEnv(config, session),
+    env: buildEnv(config, shell),
     stdout: "piped",
     stderr: "piped",
   });

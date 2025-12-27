@@ -11,7 +11,7 @@
 
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
-import type { Job, SafeShellConfig, Session } from "../core/types.ts";
+import type { Job, SafeShellConfig, Shell } from "../core/types.ts";
 import { JOB_OUTPUT_LIMIT } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { executionError } from "../core/errors.ts";
@@ -32,24 +32,24 @@ export function truncateOutput(
 }
 
 /**
- * Generate a new job ID for a session
+ * Generate a new job ID for a shell
  */
-export function generateJobId(session: Session): string {
-  const seq = session.jobSequence++;
-  return `job-${session.id}-${seq}`;
+export function generateJobId(shell: Shell): string {
+  const seq = shell.jobSequence++;
+  return `job-${shell.id}-${seq}`;
 }
 
 /**
  * Create a new job record
  */
 export function createJob(
-  session: Session,
+  shell: Shell,
   code: string,
   background: boolean,
   pid: number = 0,
 ): Job {
   return {
-    id: generateJobId(session),
+    id: generateJobId(shell),
     code,
     pid,
     status: "running",
@@ -68,7 +68,7 @@ export function createJob(
 export async function launchCodeJob(
   code: string,
   config: SafeShellConfig,
-  session: Session,
+  shell: Shell,
 ): Promise<Job> {
   // Ensure temp directory exists
   await ensureDir(TEMP_DIR);
@@ -78,15 +78,15 @@ export async function launchCodeJob(
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
   // Build full code with preamble
-  const preamble = buildPreamble(session);
+  const preamble = buildPreamble(shell);
   const fullCode = preamble + code;
 
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
 
   // Build command
-  const permFlags = buildPermissionFlags(config, session.cwd);
-  const configPath = await findConfig(session.cwd);
+  const permFlags = buildPermissionFlags(config, shell.cwd);
+  const configPath = await findConfig(shell.cwd);
 
   const args = [
     "run",
@@ -103,8 +103,8 @@ export async function launchCodeJob(
   // Create command
   const command = new Deno.Command("deno", {
     args,
-    cwd: session.cwd,
-    env: buildEnv(config, session),
+    cwd: shell.cwd,
+    env: buildEnv(config, shell),
     stdout: "piped",
     stderr: "piped",
   });
@@ -113,12 +113,12 @@ export async function launchCodeJob(
   const process = command.spawn();
 
   // Create job with new structure
-  const job = createJob(session, code, true, process.pid);
+  const job = createJob(shell, code, true, process.pid);
   job.process = process;
 
-  // Add to session maps
-  session.jobs.set(job.id, job);
-  session.jobsByPid.set(job.pid, job.id);
+  // Add to shell maps
+  shell.jobs.set(job.id, job);
+  shell.jobsByPid.set(job.pid, job.id);
 
   // Start collecting output in background
   collectJobOutput(job);
@@ -133,15 +133,15 @@ export async function launchCommandJob(
   command: string,
   args: string[],
   config: SafeShellConfig,
-  session: Session,
+  shell: Shell,
 ): Promise<Job> {
   // Build environment
-  const processEnv = buildEnv(config, session);
+  const processEnv = buildEnv(config, shell);
 
   // Create command
   const cmd = new Deno.Command(command, {
     args,
-    cwd: session.cwd,
+    cwd: shell.cwd,
     env: processEnv,
     stdout: "piped",
     stderr: "piped",
@@ -152,12 +152,12 @@ export async function launchCommandJob(
 
   // Create job with command as code
   const code = `${command} ${args.join(" ")}`;
-  const job = createJob(session, code, true, process.pid);
+  const job = createJob(shell, code, true, process.pid);
   job.process = process;
 
-  // Add to session maps
-  session.jobs.set(job.id, job);
-  session.jobsByPid.set(job.pid, job.id);
+  // Add to shell maps
+  shell.jobs.set(job.id, job);
+  shell.jobsByPid.set(job.pid, job.id);
 
   // Start collecting output in background
   collectJobOutput(job);
@@ -379,7 +379,7 @@ async function hashCode(code: string): Promise<string> {
 /**
  * Helper: Build preamble for code execution
  */
-function buildPreamble(session: Session): string {
+function buildPreamble(shell: Shell): string {
   const lines: string[] = [
     "// SafeShell auto-generated preamble",
     'import * as fs from "safesh:fs";',
@@ -388,12 +388,12 @@ function buildPreamble(session: Session): string {
   ];
 
   lines.push("");
-  lines.push("// Session context");
+  lines.push("// Shell context");
   lines.push(`const $session = ${JSON.stringify({
-    id: session.id,
-    cwd: session.cwd,
-    env: session.env,
-    vars: session.vars,
+    id: shell.id,
+    cwd: shell.cwd,
+    env: shell.env,
+    vars: shell.vars,
   })};`);
 
   lines.push("");
@@ -408,7 +408,7 @@ function buildPreamble(session: Session): string {
  */
 function buildEnv(
   config: SafeShellConfig,
-  session: Session,
+  shell: Shell,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   const envConfig = config.env ?? {};
@@ -435,9 +435,9 @@ function buildEnv(
     }
   }
 
-  // Merge session env vars (they override)
-  if (session.env) {
-    for (const [key, value] of Object.entries(session.env)) {
+  // Merge shell env vars (they override)
+  if (shell.env) {
+    for (const [key, value] of Object.entries(shell.env)) {
       if (!isMasked(key)) {
         result[key] = value;
       }

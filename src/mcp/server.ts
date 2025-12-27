@@ -3,10 +3,10 @@
  *
  * Exposes SafeShell capabilities as MCP tools:
  * - exec: Execute JS/TS code in sandboxed Deno runtime with streaming shell API
- * - startSession: Create a new persistent session
- * - endSession: Destroy a session
- * - updateSession: Modify session state (cwd, env)
- * - listSessions: List active sessions
+ * - startShell: Create a new persistent shell
+ * - endShell: Destroy a shell
+ * - updateShell: Modify shell state (cwd, env)
+ * - listShells: List active shells
  * - bg, jobs, jobOutput, kill, fg: Background job management
  * - task: Execute configured tasks
  */
@@ -19,12 +19,12 @@ import {
 } from "@mcp/sdk/types.js";
 import { z } from "zod";
 import { executeCode } from "../runtime/executor.ts";
-import { createSessionManager, type SessionManager } from "../runtime/session.ts";
+import { createShellManager, type ShellManager } from "../runtime/shell.ts";
 import { loadConfig } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
 import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
-import type { SafeShellConfig, Session } from "../core/types.ts";
+import type { SafeShellConfig, Shell } from "../core/types.ts";
 import {
   launchCodeJob,
   launchCommandJob,
@@ -37,32 +37,32 @@ import { runTask, listTasks } from "../runner/tasks.ts";
 // Tool schemas
 const ExecSchema = z.object({
   code: z.string().describe("JavaScript/TypeScript code to execute"),
-  sessionId: z.string().optional().describe("Session ID to use"),
+  shellId: z.string().optional().describe("Shell ID to use"),
   background: z.boolean().optional().describe("Run in background (async), returns { jobId, pid }"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
 });
 
-const StartSessionSchema = z.object({
+const StartShellSchema = z.object({
   cwd: z.string().optional().describe("Initial working directory"),
   env: z.record(z.string()).optional().describe("Initial environment variables"),
 });
 
-const UpdateSessionSchema = z.object({
-  sessionId: z.string().describe("Session ID to update"),
+const UpdateShellSchema = z.object({
+  shellId: z.string().describe("Shell ID to update"),
   cwd: z.string().optional().describe("New working directory"),
   env: z.record(z.string()).optional().describe("Environment variables to set/update"),
 });
 
-const EndSessionSchema = z.object({
-  sessionId: z.string().describe("Session ID to end"),
+const EndShellSchema = z.object({
+  shellId: z.string().describe("Shell ID to end"),
 });
 
 // REMOVED: BgSchema (SSH-64) - Use exec with background:true instead
 
 // New job management schemas (SSH-61/62)
 const ListJobsSchema = z.object({
-  sessionId: z.string().describe("Session ID to list jobs from"),
+  shellId: z.string().describe("Shell ID to list jobs from"),
   filter: z.object({
     status: z.enum(["running", "completed", "failed"]).optional(),
     background: z.boolean().optional(),
@@ -71,29 +71,29 @@ const ListJobsSchema = z.object({
 });
 
 const GetJobOutputSchema = z.object({
-  sessionId: z.string().describe("Session ID"),
+  shellId: z.string().describe("Shell ID"),
   jobId: z.string().describe("Job ID"),
   since: z.number().optional().describe("Byte offset to start from"),
 });
 
 const KillJobSchema = z.object({
-  sessionId: z.string().describe("Session ID"),
+  shellId: z.string().describe("Shell ID"),
   jobId: z.string().describe("Job ID to kill"),
   signal: z.string().optional().describe("Signal to send (default: SIGTERM)"),
 });
 
 const WaitJobSchema = z.object({
-  sessionId: z.string().describe("Session ID"),
+  shellId: z.string().describe("Shell ID"),
   jobId: z.string().describe("Job ID to wait for"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
 });
 
 // REMOVED: JobsSchema, JobOutputSchema, KillSchema, FgSchema (SSH-64)
-// Legacy tools replaced by session-based versions
+// Legacy tools replaced by shell-based versions
 
 const TaskSchema = z.object({
   name: z.string().describe("Task name from config"),
-  sessionId: z.string().optional().describe("Session ID for persistent state"),
+  shellId: z.string().optional().describe("Shell ID for persistent state"),
 });
 
 /**
@@ -113,7 +113,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
   );
 
   const registry = createRegistry(config);
-  const sessionManager = createSessionManager(cwd);
+  const shellManager = createShellManager(cwd);
 
   // Build permission summary for tool descriptions
   const perms = config.permissions ?? {};
@@ -132,7 +132,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           name: "exec",
           description:
             "Execute JavaScript/TypeScript code in a sandboxed Deno runtime - MCPU usage: infoc\n\n" +
-            "Use sessionId for persistent state between calls. " +
+            "Use shellId for persistent state between calls. " +
             "Set background: true to run asynchronously (returns { jobId, pid }).\n" +
             (permSummary ? `Permissions: ${permSummary}` : "No permissions configured.") +
             "\n\nIMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.\n" +
@@ -155,9 +155,9 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 description: "JavaScript/TypeScript code to execute. " +
                   "Example streaming: await cat('file.txt').pipe(lines()).pipe(grep(/ERROR/)).collect()",
               },
-              sessionId: {
+              shellId: {
                 type: "string",
-                description: "Session ID for persistent state (env, cwd, vars). Required for background jobs.",
+                description: "Shell ID for persistent state (env, cwd, vars). Required for background jobs.",
               },
               background: {
                 type: "boolean",
@@ -177,11 +177,11 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           },
         },
         {
-          name: "startSession",
+          name: "startShell",
           description:
-            "Create a new session for persistent state between exec calls. " +
-            "Sessions maintain: cwd (working directory), env (environment variables), " +
-            "and vars (persisted JS variables accessible via $session).",
+            "Create a new shell for persistent state between exec calls. " +
+            "Shells maintain: cwd (working directory), env (environment variables), " +
+            "and vars (persisted JS variables accessible via $shell).",
           inputSchema: {
             type: "object",
             properties: {
@@ -198,15 +198,15 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           },
         },
         {
-          name: "updateSession",
+          name: "updateShell",
           description:
-            "Update session state: change working directory or set environment variables.",
+            "Update shell state: change working directory or set environment variables.",
           inputSchema: {
             type: "object",
             properties: {
-              sessionId: {
+              shellId: {
                 type: "string",
-                description: "Session ID to update",
+                description: "Shell ID to update",
               },
               cwd: {
                 type: "string",
@@ -218,28 +218,28 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 description: "Environment variables to set/update (merged with existing)",
               },
             },
-            required: ["sessionId"],
+            required: ["shellId"],
           },
         },
         {
-          name: "endSession",
+          name: "endShell",
           description:
-            "End a session and clean up resources. Stops any background jobs.",
+            "End a shell and clean up resources. Stops any background jobs.",
           inputSchema: {
             type: "object",
             properties: {
-              sessionId: {
+              shellId: {
                 type: "string",
-                description: "Session ID to end",
+                description: "Shell ID to end",
               },
             },
-            required: ["sessionId"],
+            required: ["shellId"],
           },
         },
         {
-          name: "listSessions",
+          name: "listShells",
           description:
-            "List all active sessions with their current state.",
+            "List all active shells with their current state.",
           inputSchema: {
             type: "object",
             properties: {},
@@ -261,9 +261,9 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 type: "string",
                 description: "Task name from config.tasks",
               },
-              sessionId: {
+              shellId: {
                 type: "string",
-                description: "Session ID for persistent state and cwd/env context",
+                description: "Shell ID for persistent state and cwd/env context",
               },
             },
             required: ["name"],
@@ -273,14 +273,14 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         {
           name: "listJobs",
           description:
-            "List jobs in a session with optional filtering. " +
+            "List jobs in a shell with optional filtering. " +
             "Returns jobs sorted by start time (newest first).",
           inputSchema: {
             type: "object",
             properties: {
-              sessionId: {
+              shellId: {
                 type: "string",
-                description: "Session ID to list jobs from",
+                description: "Shell ID to list jobs from",
               },
               filter: {
                 type: "object",
@@ -302,7 +302,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 description: "Optional filter criteria",
               },
             },
-            required: ["sessionId"],
+            required: ["shellId"],
           },
         },
         {
@@ -313,9 +313,9 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           inputSchema: {
             type: "object",
             properties: {
-              sessionId: {
+              shellId: {
                 type: "string",
-                description: "Session ID containing the job",
+                description: "Shell ID containing the job",
               },
               jobId: {
                 type: "string",
@@ -326,7 +326,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 description: "Byte offset to start reading from (for incremental reads)",
               },
             },
-            required: ["sessionId", "jobId"],
+            required: ["shellId", "jobId"],
           },
         },
         {
@@ -337,9 +337,9 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           inputSchema: {
             type: "object",
             properties: {
-              sessionId: {
+              shellId: {
                 type: "string",
-                description: "Session ID containing the job",
+                description: "Shell ID containing the job",
               },
               jobId: {
                 type: "string",
@@ -350,7 +350,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 description: "Signal to send (SIGTERM, SIGKILL, etc.)",
               },
             },
-            required: ["sessionId", "jobId"],
+            required: ["shellId", "jobId"],
           },
         },
         {
@@ -361,9 +361,9 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           inputSchema: {
             type: "object",
             properties: {
-              sessionId: {
+              shellId: {
                 type: "string",
-                description: "Session ID containing the job",
+                description: "Shell ID containing the job",
               },
               jobId: {
                 type: "string",
@@ -374,7 +374,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 description: "Maximum time to wait in milliseconds",
               },
             },
-            required: ["sessionId", "jobId"],
+            required: ["shellId", "jobId"],
           },
         },
       ],
@@ -390,36 +390,36 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         case "exec": {
           const parsed = ExecSchema.parse(args);
 
-          // Background execution requires a session
-          if (parsed.background && !parsed.sessionId) {
+          // Background execution requires a shell
+          if (parsed.background && !parsed.shellId) {
             return {
               content: [
                 {
                   type: "text",
-                  text: "sessionId is required for background execution",
+                  text: "shellId is required for background execution",
                 },
               ],
               isError: true,
             };
           }
 
-          // Get or create session
-          const { session, isTemporary } = sessionManager.getOrTemp(
-            parsed.sessionId,
+          // Get or create shell
+          const { shell, isTemporary } = shellManager.getOrTemp(
+            parsed.shellId,
             { cwd, env: parsed.env },
           );
 
-          // Merge additional env vars into the actual session temporarily
-          const originalEnv = session.env;
+          // Merge additional env vars into the actual shell temporarily
+          const originalEnv = shell.env;
           if (parsed.env) {
-            session.env = { ...session.env, ...parsed.env };
+            shell.env = { ...shell.env, ...parsed.env };
           }
 
           // Background execution: launch job and return immediately
           if (parsed.background) {
-            const job = await launchCodeJob(parsed.code, config, session);
+            const job = await launchCodeJob(parsed.code, config, shell);
             // Restore original env
-            session.env = originalEnv;
+            shell.env = originalEnv;
 
             return {
               content: [
@@ -428,7 +428,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                   text: JSON.stringify({
                     jobId: job.id,
                     pid: job.pid,
-                    sessionId: session.id,
+                    shellId: shell.id,
                     background: true,
                   }, null, 2),
                 },
@@ -440,32 +440,32 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           const result = await executeCode(
             parsed.code,
             config,
-            { timeout: parsed.timeout, cwd: session.cwd },
-            session,
+            { timeout: parsed.timeout, cwd: shell.cwd },
+            shell,
           );
 
           // Restore original env
-          session.env = originalEnv;
+          shell.env = originalEnv;
 
-          // Update session vars if not temporary
-          if (!isTemporary && result.success && session.vars) {
-            sessionManager.update(session.id, { vars: session.vars });
+          // Update shell vars if not temporary
+          if (!isTemporary && result.success && shell.vars) {
+            shellManager.update(shell.id, { vars: shell.vars });
           }
 
           return {
             content: [
               {
                 type: "text",
-                text: formatExecResult(result, parsed.sessionId, result.jobId),
+                text: formatExecResult(result, parsed.shellId, result.jobId),
               },
             ],
             isError: !result.success,
           };
         }
 
-        case "startSession": {
-          const parsed = StartSessionSchema.parse(args);
-          const session = sessionManager.create({
+        case "startShell": {
+          const parsed = StartShellSchema.parse(args);
+          const shell = shellManager.create({
             cwd: parsed.cwd,
             env: parsed.env,
           });
@@ -474,25 +474,25 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             content: [
               {
                 type: "text",
-                text: JSON.stringify(sessionManager.serialize(session), null, 2),
+                text: JSON.stringify(shellManager.serialize(shell), null, 2),
               },
             ],
           };
         }
 
-        case "updateSession": {
-          const parsed = UpdateSessionSchema.parse(args);
-          const session = sessionManager.update(parsed.sessionId, {
+        case "updateShell": {
+          const parsed = UpdateShellSchema.parse(args);
+          const shell = shellManager.update(parsed.shellId, {
             cwd: parsed.cwd,
             env: parsed.env,
           });
 
-          if (!session) {
+          if (!shell) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Session not found: ${parsed.sessionId}`,
+                  text: `Shell not found: ${parsed.shellId}`,
                 },
               ],
               isError: true,
@@ -503,22 +503,22 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             content: [
               {
                 type: "text",
-                text: JSON.stringify(sessionManager.serialize(session), null, 2),
+                text: JSON.stringify(shellManager.serialize(shell), null, 2),
               },
             ],
           };
         }
 
-        case "endSession": {
-          const parsed = EndSessionSchema.parse(args);
-          const ended = sessionManager.end(parsed.sessionId);
+        case "endShell": {
+          const parsed = EndShellSchema.parse(args);
+          const ended = shellManager.end(parsed.shellId);
 
           if (!ended) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Session not found: ${parsed.sessionId}`,
+                  text: `Shell not found: ${parsed.shellId}`,
                 },
               ],
               isError: true,
@@ -529,27 +529,27 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             content: [
               {
                 type: "text",
-                text: `Session ended: ${parsed.sessionId}`,
+                text: `Shell ended: ${parsed.shellId}`,
               },
             ],
           };
         }
 
-        case "listSessions": {
-          const sessions = sessionManager.list();
+        case "listShells": {
+          const shells = shellManager.list();
 
-          if (sessions.length === 0) {
+          if (shells.length === 0) {
             return {
               content: [
                 {
                   type: "text",
-                  text: "No active sessions",
+                  text: "No active shells",
                 },
               ],
             };
           }
 
-          const serialized = sessions.map((s) => sessionManager.serialize(s));
+          const serialized = shells.map((s) => shellManager.serialize(s));
           return {
             content: [
               {
@@ -566,13 +566,13 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         case "task": {
           const parsed = TaskSchema.parse(args);
 
-          // Get session for context
-          const { session } = sessionManager.getOrTemp(parsed.sessionId, { cwd });
+          // Get shell for context
+          const { shell } = shellManager.getOrTemp(parsed.shellId, { cwd });
 
           try {
             const result = await runTask(parsed.name, config, {
-              cwd: session.cwd,
-              session,
+              cwd: shell.cwd,
+              shell: shell,
             });
 
             return {
@@ -601,7 +601,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         // New job management tools (SSH-61/62)
         case "listJobs": {
           const parsed = ListJobsSchema.parse(args);
-          const jobs = sessionManager.listJobs(parsed.sessionId, parsed.filter);
+          const jobs = shellManager.listJobs(parsed.shellId, parsed.filter);
 
           if (jobs.length === 0) {
             return {
@@ -642,7 +642,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
         case "getJobOutput": {
           const parsed = GetJobOutputSchema.parse(args);
-          const job = sessionManager.getJob(parsed.sessionId, parsed.jobId);
+          const job = shellManager.getJob(parsed.shellId, parsed.jobId);
 
           if (!job) {
             return {
@@ -678,7 +678,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
         case "killJob": {
           const parsed = KillJobSchema.parse(args);
-          const job = sessionManager.getJob(parsed.sessionId, parsed.jobId);
+          const job = shellManager.getJob(parsed.shellId, parsed.jobId);
 
           if (!job) {
             return {
@@ -707,7 +707,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
         case "waitJob": {
           const parsed = WaitJobSchema.parse(args);
-          const job = sessionManager.getJob(parsed.sessionId, parsed.jobId);
+          const job = shellManager.getJob(parsed.shellId, parsed.jobId);
 
           if (!job) {
             return {
@@ -837,7 +837,7 @@ function formatExecResult(
     code: number;
     success: boolean;
   },
-  sessionId?: string,
+  shellId?: string,
   jobId?: string,
 ): string {
   const parts: string[] = [];
@@ -855,7 +855,7 @@ function formatExecResult(
   }
 
   const meta: string[] = [];
-  if (sessionId) meta.push(`session: ${sessionId}`);
+  if (shellId) meta.push(`shell: ${shellId}`);
   if (jobId) meta.push(`job: ${jobId}`);
   if (meta.length > 0) {
     parts.push(`[${meta.join(", ")}]`);

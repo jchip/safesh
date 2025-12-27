@@ -11,13 +11,13 @@ import {
   killJob,
   streamJobOutput,
 } from "../src/runtime/jobs.ts";
-import { createSessionManager } from "../src/runtime/session.ts";
-import type { SafeShellConfig, Session } from "../src/core/types.ts";
+import { createShellManager } from "../src/runtime/shell.ts";
+import type { SafeShellConfig, Shell } from "../src/core/types.ts";
 
 describe("Background Job Control", () => {
   let config: SafeShellConfig;
-  let session: Session;
-  const sessionManager = createSessionManager("/tmp/test");
+  let shell: Shell;
+  const shellManager = createShellManager("/tmp/test");
 
   beforeEach(() => {
     // Basic config with minimal permissions
@@ -32,13 +32,13 @@ describe("Background Job Control", () => {
       },
     };
 
-    // Create a test session
-    session = sessionManager.create({ cwd: "/tmp" });
+    // Create a test shell
+    shell = shellManager.create({ cwd: "/tmp" });
   });
 
   afterEach(async () => {
     // Clean up any running jobs
-    for (const job of session.jobs.values()) {
+    for (const job of shell.jobs.values()) {
       if (job.status === "running" && job.process) {
         try {
           job.process.kill("SIGKILL");
@@ -57,7 +57,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.log("Hello from background job");',
         config,
-        session,
+        shell,
       );
 
       assertExists(job.id);
@@ -81,7 +81,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.error("Error message");',
         config,
-        session,
+        shell,
       );
 
       // Wait for job to complete
@@ -95,7 +95,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'throw new Error("Test error");',
         config,
-        session,
+        shell,
       );
 
       // Wait for job to fail
@@ -109,7 +109,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         "Deno.exit(1);",
         config,
-        session,
+        shell,
       );
 
       // Wait for job to exit
@@ -122,7 +122,7 @@ describe("Background Job Control", () => {
 
   describe("launchCommandJob", () => {
     it("launches a background job from command", async () => {
-      const job = await launchCommandJob("echo", ["Hello", "World"], config, session);
+      const job = await launchCommandJob("echo", ["Hello", "World"], config, shell);
 
       assertExists(job.id);
       assertExists(job.pid);
@@ -140,7 +140,7 @@ describe("Background Job Control", () => {
     });
 
     it("captures command output", async () => {
-      const job = await launchCommandJob("ls", ["-la", "/tmp"], config, session);
+      const job = await launchCommandJob("ls", ["-la", "/tmp"], config, shell);
 
       // Wait for completion
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -155,7 +155,7 @@ describe("Background Job Control", () => {
         "cat",
         ["/tmp/nonexistent-file-12345.txt"],
         config,
-        session,
+        shell,
       );
 
       // Wait for failure
@@ -172,7 +172,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.log("Line 1"); console.log("Line 2");',
         config,
-        session,
+        shell,
       );
 
       // Wait for output
@@ -189,7 +189,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.log("First output");',
         config,
-        session,
+        shell,
       );
 
       // Wait for initial output
@@ -209,7 +209,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.log("stdout"); console.error("stderr");',
         config,
-        session,
+        shell,
       );
 
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -223,7 +223,7 @@ describe("Background Job Control", () => {
 
   describe("killJob", () => {
     it("kills a running job", async () => {
-      const job = await launchCommandJob("sleep", ["10"], config, session);
+      const job = await launchCommandJob("sleep", ["10"], config, shell);
 
       assertEquals(job.status, "running");
 
@@ -235,7 +235,7 @@ describe("Background Job Control", () => {
     });
 
     it("supports different signals", async () => {
-      const job = await launchCommandJob("sleep", ["10"], config, session);
+      const job = await launchCommandJob("sleep", ["10"], config, shell);
 
       // Kill with SIGKILL
       await killJob(job, "SIGKILL");
@@ -244,7 +244,7 @@ describe("Background Job Control", () => {
     });
 
     it("throws error if job not running", async () => {
-      const job = await launchCodeJob('console.log("done");', config, session);
+      const job = await launchCodeJob('console.log("done");', config, shell);
 
       // Wait for completion
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -272,7 +272,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.log("Stream test");',
         config,
-        session,
+        shell,
       );
 
       const chunks: Array<{ type: string; data?: string; code?: number }> = [];
@@ -296,7 +296,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.log("out"); console.error("err");',
         config,
-        session,
+        shell,
       );
 
       const chunks: Array<{ type: string; data?: string }> = [];
@@ -318,7 +318,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.log("buffered");',
         config,
-        session,
+        shell,
       );
 
       for await (const _chunk of streamJobOutput(job)) {
@@ -333,7 +333,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         'console.log("done");',
         config,
-        session,
+        shell,
       );
 
       for await (const _chunk of streamJobOutput(job)) {
@@ -348,7 +348,7 @@ describe("Background Job Control", () => {
       const job = await launchCodeJob(
         "Deno.exit(1);",
         config,
-        session,
+        shell,
       );
 
       for await (const _chunk of streamJobOutput(job)) {
@@ -361,50 +361,50 @@ describe("Background Job Control", () => {
   });
 
   describe("Integration with SessionManager", () => {
-    it("jobs are automatically stored in session", async () => {
-      const job = await launchCodeJob('console.log("test");', config, session);
+    it("jobs are automatically stored in shell", async () => {
+      const job = await launchCodeJob('console.log("test");', config, shell);
 
-      // Job should already be in session (added by launchCodeJob)
-      const retrieved = sessionManager.getJob(session.id, job.id);
+      // Job should already be in shell (added by launchCodeJob)
+      const retrieved = shellManager.getJob(shell.id, job.id);
       assertEquals(retrieved, job);
     });
 
-    it("jobs are added to session by launch functions", async () => {
-      const job1 = await launchCodeJob('console.log("1");', config, session);
-      const job2 = await launchCodeJob('console.log("2");', config, session);
+    it("jobs are added to shell by launch functions", async () => {
+      const job1 = await launchCodeJob('console.log("1");', config, shell);
+      const job2 = await launchCodeJob('console.log("2");', config, shell);
 
-      // Jobs should already be in session
-      const jobs = sessionManager.listJobs(session.id);
+      // Jobs should already be in shell
+      const jobs = shellManager.listJobs(shell.id);
       assertEquals(jobs.length >= 2, true);
 
       // Verify jobs are present
-      assertEquals(session.jobs.has(job1.id), true);
-      assertEquals(session.jobs.has(job2.id), true);
+      assertEquals(shell.jobs.has(job1.id), true);
+      assertEquals(shell.jobs.has(job2.id), true);
     });
 
     it("jobs can be looked up by PID", async () => {
-      const job = await launchCodeJob('console.log("test");', config, session);
+      const job = await launchCodeJob('console.log("test");', config, shell);
 
       // Should be able to find job by PID
-      const retrieved = sessionManager.getJobByPid(session.id, job.pid);
+      const retrieved = shellManager.getJobByPid(shell.id, job.pid);
       assertEquals(retrieved, job);
     });
 
-    it("session cleanup kills running jobs", async () => {
-      const job = await launchCommandJob("sleep", ["10"], config, session);
+    it("shell cleanup kills running jobs", async () => {
+      const job = await launchCommandJob("sleep", ["10"], config, shell);
 
-      // Job is already in session
+      // Job is already in shell
       assertEquals(job.status, "running");
 
-      // End session
-      sessionManager.end(session.id);
+      // End shell
+      shellManager.end(shell.id);
 
       // Job should be killed
       assertEquals(job.status, "failed");
     });
 
     it("job completedAt and duration are set", async () => {
-      const job = await launchCodeJob('console.log("done");', config, session);
+      const job = await launchCodeJob('console.log("done");', config, shell);
 
       // Wait for job to complete
       await new Promise((resolve) => setTimeout(resolve, 1000));

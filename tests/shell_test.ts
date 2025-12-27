@@ -1,44 +1,44 @@
 /**
- * Tests for runtime/session.ts
+ * Tests for runtime/shell.ts
  */
 
 import { assertEquals, assertNotEquals } from "@std/assert";
 import { describe, it, beforeEach } from "@std/testing/bdd";
-import { SessionManager, createSessionManager } from "../src/runtime/session.ts";
+import { ShellManager, createShellManager } from "../src/runtime/shell.ts";
 
-describe("SessionManager", () => {
-  let manager: SessionManager;
+describe("ShellManager", () => {
+  let manager: ShellManager;
 
   beforeEach(() => {
-    manager = createSessionManager("/tmp/test");
+    manager = createShellManager("/tmp/test");
   });
 
   describe("create", () => {
-    it("creates session with defaults", () => {
-      const session = manager.create();
+    it("creates shell with defaults", () => {
+      const shell = manager.create();
 
-      assertNotEquals(session.id, "");
-      assertEquals(session.cwd, "/tmp/test");
-      assertEquals(session.env, {});
-      assertEquals(session.vars, {});
-      assertEquals(session.jobs.size, 0);
+      assertNotEquals(shell.id, "");
+      assertEquals(shell.cwd, "/tmp/test");
+      assertEquals(shell.env, {});
+      assertEquals(shell.vars, {});
+      assertEquals(shell.jobs.size, 0);
     });
 
-    it("creates session with custom cwd", () => {
-      const session = manager.create({ cwd: "/custom/path" });
+    it("creates shell with custom cwd", () => {
+      const shell = manager.create({ cwd: "/custom/path" });
 
-      assertEquals(session.cwd, "/custom/path");
+      assertEquals(shell.cwd, "/custom/path");
     });
 
-    it("creates session with initial env", () => {
-      const session = manager.create({ env: { FOO: "bar", BAZ: "qux" } });
+    it("creates shell with initial env", () => {
+      const shell = manager.create({ env: { FOO: "bar", BAZ: "qux" } });
 
-      assertEquals(session.env, { FOO: "bar", BAZ: "qux" });
+      assertEquals(shell.env, { FOO: "bar", BAZ: "qux" });
     });
   });
 
   describe("get", () => {
-    it("returns session by ID", () => {
+    it("returns shell by ID", () => {
       const created = manager.create();
       const retrieved = manager.get(created.id);
 
@@ -52,60 +52,60 @@ describe("SessionManager", () => {
   });
 
   describe("getOrTemp", () => {
-    it("returns existing session when ID provided", () => {
-      const session = manager.create();
-      const { session: retrieved, isTemporary } = manager.getOrTemp(session.id);
+    it("returns existing shell when ID provided", () => {
+      const shell = manager.create();
+      const { shell: retrieved, isTemporary } = manager.getOrTemp(shell.id);
 
-      assertEquals(retrieved, session);
+      assertEquals(retrieved, shell);
       assertEquals(isTemporary, false);
     });
 
-    it("creates temporary session when ID not found", () => {
-      const { session, isTemporary } = manager.getOrTemp("nonexistent");
+    it("creates temporary shell when ID not found", () => {
+      const { shell, isTemporary } = manager.getOrTemp("nonexistent");
 
       assertEquals(isTemporary, true);
-      assertEquals(session.cwd, "/tmp/test"); // Uses default cwd
+      assertEquals(shell.cwd, "/tmp/test"); // Uses default cwd
     });
 
-    it("creates temporary session when ID undefined", () => {
-      const { session, isTemporary } = manager.getOrTemp(undefined);
+    it("creates temporary shell when ID undefined", () => {
+      const { shell, isTemporary } = manager.getOrTemp(undefined);
 
       assertEquals(isTemporary, true);
     });
 
-    it("uses fallback options for temporary session", () => {
-      const { session, isTemporary } = manager.getOrTemp(undefined, {
+    it("uses fallback options for temporary shell", () => {
+      const { shell, isTemporary } = manager.getOrTemp(undefined, {
         cwd: "/fallback",
         env: { KEY: "value" },
       });
 
       assertEquals(isTemporary, true);
-      assertEquals(session.cwd, "/fallback");
-      assertEquals(session.env, { KEY: "value" });
+      assertEquals(shell.cwd, "/fallback");
+      assertEquals(shell.env, { KEY: "value" });
     });
   });
 
   describe("update", () => {
-    it("updates session cwd", () => {
-      const session = manager.create();
-      manager.update(session.id, { cwd: "/new/path" });
+    it("updates shell cwd", () => {
+      const shell = manager.create();
+      manager.update(shell.id, { cwd: "/new/path" });
 
-      assertEquals(session.cwd, "/new/path");
+      assertEquals(shell.cwd, "/new/path");
     });
 
     it("merges env vars", () => {
-      const session = manager.create({ env: { A: "1" } });
-      manager.update(session.id, { env: { B: "2" } });
+      const shell = manager.create({ env: { A: "1" } });
+      manager.update(shell.id, { env: { B: "2" } });
 
-      assertEquals(session.env, { A: "1", B: "2" });
+      assertEquals(shell.env, { A: "1", B: "2" });
     });
 
     it("merges vars", () => {
-      const session = manager.create();
-      session.vars = { x: 1 };
-      manager.update(session.id, { vars: { y: 2 } });
+      const shell = manager.create();
+      shell.vars = { x: 1 };
+      manager.update(shell.id, { vars: { y: 2 } });
 
-      assertEquals(session.vars, { x: 1, y: 2 });
+      assertEquals(shell.vars, { x: 1, y: 2 });
     });
 
     it("returns undefined for unknown ID", () => {
@@ -116,20 +116,20 @@ describe("SessionManager", () => {
 
   describe("setEnv/unsetEnv", () => {
     it("sets environment variable", () => {
-      const session = manager.create();
-      manager.setEnv(session.id, "MY_VAR", "my_value");
+      const shell = manager.create();
+      manager.setEnv(shell.id, "MY_VAR", "my_value");
 
-      assertEquals(session.env["MY_VAR"], "my_value");
+      assertEquals(shell.env["MY_VAR"], "my_value");
     });
 
     it("unsets environment variable", () => {
-      const session = manager.create({ env: { TO_REMOVE: "value" } });
-      manager.unsetEnv(session.id, "TO_REMOVE");
+      const shell = manager.create({ env: { TO_REMOVE: "value" } });
+      manager.unsetEnv(shell.id, "TO_REMOVE");
 
-      assertEquals(session.env["TO_REMOVE"], undefined);
+      assertEquals(shell.env["TO_REMOVE"], undefined);
     });
 
-    it("returns false for unknown session", () => {
+    it("returns false for unknown shell", () => {
       assertEquals(manager.setEnv("bad", "key", "val"), false);
       assertEquals(manager.unsetEnv("bad", "key"), false);
     });
@@ -137,37 +137,37 @@ describe("SessionManager", () => {
 
   describe("cd", () => {
     it("changes working directory", () => {
-      const session = manager.create();
-      manager.cd(session.id, "/new/dir");
+      const shell = manager.create();
+      manager.cd(shell.id, "/new/dir");
 
-      assertEquals(session.cwd, "/new/dir");
+      assertEquals(shell.cwd, "/new/dir");
     });
 
-    it("returns false for unknown session", () => {
+    it("returns false for unknown shell", () => {
       assertEquals(manager.cd("bad", "/path"), false);
     });
   });
 
   describe("setVar/getVar", () => {
     it("stores and retrieves variables", () => {
-      const session = manager.create();
-      manager.setVar(session.id, "counter", 42);
+      const shell = manager.create();
+      manager.setVar(shell.id, "counter", 42);
 
-      assertEquals(manager.getVar(session.id, "counter"), 42);
+      assertEquals(manager.getVar(shell.id, "counter"), 42);
     });
 
     it("stores complex objects", () => {
-      const session = manager.create();
+      const shell = manager.create();
       const obj = { nested: { value: [1, 2, 3] } };
-      manager.setVar(session.id, "data", obj);
+      manager.setVar(shell.id, "data", obj);
 
-      assertEquals(manager.getVar(session.id, "data"), obj);
+      assertEquals(manager.getVar(shell.id, "data"), obj);
     });
   });
 
   describe("job management", () => {
     it("adds and retrieves jobs", () => {
-      const session = manager.create();
+      const shell = manager.create();
       const job = {
         id: "job-1",
         pid: 12345,
@@ -181,14 +181,14 @@ describe("SessionManager", () => {
         background: true,
       };
 
-      manager.addJob(session.id, job);
-      const retrieved = manager.getJob(session.id, "job-1");
+      manager.addJob(shell.id, job);
+      const retrieved = manager.getJob(shell.id, "job-1");
 
       assertEquals(retrieved, job);
     });
 
     it("retrieves jobs by PID", () => {
-      const session = manager.create();
+      const shell = manager.create();
       const job = {
         id: "job-1",
         pid: 12345,
@@ -202,15 +202,15 @@ describe("SessionManager", () => {
         background: true,
       };
 
-      manager.addJob(session.id, job);
-      const retrieved = manager.getJobByPid(session.id, 12345);
+      manager.addJob(shell.id, job);
+      const retrieved = manager.getJobByPid(shell.id, 12345);
 
       assertEquals(retrieved, job);
     });
 
     it("updates job status", () => {
-      const session = manager.create();
-      manager.addJob(session.id, {
+      const shell = manager.create();
+      manager.addJob(shell.id, {
         id: "job-1",
         pid: 12345,
         code: "sleep 10",
@@ -223,13 +223,13 @@ describe("SessionManager", () => {
         background: true,
       });
 
-      manager.updateJob(session.id, "job-1", {
+      manager.updateJob(shell.id, "job-1", {
         status: "completed",
         exitCode: 0,
         completedAt: new Date(),
         duration: 100,
       });
-      const job = manager.getJob(session.id, "job-1");
+      const job = manager.getJob(shell.id, "job-1");
 
       assertEquals(job?.status, "completed");
       assertEquals(job?.exitCode, 0);
@@ -237,9 +237,9 @@ describe("SessionManager", () => {
     });
 
     it("lists jobs with filter", () => {
-      const session = manager.create();
+      const shell = manager.create();
       const now = new Date();
-      manager.addJob(session.id, {
+      manager.addJob(shell.id, {
         id: "job-1",
         pid: 123,
         code: "cmd1",
@@ -251,7 +251,7 @@ describe("SessionManager", () => {
         stderrTruncated: false,
         background: true,
       });
-      manager.addJob(session.id, {
+      manager.addJob(shell.id, {
         id: "job-2",
         pid: 456,
         code: "cmd2",
@@ -264,35 +264,35 @@ describe("SessionManager", () => {
         background: false,
       });
 
-      const allJobs = manager.listJobs(session.id);
+      const allJobs = manager.listJobs(shell.id);
       assertEquals(allJobs.length, 2);
 
-      const runningJobs = manager.listJobs(session.id, { status: "running" });
+      const runningJobs = manager.listJobs(shell.id, { status: "running" });
       assertEquals(runningJobs.length, 1);
       assertEquals(runningJobs[0]!.id, "job-1");
 
-      const bgJobs = manager.listJobs(session.id, { background: true });
+      const bgJobs = manager.listJobs(shell.id, { background: true });
       assertEquals(bgJobs.length, 1);
       assertEquals(bgJobs[0]!.id, "job-1");
     });
   });
 
   describe("end", () => {
-    it("removes session", () => {
-      const session = manager.create();
-      const ended = manager.end(session.id);
+    it("removes shell", () => {
+      const shell = manager.create();
+      const ended = manager.end(shell.id);
 
       assertEquals(ended, true);
-      assertEquals(manager.get(session.id), undefined);
+      assertEquals(manager.get(shell.id), undefined);
     });
 
-    it("returns false for unknown session", () => {
+    it("returns false for unknown shell", () => {
       assertEquals(manager.end("nonexistent"), false);
     });
   });
 
   describe("list", () => {
-    it("lists all sessions", () => {
+    it("lists all shells", () => {
       manager.create();
       manager.create();
       manager.create();
@@ -302,7 +302,7 @@ describe("SessionManager", () => {
   });
 
   describe("count", () => {
-    it("returns session count", () => {
+    it("returns shell count", () => {
       assertEquals(manager.count(), 0);
       manager.create();
       assertEquals(manager.count(), 1);
@@ -312,10 +312,10 @@ describe("SessionManager", () => {
   });
 
   describe("cleanup", () => {
-    it("removes expired sessions", () => {
-      // Create a session with old timestamp
-      const session = manager.create();
-      (session as { createdAt: Date }).createdAt = new Date(Date.now() - 100000);
+    it("removes expired shells", () => {
+      // Create a shell with old timestamp
+      const shell = manager.create();
+      (shell as { createdAt: Date }).createdAt = new Date(Date.now() - 100000);
 
       // Cleanup with 1 second max age
       const cleaned = manager.cleanup(1000);
@@ -324,7 +324,7 @@ describe("SessionManager", () => {
       assertEquals(manager.count(), 0);
     });
 
-    it("keeps recent sessions", () => {
+    it("keeps recent shells", () => {
       manager.create();
 
       const cleaned = manager.cleanup(60000);
@@ -335,10 +335,10 @@ describe("SessionManager", () => {
   });
 
   describe("serialize", () => {
-    it("serializes session for response", () => {
-      const session = manager.create({ cwd: "/my/dir", env: { FOO: "bar" } });
-      session.vars = { count: 5 };
-      manager.addJob(session.id, {
+    it("serializes shell for response", () => {
+      const shell = manager.create({ cwd: "/my/dir", env: { FOO: "bar" } });
+      shell.vars = { count: 5 };
+      manager.addJob(shell.id, {
         id: "job-1",
         pid: 123,
         code: "test command",
@@ -351,9 +351,9 @@ describe("SessionManager", () => {
         background: true,
       });
 
-      const serialized = manager.serialize(session);
+      const serialized = manager.serialize(shell);
 
-      assertEquals(serialized.sessionId, session.id);
+      assertEquals(serialized.shellId, shell.id);
       assertEquals(serialized.cwd, "/my/dir");
       assertEquals(serialized.env, { FOO: "bar" });
       assertEquals(serialized.vars, { count: 5 });
@@ -363,21 +363,21 @@ describe("SessionManager", () => {
     });
   });
 
-  describe("session limits", () => {
+  describe("shell limits", () => {
     it("has lastActivityAt field", () => {
-      const session = manager.create();
-      assertEquals(session.lastActivityAt instanceof Date, true);
+      const shell = manager.create();
+      assertEquals(shell.lastActivityAt instanceof Date, true);
     });
 
     it("has jobSequence field", () => {
-      const session = manager.create();
-      assertEquals(session.jobSequence, 0);
+      const shell = manager.create();
+      assertEquals(shell.jobSequence, 0);
     });
 
     it("has jobsByPid map", () => {
-      const session = manager.create();
-      assertEquals(session.jobsByPid instanceof Map, true);
-      assertEquals(session.jobsByPid.size, 0);
+      const shell = manager.create();
+      assertEquals(shell.jobsByPid instanceof Map, true);
+      assertEquals(shell.jobsByPid.size, 0);
     });
   });
 });

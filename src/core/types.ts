@@ -102,12 +102,14 @@ export const JOB_OUTPUT_LIMIT = 1024 * 1024; // 1MB per stdout/stderr
 export const SESSION_MEMORY_LIMIT = 50 * 1024 * 1024; // 50MB per session
 export const MAX_SESSIONS = 10; // LRU eviction when exceeded
 
-export interface Session {
-  /** Unique session ID */
+export interface Shell {
+  /** Unique shell ID */
   id: string;
+  /** Human-readable description for context recovery */
+  description?: string;
   /** Current working directory */
   cwd: string;
-  /** Session environment variables */
+  /** Shell environment variables */
   env: Record<string, string>;
   /** Persisted JS variables */
   vars: Record<string, unknown>;
