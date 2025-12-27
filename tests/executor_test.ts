@@ -142,13 +142,17 @@ Deno.test({
 
 Deno.test("executeCode - uses session cwd", async () => {
   // Use /tmp as a valid cwd that exists
+  const now = new Date();
   const session = {
     id: "test-session",
     cwd: "/tmp",
     env: {},
     vars: {},
     jobs: new Map(),
-    createdAt: new Date(),
+    jobsByPid: new Map(),
+    jobSequence: 0,
+    createdAt: now,
+    lastActivityAt: now,
   };
 
   const code = `
@@ -162,13 +166,17 @@ Deno.test("executeCode - uses session cwd", async () => {
 });
 
 Deno.test("executeCode - passes session env vars", async () => {
+  const now = new Date();
   const session = {
     id: "test-session",
     cwd: Deno.cwd(),
     env: { TEST_VAR: "test-value" },
     vars: {},
     jobs: new Map(),
-    createdAt: new Date(),
+    jobsByPid: new Map(),
+    jobSequence: 0,
+    createdAt: now,
+    lastActivityAt: now,
   };
 
   const config: SafeShellConfig = {
@@ -190,13 +198,17 @@ Deno.test("executeCode - passes session env vars", async () => {
 });
 
 Deno.test("executeCode - provides session context via $session", async () => {
+  const now = new Date();
   const session = {
     id: "test-session",
     cwd: "/tmp",
     env: { FOO: "bar" },
     vars: { myVar: "myValue" },
     jobs: new Map(),
-    createdAt: new Date(),
+    jobsByPid: new Map(),
+    jobSequence: 0,
+    createdAt: now,
+    lastActivityAt: now,
   };
 
   const code = `
@@ -335,13 +347,17 @@ Deno.test("executeFile - supports imports in file", async () => {
 Deno.test("executeFile - uses session cwd", async () => {
   const testFile = join("/tmp", "test-cwd.ts");
   const code = 'console.log(Deno.cwd());';
+  const now = new Date();
   const session = {
     id: "test-session",
     cwd: "/tmp",
     env: {},
     vars: {},
     jobs: new Map(),
-    createdAt: new Date(),
+    jobsByPid: new Map(),
+    jobSequence: 0,
+    createdAt: now,
+    lastActivityAt: now,
   };
 
   try {

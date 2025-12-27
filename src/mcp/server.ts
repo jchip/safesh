@@ -549,10 +549,8 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             job = await launchCommandJob(parsed.command, cmdArgs, config, session);
           }
 
-          // Add job to session
+          // Job is already added to session by launch functions
           if (job) {
-            sessionManager.addJob(session.id, job);
-
             return {
               content: [
                 {
@@ -607,13 +605,18 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           const serialized = allJobs.map((j) => ({
             id: j.id,
             pid: j.pid,
-            command: j.command,
-            code: j.code ? `${j.code.slice(0, 50)}...` : undefined,
+            code: j.code.length > 50 ? `${j.code.slice(0, 50)}...` : j.code,
             status: j.status,
-            startedAt: j.startedAt,
+            background: j.background,
+            startedAt: j.startedAt.toISOString(),
+            duration: j.duration,
             exitCode: j.exitCode,
             stdoutLength: j.stdout.length,
             stderrLength: j.stderr.length,
+            truncated: {
+              stdout: j.stdoutTruncated,
+              stderr: j.stderrTruncated,
+            },
           }));
 
           return {

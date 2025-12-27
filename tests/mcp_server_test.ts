@@ -76,13 +76,17 @@ Deno.test({
   async fn() {
     const { executeCode } = await import("../src/runtime/executor.ts");
 
+    const now = new Date();
     const session = {
       id: "test-session",
       cwd: Deno.cwd(),
       env: { TEST_VAR: "test_value" },
       vars: {},
       jobs: new Map(),
-      createdAt: new Date(),
+      jobsByPid: new Map(),
+      jobSequence: 0,
+      createdAt: now,
+      lastActivityAt: now,
     };
 
     const configWithEnv: SafeShellConfig = {

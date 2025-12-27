@@ -12,10 +12,55 @@
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import type { Job, SafeShellConfig, Session } from "../core/types.ts";
+import { JOB_OUTPUT_LIMIT } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { executionError } from "../core/errors.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
+
+/**
+ * Truncate output to limit, keeping most recent content
+ */
+export function truncateOutput(
+  output: string,
+  limit: number = JOB_OUTPUT_LIMIT,
+): { text: string; truncated: boolean } {
+  if (output.length <= limit) {
+    return { text: output, truncated: false };
+  }
+  return { text: output.slice(-limit), truncated: true };
+}
+
+/**
+ * Generate a new job ID for a session
+ */
+export function generateJobId(session: Session): string {
+  const seq = session.jobSequence++;
+  return `job-${session.id}-${seq}`;
+}
+
+/**
+ * Create a new job record
+ */
+export function createJob(
+  session: Session,
+  code: string,
+  background: boolean,
+  pid: number = 0,
+): Job {
+  return {
+    id: generateJobId(session),
+    code,
+    pid,
+    status: "running",
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    startedAt: new Date(),
+    background,
+  };
+}
 
 /**
  * Launch a background job from code
@@ -67,17 +112,13 @@ export async function launchCodeJob(
   // Spawn process
   const process = command.spawn();
 
-  // Create job
-  const job: Job = {
-    id: crypto.randomUUID(),
-    pid: process.pid,
-    code,
-    status: "running",
-    stdout: "",
-    stderr: "",
-    startedAt: Date.now(),
-    process,
-  };
+  // Create job with new structure
+  const job = createJob(session, code, true, process.pid);
+  job.process = process;
+
+  // Add to session maps
+  session.jobs.set(job.id, job);
+  session.jobsByPid.set(job.pid, job.id);
 
   // Start collecting output in background
   collectJobOutput(job);
@@ -109,17 +150,14 @@ export async function launchCommandJob(
   // Spawn process
   const process = cmd.spawn();
 
-  // Create job
-  const job: Job = {
-    id: crypto.randomUUID(),
-    pid: process.pid,
-    command: `${command} ${args.join(" ")}`,
-    status: "running",
-    stdout: "",
-    stderr: "",
-    startedAt: Date.now(),
-    process,
-  };
+  // Create job with command as code
+  const code = `${command} ${args.join(" ")}`;
+  const job = createJob(session, code, true, process.pid);
+  job.process = process;
+
+  // Add to session maps
+  session.jobs.set(job.id, job);
+  session.jobsByPid.set(job.pid, job.id);
 
   // Start collecting output in background
   collectJobOutput(job);
@@ -133,7 +171,14 @@ export async function launchCommandJob(
 export function getJobOutput(
   job: Job,
   since?: number,
-): { stdout: string; stderr: string; offset: number } {
+): {
+  stdout: string;
+  stderr: string;
+  offset: number;
+  status: Job["status"];
+  exitCode?: number;
+  truncated: { stdout: boolean; stderr: boolean };
+} {
   const stdoutOffset = since ?? 0;
   const stderrOffset = since ?? 0;
 
@@ -141,6 +186,12 @@ export function getJobOutput(
     stdout: job.stdout.slice(stdoutOffset),
     stderr: job.stderr.slice(stderrOffset),
     offset: job.stdout.length,
+    status: job.status,
+    exitCode: job.exitCode,
+    truncated: {
+      stdout: job.stdoutTruncated,
+      stderr: job.stderrTruncated,
+    },
   };
 }
 
@@ -175,6 +226,9 @@ export async function killJob(job: Job, signal: Deno.Signal = "SIGTERM"): Promis
 
     job.status = "failed";
     job.exitCode = -1;
+    job.completedAt = new Date();
+    job.duration = job.completedAt.getTime() - job.startedAt.getTime();
+    job.process = undefined; // Clear to allow GC
   } catch (error) {
     throw executionError(`Failed to kill job: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -242,7 +296,7 @@ function collectJobOutput(job: Job): void {
 
   const decoder = new TextDecoder();
 
-  // Collect stdout
+  // Collect stdout with truncation
   (async () => {
     const reader = job.process!.stdout.getReader();
     try {
@@ -250,7 +304,14 @@ function collectJobOutput(job: Job): void {
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
-          job.stdout += decoder.decode(value);
+          const decoded = decoder.decode(value);
+          job.stdout += decoded;
+
+          // Apply truncation if needed
+          if (job.stdout.length > JOB_OUTPUT_LIMIT) {
+            job.stdout = job.stdout.slice(-JOB_OUTPUT_LIMIT);
+            job.stdoutTruncated = true;
+          }
         }
       }
     } catch (error) {
@@ -260,7 +321,7 @@ function collectJobOutput(job: Job): void {
     }
   })();
 
-  // Collect stderr
+  // Collect stderr with truncation
   (async () => {
     const reader = job.process!.stderr.getReader();
     try {
@@ -268,7 +329,14 @@ function collectJobOutput(job: Job): void {
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
-          job.stderr += decoder.decode(value);
+          const decoded = decoder.decode(value);
+          job.stderr += decoded;
+
+          // Apply truncation if needed
+          if (job.stderr.length > JOB_OUTPUT_LIMIT) {
+            job.stderr = job.stderr.slice(-JOB_OUTPUT_LIMIT);
+            job.stderrTruncated = true;
+          }
         }
       }
     } catch (error) {
@@ -284,10 +352,16 @@ function collectJobOutput(job: Job): void {
       const status = await job.process!.status;
       job.status = status.code === 0 ? "completed" : "failed";
       job.exitCode = status.code;
+      job.completedAt = new Date();
+      job.duration = job.completedAt.getTime() - job.startedAt.getTime();
+      job.process = undefined; // Clear to allow GC
     } catch (error) {
       console.error("Error waiting for job:", error);
       job.status = "failed";
       job.exitCode = -1;
+      job.completedAt = new Date();
+      job.duration = job.completedAt.getTime() - job.startedAt.getTime();
+      job.process = undefined; // Clear to allow GC
     }
   })();
 }
