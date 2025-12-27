@@ -61,6 +61,9 @@ export interface CommandOptions {
 
   /** Clear environment (don't inherit from parent) */
   clearEnv?: boolean;
+
+  /** Standard input data to write to the command */
+  stdin?: string | Uint8Array | ReadableStream<Uint8Array>;
 }
 
 /**
@@ -107,6 +110,7 @@ export class Command {
    * Execute with separate stdout/stderr buffers
    */
   private async execSeparate(): Promise<CommandResult> {
+    const hasStdin = this.options.stdin !== undefined;
     const command = new Deno.Command(this.cmd, {
       args: this.args,
       cwd: this.options.cwd,
@@ -114,17 +118,27 @@ export class Command {
       clearEnv: this.options.clearEnv,
       stdout: "piped",
       stderr: "piped",
+      stdin: hasStdin ? "piped" : undefined,
     });
 
     const process = command.spawn();
     const decoder = new TextDecoder();
 
-    // Read both streams concurrently
-    const [stdoutBytes, stderrBytes, status] = await Promise.all([
+    // Write stdin, read outputs, and wait for status concurrently
+    const promises: Promise<unknown>[] = [
       this.readStream(process.stdout),
       this.readStream(process.stderr),
       process.status,
-    ]);
+    ];
+    if (hasStdin && process.stdin) {
+      promises.push(this.writeStdin(process.stdin, this.options.stdin!));
+    }
+
+    const [stdoutBytes, stderrBytes, status] = (await Promise.all(promises)) as [
+      Uint8Array,
+      Uint8Array,
+      Deno.CommandStatus,
+    ];
 
     return {
       stdout: decoder.decode(stdoutBytes),
@@ -183,6 +197,7 @@ export class Command {
    * ```
    */
   async *stream(): AsyncGenerator<StreamChunk> {
+    const hasStdin = this.options.stdin !== undefined;
     const command = new Deno.Command(this.cmd, {
       args: this.args,
       cwd: this.options.cwd,
@@ -190,14 +205,26 @@ export class Command {
       clearEnv: this.options.clearEnv,
       stdout: "piped",
       stderr: "piped",
+      stdin: hasStdin ? "piped" : undefined,
     });
 
     const process = command.spawn();
+
+    // Start writing stdin in background (don't await yet)
+    let stdinPromise: Promise<void> | undefined;
+    if (hasStdin && process.stdin) {
+      stdinPromise = this.writeStdin(process.stdin, this.options.stdin!);
+    }
 
     if (this.options.mergeStreams) {
       yield* this.mergeStreams(process.stdout, process.stderr);
     } else {
       yield* this.separateStreams(process.stdout, process.stderr);
+    }
+
+    // Wait for stdin to finish writing
+    if (stdinPromise) {
+      await stdinPromise;
     }
 
     const status = await process.status;
@@ -227,6 +254,7 @@ export class Command {
     const self = this;
     return createStream(
       (async function* () {
+        const hasStdin = self.options.stdin !== undefined;
         const command = new Deno.Command(self.cmd, {
           args: self.args,
           cwd: self.options.cwd,
@@ -234,10 +262,17 @@ export class Command {
           clearEnv: self.options.clearEnv,
           stdout: "piped",
           stderr: "piped",
+          stdin: hasStdin ? "piped" : undefined,
         });
 
         const process = command.spawn();
         const decoder = new TextDecoder();
+
+        // Start writing stdin in background
+        let stdinPromise: Promise<void> | undefined;
+        if (hasStdin && process.stdin) {
+          stdinPromise = self.writeStdin(process.stdin, self.options.stdin!);
+        }
 
         // Drain stderr in background to prevent deadlock
         const stderrDrain = (async () => {
@@ -264,6 +299,7 @@ export class Command {
           }
         } finally {
           reader.releaseLock();
+          if (stdinPromise) await stdinPromise;
           await stderrDrain;
           await process.status;
         }
@@ -293,6 +329,7 @@ export class Command {
     const self = this;
     return createStream(
       (async function* () {
+        const hasStdin = self.options.stdin !== undefined;
         const command = new Deno.Command(self.cmd, {
           args: self.args,
           cwd: self.options.cwd,
@@ -300,10 +337,17 @@ export class Command {
           clearEnv: self.options.clearEnv,
           stdout: "piped",
           stderr: "piped",
+          stdin: hasStdin ? "piped" : undefined,
         });
 
         const process = command.spawn();
         const decoder = new TextDecoder();
+
+        // Start writing stdin in background
+        let stdinPromise: Promise<void> | undefined;
+        if (hasStdin && process.stdin) {
+          stdinPromise = self.writeStdin(process.stdin, self.options.stdin!);
+        }
 
         // Drain stdout in background to prevent deadlock
         const stdoutDrain = (async () => {
@@ -330,6 +374,7 @@ export class Command {
           }
         } finally {
           reader.releaseLock();
+          if (stdinPromise) await stdinPromise;
           await stdoutDrain;
           await process.status;
         }
@@ -366,6 +411,28 @@ export class Command {
     }
 
     return result;
+  }
+
+  /**
+   * Write data to stdin and close it
+   */
+  private async writeStdin(
+    stdin: WritableStream<Uint8Array>,
+    data: string | Uint8Array | ReadableStream<Uint8Array>,
+  ): Promise<void> {
+    if (data instanceof ReadableStream) {
+      // Pipe the readable stream to stdin
+      await data.pipeTo(stdin);
+    } else {
+      const writer = stdin.getWriter();
+      try {
+        const bytes =
+          typeof data === "string" ? new TextEncoder().encode(data) : data;
+        await writer.write(bytes);
+      } finally {
+        await writer.close();
+      }
+    }
   }
 
   /**
