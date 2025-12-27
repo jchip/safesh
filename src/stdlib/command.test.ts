@@ -3,8 +3,9 @@
  */
 
 import { assertEquals, assert } from "@std/assert";
-import { cmd, git, str, bytes, type StreamChunk } from "./command.ts";
+import { cmd, git, str, bytes, toCmd, toCmdLines, type StreamChunk } from "./command.ts";
 import { lines } from "./transforms.ts";
+import { createStream } from "./stream.ts";
 
 Deno.test("cmd() - executes simple command", async () => {
   const result = await cmd("echo", ["hello"]).exec();
@@ -536,4 +537,88 @@ Deno.test("bytes() - piped to command", async () => {
 
   const count = parseInt(result.stdout.trim(), 10);
   assertEquals(count, 2);
+});
+
+// ==================== toCmd() and toCmdLines() tests ====================
+
+Deno.test("toCmd() - pipes stream to command", async () => {
+  const stream = createStream(
+    (async function* () {
+      yield "cherry";
+      yield "apple";
+      yield "banana";
+    })(),
+  );
+
+  const result = await stream.pipe(toCmd("sort")).first();
+
+  assertEquals(result, "apple\nbanana\ncherry\n");
+});
+
+Deno.test("toCmd() - with command arguments", async () => {
+  const stream = createStream(
+    (async function* () {
+      yield "cherry";
+      yield "apple";
+      yield "banana";
+    })(),
+  );
+
+  const result = await stream.pipe(toCmd("sort", ["-r"])).first();
+
+  assertEquals(result, "cherry\nbanana\napple\n");
+});
+
+Deno.test("toCmdLines() - pipes stream and yields lines", async () => {
+  const stream = createStream(
+    (async function* () {
+      yield "cherry";
+      yield "apple";
+      yield "banana";
+    })(),
+  );
+
+  const result = await stream.pipe(toCmdLines("sort")).collect();
+
+  assertEquals(result, ["apple", "banana", "cherry"]);
+});
+
+Deno.test("toCmdLines() - with reverse sort", async () => {
+  const stream = createStream(
+    (async function* () {
+      yield "a";
+      yield "c";
+      yield "b";
+    })(),
+  );
+
+  const result = await stream.pipe(toCmdLines("sort", ["-r"])).collect();
+
+  assertEquals(result, ["c", "b", "a"]);
+});
+
+Deno.test("toCmd() - chained with other transforms", async () => {
+  const result = await cmd("echo", ["cherry\napple\nbanana"])
+    .stdout()
+    .pipe(lines())
+    .pipe(toCmd("sort"))
+    .first();
+
+  assertEquals(result, "apple\nbanana\ncherry\n");
+});
+
+Deno.test("toCmd() - failure throws error", async () => {
+  const stream = createStream(
+    (async function* () {
+      yield "test";
+    })(),
+  );
+
+  try {
+    await stream.pipe(toCmd("sh", ["-c", "exit 1"])).first();
+    assert(false, "Should have thrown");
+  } catch (error) {
+    assert(error instanceof Error);
+    assert(error.message.includes("toCmd failed"));
+  }
 });
