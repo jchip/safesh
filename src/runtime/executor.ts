@@ -47,7 +47,7 @@ function buildPreamble(shell?: Shell): string {
     "",
     "// Import streaming shell API",
     `import { createStream, fromArray, empty } from 'file://${stdlibPath}stream.ts';`,
-    `import { filter, map, flatMap, take, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
+    `import { filter, map, flatMap, take, head, tail, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
     `import { stdout, stderr, tee } from 'file://${stdlibPath}io.ts';`,
     `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
     `import { cmd, git, docker, deno } from 'file://${stdlibPath}command.ts';`,

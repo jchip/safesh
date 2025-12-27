@@ -201,3 +201,51 @@ export function grep(pattern: RegExp | string): Transform<string, string> {
   const regex = typeof pattern === "string" ? new RegExp(pattern) : pattern;
   return filter((line) => regex.test(line));
 }
+
+/**
+ * Get first n items from stream (alias for take)
+ *
+ * Shell-friendly name matching Unix `head` command.
+ *
+ * @param n - Number of items to take (default: 10)
+ * @returns Transform that limits stream to first n items
+ *
+ * @example
+ * ```ts
+ * // Get first 3 lines (like head -3)
+ * await cmd('lsof', ['-i']).stdout().pipe(lines()).pipe(head(3)).forEach(console.log);
+ * ```
+ */
+export function head<T>(n: number = 10): Transform<T, T> {
+  return take(n);
+}
+
+/**
+ * Get last n items from stream
+ *
+ * Shell-friendly name matching Unix `tail` command.
+ * Note: Must buffer the last n items, so memory usage is O(n).
+ *
+ * @param n - Number of items to keep (default: 10)
+ * @returns Transform that yields only last n items
+ *
+ * @example
+ * ```ts
+ * // Get last 5 lines (like tail -5)
+ * await cat('log.txt').pipe(lines()).pipe(tail(5)).forEach(console.log);
+ * ```
+ */
+export function tail<T>(n: number = 10): Transform<T, T> {
+  return async function* (stream) {
+    const buffer: T[] = [];
+    for await (const item of stream) {
+      buffer.push(item);
+      if (buffer.length > n) {
+        buffer.shift();
+      }
+    }
+    for (const item of buffer) {
+      yield item;
+    }
+  };
+}
