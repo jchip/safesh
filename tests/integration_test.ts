@@ -254,13 +254,17 @@ Deno.test("E2E: Path sandbox blocks access outside boundaries", async () => {
 Deno.test("E2E: Path sandbox handles relative paths", async () => {
   await setupTestEnv();
 
+  const now = new Date();
   const session = {
     id: "test-session",
     cwd: "/tmp/safesh-test",
     env: {},
     vars: {},
     jobs: new Map(),
-    createdAt: new Date(),
+    jobsByPid: new Map(),
+    jobSequence: 0,
+    createdAt: now,
+    lastActivityAt: now,
   };
 
   const result = await runExternal(

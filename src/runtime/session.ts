@@ -13,6 +13,11 @@
  */
 
 import type { Session, Job } from "../core/types.ts";
+import {
+  JOB_OUTPUT_LIMIT,
+  SESSION_MEMORY_LIMIT,
+  MAX_SESSIONS,
+} from "../core/types.ts";
 
 /**
  * Session manager - stores and manages sessions
@@ -32,13 +37,22 @@ export class SessionManager {
    * @returns New session
    */
   create(options: { cwd?: string; env?: Record<string, string> } = {}): Session {
+    // Enforce session limit with LRU eviction
+    if (this.sessions.size >= MAX_SESSIONS) {
+      this.evictLeastRecentSession();
+    }
+
+    const now = new Date();
     const session: Session = {
       id: crypto.randomUUID(),
       cwd: options.cwd ?? this.defaultCwd,
       env: options.env ?? {},
       vars: {},
       jobs: new Map(),
-      createdAt: new Date(),
+      jobsByPid: new Map(),
+      jobSequence: 0,
+      createdAt: now,
+      lastActivityAt: now,
     };
 
     this.sessions.set(session.id, session);
@@ -74,13 +88,17 @@ export class SessionManager {
     }
 
     // Create temporary session (not stored)
+    const now = new Date();
     const session: Session = {
       id: crypto.randomUUID(),
       cwd: fallback.cwd ?? this.defaultCwd,
       env: fallback.env ?? {},
       vars: {},
       jobs: new Map(),
-      createdAt: new Date(),
+      jobsByPid: new Map(),
+      jobSequence: 0,
+      createdAt: now,
+      lastActivityAt: now,
     };
 
     return { session, isTemporary: true };
@@ -170,12 +188,29 @@ export class SessionManager {
   }
 
   /**
+   * Touch session (update lastActivityAt)
+   */
+  touch(id: string): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      session.lastActivityAt = new Date();
+    }
+  }
+
+  /**
    * Add a job to the session
    */
   addJob(sessionId: string, job: Job): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
+
     session.jobs.set(job.id, job);
+    session.jobsByPid.set(job.pid, job.id);
+    session.lastActivityAt = new Date();
+
+    // Check memory and trim if needed
+    this.trimSessionIfNeeded(session);
+
     return true;
   }
 
@@ -188,12 +223,35 @@ export class SessionManager {
   }
 
   /**
-   * Update job status
+   * Get a job by PID
+   */
+  getJobByPid(sessionId: string, pid: number): Job | undefined {
+    const session = this.sessions.get(sessionId);
+    if (!session) return undefined;
+    const jobId = session.jobsByPid.get(pid);
+    return jobId ? session.jobs.get(jobId) : undefined;
+  }
+
+  /**
+   * Update job with comprehensive fields
    */
   updateJob(
     sessionId: string,
     jobId: string,
-    updates: Partial<Pick<Job, "status" | "exitCode">>,
+    updates: Partial<
+      Pick<
+        Job,
+        | "status"
+        | "exitCode"
+        | "stdout"
+        | "stderr"
+        | "stdoutTruncated"
+        | "stderrTruncated"
+        | "completedAt"
+        | "duration"
+        | "process"
+      >
+    >,
   ): boolean {
     const job = this.getJob(sessionId, jobId);
     if (!job) return false;
@@ -204,15 +262,119 @@ export class SessionManager {
     if (updates.exitCode !== undefined) {
       job.exitCode = updates.exitCode;
     }
+    if (updates.stdout !== undefined) {
+      job.stdout = updates.stdout;
+    }
+    if (updates.stderr !== undefined) {
+      job.stderr = updates.stderr;
+    }
+    if (updates.stdoutTruncated !== undefined) {
+      job.stdoutTruncated = updates.stdoutTruncated;
+    }
+    if (updates.stderrTruncated !== undefined) {
+      job.stderrTruncated = updates.stderrTruncated;
+    }
+    if (updates.completedAt !== undefined) {
+      job.completedAt = updates.completedAt;
+    }
+    if (updates.duration !== undefined) {
+      job.duration = updates.duration;
+    }
+    if (updates.process !== undefined) {
+      job.process = updates.process;
+    }
+
     return true;
   }
 
   /**
-   * List all jobs in a session
+   * List jobs in a session with optional filter
    */
-  listJobs(sessionId: string): Job[] {
+  listJobs(
+    sessionId: string,
+    filter?: {
+      status?: "running" | "completed" | "failed";
+      background?: boolean;
+      limit?: number;
+    },
+  ): Job[] {
     const session = this.sessions.get(sessionId);
-    return session ? Array.from(session.jobs.values()) : [];
+    if (!session) return [];
+
+    let jobs = Array.from(session.jobs.values());
+
+    // Apply filters
+    if (filter?.status !== undefined) {
+      jobs = jobs.filter((j) => j.status === filter.status);
+    }
+    if (filter?.background !== undefined) {
+      jobs = jobs.filter((j) => j.background === filter.background);
+    }
+
+    // Sort by startedAt descending (newest first)
+    jobs.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+
+    // Apply limit
+    if (filter?.limit !== undefined && filter.limit > 0) {
+      jobs = jobs.slice(0, filter.limit);
+    }
+
+    return jobs;
+  }
+
+  /**
+   * Estimate memory usage of a session
+   */
+  estimateSessionMemory(session: Session): number {
+    let size = 0;
+    for (const job of session.jobs.values()) {
+      size += job.stdout.length + job.stderr.length + job.code.length + 200; // overhead
+    }
+    size += JSON.stringify(session.vars).length;
+    return size;
+  }
+
+  /**
+   * Trim oldest completed jobs if session exceeds memory limit
+   */
+  private trimSessionIfNeeded(session: Session): void {
+    const memoryUsage = this.estimateSessionMemory(session);
+    if (memoryUsage <= SESSION_MEMORY_LIMIT) return;
+
+    // Get completed jobs sorted by startedAt (oldest first)
+    const completedJobs = Array.from(session.jobs.values())
+      .filter((j) => j.status !== "running")
+      .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
+
+    // Remove oldest jobs until under limit
+    for (const job of completedJobs) {
+      session.jobs.delete(job.id);
+      session.jobsByPid.delete(job.pid);
+
+      if (this.estimateSessionMemory(session) <= SESSION_MEMORY_LIMIT) {
+        break;
+      }
+    }
+  }
+
+  /**
+   * Evict the least recently used session
+   */
+  private evictLeastRecentSession(): void {
+    let oldest: Session | undefined;
+    let oldestTime = Infinity;
+
+    for (const session of this.sessions.values()) {
+      const activityTime = session.lastActivityAt.getTime();
+      if (activityTime < oldestTime) {
+        oldestTime = activityTime;
+        oldest = session;
+      }
+    }
+
+    if (oldest) {
+      this.end(oldest.id);
+    }
   }
 
   /**
@@ -280,8 +442,16 @@ export class SessionManager {
     cwd: string;
     env: Record<string, string>;
     vars: Record<string, unknown>;
-    jobs: { id: string; command?: string; code?: string; status: string }[];
+    jobs: {
+      id: string;
+      code: string;
+      status: string;
+      background: boolean;
+      startedAt: string;
+      duration?: number;
+    }[];
     createdAt: string;
+    lastActivityAt: string;
   } {
     return {
       sessionId: session.id,
@@ -290,11 +460,14 @@ export class SessionManager {
       vars: session.vars,
       jobs: Array.from(session.jobs.values()).map((j) => ({
         id: j.id,
-        command: j.command,
-        code: j.code,
+        code: j.code.length > 100 ? j.code.slice(0, 100) + "..." : j.code,
         status: j.status,
+        background: j.background,
+        startedAt: j.startedAt.toISOString(),
+        duration: j.duration,
       })),
       createdAt: session.createdAt.toISOString(),
+      lastActivityAt: session.lastActivityAt.toISOString(),
     };
   }
 }

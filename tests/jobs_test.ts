@@ -127,7 +127,8 @@ describe("Background Job Control", () => {
       assertExists(job.id);
       assertExists(job.pid);
       assertEquals(job.status, "running");
-      assertEquals(job.command, "echo Hello World");
+      assertEquals(job.code, "echo Hello World");
+      assertEquals(job.background, true);
       assertExists(job.startedAt);
 
       // Wait for job to complete
@@ -253,9 +254,11 @@ describe("Background Job Control", () => {
         await killJob(job, "SIGTERM");
       } catch (error) {
         errorThrown = true;
+        // After completion, process handle is cleared so error will be about process not available
         assertEquals(
           error instanceof Error &&
-            error.message.includes("not running"),
+            (error.message.includes("not running") ||
+             error.message.includes("not available")),
           true,
         );
       }
@@ -358,30 +361,39 @@ describe("Background Job Control", () => {
   });
 
   describe("Integration with SessionManager", () => {
-    it("jobs are stored in session", async () => {
+    it("jobs are automatically stored in session", async () => {
       const job = await launchCodeJob('console.log("test");', config, session);
 
-      sessionManager.addJob(session.id, job);
-
+      // Job should already be in session (added by launchCodeJob)
       const retrieved = sessionManager.getJob(session.id, job.id);
       assertEquals(retrieved, job);
     });
 
-    it("lists all jobs in session", async () => {
+    it("jobs are added to session by launch functions", async () => {
       const job1 = await launchCodeJob('console.log("1");', config, session);
       const job2 = await launchCodeJob('console.log("2");', config, session);
 
-      sessionManager.addJob(session.id, job1);
-      sessionManager.addJob(session.id, job2);
-
+      // Jobs should already be in session
       const jobs = sessionManager.listJobs(session.id);
-      assertEquals(jobs.length, 2);
+      assertEquals(jobs.length >= 2, true);
+
+      // Verify jobs are present
+      assertEquals(session.jobs.has(job1.id), true);
+      assertEquals(session.jobs.has(job2.id), true);
+    });
+
+    it("jobs can be looked up by PID", async () => {
+      const job = await launchCodeJob('console.log("test");', config, session);
+
+      // Should be able to find job by PID
+      const retrieved = sessionManager.getJobByPid(session.id, job.pid);
+      assertEquals(retrieved, job);
     });
 
     it("session cleanup kills running jobs", async () => {
       const job = await launchCommandJob("sleep", ["10"], config, session);
-      sessionManager.addJob(session.id, job);
 
+      // Job is already in session
       assertEquals(job.status, "running");
 
       // End session
@@ -389,6 +401,17 @@ describe("Background Job Control", () => {
 
       // Job should be killed
       assertEquals(job.status, "failed");
+    });
+
+    it("job completedAt and duration are set", async () => {
+      const job = await launchCodeJob('console.log("done");', config, session);
+
+      // Wait for job to complete
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      assertExists(job.completedAt);
+      assertExists(job.duration);
+      assertEquals(job.duration >= 0, true);
     });
   });
 });

@@ -171,15 +171,39 @@ describe("SessionManager", () => {
       const job = {
         id: "job-1",
         pid: 12345,
-        command: "sleep 10",
+        code: "sleep 10",
         status: "running" as const,
-        startedAt: Date.now(),
+        startedAt: new Date(),
         stdout: "",
         stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        background: true,
       };
 
       manager.addJob(session.id, job);
       const retrieved = manager.getJob(session.id, "job-1");
+
+      assertEquals(retrieved, job);
+    });
+
+    it("retrieves jobs by PID", () => {
+      const session = manager.create();
+      const job = {
+        id: "job-1",
+        pid: 12345,
+        code: "sleep 10",
+        status: "running" as const,
+        startedAt: new Date(),
+        stdout: "",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        background: true,
+      };
+
+      manager.addJob(session.id, job);
+      const retrieved = manager.getJobByPid(session.id, 12345);
 
       assertEquals(retrieved, job);
     });
@@ -189,43 +213,67 @@ describe("SessionManager", () => {
       manager.addJob(session.id, {
         id: "job-1",
         pid: 12345,
-        command: "sleep 10",
+        code: "sleep 10",
         status: "running",
-        startedAt: Date.now(),
+        startedAt: new Date(),
         stdout: "",
         stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        background: true,
       });
 
-      manager.updateJob(session.id, "job-1", { status: "completed", exitCode: 0 });
+      manager.updateJob(session.id, "job-1", {
+        status: "completed",
+        exitCode: 0,
+        completedAt: new Date(),
+        duration: 100,
+      });
       const job = manager.getJob(session.id, "job-1");
 
       assertEquals(job?.status, "completed");
       assertEquals(job?.exitCode, 0);
+      assertEquals(job?.duration, 100);
     });
 
-    it("lists jobs", () => {
+    it("lists jobs with filter", () => {
       const session = manager.create();
+      const now = new Date();
       manager.addJob(session.id, {
         id: "job-1",
         pid: 123,
-        command: "cmd1",
+        code: "cmd1",
         status: "running",
-        startedAt: Date.now(),
+        startedAt: now,
         stdout: "",
         stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        background: true,
       });
       manager.addJob(session.id, {
         id: "job-2",
         pid: 456,
-        command: "cmd2",
+        code: "cmd2",
         status: "completed",
-        startedAt: Date.now(),
+        startedAt: new Date(now.getTime() + 1000),
         stdout: "",
         stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        background: false,
       });
 
-      const jobs = manager.listJobs(session.id);
-      assertEquals(jobs.length, 2);
+      const allJobs = manager.listJobs(session.id);
+      assertEquals(allJobs.length, 2);
+
+      const runningJobs = manager.listJobs(session.id, { status: "running" });
+      assertEquals(runningJobs.length, 1);
+      assertEquals(runningJobs[0]!.id, "job-1");
+
+      const bgJobs = manager.listJobs(session.id, { background: true });
+      assertEquals(bgJobs.length, 1);
+      assertEquals(bgJobs[0]!.id, "job-1");
     });
   });
 
@@ -293,11 +341,14 @@ describe("SessionManager", () => {
       manager.addJob(session.id, {
         id: "job-1",
         pid: 123,
-        command: "test",
+        code: "test command",
         status: "running",
-        startedAt: Date.now(),
+        startedAt: new Date(),
         stdout: "",
         stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        background: true,
       });
 
       const serialized = manager.serialize(session);
@@ -308,6 +359,25 @@ describe("SessionManager", () => {
       assertEquals(serialized.vars, { count: 5 });
       assertEquals(serialized.jobs.length, 1);
       assertEquals(serialized.jobs[0]!.id, "job-1");
+      assertEquals(serialized.jobs[0]!.background, true);
+    });
+  });
+
+  describe("session limits", () => {
+    it("has lastActivityAt field", () => {
+      const session = manager.create();
+      assertEquals(session.lastActivityAt instanceof Date, true);
+    });
+
+    it("has jobSequence field", () => {
+      const session = manager.create();
+      assertEquals(session.jobSequence, 0);
+    });
+
+    it("has jobsByPid map", () => {
+      const session = manager.create();
+      assertEquals(session.jobsByPid instanceof Map, true);
+      assertEquals(session.jobsByPid.size, 0);
     });
   });
 });

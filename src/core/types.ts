@@ -97,6 +97,11 @@ export interface SafeShellConfig {
 // Runtime Types
 // ============================================================================
 
+/** Memory limits for session/job management */
+export const JOB_OUTPUT_LIMIT = 1024 * 1024; // 1MB per stdout/stderr
+export const SESSION_MEMORY_LIMIT = 50 * 1024 * 1024; // 50MB per session
+export const MAX_SESSIONS = 10; // LRU eviction when exceeded
+
 export interface Session {
   /** Unique session ID */
   id: string;
@@ -106,32 +111,46 @@ export interface Session {
   env: Record<string, string>;
   /** Persisted JS variables */
   vars: Record<string, unknown>;
-  /** Background jobs */
+  /** Jobs by ID (primary index) */
   jobs: Map<string, Job>;
+  /** Job ID lookup by PID */
+  jobsByPid: Map<number, string>;
+  /** Auto-increment counter for job IDs */
+  jobSequence: number;
   /** Creation timestamp */
   createdAt: Date;
+  /** Last activity timestamp (updated on each exec, used for LRU) */
+  lastActivityAt: Date;
 }
 
 export interface Job {
-  /** Unique job ID */
+  /** Unique job ID: job-{sessionId}-{seq} */
   id: string;
-  /** Process ID */
+  /** Code that was executed */
+  code: string;
+  /** Process ID (required for spawned processes) */
   pid: number;
-  /** External command (if any) */
-  command?: string;
-  /** JS/TS code (if any) */
-  code?: string;
   /** Current status */
   status: "running" | "completed" | "failed";
-  /** Buffered stdout */
-  stdout: string;
-  /** Buffered stderr */
-  stderr: string;
-  /** Start timestamp */
-  startedAt: number;
   /** Exit code if completed/failed */
   exitCode?: number;
-  /** Child process handle (internal use) */
+  /** Buffered stdout (capped at JOB_OUTPUT_LIMIT) */
+  stdout: string;
+  /** Buffered stderr (capped at JOB_OUTPUT_LIMIT) */
+  stderr: string;
+  /** True if stdout exceeded JOB_OUTPUT_LIMIT */
+  stdoutTruncated: boolean;
+  /** True if stderr exceeded JOB_OUTPUT_LIMIT */
+  stderrTruncated: boolean;
+  /** Start timestamp */
+  startedAt: Date;
+  /** Completion timestamp */
+  completedAt?: Date;
+  /** Duration in milliseconds */
+  duration?: number;
+  /** Whether job runs in background */
+  background: boolean;
+  /** Child process handle (cleared after completion to allow GC) */
   process?: Deno.ChildProcess;
 }
 
