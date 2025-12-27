@@ -38,6 +38,7 @@ import { runTask, listTasks } from "../runner/tasks.ts";
 const ExecSchema = z.object({
   code: z.string().describe("JavaScript/TypeScript code to execute"),
   sessionId: z.string().optional().describe("Session ID to use"),
+  background: z.boolean().optional().describe("Run in background (async), returns { jobId, pid }"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
 });
@@ -124,6 +125,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           description:
             "Execute JavaScript/TypeScript code in a sandboxed Deno runtime - MCPU usage: infoc\n\n" +
             "Use sessionId for persistent state between calls. " +
+            "Set background: true to run asynchronously (returns { jobId, pid }).\n" +
             (permSummary ? `Permissions: ${permSummary}` : "No permissions configured.") +
             "\n\nIMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.\n" +
             "❌ BAD: cmd('sh', ['-c', 'git log | grep ERROR'])\n" +
@@ -147,11 +149,15 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
               sessionId: {
                 type: "string",
-                description: "Session ID for persistent state (env, cwd, vars)",
+                description: "Session ID for persistent state (env, cwd, vars). Required for background jobs.",
+              },
+              background: {
+                type: "boolean",
+                description: "Run in background (default: false). Returns { jobId, pid } instead of waiting for completion.",
               },
               timeout: {
                 type: "number",
-                description: "Timeout in milliseconds (default: 30000)",
+                description: "Timeout in milliseconds (default: 30000). Ignored for background jobs.",
               },
               env: {
                 type: "object",
@@ -366,6 +372,19 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         case "exec": {
           const parsed = ExecSchema.parse(args);
 
+          // Background execution requires a session
+          if (parsed.background && !parsed.sessionId) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "sessionId is required for background execution",
+                },
+              ],
+              isError: true,
+            };
+          }
+
           // Get or create session
           const { session, isTemporary } = sessionManager.getOrTemp(
             parsed.sessionId,
@@ -379,6 +398,26 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
           const execSession: Session = { ...session, env: sessionEnv };
 
+          // Background execution: launch job and return immediately
+          if (parsed.background) {
+            const job = await launchCodeJob(parsed.code, config, execSession);
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    jobId: job.id,
+                    pid: job.pid,
+                    sessionId: session.id,
+                    background: true,
+                  }, null, 2),
+                },
+              ],
+            };
+          }
+
+          // Foreground execution: wait for completion
           const result = await executeCode(
             parsed.code,
             config,
@@ -395,7 +434,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             content: [
               {
                 type: "text",
-                text: formatExecResult(result, parsed.sessionId),
+                text: formatExecResult(result, parsed.sessionId, result.jobId),
               },
             ],
             isError: !result.success,
@@ -837,6 +876,7 @@ function formatExecResult(
     success: boolean;
   },
   sessionId?: string,
+  jobId?: string,
 ): string {
   const parts: string[] = [];
 
@@ -852,8 +892,11 @@ function formatExecResult(
     parts.push(`[exit code: ${result.code}]`);
   }
 
-  if (sessionId) {
-    parts.push(`[session: ${sessionId}]`);
+  const meta: string[] = [];
+  if (sessionId) meta.push(`session: ${sessionId}`);
+  if (jobId) meta.push(`job: ${jobId}`);
+  if (meta.length > 0) {
+    parts.push(`[${meta.join(", ")}]`);
   }
 
   return parts.join("\n") || "(no output)";
