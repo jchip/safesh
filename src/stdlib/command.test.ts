@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assert } from "@std/assert";
-import { cmd, git, type StreamChunk } from "./command.ts";
+import { cmd, git, str, bytes, type StreamChunk } from "./command.ts";
 import { lines } from "./transforms.ts";
 
 Deno.test("cmd() - executes simple command", async () => {
@@ -459,4 +459,81 @@ Deno.test("cmd().pipe() - upstream failure throws error", async () => {
     assert(error.message.includes("Pipeline failed"));
     assert(error.message.includes("code 1"));
   }
+});
+
+// ==================== str() and bytes() tests ====================
+
+Deno.test("str() - simple heredoc-style usage", async () => {
+  const result = await str("hello world").exec();
+
+  assertEquals(result.stdout, "hello world");
+  assertEquals(result.success, true);
+});
+
+Deno.test("str() - multi-line heredoc", async () => {
+  const result = await str(`line 1
+line 2
+line 3`).exec();
+
+  assertEquals(result.stdout, "line 1\nline 2\nline 3");
+  assertEquals(result.success, true);
+});
+
+Deno.test("str() - piped to sort (heredoc equivalent)", async () => {
+  const result = await str(`cherry
+apple
+banana`).pipe("sort").exec();
+
+  assertEquals(result.stdout, "apple\nbanana\ncherry\n");
+  assertEquals(result.success, true);
+});
+
+Deno.test("str() - with variable interpolation", async () => {
+  const name = "world";
+  const result = await str(`Hello ${name}!`).pipe("cat").exec();
+
+  assertEquals(result.stdout, "Hello world!");
+  assertEquals(result.success, true);
+});
+
+Deno.test("str() - multi-stage pipeline", async () => {
+  const result = await str(`a
+b
+c
+d
+e`)
+    .pipe("grep", ["[aeiou]"])
+    .pipe("wc", ["-l"])
+    .exec();
+
+  const count = parseInt(result.stdout.trim(), 10);
+  assertEquals(count, 2); // a, e
+});
+
+Deno.test("str() - with stdout() stream", async () => {
+  const result = await str(`line1
+line2
+line3`)
+    .pipe("sort", ["-r"])
+    .stdout()
+    .pipe(lines())
+    .collect();
+
+  assertEquals(result, ["line3", "line2", "line1"]);
+});
+
+Deno.test("bytes() - binary data passthrough", async () => {
+  const raw = new TextEncoder().encode("binary data");
+  const result = await bytes(raw).exec();
+
+  assertEquals(result.stdout, "binary data");
+  assertEquals(result.success, true);
+});
+
+Deno.test("bytes() - piped to command", async () => {
+  const raw = new TextEncoder().encode("hello\nworld\n");
+  const result = await bytes(raw).pipe("wc", ["-l"]).exec();
+
+  const count = parseInt(result.stdout.trim(), 10);
+  assertEquals(count, 2);
 });
