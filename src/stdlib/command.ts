@@ -73,11 +73,44 @@ export interface CommandOptions {
  * By default, keeps stdout and stderr separate for clarity.
  */
 export class Command {
+  /** Upstream command whose stdout becomes this command's stdin */
+  private upstream?: Command;
+
   constructor(
     private cmd: string,
     private args: string[] = [],
     private options: CommandOptions = {},
   ) {}
+
+  /**
+   * Pipe this command's stdout to another command's stdin
+   *
+   * Creates a pipeline where this command's stdout becomes the next
+   * command's stdin. Can be chained for multi-stage pipelines.
+   *
+   * @param command - Command name to pipe to
+   * @param args - Arguments for the target command
+   * @param options - Options for the target command
+   * @returns New Command instance configured with this command as upstream
+   *
+   * @example
+   * ```ts
+   * // Simple pipe
+   * await cmd("cat", ["file.txt"]).pipe("grep", ["pattern"]).exec();
+   *
+   * // Multi-stage pipeline
+   * await cmd("cat", ["file.txt"])
+   *   .pipe("grep", ["pattern"])
+   *   .pipe("sort")
+   *   .pipe("uniq", ["-c"])
+   *   .exec();
+   * ```
+   */
+  pipe(command: string, args: string[] = [], options?: CommandOptions): Command {
+    const next = new Command(command, args, options ?? {});
+    next.upstream = this;
+    return next;
+  }
 
   /**
    * Execute command and buffer output
@@ -110,7 +143,10 @@ export class Command {
    * Execute with separate stdout/stderr buffers
    */
   private async execSeparate(): Promise<CommandResult> {
-    const hasStdin = this.options.stdin !== undefined;
+    // Get stdin from upstream command or options
+    const stdinData = await this.resolveStdin();
+    const hasStdin = stdinData !== undefined;
+
     const command = new Deno.Command(this.cmd, {
       args: this.args,
       cwd: this.options.cwd,
@@ -131,7 +167,7 @@ export class Command {
       process.status,
     ];
     if (hasStdin && process.stdin) {
-      promises.push(this.writeStdin(process.stdin, this.options.stdin!));
+      promises.push(this.writeStdin(process.stdin, stdinData));
     }
 
     const [stdoutBytes, stderrBytes, status] = (await Promise.all(promises)) as [
@@ -197,7 +233,10 @@ export class Command {
    * ```
    */
   async *stream(): AsyncGenerator<StreamChunk> {
-    const hasStdin = this.options.stdin !== undefined;
+    // Get stdin from upstream command or options
+    const stdinData = await this.resolveStdin();
+    const hasStdin = stdinData !== undefined;
+
     const command = new Deno.Command(this.cmd, {
       args: this.args,
       cwd: this.options.cwd,
@@ -213,7 +252,7 @@ export class Command {
     // Start writing stdin in background (don't await yet)
     let stdinPromise: Promise<void> | undefined;
     if (hasStdin && process.stdin) {
-      stdinPromise = this.writeStdin(process.stdin, this.options.stdin!);
+      stdinPromise = this.writeStdin(process.stdin, stdinData);
     }
 
     if (this.options.mergeStreams) {
@@ -254,7 +293,10 @@ export class Command {
     const self = this;
     return createStream(
       (async function* () {
-        const hasStdin = self.options.stdin !== undefined;
+        // Get stdin from upstream command or options
+        const stdinData = await self.resolveStdin();
+        const hasStdin = stdinData !== undefined;
+
         const command = new Deno.Command(self.cmd, {
           args: self.args,
           cwd: self.options.cwd,
@@ -271,7 +313,7 @@ export class Command {
         // Start writing stdin in background
         let stdinPromise: Promise<void> | undefined;
         if (hasStdin && process.stdin) {
-          stdinPromise = self.writeStdin(process.stdin, self.options.stdin!);
+          stdinPromise = self.writeStdin(process.stdin, stdinData);
         }
 
         // Drain stderr in background to prevent deadlock
@@ -329,7 +371,10 @@ export class Command {
     const self = this;
     return createStream(
       (async function* () {
-        const hasStdin = self.options.stdin !== undefined;
+        // Get stdin from upstream command or options
+        const stdinData = await self.resolveStdin();
+        const hasStdin = stdinData !== undefined;
+
         const command = new Deno.Command(self.cmd, {
           args: self.args,
           cwd: self.options.cwd,
@@ -346,7 +391,7 @@ export class Command {
         // Start writing stdin in background
         let stdinPromise: Promise<void> | undefined;
         if (hasStdin && process.stdin) {
-          stdinPromise = self.writeStdin(process.stdin, self.options.stdin!);
+          stdinPromise = self.writeStdin(process.stdin, stdinData);
         }
 
         // Drain stdout in background to prevent deadlock
@@ -433,6 +478,27 @@ export class Command {
         await writer.close();
       }
     }
+  }
+
+  /**
+   * Resolve stdin data from upstream command or options
+   * If upstream command exists, execute it and use its stdout
+   * Otherwise, return options.stdin if set
+   */
+  private async resolveStdin(): Promise<
+    string | Uint8Array | ReadableStream<Uint8Array> | undefined
+  > {
+    if (this.upstream) {
+      // Execute upstream command and get its stdout
+      const result = await this.upstream.exec();
+      if (!result.success) {
+        throw new Error(
+          `Pipeline failed: upstream command exited with code ${result.code}`,
+        );
+      }
+      return result.stdout;
+    }
+    return this.options.stdin;
   }
 
   /**

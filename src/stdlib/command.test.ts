@@ -398,3 +398,65 @@ Deno.test("cmd() - stdin with large data (no deadlock)", async () => {
   assertEquals(count, 100 * 1024);
   assertEquals(result.success, true);
 });
+
+// ==================== pipe() tests ====================
+
+Deno.test("cmd().pipe() - simple two-command pipe", async () => {
+  const result = await cmd("echo", ["hello world"]).pipe("cat").exec();
+
+  assertEquals(result.stdout.trim(), "hello world");
+  assertEquals(result.success, true);
+});
+
+Deno.test("cmd().pipe() - pipe with filtering (grep)", async () => {
+  const result = await cmd("echo", ["line1\nline2\nline3"])
+    .pipe("grep", ["line2"])
+    .exec();
+
+  assertEquals(result.stdout.trim(), "line2");
+  assertEquals(result.success, true);
+});
+
+Deno.test("cmd().pipe() - multi-stage pipeline", async () => {
+  const result = await cmd("echo", ["cherry\napple\nbanana"])
+    .pipe("sort")
+    .pipe("head", ["-n", "2"])
+    .exec();
+
+  assertEquals(result.stdout, "apple\nbanana\n");
+  assertEquals(result.success, true);
+});
+
+Deno.test("cmd().pipe() - pipeline with transform", async () => {
+  // Echo -> grep -> count lines
+  const result = await cmd("echo", ["a\nb\nc\nd\ne"])
+    .pipe("grep", ["[aeiou]"]) // Filter vowels
+    .pipe("wc", ["-l"])
+    .exec();
+
+  // Should have 2 vowels: a, e
+  const count = parseInt(result.stdout.trim(), 10);
+  assertEquals(count, 2);
+});
+
+Deno.test("cmd().pipe() - with stdout() stream", async () => {
+  const result = await cmd("echo", ["apple\nbanana\ncherry"])
+    .pipe("sort", ["-r"]) // reverse sort
+    .stdout()
+    .pipe(lines())
+    .collect();
+
+  assertEquals(result, ["cherry", "banana", "apple"]);
+});
+
+Deno.test("cmd().pipe() - upstream failure throws error", async () => {
+  // Use a command that will fail
+  try {
+    await cmd("sh", ["-c", "exit 1"]).pipe("cat").exec();
+    assert(false, "Should have thrown");
+  } catch (error) {
+    assert(error instanceof Error);
+    assert(error.message.includes("Pipeline failed"));
+    assert(error.message.includes("code 1"));
+  }
+});
