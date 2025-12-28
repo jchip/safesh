@@ -102,11 +102,6 @@ export const SCRIPT_OUTPUT_LIMIT = 1024 * 1024; // 1MB per stdout/stderr
 export const SHELL_MEMORY_LIMIT = 50 * 1024 * 1024; // 50MB per shell
 export const MAX_SHELLS = 10; // LRU eviction when exceeded
 
-// Legacy aliases for backwards compatibility during migration
-export const JOB_OUTPUT_LIMIT = SCRIPT_OUTPUT_LIMIT;
-export const SESSION_MEMORY_LIMIT = SHELL_MEMORY_LIMIT;
-export const MAX_SESSIONS = MAX_SHELLS;
-
 export interface Shell {
   /** Unique shell ID */
   id: string;
@@ -205,8 +200,8 @@ export interface Job {
 // ============================================================================
 
 export interface ExecOptions {
-  /** Session ID to use */
-  sessionId?: string;
+  /** Shell ID to use */
+  shellId?: string;
   /** Timeout in milliseconds */
   timeout?: number;
   /** Stream output in real-time */
@@ -240,43 +235,6 @@ export interface StreamChunk {
   type: "stdout" | "stderr" | "exit";
   data?: string;
   code?: number;
-}
-
-// ============================================================================
-// MCP Types
-// ============================================================================
-
-export interface ExecRequest {
-  code: string;
-  sessionId?: string;
-  timeout?: number;
-  stream?: boolean;
-}
-
-export interface RunRequest {
-  command: string;
-  args?: string[];
-  sessionId?: string;
-  cwd?: string;
-  timeout?: number;
-  stream?: boolean;
-}
-
-export interface TaskRequest {
-  name: string;
-  args?: string[];
-  sessionId?: string;
-}
-
-export interface StartSessionRequest {
-  cwd?: string;
-  env?: Record<string, string>;
-}
-
-export interface SessionResponse {
-  sessionId: string;
-  cwd: string;
-  env: Record<string, string>;
 }
 
 // ============================================================================
