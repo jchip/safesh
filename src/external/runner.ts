@@ -10,6 +10,7 @@ import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import type { ExecResult, RunOptions, SafeShellConfig, Shell } from "../core/types.ts";
 import { createRegistry } from "./registry.ts";
 import { validateExternal } from "./validator.ts";
+import { writeStdin } from "../stdlib/io.ts";
 
 const DEFAULT_TIMEOUT = 30000;
 
@@ -152,28 +153,6 @@ async function collectStream(stream: ReadableStream<Uint8Array>): Promise<string
   }
 
   return new TextDecoder().decode(result);
-}
-
-/**
- * Write data to stdin and close it
- */
-async function writeStdin(
-  stdin: WritableStream<Uint8Array>,
-  data: string | Uint8Array | ReadableStream<Uint8Array>,
-): Promise<void> {
-  if (data instanceof ReadableStream) {
-    // Pipe the readable stream to stdin
-    await data.pipeTo(stdin);
-  } else {
-    const writer = stdin.getWriter();
-    try {
-      const bytes =
-        typeof data === "string" ? new TextEncoder().encode(data) : data;
-      await writer.write(bytes);
-    } finally {
-      await writer.close();
-    }
-  }
 }
 
 /**

@@ -1,8 +1,8 @@
 /**
- * I/O Stream Transforms - stdout, stderr, and tee operations
+ * I/O Stream Transforms and Utilities
  *
  * Provides transforms for writing to stdout/stderr while passing data through,
- * and for applying side effects with tee().
+ * tee operations for side effects, and low-level stdin writing utilities.
  *
  * Key design: Streams are lazy and silent by default. These transforms
  * provide explicit output while maintaining stream composability.
@@ -11,6 +11,48 @@
  */
 
 import type { Transform } from "./stream.ts";
+
+/**
+ * Write data to a writable stream and close it
+ *
+ * Handles three input types:
+ * - string: Encodes as UTF-8 bytes
+ * - Uint8Array: Writes directly
+ * - ReadableStream: Pipes to the writable stream
+ *
+ * @param stream - The writable stream to write to
+ * @param data - Data to write (string, bytes, or readable stream)
+ *
+ * @example
+ * ```ts
+ * // Write string to process stdin
+ * await writeStdin(process.stdin, "hello world");
+ *
+ * // Write binary data
+ * await writeStdin(process.stdin, new Uint8Array([0x48, 0x69]));
+ *
+ * // Pipe from another stream
+ * await writeStdin(process.stdin, file.readable);
+ * ```
+ */
+export async function writeStdin(
+  stream: WritableStream<Uint8Array>,
+  data: string | Uint8Array | ReadableStream<Uint8Array>,
+): Promise<void> {
+  if (data instanceof ReadableStream) {
+    // Pipe the readable stream to stdin
+    await data.pipeTo(stream);
+  } else {
+    const writer = stream.getWriter();
+    try {
+      const bytes =
+        typeof data === "string" ? new TextEncoder().encode(data) : data;
+      await writer.write(bytes);
+    } finally {
+      await writer.close();
+    }
+  }
+}
 
 /**
  * Write each item to stdout and pass through

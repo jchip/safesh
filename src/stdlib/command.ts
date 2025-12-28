@@ -8,6 +8,7 @@
  */
 
 import { createStream, type Stream } from "./stream.ts";
+import { writeStdin } from "./io.ts";
 
 // Job tracking marker for communication with main process
 const JOB_MARKER = "__SAFESH_JOB__:";
@@ -143,6 +144,35 @@ export class Command {
   ) {}
 
   /**
+   * Create a Deno.Command with standard configuration
+   */
+  private createCommand(hasStdin: boolean): Deno.Command {
+    return new Deno.Command(this.cmd, {
+      args: this.args,
+      cwd: this.options.cwd,
+      env: this.options.env,
+      clearEnv: this.options.clearEnv,
+      stdout: "piped",
+      stderr: "piped",
+      stdin: hasStdin ? "piped" : undefined,
+    });
+  }
+
+  /**
+   * Set up stdin writing for a process
+   * Returns a promise that resolves when stdin is fully written, or undefined if no stdin
+   */
+  private setupStdin(
+    process: Deno.ChildProcess,
+    stdinData: string | Uint8Array | ReadableStream<Uint8Array> | undefined,
+  ): Promise<void> | undefined {
+    if (stdinData !== undefined && process.stdin) {
+      return writeStdin(process.stdin, stdinData);
+    }
+    return undefined;
+  }
+
+  /**
    * Spawn a process with improved error handling
    */
   private spawnProcess(command: Deno.Command): Deno.ChildProcess {
@@ -226,17 +256,7 @@ export class Command {
     const stdinData = await this.resolveStdin();
     const hasStdin = stdinData !== undefined;
 
-    const command = new Deno.Command(this.cmd, {
-      args: this.args,
-      cwd: this.options.cwd,
-      env: this.options.env,
-      clearEnv: this.options.clearEnv,
-      stdout: "piped",
-      stderr: "piped",
-      stdin: hasStdin ? "piped" : undefined,
-    });
-
-    const process = this.spawnProcess(command);
+    const process = this.spawnProcess(this.createCommand(hasStdin));
     const decoder = new TextDecoder();
 
     // Emit job start event
@@ -250,8 +270,9 @@ export class Command {
       this.readStream(process.stderr),
       process.status,
     ];
-    if (hasStdin && process.stdin) {
-      promises.push(this.writeStdin(process.stdin, stdinData));
+    const stdinPromise = this.setupStdin(process, stdinData);
+    if (stdinPromise) {
+      promises.push(stdinPromise);
     }
 
     const [stdoutBytes, stderrBytes, status] = (await Promise.all(promises)) as [
@@ -324,17 +345,7 @@ export class Command {
     const stdinData = await this.resolveStdin();
     const hasStdin = stdinData !== undefined;
 
-    const command = new Deno.Command(this.cmd, {
-      args: this.args,
-      cwd: this.options.cwd,
-      env: this.options.env,
-      clearEnv: this.options.clearEnv,
-      stdout: "piped",
-      stderr: "piped",
-      stdin: hasStdin ? "piped" : undefined,
-    });
-
-    const process = this.spawnProcess(command);
+    const process = this.spawnProcess(this.createCommand(hasStdin));
 
     // Emit job start event
     const jobId = generateJobId();
@@ -342,10 +353,7 @@ export class Command {
     emitJobStart(jobId, this.cmd, this.args, process.pid);
 
     // Start writing stdin in background (don't await yet)
-    let stdinPromise: Promise<void> | undefined;
-    if (hasStdin && process.stdin) {
-      stdinPromise = this.writeStdin(process.stdin, stdinData);
-    }
+    const stdinPromise = this.setupStdin(process, stdinData);
 
     if (this.options.mergeStreams) {
       yield* this.mergeStreams(process.stdout, process.stderr);
@@ -364,6 +372,67 @@ export class Command {
     emitJobEnd(jobId, status.code, startTime);
 
     yield { type: "exit", code: status.code };
+  }
+
+  /**
+   * Stream one output (stdout or stderr), draining the other
+   */
+  private streamOne(target: "stdout" | "stderr"): Stream<string> {
+    const self = this;
+    return createStream(
+      (async function* () {
+        // Get stdin from upstream command or options
+        const stdinData = await self.resolveStdin();
+        const hasStdin = stdinData !== undefined;
+
+        const process = self.spawnProcess(self.createCommand(hasStdin));
+        const decoder = new TextDecoder();
+
+        // Emit job start event
+        const jobId = generateJobId();
+        const startTime = Date.now();
+        emitJobStart(jobId, self.cmd, self.args, process.pid);
+
+        // Start writing stdin in background
+        const stdinPromise = self.setupStdin(process, stdinData);
+
+        // Select streams based on target
+        const streamToRead = target === "stdout" ? process.stdout : process.stderr;
+        const streamToDrain = target === "stdout" ? process.stderr : process.stdout;
+
+        // Drain the other stream in background to prevent deadlock
+        const drainPromise = (async () => {
+          const reader = streamToDrain.getReader();
+          try {
+            while (true) {
+              const { done } = await reader.read();
+              if (done) break;
+            }
+          } finally {
+            reader.releaseLock();
+          }
+        })();
+
+        // Stream target output
+        const reader = streamToRead.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              yield decoder.decode(value, { stream: true });
+            }
+          }
+        } finally {
+          reader.releaseLock();
+          if (stdinPromise) await stdinPromise;
+          await drainPromise;
+          const status = await process.status;
+          // Emit job end event
+          emitJobEnd(jobId, status.code, startTime);
+        }
+      })(),
+    );
   }
 
   /**
@@ -386,70 +455,7 @@ export class Command {
    * ```
    */
   stdout(): Stream<string> {
-    const self = this;
-    return createStream(
-      (async function* () {
-        // Get stdin from upstream command or options
-        const stdinData = await self.resolveStdin();
-        const hasStdin = stdinData !== undefined;
-
-        const command = new Deno.Command(self.cmd, {
-          args: self.args,
-          cwd: self.options.cwd,
-          env: self.options.env,
-          clearEnv: self.options.clearEnv,
-          stdout: "piped",
-          stderr: "piped",
-          stdin: hasStdin ? "piped" : undefined,
-        });
-
-        const process = self.spawnProcess(command);
-        const decoder = new TextDecoder();
-
-        // Emit job start event
-        const jobId = generateJobId();
-        const startTime = Date.now();
-        emitJobStart(jobId, self.cmd, self.args, process.pid);
-
-        // Start writing stdin in background
-        let stdinPromise: Promise<void> | undefined;
-        if (hasStdin && process.stdin) {
-          stdinPromise = self.writeStdin(process.stdin, stdinData);
-        }
-
-        // Drain stderr in background to prevent deadlock
-        const stderrDrain = (async () => {
-          const reader = process.stderr.getReader();
-          try {
-            while (true) {
-              const { done } = await reader.read();
-              if (done) break;
-            }
-          } finally {
-            reader.releaseLock();
-          }
-        })();
-
-        // Stream stdout
-        const reader = process.stdout.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) {
-              yield decoder.decode(value, { stream: true });
-            }
-          }
-        } finally {
-          reader.releaseLock();
-          if (stdinPromise) await stdinPromise;
-          await stderrDrain;
-          const status = await process.status;
-          // Emit job end event
-          emitJobEnd(jobId, status.code, startTime);
-        }
-      })(),
-    );
+    return this.streamOne("stdout");
   }
 
   /**
@@ -471,70 +477,7 @@ export class Command {
    * ```
    */
   stderr(): Stream<string> {
-    const self = this;
-    return createStream(
-      (async function* () {
-        // Get stdin from upstream command or options
-        const stdinData = await self.resolveStdin();
-        const hasStdin = stdinData !== undefined;
-
-        const command = new Deno.Command(self.cmd, {
-          args: self.args,
-          cwd: self.options.cwd,
-          env: self.options.env,
-          clearEnv: self.options.clearEnv,
-          stdout: "piped",
-          stderr: "piped",
-          stdin: hasStdin ? "piped" : undefined,
-        });
-
-        const process = self.spawnProcess(command);
-        const decoder = new TextDecoder();
-
-        // Emit job start event
-        const jobId = generateJobId();
-        const startTime = Date.now();
-        emitJobStart(jobId, self.cmd, self.args, process.pid);
-
-        // Start writing stdin in background
-        let stdinPromise: Promise<void> | undefined;
-        if (hasStdin && process.stdin) {
-          stdinPromise = self.writeStdin(process.stdin, stdinData);
-        }
-
-        // Drain stdout in background to prevent deadlock
-        const stdoutDrain = (async () => {
-          const reader = process.stdout.getReader();
-          try {
-            while (true) {
-              const { done } = await reader.read();
-              if (done) break;
-            }
-          } finally {
-            reader.releaseLock();
-          }
-        })();
-
-        // Stream stderr
-        const reader = process.stderr.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) {
-              yield decoder.decode(value, { stream: true });
-            }
-          }
-        } finally {
-          reader.releaseLock();
-          if (stdinPromise) await stdinPromise;
-          await stdoutDrain;
-          const status = await process.status;
-          // Emit job end event
-          emitJobEnd(jobId, status.code, startTime);
-        }
-      })(),
-    );
+    return this.streamOne("stderr");
   }
 
   /**
@@ -566,28 +509,6 @@ export class Command {
     }
 
     return result;
-  }
-
-  /**
-   * Write data to stdin and close it
-   */
-  private async writeStdin(
-    stdin: WritableStream<Uint8Array>,
-    data: string | Uint8Array | ReadableStream<Uint8Array>,
-  ): Promise<void> {
-    if (data instanceof ReadableStream) {
-      // Pipe the readable stream to stdin
-      await data.pipeTo(stdin);
-    } else {
-      const writer = stdin.getWriter();
-      try {
-        const bytes =
-          typeof data === "string" ? new TextEncoder().encode(data) : data;
-        await writer.write(bytes);
-      } finally {
-        await writer.close();
-      }
-    }
   }
 
   /**
