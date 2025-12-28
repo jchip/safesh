@@ -37,8 +37,7 @@ export function truncateOutput(
  * Generate a new script ID for a shell
  */
 export function generateScriptId(shell: Shell): string {
-  const seq = shell.scriptSequence++;
-  return `script-${shell.id}-${seq}`;
+  return `sc${++shell.scriptSequence}`;
 }
 
 /**
