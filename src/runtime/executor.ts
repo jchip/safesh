@@ -9,7 +9,7 @@ import { ensureDir } from "@std/fs";
 import { deadline } from "@std/async";
 import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
-import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script } from "../core/types.ts";
+import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 
@@ -150,6 +150,95 @@ function extractShellState(output: string): { cleanOutput: string; vars?: Record
   }
 }
 
+// Marker for job events (must match command.ts)
+const JOB_MARKER = "__SAFESH_JOB__:";
+
+/** Job event from subprocess */
+interface JobEvent {
+  type: "start" | "end";
+  id: string;
+  scriptId?: string;
+  shellId?: string;
+  command?: string;
+  args?: string[];
+  pid?: number;
+  startedAt?: string;
+  exitCode?: number;
+  completedAt?: string;
+  duration?: number;
+}
+
+/**
+ * Extract job events from stderr and return cleaned output
+ */
+function extractJobEvents(stderr: string): { cleanStderr: string; events: JobEvent[] } {
+  const lines = stderr.split("\n");
+  const events: JobEvent[] = [];
+  const cleanLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith(JOB_MARKER)) {
+      try {
+        const jsonStr = line.slice(JOB_MARKER.length);
+        const event = JSON.parse(jsonStr) as JobEvent;
+        events.push(event);
+      } catch {
+        // Invalid JSON, keep the line as-is
+        cleanLines.push(line);
+      }
+    } else {
+      cleanLines.push(line);
+    }
+  }
+
+  return { cleanStderr: cleanLines.join("\n"), events };
+}
+
+/**
+ * Process job events and register jobs in shell
+ */
+function processJobEvents(shell: Shell, script: Script, events: JobEvent[]): void {
+  // Group events by job ID
+  const startEvents = new Map<string, JobEvent>();
+  const endEvents = new Map<string, JobEvent>();
+
+  for (const event of events) {
+    if (event.type === "start") {
+      startEvents.set(event.id, event);
+    } else if (event.type === "end") {
+      endEvents.set(event.id, event);
+    }
+  }
+
+  // Create Job records from paired events
+  for (const [jobId, start] of startEvents) {
+    const end = endEvents.get(jobId);
+
+    const job: Job = {
+      id: jobId,
+      scriptId: script.id,
+      command: start.command ?? "unknown",
+      args: start.args ?? [],
+      pid: start.pid ?? 0,
+      status: end ? (end.exitCode === 0 ? "completed" : "failed") : "running",
+      exitCode: end?.exitCode,
+      stdout: "", // Not captured at this level
+      stderr: "", // Not captured at this level
+      startedAt: new Date(start.startedAt ?? Date.now()),
+      completedAt: end?.completedAt ? new Date(end.completedAt) : undefined,
+      duration: end?.duration,
+    };
+
+    // Add job to shell
+    shell.jobs.set(jobId, job);
+
+    // Link job to script
+    if (!script.jobIds.includes(jobId)) {
+      script.jobIds.push(jobId);
+    }
+  }
+}
+
 /**
  * Build Deno permission flags from config
  */
@@ -210,9 +299,16 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
     }
   }
 
-  // Env permissions
-  if (perms.env?.length) {
-    flags.push(`--allow-env=${perms.env.join(",")}`);
+  // Env permissions - always include SAFESH_* for job tracking
+  const envVars = [...(perms.env ?? [])];
+  if (!envVars.includes("SAFESH_SHELL_ID")) {
+    envVars.push("SAFESH_SHELL_ID");
+  }
+  if (!envVars.includes("SAFESH_SCRIPT_ID")) {
+    envVars.push("SAFESH_SCRIPT_ID");
+  }
+  if (envVars.length) {
+    flags.push(`--allow-env=${envVars.join(",")}`);
   }
 
   return flags;
@@ -224,6 +320,7 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
 function buildEnv(
   config: SafeShellConfig,
   shell?: Shell,
+  scriptId?: string,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   const envConfig = config.env ?? {};
@@ -257,6 +354,14 @@ function buildEnv(
         result[key] = value;
       }
     }
+  }
+
+  // Add shell and script context for job tracking
+  if (shell) {
+    result["SAFESH_SHELL_ID"] = shell.id;
+  }
+  if (scriptId) {
+    result["SAFESH_SCRIPT_ID"] = scriptId;
   }
 
   return result;
@@ -335,7 +440,7 @@ export async function executeCode(
   const command = new Deno.Command("deno", {
     args,
     cwd,
-    env: buildEnv(config, shell),
+    env: buildEnv(config, shell, script?.id),
     stdout: "piped",
     stderr: "piped",
   });
@@ -360,12 +465,18 @@ export async function executeCode(
       return { status, stdout, stderr };
     })();
 
-    const { status, stdout: rawStdout, stderr } = await deadline(outputPromise, timeoutMs);
+    const { status, stdout: rawStdout, stderr: rawStderr } = await deadline(outputPromise, timeoutMs);
 
-    // Extract shell state from output and sync vars back
+    // Extract shell state from stdout and sync vars back
     const { cleanOutput: stdout, vars } = extractShellState(rawStdout);
     if (shell && vars) {
       shell.vars = vars;
+    }
+
+    // Extract job events from stderr and process them
+    const { cleanStderr: stderr, events: jobEvents } = extractJobEvents(rawStderr);
+    if (shell && script && jobEvents.length > 0) {
+      processJobEvents(shell, script, jobEvents);
     }
 
     // Update script with results (using cleaned output)

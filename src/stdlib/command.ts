@@ -9,6 +9,66 @@
 
 import { createStream, type Stream } from "./stream.ts";
 
+// Job tracking marker for communication with main process
+const JOB_MARKER = "__SAFESH_JOB__:";
+
+/**
+ * Generate a unique job ID
+ */
+function generateJobId(): string {
+  const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
+  const random = crypto.getRandomValues(new Uint32Array(1))[0];
+  if (scriptId) {
+    // Extract shell ID prefix from script ID (script-{shellId}-{seq})
+    const shellPrefix = scriptId.replace(/^script-/, "").split("-")[0];
+    return `job-${shellPrefix}-${random?.toString(16) ?? "0"}`;
+  }
+  return `job-${random?.toString(16) ?? "0"}`;
+}
+
+/**
+ * Emit a job event marker to stderr (for main process to parse)
+ */
+function emitJobStart(jobId: string, command: string, args: string[], pid: number): void {
+  const shellId = Deno.env.get("SAFESH_SHELL_ID");
+  const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
+  if (!shellId || !scriptId) return; // Not running in a tracked context
+
+  const event = {
+    type: "start",
+    id: jobId,
+    scriptId,
+    shellId,
+    command,
+    args,
+    pid,
+    startedAt: new Date().toISOString(),
+  };
+  console.error(`${JOB_MARKER}${JSON.stringify(event)}`);
+}
+
+/**
+ * Emit a job completion event marker
+ */
+function emitJobEnd(
+  jobId: string,
+  exitCode: number,
+  startTime: number,
+): void {
+  const shellId = Deno.env.get("SAFESH_SHELL_ID");
+  if (!shellId) return;
+
+  const completedAt = new Date();
+  const event = {
+    type: "end",
+    id: jobId,
+    exitCode,
+    completedAt: completedAt.toISOString(),
+    duration: completedAt.getTime() - startTime,
+  };
+  console.error(`${JOB_MARKER}${JSON.stringify(event)}`);
+}
+
 /**
  * Result from executing a command (buffered mode)
  */
@@ -179,6 +239,11 @@ export class Command {
     const process = this.spawnProcess(command);
     const decoder = new TextDecoder();
 
+    // Emit job start event
+    const jobId = generateJobId();
+    const startTime = Date.now();
+    emitJobStart(jobId, this.cmd, this.args, process.pid);
+
     // Write stdin, read outputs, and wait for status concurrently
     const promises: Promise<unknown>[] = [
       this.readStream(process.stdout),
@@ -194,6 +259,9 @@ export class Command {
       Uint8Array,
       Deno.CommandStatus,
     ];
+
+    // Emit job end event
+    emitJobEnd(jobId, status.code, startTime);
 
     return {
       stdout: decoder.decode(stdoutBytes),
@@ -268,6 +336,11 @@ export class Command {
 
     const process = this.spawnProcess(command);
 
+    // Emit job start event
+    const jobId = generateJobId();
+    const startTime = Date.now();
+    emitJobStart(jobId, this.cmd, this.args, process.pid);
+
     // Start writing stdin in background (don't await yet)
     let stdinPromise: Promise<void> | undefined;
     if (hasStdin && process.stdin) {
@@ -286,6 +359,10 @@ export class Command {
     }
 
     const status = await process.status;
+
+    // Emit job end event
+    emitJobEnd(jobId, status.code, startTime);
+
     yield { type: "exit", code: status.code };
   }
 
@@ -329,6 +406,11 @@ export class Command {
         const process = self.spawnProcess(command);
         const decoder = new TextDecoder();
 
+        // Emit job start event
+        const jobId = generateJobId();
+        const startTime = Date.now();
+        emitJobStart(jobId, self.cmd, self.args, process.pid);
+
         // Start writing stdin in background
         let stdinPromise: Promise<void> | undefined;
         if (hasStdin && process.stdin) {
@@ -362,7 +444,9 @@ export class Command {
           reader.releaseLock();
           if (stdinPromise) await stdinPromise;
           await stderrDrain;
-          await process.status;
+          const status = await process.status;
+          // Emit job end event
+          emitJobEnd(jobId, status.code, startTime);
         }
       })(),
     );
@@ -407,6 +491,11 @@ export class Command {
         const process = self.spawnProcess(command);
         const decoder = new TextDecoder();
 
+        // Emit job start event
+        const jobId = generateJobId();
+        const startTime = Date.now();
+        emitJobStart(jobId, self.cmd, self.args, process.pid);
+
         // Start writing stdin in background
         let stdinPromise: Promise<void> | undefined;
         if (hasStdin && process.stdin) {
@@ -440,7 +529,9 @@ export class Command {
           reader.releaseLock();
           if (stdinPromise) await stdinPromise;
           await stdoutDrain;
-          await process.status;
+          const status = await process.status;
+          // Emit job end event
+          emitJobEnd(jobId, status.code, startTime);
         }
       })(),
     );

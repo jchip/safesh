@@ -79,6 +79,15 @@ const WaitScriptSchema = z.object({
   timeout: z.number().optional().describe("Timeout in milliseconds"),
 });
 
+const ListJobsSchema = z.object({
+  shellId: z.string().describe("Shell ID to list jobs from"),
+  filter: z.object({
+    scriptId: z.string().optional().describe("Filter by parent script ID"),
+    status: z.enum(["running", "completed", "failed"]).optional(),
+    limit: z.number().optional(),
+  }).optional().describe("Optional filter criteria"),
+});
+
 // Job (process) management - for killing spawned processes
 const KillJobSchema = z.object({
   shellId: z.string().describe("Shell ID"),
@@ -370,6 +379,43 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             required: ["shellId", "scriptId"],
           },
         },
+        // Job listing (SSH-91)
+        {
+          name: "listJobs",
+          description:
+            "List jobs (spawned processes) in a shell. " +
+            "Jobs are child processes created by scripts via cmd(), git(), docker(), etc. " +
+            "Returns jobs sorted by start time (newest first).",
+          inputSchema: {
+            type: "object",
+            properties: {
+              shellId: {
+                type: "string",
+                description: "Shell ID to list jobs from",
+              },
+              filter: {
+                type: "object",
+                properties: {
+                  scriptId: {
+                    type: "string",
+                    description: "Filter by parent script ID",
+                  },
+                  status: {
+                    type: "string",
+                    enum: ["running", "completed", "failed"],
+                    description: "Filter by job status",
+                  },
+                  limit: {
+                    type: "number",
+                    description: "Maximum number of jobs to return",
+                  },
+                },
+                description: "Optional filter criteria",
+              },
+            },
+            required: ["shellId"],
+          },
+        },
       ],
     };
   });
@@ -614,6 +660,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             startedAt: s.startedAt.toISOString(),
             duration: s.duration,
             exitCode: s.exitCode,
+            jobIds: s.jobIds,
             truncated: {
               stdout: s.stdoutTruncated,
               stderr: s.stderrTruncated,
@@ -773,6 +820,34 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
             ],
             isError: script.status === "failed",
+          };
+        }
+
+        case "listJobs": {
+          const parsed = ListJobsSchema.parse(args);
+          const jobs = shellManager.listJobs(parsed.shellId, parsed.filter);
+
+          // Serialize jobs (newest first, already sorted by listJobs)
+          const serialized = jobs.map((job) => ({
+            id: job.id,
+            scriptId: job.scriptId,
+            command: job.command,
+            args: job.args,
+            pid: job.pid,
+            status: job.status,
+            exitCode: job.exitCode,
+            startedAt: job.startedAt.toISOString(),
+            completedAt: job.completedAt?.toISOString(),
+            duration: job.duration,
+          }));
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(serialized, null, 2),
+              },
+            ],
           };
         }
 
