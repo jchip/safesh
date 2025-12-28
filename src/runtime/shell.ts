@@ -27,6 +27,8 @@ import {
 export class ShellManager {
   private shells: Map<string, Shell> = new Map();
   private defaultCwd: string;
+  private shellSequence = 0;
+  private retrySequence = 0;
 
   constructor(defaultCwd: string) {
     this.defaultCwd = defaultCwd;
@@ -42,7 +44,7 @@ export class ShellManager {
   } = {}): Shell {
     const now = new Date();
     return {
-      id: crypto.randomUUID(),
+      id: `sh${++this.shellSequence}`,
       description: options.description,
       cwd: options.cwd ?? this.defaultCwd,
       env: options.env ?? {},
@@ -354,7 +356,7 @@ export class ShellManager {
     }
 
     const retry: PendingRetry = {
-      id: `retry-${crypto.randomUUID().slice(0, 8)}`,
+      id: `rt${++this.retrySequence}`,
       code,
       shellId,
       context,
