@@ -4,7 +4,7 @@
  * Translates SafeShell config into Deno permission flags.
  */
 
-import { resolve } from "@std/path";
+import { resolve, isAbsolute } from "@std/path";
 import type { PermissionsConfig, SafeShellConfig } from "./types.ts";
 import { pathViolation, symlinkViolation } from "./errors.ts";
 
@@ -33,6 +33,35 @@ export function isWithinWorkspace(path: string, workspace: string): boolean {
 
   return absolutePath === absoluteWorkspace ||
          absolutePath.startsWith(absoluteWorkspace + "/");
+}
+
+/**
+ * Check if a path is within the project directory
+ */
+export function isWithinProjectDir(path: string, projectDir: string, cwd?: string): boolean {
+  // Resolve path to absolute
+  const absolutePath = isAbsolute(path) ? resolve(path) : resolve(cwd ?? Deno.cwd(), path);
+  const absoluteProjectDir = resolve(projectDir);
+
+  return absolutePath === absoluteProjectDir ||
+         absolutePath.startsWith(absoluteProjectDir + "/");
+}
+
+/**
+ * Check if a command path is allowed under projectDir
+ * Used when allowProjectCommands is true
+ */
+export function isCommandWithinProjectDir(
+  commandPath: string,
+  projectDir: string,
+  cwd?: string,
+): boolean {
+  // Only applies to path-like commands (relative or absolute paths)
+  if (!commandPath.includes("/") && !commandPath.includes("\\")) {
+    return false; // Not a path, just a command name
+  }
+
+  return isWithinProjectDir(commandPath, projectDir, cwd);
 }
 
 /**
@@ -90,19 +119,6 @@ export async function validatePath(
 ): Promise<string> {
   const absolutePath = resolve(cwd, requestedPath);
 
-  // Get allowed paths for this operation
-  const perms = config.permissions ?? {};
-  const allowedPaths = operation === "write"
-    ? (perms.write ?? [])
-    : (perms.read ?? []);
-
-  if (allowedPaths.length === 0) {
-    throw pathViolation(requestedPath, [], absolutePath);
-  }
-
-  const workspace = config.workspace;
-  const expandedAllowed = expandPaths(allowedPaths, cwd, workspace);
-
   // Resolve symlinks to get real path
   let realPath: string;
   try {
@@ -111,6 +127,26 @@ export async function validatePath(
     // File doesn't exist yet, use the absolute path
     realPath = absolutePath;
   }
+
+  // Check if allowProjectFiles permits this path
+  if (config.allowProjectFiles && config.projectDir) {
+    if (isWithinProjectDir(realPath, config.projectDir)) {
+      return realPath;
+    }
+  }
+
+  // Get allowed paths for this operation
+  const perms = config.permissions ?? {};
+  const allowedPaths = operation === "write"
+    ? (perms.write ?? [])
+    : (perms.read ?? []);
+
+  if (allowedPaths.length === 0 && !(config.allowProjectFiles && config.projectDir)) {
+    throw pathViolation(requestedPath, [], absolutePath);
+  }
+
+  const workspace = config.workspace;
+  const expandedAllowed = expandPaths(allowedPaths, cwd, workspace);
 
   // Check if real path is within allowed directories
   if (!isPathAllowed(realPath, allowedPaths, cwd, workspace)) {
@@ -150,6 +186,12 @@ export function getEffectivePermissions(
   // Always include /tmp for scratch operations
   const defaultRead = [cwd, "/tmp"];
   const defaultWrite = ["/tmp"];
+
+  // Include projectDir in read/write if allowProjectFiles is true
+  if (config.allowProjectFiles && config.projectDir) {
+    defaultRead.push(config.projectDir);
+    defaultWrite.push(config.projectDir);
+  }
 
   return {
     read: [...new Set([...defaultRead, ...(perms.read ?? [])])],
