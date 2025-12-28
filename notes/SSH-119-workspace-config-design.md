@@ -138,12 +138,37 @@ MCP client sends configuration as part of connection handshake or initialization
    - Validate paths exist at configure time?
    - Or lazy validation on first use?
 
-## Proposed Implementation
+## Chosen Approach: MCP Roots (Option 5)
 
-TBD - waiting for design decision on configuration approach.
+**Decision**: Use MCP protocol's built-in `roots` capability instead of CLI args or custom configure tool.
+
+### Implementation (SSH-121)
+
+After server connects and receives `initialized` notification:
+
+1. Check if client supports `roots` capability via `getClientCapabilities()`
+2. Call `server.listRoots()` to get root URIs from client
+3. Parse `file://` URIs to local paths
+4. First root becomes `projectDir`
+5. All roots added to `permissions.read` and `permissions.write`
+6. Listen for `notifications/roots/list_changed` to handle dynamic updates
+
+### Benefits
+
+- Uses MCP standard instead of custom protocol
+- Client-driven (IDE/Claude Code knows the context)
+- Dynamic updates when roots change
+- No extra CLI args or tools needed
+- Works with any MCP client that supports roots
+
+### Files Changed
+
+- `src/mcp/server.ts`: Added roots fetching and config updates
+- `tests/mcp_roots_test.ts`: Unit tests for URI parsing
 
 ## Related
 
-- Epic: SSH-119
-- Current implementation: CLI args `--project-dir`, `--cwd`, `--allow-project-files`, `--allow-project-commands`
+- Epic: SSH-119 (closed)
+- Implementation: SSH-121
+- Current implementation: CLI args still supported as fallback
 - Files: `src/mcp/server.ts`, `src/core/config.ts`, `src/core/permissions.ts`
