@@ -2,8 +2,9 @@
 .deno/
 deno.lock
 
-# Claude
-.claude/
+# Claude (keep skills for sharing)
+.claude/*
+!.claude/skills/
 
 # Temp files
 .temp/
