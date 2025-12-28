@@ -1,6 +1,6 @@
 # SafeShell
 
-A secure, sandboxed shell environment for AI assistants and automated workflows. Execute JavaScript/TypeScript code and whitelisted commands with fine-grained permission control.
+A safe JavaScript/TypeScript shell in a sandboxed Deno runtime for bash tool replacement.
 
 ## What is SafeShell?
 

@@ -54,7 +54,10 @@
   },
   "lint": {
     "rules": {
-      "tags": ["recommended"]
+      "tags": [
+        "recommended"
+      ]
     }
-  }
+  },
+  "description": "A safe JavaScript/TypeScript shell in a sandboxed Deno runtime for bash tool replacement"
 }
