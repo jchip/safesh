@@ -5,18 +5,18 @@
  * - Working directory (cwd)
  * - Environment variables
  * - Persisted JS variables
- * - Background jobs
+ * - Background scripts and jobs
  *
  * Shells are stored in-memory and tied to the MCP server lifecycle.
  *
  * @module
  */
 
-import type { Shell, Job } from "../core/types.ts";
+import type { Shell, Script, Job } from "../core/types.ts";
 import {
-  JOB_OUTPUT_LIMIT,
-  SESSION_MEMORY_LIMIT,
-  MAX_SESSIONS,
+  SCRIPT_OUTPUT_LIMIT,
+  SHELL_MEMORY_LIMIT,
+  MAX_SHELLS,
 } from "../core/types.ts";
 
 /**
@@ -38,7 +38,7 @@ export class ShellManager {
    */
   create(options: { cwd?: string; env?: Record<string, string>; description?: string } = {}): Shell {
     // Enforce shell limit with LRU eviction
-    if (this.shells.size >= MAX_SESSIONS) {
+    if (this.shells.size >= MAX_SHELLS) {
       this.evictLeastRecentShell();
     }
 
@@ -49,9 +49,10 @@ export class ShellManager {
       cwd: options.cwd ?? this.defaultCwd,
       env: options.env ?? {},
       vars: {},
+      scripts: new Map(),
+      scriptsByPid: new Map(),
+      scriptSequence: 0,
       jobs: new Map(),
-      jobsByPid: new Map(),
-      jobSequence: 0,
       createdAt: now,
       lastActivityAt: now,
     };
@@ -95,9 +96,10 @@ export class ShellManager {
       cwd: fallback.cwd ?? this.defaultCwd,
       env: fallback.env ?? {},
       vars: {},
+      scripts: new Map(),
+      scriptsByPid: new Map(),
+      scriptSequence: 0,
       jobs: new Map(),
-      jobsByPid: new Map(),
-      jobSequence: 0,
       createdAt: now,
       lastActivityAt: now,
     };
@@ -204,14 +206,14 @@ export class ShellManager {
   }
 
   /**
-   * Add a job to the shell
+   * Add a script to the shell
    */
-  addJob(shellId: string, job: Job): boolean {
+  addScript(shellId: string, script: Script): boolean {
     const shell = this.shells.get(shellId);
     if (!shell) return false;
 
-    shell.jobs.set(job.id, job);
-    shell.jobsByPid.set(job.pid, job.id);
+    shell.scripts.set(script.id, script);
+    shell.scriptsByPid.set(script.pid, script.id);
     shell.lastActivityAt = new Date();
 
     // Check memory and trim if needed
@@ -221,32 +223,32 @@ export class ShellManager {
   }
 
   /**
-   * Get a job from a shell
+   * Get a script from a shell
    */
-  getJob(shellId: string, jobId: string): Job | undefined {
+  getScript(shellId: string, scriptId: string): Script | undefined {
     const shell = this.shells.get(shellId);
-    return shell?.jobs.get(jobId);
+    return shell?.scripts.get(scriptId);
   }
 
   /**
-   * Get a job by PID
+   * Get a script by PID
    */
-  getJobByPid(shellId: string, pid: number): Job | undefined {
+  getScriptByPid(shellId: string, pid: number): Script | undefined {
     const shell = this.shells.get(shellId);
     if (!shell) return undefined;
-    const jobId = shell.jobsByPid.get(pid);
-    return jobId ? shell.jobs.get(jobId) : undefined;
+    const scriptId = shell.scriptsByPid.get(pid);
+    return scriptId ? shell.scripts.get(scriptId) : undefined;
   }
 
   /**
-   * Update job with comprehensive fields
+   * Update script with comprehensive fields
    */
-  updateJob(
+  updateScript(
     shellId: string,
-    jobId: string,
+    scriptId: string,
     updates: Partial<
       Pick<
-        Job,
+        Script,
         | "status"
         | "exitCode"
         | "stdout"
@@ -259,73 +261,73 @@ export class ShellManager {
       >
     >,
   ): boolean {
-    const job = this.getJob(shellId, jobId);
-    if (!job) return false;
+    const script = this.getScript(shellId, scriptId);
+    if (!script) return false;
 
     if (updates.status !== undefined) {
-      job.status = updates.status;
+      script.status = updates.status;
     }
     if (updates.exitCode !== undefined) {
-      job.exitCode = updates.exitCode;
+      script.exitCode = updates.exitCode;
     }
     if (updates.stdout !== undefined) {
-      job.stdout = updates.stdout;
+      script.stdout = updates.stdout;
     }
     if (updates.stderr !== undefined) {
-      job.stderr = updates.stderr;
+      script.stderr = updates.stderr;
     }
     if (updates.stdoutTruncated !== undefined) {
-      job.stdoutTruncated = updates.stdoutTruncated;
+      script.stdoutTruncated = updates.stdoutTruncated;
     }
     if (updates.stderrTruncated !== undefined) {
-      job.stderrTruncated = updates.stderrTruncated;
+      script.stderrTruncated = updates.stderrTruncated;
     }
     if (updates.completedAt !== undefined) {
-      job.completedAt = updates.completedAt;
+      script.completedAt = updates.completedAt;
     }
     if (updates.duration !== undefined) {
-      job.duration = updates.duration;
+      script.duration = updates.duration;
     }
     if (updates.process !== undefined) {
-      job.process = updates.process;
+      script.process = updates.process;
     }
 
     return true;
   }
 
   /**
-   * List jobs in a shell with optional filter
+   * List scripts in a shell with optional filter
    */
-  listJobs(
+  listScripts(
     shellId: string,
     filter?: {
       status?: "running" | "completed" | "failed";
       background?: boolean;
       limit?: number;
     },
-  ): Job[] {
+  ): Script[] {
     const shell = this.shells.get(shellId);
     if (!shell) return [];
 
-    let jobs = Array.from(shell.jobs.values());
+    let scripts = Array.from(shell.scripts.values());
 
     // Apply filters
     if (filter?.status !== undefined) {
-      jobs = jobs.filter((j) => j.status === filter.status);
+      scripts = scripts.filter((s) => s.status === filter.status);
     }
     if (filter?.background !== undefined) {
-      jobs = jobs.filter((j) => j.background === filter.background);
+      scripts = scripts.filter((s) => s.background === filter.background);
     }
 
     // Sort by startedAt descending (newest first)
-    jobs.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+    scripts.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
 
     // Apply limit
     if (filter?.limit !== undefined && filter.limit > 0) {
-      jobs = jobs.slice(0, filter.limit);
+      scripts = scripts.slice(0, filter.limit);
     }
 
-    return jobs;
+    return scripts;
   }
 
   /**
@@ -333,31 +335,31 @@ export class ShellManager {
    */
   estimateShellMemory(shell: Shell): number {
     let size = 0;
-    for (const job of shell.jobs.values()) {
-      size += job.stdout.length + job.stderr.length + job.code.length + 200; // overhead
+    for (const script of shell.scripts.values()) {
+      size += script.stdout.length + script.stderr.length + script.code.length + 200; // overhead
     }
     size += JSON.stringify(shell.vars).length;
     return size;
   }
 
   /**
-   * Trim oldest completed jobs if shell exceeds memory limit
+   * Trim oldest completed scripts if shell exceeds memory limit
    */
   private trimShellIfNeeded(shell: Shell): void {
     const memoryUsage = this.estimateShellMemory(shell);
-    if (memoryUsage <= SESSION_MEMORY_LIMIT) return;
+    if (memoryUsage <= SHELL_MEMORY_LIMIT) return;
 
-    // Get completed jobs sorted by startedAt (oldest first)
-    const completedJobs = Array.from(shell.jobs.values())
-      .filter((j) => j.status !== "running")
+    // Get completed scripts sorted by startedAt (oldest first)
+    const completedScripts = Array.from(shell.scripts.values())
+      .filter((s) => s.status !== "running")
       .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
 
-    // Remove oldest jobs until under limit
-    for (const job of completedJobs) {
-      shell.jobs.delete(job.id);
-      shell.jobsByPid.delete(job.pid);
+    // Remove oldest scripts until under limit
+    for (const script of completedScripts) {
+      shell.scripts.delete(script.id);
+      shell.scriptsByPid.delete(script.pid);
 
-      if (this.estimateShellMemory(shell) <= SESSION_MEMORY_LIMIT) {
+      if (this.estimateShellMemory(shell) <= SHELL_MEMORY_LIMIT) {
         break;
       }
     }
@@ -393,12 +395,12 @@ export class ShellManager {
     const shell = this.shells.get(id);
     if (!shell) return false;
 
-    // Clean up any running jobs
-    for (const job of shell.jobs.values()) {
-      if (job.status === "running" && job.process) {
+    // Clean up any running scripts
+    for (const script of shell.scripts.values()) {
+      if (script.status === "running" && script.process) {
         try {
-          job.process.kill("SIGTERM");
-          job.status = "failed";
+          script.process.kill("SIGTERM");
+          script.status = "failed";
         } catch {
           // Process may have already exited
         }
@@ -449,7 +451,7 @@ export class ShellManager {
     cwd: string;
     env: Record<string, string>;
     vars: Record<string, unknown>;
-    jobs: {
+    scripts: {
       id: string;
       code: string;
       status: string;
@@ -466,13 +468,13 @@ export class ShellManager {
       cwd: shell.cwd,
       env: shell.env,
       vars: shell.vars,
-      jobs: Array.from(shell.jobs.values()).map((j) => ({
-        id: j.id,
-        code: j.code.length > 100 ? j.code.slice(0, 100) + "..." : j.code,
-        status: j.status,
-        background: j.background,
-        startedAt: j.startedAt.toISOString(),
-        duration: j.duration,
+      scripts: Array.from(shell.scripts.values()).map((s) => ({
+        id: s.id,
+        code: s.code.length > 100 ? s.code.slice(0, 100) + "..." : s.code,
+        status: s.status,
+        background: s.background,
+        startedAt: s.startedAt.toISOString(),
+        duration: s.duration,
       })),
       createdAt: shell.createdAt.toISOString(),
       lastActivityAt: shell.lastActivityAt.toISOString(),

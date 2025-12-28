@@ -97,10 +97,15 @@ export interface SafeShellConfig {
 // Runtime Types
 // ============================================================================
 
-/** Memory limits for session/job management */
-export const JOB_OUTPUT_LIMIT = 1024 * 1024; // 1MB per stdout/stderr
-export const SESSION_MEMORY_LIMIT = 50 * 1024 * 1024; // 50MB per session
-export const MAX_SESSIONS = 10; // LRU eviction when exceeded
+/** Memory limits for shell/script management */
+export const SCRIPT_OUTPUT_LIMIT = 1024 * 1024; // 1MB per stdout/stderr
+export const SHELL_MEMORY_LIMIT = 50 * 1024 * 1024; // 50MB per shell
+export const MAX_SHELLS = 10; // LRU eviction when exceeded
+
+// Legacy aliases for backwards compatibility during migration
+export const JOB_OUTPUT_LIMIT = SCRIPT_OUTPUT_LIMIT;
+export const SESSION_MEMORY_LIMIT = SHELL_MEMORY_LIMIT;
+export const MAX_SESSIONS = MAX_SHELLS;
 
 export interface Shell {
   /** Unique shell ID */
@@ -113,36 +118,42 @@ export interface Shell {
   env: Record<string, string>;
   /** Persisted JS variables */
   vars: Record<string, unknown>;
-  /** Jobs by ID (primary index) */
+  /** Scripts by ID (primary index) - code executions */
+  scripts: Map<string, Script>;
+  /** Script ID lookup by PID */
+  scriptsByPid: Map<number, string>;
+  /** Auto-increment counter for script IDs */
+  scriptSequence: number;
+  /** Jobs by ID - spawned processes within scripts */
   jobs: Map<string, Job>;
-  /** Job ID lookup by PID */
-  jobsByPid: Map<number, string>;
-  /** Auto-increment counter for job IDs */
-  jobSequence: number;
   /** Creation timestamp */
   createdAt: Date;
-  /** Last activity timestamp (updated on each exec, used for LRU) */
+  /** Last activity timestamp (updated on each run, used for LRU) */
   lastActivityAt: Date;
 }
 
-export interface Job {
-  /** Unique job ID: job-{sessionId}-{seq} */
+/**
+ * Script - a code execution record created by the `run` tool.
+ * May spawn multiple Jobs (processes with PIDs).
+ */
+export interface Script {
+  /** Unique script ID: script-{shellId}-{seq} */
   id: string;
   /** Code that was executed */
   code: string;
-  /** Process ID (required for spawned processes) */
+  /** Process ID of the deno subprocess running this script */
   pid: number;
   /** Current status */
   status: "running" | "completed" | "failed";
   /** Exit code if completed/failed */
   exitCode?: number;
-  /** Buffered stdout (capped at JOB_OUTPUT_LIMIT) */
+  /** Buffered stdout (capped at SCRIPT_OUTPUT_LIMIT) */
   stdout: string;
-  /** Buffered stderr (capped at JOB_OUTPUT_LIMIT) */
+  /** Buffered stderr (capped at SCRIPT_OUTPUT_LIMIT) */
   stderr: string;
-  /** True if stdout exceeded JOB_OUTPUT_LIMIT */
+  /** True if stdout exceeded SCRIPT_OUTPUT_LIMIT */
   stdoutTruncated: boolean;
-  /** True if stderr exceeded JOB_OUTPUT_LIMIT */
+  /** True if stderr exceeded SCRIPT_OUTPUT_LIMIT */
   stderrTruncated: boolean;
   /** Start timestamp */
   startedAt: Date;
@@ -150,10 +161,43 @@ export interface Job {
   completedAt?: Date;
   /** Duration in milliseconds */
   duration?: number;
-  /** Whether job runs in background */
+  /** Whether script runs in background */
   background: boolean;
   /** Child process handle (cleared after completion to allow GC) */
   process?: Deno.ChildProcess;
+  /** IDs of jobs spawned by this script */
+  jobIds: string[];
+}
+
+/**
+ * Job - a spawned process with a PID.
+ * Created when cmd(), git(), docker() etc. are called within a Script.
+ */
+export interface Job {
+  /** Unique job ID: job-{shellId}-{seq} */
+  id: string;
+  /** Parent script ID */
+  scriptId: string;
+  /** Command that was executed (e.g., "git", "docker") */
+  command: string;
+  /** Command arguments */
+  args: string[];
+  /** Process ID */
+  pid: number;
+  /** Current status */
+  status: "running" | "completed" | "failed";
+  /** Exit code if completed/failed */
+  exitCode?: number;
+  /** Buffered stdout */
+  stdout: string;
+  /** Buffered stderr */
+  stderr: string;
+  /** Start timestamp */
+  startedAt: Date;
+  /** Completion timestamp */
+  completedAt?: Date;
+  /** Duration in milliseconds */
+  duration?: number;
 }
 
 // ============================================================================
@@ -180,8 +224,8 @@ export interface ExecResult {
   code: number;
   /** Whether execution succeeded (code === 0) */
   success: boolean;
-  /** Job ID if tracked in a session */
-  jobId?: string;
+  /** Script ID if tracked in a shell */
+  scriptId?: string;
 }
 
 export interface RunOptions extends ExecOptions {

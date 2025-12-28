@@ -9,9 +9,9 @@ import { ensureDir } from "@std/fs";
 import { deadline } from "@std/async";
 import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
-import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Job } from "../core/types.ts";
-import { JOB_OUTPUT_LIMIT } from "../core/types.ts";
-import { createJob, truncateOutput } from "./jobs.ts";
+import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script } from "../core/types.ts";
+import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
+import { createScript, truncateOutput } from "./scripts.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
@@ -265,7 +265,7 @@ function buildEnv(
 /**
  * Execute JS/TS code in a sandboxed Deno subprocess
  *
- * When an explicit shell is provided, automatically creates a job record
+ * When an explicit shell is provided, automatically creates a script record
  * for tracking execution history.
  */
 export async function executeCode(
@@ -281,11 +281,11 @@ export async function executeCode(
   const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
   validateImports(code, importPolicy);
 
-  // Create job for tracking if shell provided
-  let job: Job | undefined;
+  // Create script for tracking if shell provided
+  let script: Script | undefined;
   if (shell) {
-    job = createJob(shell, code, false, 0);
-    shell.jobs.set(job.id, job);
+    script = createScript(shell, code, false, 0);
+    shell.scripts.set(script.id, script);
     shell.lastActivityAt = new Date();
   }
 
@@ -343,10 +343,10 @@ export async function executeCode(
   // Spawn process so we can kill it on timeout
   const process = command.spawn();
 
-  // Update job with PID
-  if (job) {
-    job.pid = process.pid;
-    shell!.jobsByPid.set(process.pid, job.id);
+  // Update script with PID
+  if (script) {
+    script.pid = process.pid;
+    shell!.scriptsByPid.set(process.pid, script.id);
   }
 
   try {
@@ -368,19 +368,19 @@ export async function executeCode(
       shell.vars = vars;
     }
 
-    // Update job with results (using cleaned output)
-    if (job) {
+    // Update script with results (using cleaned output)
+    if (script) {
       const stdoutResult = truncateOutput(stdout);
       const stderrResult = truncateOutput(stderr);
 
-      job.status = status.code === 0 ? "completed" : "failed";
-      job.exitCode = status.code;
-      job.stdout = stdoutResult.text;
-      job.stderr = stderrResult.text;
-      job.stdoutTruncated = stdoutResult.truncated;
-      job.stderrTruncated = stderrResult.truncated;
-      job.completedAt = new Date();
-      job.duration = job.completedAt.getTime() - job.startedAt.getTime();
+      script.status = status.code === 0 ? "completed" : "failed";
+      script.exitCode = status.code;
+      script.stdout = stdoutResult.text;
+      script.stderr = stderrResult.text;
+      script.stdoutTruncated = stdoutResult.truncated;
+      script.stderrTruncated = stderrResult.truncated;
+      script.completedAt = new Date();
+      script.duration = script.completedAt.getTime() - script.startedAt.getTime();
     }
 
     return {
@@ -388,7 +388,7 @@ export async function executeCode(
       stderr,
       code: status.code,
       success: status.code === 0,
-      jobId: job?.id,
+      scriptId: script?.id,
     };
   } catch (error) {
     // Kill the process and cancel streams on timeout or error
@@ -410,14 +410,14 @@ export async function executeCode(
       // Stream may already be closed
     }
 
-    // Update job with failure
-    if (job) {
-      job.status = "failed";
-      job.completedAt = new Date();
-      job.duration = job.completedAt.getTime() - job.startedAt.getTime();
+    // Update script with failure
+    if (script) {
+      script.status = "failed";
+      script.completedAt = new Date();
+      script.duration = script.completedAt.getTime() - script.startedAt.getTime();
       if (error instanceof DOMException && error.name === "TimeoutError") {
-        job.stderr = `Execution timed out after ${timeoutMs}ms`;
-        job.stderrTruncated = false;
+        script.stderr = `Execution timed out after ${timeoutMs}ms`;
+        script.stderrTruncated = false;
       }
     }
 

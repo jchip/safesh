@@ -358,5 +358,5 @@ function estimateSessionMemory(session: Session): number {
 - Current Session type: `src/core/types.ts`
 - Current SessionManager: `src/runtime/session.ts`
 - Current MCP tools: `src/mcp/server.ts`
-- Job management: `src/runtime/jobs.ts`
+- Script management: `src/runtime/scripts.ts`
 - Command class: `src/stdlib/command.ts`
