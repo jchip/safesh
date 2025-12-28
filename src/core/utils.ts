@@ -5,6 +5,7 @@
  */
 
 import type { SafeShellConfig, Shell } from "./types.ts";
+import { getProjectCommands } from "./config.ts";
 
 /**
  * Hash code string using SHA-256
@@ -72,6 +73,12 @@ export function buildEnv(
   }
   if (scriptId) {
     result["SAFESH_SCRIPT_ID"] = scriptId;
+  }
+
+  // Add project commands for init() validation
+  const projectCommands = getProjectCommands();
+  if (projectCommands.length > 0) {
+    result["SAFESH_PROJECT_COMMANDS"] = JSON.stringify(projectCommands);
   }
 
   return result;

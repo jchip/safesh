@@ -1,23 +1,43 @@
 ---
 name: safesh-permission
-description: Check command permissions before executing via safesh, prompt user if needed
+description: Handle project command permissions for safesh init()
 allowed-tools: Read, Edit, Write
 ---
 
-# SafeShell Command Permission Workflow
+# SafeShell Project Command Permissions
 
-Before executing external commands via safesh, always check if they are allowed and prompt the user if needed.
+When using safesh to run project-local commands (scripts, binaries under the project directory), you must use `init()` to register them. This requires the commands to be in `.claude/safesh.local.ts`.
 
-## Pre-Flight Permission Check
+## Two Types of Commands
 
-**BEFORE** sending code to safesh that includes external commands (via `cmd()`, `git()`, `docker()`, etc.):
+### 1. Built-in Commands (No init needed)
+```typescript
+// These work without any setup
+await git("status").exec();
+await deno("test").exec();
+await docker("ps").exec();
+```
 
-1. Read `.claude/safesh.local.ts` to check if the command is already allowed
-2. If NOT allowed, prompt the user for permission
+### 2. Project Commands (Require init)
+```typescript
+// Must register project commands first
+const commands = init({
+  fyngram: "./packages/fyngram/fyngram",
+  build: "./scripts/build.sh"
+});
+
+await commands.fyngram.exec(["build"]);
+await commands.build.exec(["--release"]);
+```
+
+## Permission Workflow
+
+**BEFORE** writing code with `init()`:
+
+1. Check `.claude/safesh.local.ts` for allowed project commands
+2. If command is NOT listed, prompt user for permission
 3. If approved, update the config file
-4. THEN execute the code
-
-This prevents partial script execution when a command is blocked midway.
+4. THEN write the code using `init()`
 
 ## Checking Permissions
 
@@ -27,22 +47,28 @@ Read the project's config file:
 .claude/safesh.local.ts
 ```
 
-Example contents:
+Look for project commands (those with `name` and `path`):
+
 ```typescript
 export default {
-  allowedCommands: ["cargo", "rustc", "make"]
+  allowedCommands: [
+    // Built-in command overrides
+    "cargo",
+
+    // Project commands (required for init())
+    { name: "fyngram", path: "./packages/fyngram/fyngram" },
+    { name: "build", path: "./scripts/build.sh" }
+  ]
 };
 ```
 
-If the command you need (e.g., `npm`) is not in `allowedCommands`, you must prompt first.
-
 ## Prompting the User
 
-Ask clearly:
+When you need to use a project command not in the config:
 
 ```
-The command 'npm' is not in the allowed list for safesh.
-Would you like to add it to .claude/safesh.local.ts?
+I need to use './scripts/deploy.sh' as a project command.
+Would you like me to add it to .claude/safesh.local.ts?
 - Yes: Add and proceed
 - No: Cancel
 ```
@@ -53,7 +79,9 @@ Would you like to add it to .claude/safesh.local.ts?
 
 ```typescript
 export default {
-  allowedCommands: ["npm"]
+  allowedCommands: [
+    { name: "deploy", path: "./scripts/deploy.sh" }
+  ]
 };
 ```
 
@@ -61,35 +89,41 @@ export default {
 
 ```typescript
 export default {
-  allowedCommands: ["cargo", "rustc", "npm"]  // added npm
-};
-```
-
-## Then Execute
-
-Only after the config is updated, send the code to safesh.
-
-## Config Format
-
-```typescript
-export default {
   allowedCommands: [
-    // Simple string - allows command with any args
     "cargo",
-    "make",
-
-    // Object - granular control (optional)
-    {
-      command: "git",
-      subcommands: ["status", "log", "diff", "add", "commit"]
-    }
+    { name: "build", path: "./scripts/build.sh" },
+    { name: "deploy", path: "./scripts/deploy.sh" }  // added
   ]
 };
 ```
 
+## Using init()
+
+After the config is updated:
+
+```typescript
+const commands = init({
+  deploy: "./scripts/deploy.sh"
+});
+
+// Execute with arguments
+await commands.deploy.exec(["--production"]);
+
+// Stream output
+for await (const chunk of commands.deploy.stream(["--verbose"])) {
+  console.log(chunk);
+}
+
+// Use in pipeline
+const result = await commands.deploy.cmd(["--json"])
+  .pipe("jq", [".status"])
+  .exec();
+```
+
 ## Important Notes
 
-- Always check BEFORE executing, not after failure
-- Commands under `${PROJECT_DIR}` are project-scoped
-- System commands outside workspace require manual config in `~/.config/safesh/config.ts`
-- The `.claude/` directory is typically gitignored (local to each developer)
+- `init()` checks permissions at registration time, not execution time
+- All commands in `init()` must be in the config, or it throws immediately
+- This prevents partial script execution when a command is blocked
+- Project commands are relative to the project directory
+- Commands outside the project/workspace are blocked (require manual system config)
