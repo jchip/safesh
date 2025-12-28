@@ -17,9 +17,11 @@ import type {
   ImportPolicy,
   PermissionsConfig,
   SafeShellConfig,
+  SafeshLocalConfig,
   SecurityPreset,
 } from "./types.ts";
 import { configError } from "./errors.ts";
+import { resolveWorkspace } from "./permissions.ts";
 
 // ============================================================================
 // Security Presets
@@ -257,6 +259,7 @@ export function mergeConfigs(
   override: SafeShellConfig,
 ): SafeShellConfig {
   return {
+    workspace: override.workspace ?? base.workspace,
     permissions: mergePermissions(
       base.permissions ?? {},
       override.permissions ?? {},
@@ -313,6 +316,69 @@ export function getProjectConfigPath(cwd: string): string {
 }
 
 /**
+ * Get the local config path (.claude/safesh.local.ts)
+ */
+export function getLocalConfigPath(cwd: string): string {
+  return join(cwd, ".claude", "safesh.local.ts");
+}
+
+/**
+ * Load local config from .claude/safesh.local.ts and convert to SafeShellConfig
+ * Local config only supports allowedCommands, which gets merged into external
+ */
+async function loadLocalConfig(cwd: string): Promise<SafeShellConfig | null> {
+  const localPath = getLocalConfigPath(cwd);
+
+  try {
+    // Convert to file path for stat check
+    const filePath = localPath.startsWith("file://") ? fromFileUrl(localPath) : localPath;
+    await Deno.stat(filePath);
+  } catch {
+    return null; // File doesn't exist - this is normal
+  }
+
+  try {
+    // Dynamic import the config file
+    const module = await import(`file://${localPath}`);
+    const localConfig = module.default as SafeshLocalConfig;
+
+    // Convert SafeshLocalConfig to SafeShellConfig
+    // Only merge allowedCommands into external section
+    if (!localConfig.allowedCommands || localConfig.allowedCommands.length === 0) {
+      return null;
+    }
+
+    const external: Record<string, ExternalCommandConfig> = {};
+
+    for (const cmd of localConfig.allowedCommands) {
+      if (typeof cmd === "string") {
+        // Simple string: allow all subcommands
+        external[cmd] = { allow: true };
+      } else {
+        // Object with command, subcommands, flags
+        const { command, subcommands, flags } = cmd;
+        external[command] = {
+          allow: subcommands && subcommands.length > 0 ? subcommands : true,
+          // Flags in local config are treated as allowed flags (not deny/require)
+          // Since we don't have an "allowFlags" concept, we'll ignore flags for now
+          // or could use requireFlags if needed
+        };
+      }
+    }
+
+    return { external };
+  } catch (error) {
+    // Log warning but don't fail
+    console.warn(
+      `⚠️  Failed to load local config from ${localPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}
+
+/**
  * Load and merge all config files
  */
 export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
@@ -340,6 +406,18 @@ export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
     } else {
       config = mergeConfigs(config, projectConfig);
     }
+  }
+
+  // Load local config (.claude/safesh.local.ts)
+  // This has highest priority for allowedCommands
+  const localConfig = await loadLocalConfig(cwd);
+  if (localConfig) {
+    config = mergeConfigs(config, localConfig);
+  }
+
+  // Resolve workspace path if provided
+  if (config.workspace) {
+    config.workspace = resolveWorkspace(config.workspace);
   }
 
   return config;

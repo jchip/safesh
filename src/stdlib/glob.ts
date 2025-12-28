@@ -75,9 +75,10 @@ function validateGlobPath(
   path: string,
   allowedPaths: string[],
   cwd: string,
+  workspace?: string,
 ): void {
-  if (!isPathAllowed(path, allowedPaths, cwd)) {
-    const expandedAllowed = allowedPaths.map((p) => expandPath(p, cwd));
+  if (!isPathAllowed(path, allowedPaths, cwd, workspace)) {
+    const expandedAllowed = allowedPaths.map((p) => expandPath(p, cwd, workspace));
     throw pathViolation(path, expandedAllowed);
   }
 }
@@ -129,6 +130,7 @@ export async function* glob(
 ): AsyncGenerator<GlobEntry> {
   const cwd = options.cwd ?? Deno.cwd();
   const root = options.root ?? cwd;
+  const workspace = config?.workspace;
 
   // Get allowed paths from config or use defaults
   const perms = config?.permissions ?? {};
@@ -146,7 +148,7 @@ export async function* glob(
 
   // Check if base is allowed - if pattern starts with absolute path
   if (pattern.startsWith("/") || globBase !== ".") {
-    validateGlobPath(absoluteBase, effectiveAllowedPaths, cwd);
+    validateGlobPath(absoluteBase, effectiveAllowedPaths, cwd, workspace);
   }
 
   // Build expand_glob options
@@ -162,7 +164,7 @@ export async function* glob(
   for await (const entry of expandGlob(pattern, expandOptions)) {
     // Validate each result is within sandbox
     try {
-      validateGlobPath(entry.path, effectiveAllowedPaths, cwd);
+      validateGlobPath(entry.path, effectiveAllowedPaths, cwd, workspace);
 
       yield {
         path: entry.path,

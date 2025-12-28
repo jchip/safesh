@@ -7,9 +7,9 @@
 // ============================================================================
 
 export interface PermissionsConfig {
-  /** Paths allowed for reading (supports ${CWD}, ${HOME}, /tmp) */
+  /** Paths allowed for reading (supports ${CWD}, ${HOME}, ${WORKSPACE}, /tmp) */
   read?: string[];
-  /** Paths allowed for writing */
+  /** Paths allowed for writing (supports ${CWD}, ${HOME}, ${WORKSPACE}) */
   write?: string[];
   /** Allowed network hosts/domains */
   net?: string[] | boolean;
@@ -74,6 +74,9 @@ export interface SafeShellConfig {
   /** Security preset to start from (optional) */
   preset?: SecurityPreset;
 
+  /** Workspace directory for scoped file access (supports ~/path) */
+  workspace?: string;
+
   /** Deno permission configuration */
   permissions?: PermissionsConfig;
 
@@ -91,6 +94,19 @@ export interface SafeShellConfig {
 
   /** Default timeout in milliseconds */
   timeout?: number;
+}
+
+/**
+ * Configuration for .claude/safesh.local.ts
+ * A simplified config that only allows specifying additional commands
+ */
+export interface SafeshLocalConfig {
+  /** Commands to allow (added to external) */
+  allowedCommands?: (string | {
+    command: string;
+    subcommands?: string[];
+    flags?: string[];
+  })[];
 }
 
 // ============================================================================
