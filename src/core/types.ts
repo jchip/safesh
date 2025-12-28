@@ -221,6 +221,8 @@ export interface ExecResult {
   success: boolean;
   /** Script ID if tracked in a shell */
   scriptId?: string;
+  /** Blocked command if a command was not allowed */
+  blockedCommand?: string;
 }
 
 export interface RunOptions extends ExecOptions {
@@ -235,6 +237,51 @@ export interface StreamChunk {
   type: "stdout" | "stderr" | "exit";
   data?: string;
   code?: number;
+}
+
+// ============================================================================
+// Retry Types
+// ============================================================================
+
+/** TTL for pending retries (5 minutes) */
+export const PENDING_RETRY_TTL = 5 * 60 * 1000;
+
+/** Maximum pending retries stored */
+export const MAX_PENDING_RETRIES = 50;
+
+/**
+ * PendingRetry - memoized execution context for permission retry workflow.
+ * When a command is blocked, we store the context so Claude can retry
+ * after getting user approval.
+ */
+export interface PendingRetry {
+  /** Unique retry ID */
+  id: string;
+  /** Code that was attempted */
+  code: string;
+  /** Shell ID (if using a shell) */
+  shellId?: string;
+  /** Execution context */
+  context: {
+    cwd: string;
+    env?: Record<string, string>;
+    timeout?: number;
+    background?: boolean;
+  };
+  /** Command that was blocked */
+  blockedCommand: string;
+  /** Creation timestamp (for TTL) */
+  createdAt: Date;
+}
+
+/**
+ * Structured error for permission failures
+ */
+export interface CommandNotAllowedError {
+  type: "COMMAND_NOT_ALLOWED";
+  command: string;
+  message: string;
+  retry_id: string;
 }
 
 // ============================================================================

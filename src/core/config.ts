@@ -86,7 +86,7 @@ export const PERMISSIVE_PRESET: SafeShellConfig = {
     read: ["${CWD}", "/tmp", "${HOME}"],
     write: ["${CWD}", "/tmp"],
     net: true,
-    run: ["git", "deno", "node", "npm", "pnpm", "yarn", "docker", "make"],
+    run: ["git", "deno", "node", "npm", "pnpm", "yarn", "docker", "make", "cargo"],
     env: ["HOME", "PATH", "TERM", "USER", "LANG", "EDITOR", "SHELL"],
   },
   external: {
@@ -101,6 +101,7 @@ export const PERMISSIVE_PRESET: SafeShellConfig = {
       pathArgs: { autoDetect: true, validateSandbox: true },
     },
     make: { allow: true },
+    cargo: { allow: true },
   },
   env: {
     allow: [

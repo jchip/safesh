@@ -55,6 +55,9 @@ function filterExistingCommands(commands: string[]): string[] {
 // Marker for job events (must match command.ts)
 const JOB_MARKER = "__SAFESH_JOB__:";
 
+// Marker for command permission errors (must match command.ts)
+const CMD_ERROR_MARKER = "__SAFESH_CMD_ERROR__:";
+
 /** Job event from subprocess */
 interface JobEvent {
   type: "start" | "end";
@@ -70,12 +73,23 @@ interface JobEvent {
   duration?: number;
 }
 
+/** Command error event from subprocess */
+interface CommandErrorEvent {
+  type: "COMMAND_NOT_ALLOWED";
+  command: string;
+}
+
 /**
- * Extract job events from stderr and return cleaned output
+ * Extract job events and command errors from stderr and return cleaned output
  */
-function extractJobEvents(stderr: string): { cleanStderr: string; events: JobEvent[] } {
+function extractStderrEvents(stderr: string): {
+  cleanStderr: string;
+  jobEvents: JobEvent[];
+  cmdErrors: CommandErrorEvent[];
+} {
   const lines = stderr.split("\n");
-  const events: JobEvent[] = [];
+  const jobEvents: JobEvent[] = [];
+  const cmdErrors: CommandErrorEvent[] = [];
   const cleanLines: string[] = [];
 
   for (const line of lines) {
@@ -83,7 +97,16 @@ function extractJobEvents(stderr: string): { cleanStderr: string; events: JobEve
       try {
         const jsonStr = line.slice(JOB_MARKER.length);
         const event = JSON.parse(jsonStr) as JobEvent;
-        events.push(event);
+        jobEvents.push(event);
+      } catch {
+        // Invalid JSON, keep the line as-is
+        cleanLines.push(line);
+      }
+    } else if (line.startsWith(CMD_ERROR_MARKER)) {
+      try {
+        const jsonStr = line.slice(CMD_ERROR_MARKER.length);
+        const event = JSON.parse(jsonStr) as CommandErrorEvent;
+        cmdErrors.push(event);
       } catch {
         // Invalid JSON, keep the line as-is
         cleanLines.push(line);
@@ -93,7 +116,7 @@ function extractJobEvents(stderr: string): { cleanStderr: string; events: JobEve
     }
   }
 
-  return { cleanStderr: cleanLines.join("\n"), events };
+  return { cleanStderr: cleanLines.join("\n"), jobEvents, cmdErrors };
 }
 
 /**
@@ -322,11 +345,15 @@ export async function executeCode(
       shell.vars = vars;
     }
 
-    // Extract job events from stderr and process them
-    const { cleanStderr: stderr, events: jobEvents } = extractJobEvents(rawStderr);
+    // Extract job events and command errors from stderr
+    const { cleanStderr: stderr, jobEvents, cmdErrors } = extractStderrEvents(rawStderr);
     if (shell && script && jobEvents.length > 0) {
       processJobEvents(shell, script, jobEvents);
     }
+
+    // Check for blocked command (first one wins)
+    const firstCmdError = cmdErrors[0];
+    const blockedCommand = firstCmdError?.command;
 
     // Update script with results (using cleaned output)
     if (script) {
@@ -349,6 +376,7 @@ export async function executeCode(
       code: status.code,
       success: status.code === 0,
       scriptId: script?.id,
+      blockedCommand,
     };
   } catch (error) {
     // Kill the process and cancel streams on timeout or error

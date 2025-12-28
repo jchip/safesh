@@ -380,4 +380,67 @@ describe("ShellManager", () => {
       assertEquals(shell.jobsByPid.size, 0);
     });
   });
+
+  describe("pending retries", () => {
+    it("creates pending retry with unique ID", () => {
+      const retry = manager.createPendingRetry(
+        "await cmd('cargo', ['build']).exec()",
+        "cargo",
+        { cwd: "/project", timeout: 30000 },
+        undefined,
+      );
+
+      assertNotEquals(retry.id, "");
+      assertEquals(retry.id.startsWith("retry-"), true);
+      assertEquals(retry.code, "await cmd('cargo', ['build']).exec()");
+      assertEquals(retry.blockedCommand, "cargo");
+      assertEquals(retry.context.cwd, "/project");
+      assertEquals(retry.context.timeout, 30000);
+    });
+
+    it("gets pending retry by ID", () => {
+      const created = manager.createPendingRetry(
+        "test code",
+        "rustc",
+        { cwd: "/tmp" },
+      );
+
+      const retrieved = manager.getPendingRetry(created.id);
+
+      assertEquals(retrieved?.id, created.id);
+      assertEquals(retrieved?.code, "test code");
+    });
+
+    it("consumes pending retry (get and delete)", () => {
+      const created = manager.createPendingRetry(
+        "test code",
+        "make",
+        { cwd: "/tmp" },
+      );
+
+      const consumed = manager.consumePendingRetry(created.id);
+      assertEquals(consumed?.id, created.id);
+
+      // Should be gone after consume
+      const again = manager.getPendingRetry(created.id);
+      assertEquals(again, undefined);
+    });
+
+    it("returns undefined for unknown retry ID", () => {
+      const result = manager.getPendingRetry("retry-nonexistent");
+      assertEquals(result, undefined);
+    });
+
+    it("stores shellId when provided", () => {
+      const shell = manager.create();
+      const retry = manager.createPendingRetry(
+        "code",
+        "cmd",
+        { cwd: "/tmp" },
+        shell.id,
+      );
+
+      assertEquals(retry.shellId, shell.id);
+    });
+  });
 });

@@ -14,6 +14,9 @@ import { collectStreamBytes } from "../core/utils.ts";
 // Job tracking marker for communication with main process
 const JOB_MARKER = "__SAFESH_JOB__:";
 
+// Command permission error marker for retry workflow
+const CMD_ERROR_MARKER = "__SAFESH_CMD_ERROR__:";
+
 /**
  * Generate a unique job ID
  */
@@ -184,8 +187,15 @@ export class Command {
         err instanceof Deno.errors.NotCapable ||
         (err instanceof Error && err.message.includes("NotCapable"))
       ) {
+        // Emit command error marker for retry workflow
+        const errorEvent = {
+          type: "COMMAND_NOT_ALLOWED",
+          command: this.cmd,
+        };
+        console.error(`${CMD_ERROR_MARKER}${JSON.stringify(errorEvent)}`);
+
         throw new Error(
-          `Command "${this.cmd}" is not allowed. Add it to permissions.run in safesh.toml.`,
+          `Command "${this.cmd}" is not allowed. Add it to permissions.run in safesh.config.ts.`,
         );
       }
       throw err;
