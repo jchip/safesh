@@ -12,6 +12,12 @@ import { generateImportMap, validateImports } from "../core/import_map.ts";
 import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
+import {
+  buildPreamble,
+  buildEpilogue,
+  extractShellState,
+  SHELL_STATE_MARKER,
+} from "./preamble.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
@@ -54,100 +60,6 @@ async function hashCode(code: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-// Marker used to identify shell state output for syncing vars back
-const SHELL_STATE_MARKER = "__SAFESH_STATE__:";
-
-/**
- * Build the preamble that gets prepended to user code
- *
- * The preamble injects:
- * - Shell context as $shell
- * - Standard library (fs, text, $)
- * - Streaming shell API (cat, glob, git, lines, grep, map, filter, etc.)
- */
-function buildPreamble(shell?: Shell): string {
-  // Get absolute path to stdlib directory
-  const stdlibPath = new URL("../stdlib/", import.meta.url).pathname;
-
-  const lines: string[] = [
-    "// SafeShell auto-generated preamble",
-    "",
-    "// Import standard library",
-    `import * as fs from 'file://${stdlibPath}fs.ts';`,
-    `import * as text from 'file://${stdlibPath}text.ts';`,
-    "",
-    "// Import streaming shell API",
-    `import { createStream, fromArray, empty } from 'file://${stdlibPath}stream.ts';`,
-    `import { filter, map, flatMap, take, head, tail, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
-    `import { stdout, stderr, tee } from 'file://${stdlibPath}io.ts';`,
-    `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
-    `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines } from 'file://${stdlibPath}command.ts';`,
-    "",
-    "// Import shelljs-like commands",
-    `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
-    "",
-  ];
-
-  if (shell) {
-    // Use 'let' so $shell can be reassigned, and make vars mutable
-    lines.push(
-      "// Shell context available as $shell (mutable for var persistence)",
-      `const $shell: { id: string; cwd: string; env: Record<string, string>; vars: Record<string, unknown> } = ${JSON.stringify({
-        id: shell.id,
-        cwd: shell.cwd,
-        env: shell.env,
-        vars: shell.vars,
-      })};`,
-      "",
-    );
-  }
-
-  lines.push(
-    "// User code starts here",
-    "",
-  );
-
-  return lines.join("\n");
-}
-
-/**
- * Build epilogue that outputs shell state for syncing back
- */
-function buildEpilogue(hasShell: boolean): string {
-  if (!hasShell) return "";
-
-  return `
-// SafeShell epilogue - output shell state for syncing
-console.log("${SHELL_STATE_MARKER}" + JSON.stringify($shell.vars));
-`;
-}
-
-/**
- * Extract shell state from output and return cleaned output
- */
-function extractShellState(output: string): { cleanOutput: string; vars?: Record<string, unknown> } {
-  const lines = output.split("\n");
-  const stateLineIndex = lines.findIndex(line => line.startsWith(SHELL_STATE_MARKER));
-
-  if (stateLineIndex === -1) {
-    return { cleanOutput: output };
-  }
-
-  const stateLine = lines[stateLineIndex]!;
-  const jsonStr = stateLine.slice(SHELL_STATE_MARKER.length);
-
-  // Remove the state line from output
-  lines.splice(stateLineIndex, 1);
-  const cleanOutput = lines.join("\n");
-
-  try {
-    const vars = JSON.parse(jsonStr) as Record<string, unknown>;
-    return { cleanOutput, vars };
-  } catch {
-    return { cleanOutput: output };
-  }
 }
 
 // Marker for job events (must match command.ts)

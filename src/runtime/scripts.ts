@@ -15,6 +15,7 @@ import type { SafeShellConfig, Script, Shell } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { executionError } from "../core/errors.ts";
+import { buildPreamble } from "./preamble.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 
@@ -375,33 +376,6 @@ async function hashCode(code: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * Helper: Build preamble for code execution
- */
-function buildPreamble(shell: Shell): string {
-  const lines: string[] = [
-    "// SafeShell auto-generated preamble",
-    'import * as fs from "safesh:fs";',
-    'import * as text from "safesh:text";',
-    'import $ from "safesh:shell";',
-  ];
-
-  lines.push("");
-  lines.push("// Shell context");
-  lines.push(`const $session = ${JSON.stringify({
-    id: shell.id,
-    cwd: shell.cwd,
-    env: shell.env,
-    vars: shell.vars,
-  })};`);
-
-  lines.push("");
-  lines.push("// User code starts here");
-  lines.push("");
-
-  return lines.join("\n");
 }
 
 /**
