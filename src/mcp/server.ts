@@ -17,6 +17,7 @@ import { StdioServerTransport } from "@mcp/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  RootsListChangedNotificationSchema,
 } from "@mcp/sdk/types.js";
 import { z } from "zod";
 import { executeCode } from "../runtime/executor.ts";
@@ -32,6 +33,72 @@ import {
   killScript,
 } from "../runtime/scripts.ts";
 import { runTask, listTasks } from "../runner/tasks.ts";
+
+// ============================================================================
+// MCP Roots Support
+// ============================================================================
+
+/** MCP Root from client */
+interface McpRoot {
+  uri: string;
+  name?: string;
+}
+
+/**
+ * Parse file:// URI to local path
+ */
+function parseFileUri(uri: string): string | null {
+  if (!uri.startsWith("file://")) {
+    return null;
+  }
+  // Handle file:///path/to/dir format
+  // On Unix: file:///Users/foo -> /Users/foo
+  // On Windows: file:///C:/foo -> C:/foo (but we're on Unix)
+  try {
+    const url = new URL(uri);
+    return decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Apply MCP roots to config - updates permissions for root paths
+ */
+function applyRootsToConfig(
+  config: SafeShellConfig,
+  roots: McpRoot[],
+): { config: SafeShellConfig; projectDir: string | undefined } {
+  if (roots.length === 0) {
+    return { config, projectDir: undefined };
+  }
+
+  // Parse all root URIs to paths
+  const rootPaths = roots
+    .map((r) => parseFileUri(r.uri))
+    .filter((p): p is string => p !== null);
+
+  if (rootPaths.length === 0) {
+    return { config, projectDir: undefined };
+  }
+
+  // First root is projectDir (primary project)
+  const projectDir = rootPaths[0];
+
+  // Add all roots to read/write permissions
+  const overrides: SafeShellConfig = {
+    projectDir,
+    permissions: {
+      read: rootPaths,
+      write: rootPaths,
+    },
+  };
+
+  return {
+    config: mergeConfigs(config, overrides),
+    projectDir,
+  };
+}
 
 // Tool schemas
 const RunSchema = z.object({
@@ -102,10 +169,28 @@ const TaskSchema = z.object({
   shellId: z.string().optional().describe("Shell ID for persistent state"),
 });
 
+/** Mutable config holder - allows updating config after roots are received */
+interface ConfigHolder {
+  config: SafeShellConfig;
+  cwd: string;
+  rootsReceived: boolean;
+}
+
 /**
  * Create and configure the MCP server
  */
-export function createServer(config: SafeShellConfig, cwd: string): Server {
+export function createServer(initialConfig: SafeShellConfig, initialCwd: string): Server {
+  // Mutable config holder - updated when roots are received
+  const configHolder: ConfigHolder = {
+    config: initialConfig,
+    cwd: initialCwd,
+    rootsReceived: false,
+  };
+
+  // Getter for current config (used by tool handlers)
+  const getConfig = () => configHolder.config;
+  const getCwd = () => configHolder.cwd;
+
   const server = new Server(
     {
       name: "safesh",
@@ -118,11 +203,66 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
     },
   );
 
-  const registry = createRegistry(config, cwd);
-  const shellManager = createShellManager(cwd);
+  // Create registry and shell manager (will use current config via getter)
+  let registry = createRegistry(configHolder.config, configHolder.cwd);
+  const shellManager = createShellManager(configHolder.cwd);
 
-  // Build permission summary for tool descriptions
-  const perms = config.permissions ?? {};
+  /**
+   * Request and apply roots from client
+   */
+  async function fetchAndApplyRoots(): Promise<void> {
+    const clientCaps = server.getClientCapabilities();
+    if (!clientCaps?.roots) {
+      console.error("  Client does not support roots capability");
+      return;
+    }
+
+    try {
+      const result = await server.listRoots();
+      if (result.roots && result.roots.length > 0) {
+        console.error(`  Received ${result.roots.length} root(s) from client:`);
+        for (const root of result.roots) {
+          console.error(`    - ${root.uri}${root.name ? ` (${root.name})` : ""}`);
+        }
+
+        // Apply roots to config
+        const { config: newConfig, projectDir } = applyRootsToConfig(
+          configHolder.config,
+          result.roots,
+        );
+        configHolder.config = newConfig;
+        configHolder.rootsReceived = true;
+
+        // Update cwd to projectDir if available
+        if (projectDir) {
+          configHolder.cwd = projectDir;
+          console.error(`  projectDir set to: ${projectDir}`);
+        }
+
+        // Recreate registry with updated config
+        registry = createRegistry(configHolder.config, configHolder.cwd);
+      }
+    } catch (error) {
+      console.error(`  Failed to get roots: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  // Set up initialization callback to request roots
+  server.oninitialized = () => {
+    console.error("  Client initialized, requesting roots...");
+    fetchAndApplyRoots().catch((err) => {
+      console.error(`  Error fetching roots: ${err}`);
+    });
+  };
+
+  // Handle roots list changed notifications
+  server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
+    console.error("  Roots list changed, refreshing...");
+    await fetchAndApplyRoots();
+  });
+
+  // Build permission summary for tool descriptions (uses initial config)
+  const perms = configHolder.config.permissions ?? {};
   const permSummary = [
     perms.read?.length ? `read: ${perms.read.slice(0, 3).join(", ")}${perms.read.length > 3 ? "..." : ""}` : null,
     perms.write?.length ? `write: ${perms.write.slice(0, 3).join(", ")}${perms.write.length > 3 ? "..." : ""}` : null,
@@ -265,7 +405,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             "Execute a task defined in config. " +
             "Tasks can be simple commands (cmd), parallel execution (parallel), " +
             "or serial execution (serial). Supports task references (string aliases). " +
-            `Available tasks: ${Object.keys(config.tasks ?? {}).join(", ") || "(none configured)"}`,
+            `Available tasks: ${Object.keys(configHolder.config.tasks ?? {}).join(", ") || "(none configured)"}`,
           inputSchema: {
             type: "object",
             properties: {
@@ -444,7 +584,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           let shellId: string | undefined = parsed.shellId;
           let execTimeout: number | undefined = parsed.timeout;
           let background: boolean | undefined = parsed.background;
-          let execConfig = config;
+          let execConfig = configHolder.config;
 
           if (parsed.retry_id) {
             // Retry mode: get memoized context
@@ -469,7 +609,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             // Merge allowed commands into temp config
             if (parsed.allow && parsed.allow.length > 0) {
               const allowedCommands = parsed.allow;
-              execConfig = mergeConfigs(config, {
+              execConfig = mergeConfigs(configHolder.config, {
                 permissions: {
                   run: allowedCommands,
                 },
@@ -508,7 +648,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           // Get or create shell
           const { shell, isTemporary } = shellManager.getOrTemp(
             shellId,
-            { cwd, env: parsed.env },
+            { cwd: configHolder.cwd, env: parsed.env },
           );
 
           // Merge additional env vars into the actual shell temporarily
@@ -699,10 +839,10 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           const parsed = TaskSchema.parse(args);
 
           // Get shell for context
-          const { shell } = shellManager.getOrTemp(parsed.shellId, { cwd });
+          const { shell } = shellManager.getOrTemp(parsed.shellId, { cwd: configHolder.cwd });
 
           try {
-            const result = await runTask(parsed.name, config, {
+            const result = await runTask(parsed.name, configHolder.config, {
               cwd: shell.cwd,
               shell: shell,
             });
