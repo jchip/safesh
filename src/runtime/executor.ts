@@ -22,14 +22,14 @@ import {
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
 
-// Cache for existing commands (checked once per unique command list)
+// Cache for existing commands (checked once per unique command list + cwd)
 const existingCommandsCache = new Map<string, string[]>();
 
 /**
  * Filter commands to only those that exist on the system (cached)
  */
-function filterExistingCommands(commands: string[]): string[] {
-  const cacheKey = commands.sort().join(",");
+function filterExistingCommands(commands: string[], cwd: string): string[] {
+  const cacheKey = `${cwd}:${commands.sort().join(",")}`;
 
   if (existingCommandsCache.has(cacheKey)) {
     return existingCommandsCache.get(cacheKey)!;
@@ -37,9 +37,11 @@ function filterExistingCommands(commands: string[]): string[] {
 
   const existing = commands.filter((cmd) => {
     try {
-      // For full paths, check if file exists directly
-      if (cmd.startsWith("/")) {
-        const stat = Deno.statSync(cmd);
+      // For paths (absolute or relative), check if file exists
+      if (cmd.startsWith("/") || cmd.startsWith("./") || cmd.startsWith("../")) {
+        // Resolve relative paths against cwd
+        const fullPath = cmd.startsWith("/") ? cmd : join(cwd, cmd);
+        const stat = Deno.statSync(fullPath);
         return stat.isFile;
       }
       // For command names, use which
@@ -224,7 +226,7 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   // Run permissions (for external commands)
   // Filter to only commands that exist to avoid Deno warnings (cached)
   if (perms.run?.length) {
-    const existingCommands = filterExistingCommands(perms.run);
+    const existingCommands = filterExistingCommands(perms.run, cwd);
     if (existingCommands.length) {
       flags.push(`--allow-run=${existingCommands.join(",")}`);
     }
