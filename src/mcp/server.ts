@@ -2,12 +2,13 @@
  * SafeShell MCP Server
  *
  * Exposes SafeShell capabilities as MCP tools:
- * - exec: Execute JS/TS code in sandboxed Deno runtime with streaming shell API
+ * - run: Execute JS/TS code (scripts) in sandboxed Deno runtime
  * - startShell: Create a new persistent shell
  * - endShell: Destroy a shell
  * - updateShell: Modify shell state (cwd, env)
  * - listShells: List active shells
- * - bg, jobs, jobOutput, kill, fg: Background job management
+ * - listScripts, getScriptOutput, waitScript: Script management
+ * - killJob: Kill a spawned process
  * - task: Execute configured tasks
  */
 
@@ -26,19 +27,17 @@ import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig, Shell } from "../core/types.ts";
 import {
-  launchCodeJob,
-  launchCommandJob,
-  getJobOutput,
-  killJob,
-  streamJobOutput,
-} from "../runtime/jobs.ts";
+  launchCodeScript,
+  getScriptOutput,
+  killScript,
+} from "../runtime/scripts.ts";
 import { runTask, listTasks } from "../runner/tasks.ts";
 
 // Tool schemas
-const ExecSchema = z.object({
+const RunSchema = z.object({
   code: z.string().describe("JavaScript/TypeScript code to execute"),
   shellId: z.string().optional().describe("Shell ID to use"),
-  background: z.boolean().optional().describe("Run in background (async), returns { jobId, pid }"),
+  background: z.boolean().optional().describe("Run in background (async), returns { scriptId, pid }"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
 });
@@ -58,11 +57,9 @@ const EndShellSchema = z.object({
   shellId: z.string().describe("Shell ID to end"),
 });
 
-// REMOVED: BgSchema (SSH-64) - Use exec with background:true instead
-
-// New job management schemas (SSH-61/62)
-const ListJobsSchema = z.object({
-  shellId: z.string().describe("Shell ID to list jobs from"),
+// Script management schemas (SSH-90)
+const ListScriptsSchema = z.object({
+  shellId: z.string().describe("Shell ID to list scripts from"),
   filter: z.object({
     status: z.enum(["running", "completed", "failed"]).optional(),
     background: z.boolean().optional(),
@@ -70,26 +67,24 @@ const ListJobsSchema = z.object({
   }).optional().describe("Optional filter criteria"),
 });
 
-const GetJobOutputSchema = z.object({
+const GetScriptOutputSchema = z.object({
   shellId: z.string().describe("Shell ID"),
-  jobId: z.string().describe("Job ID"),
+  scriptId: z.string().describe("Script ID"),
   since: z.number().optional().describe("Byte offset to start from"),
 });
 
-const KillJobSchema = z.object({
+const WaitScriptSchema = z.object({
   shellId: z.string().describe("Shell ID"),
-  jobId: z.string().describe("Job ID to kill"),
-  signal: z.string().optional().describe("Signal to send (default: SIGTERM)"),
-});
-
-const WaitJobSchema = z.object({
-  shellId: z.string().describe("Shell ID"),
-  jobId: z.string().describe("Job ID to wait for"),
+  scriptId: z.string().describe("Script ID to wait for"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
 });
 
-// REMOVED: JobsSchema, JobOutputSchema, KillSchema, FgSchema (SSH-64)
-// Legacy tools replaced by shell-based versions
+// Job (process) management - for killing spawned processes
+const KillJobSchema = z.object({
+  shellId: z.string().describe("Shell ID"),
+  scriptId: z.string().describe("Script ID containing the process"),
+  signal: z.string().optional().describe("Signal to send (default: SIGTERM)"),
+});
 
 const TaskSchema = z.object({
   name: z.string().describe("Task name from config"),
@@ -129,11 +124,11 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
     return {
       tools: [
         {
-          name: "exec",
+          name: "run",
           description:
-            "Execute JavaScript/TypeScript code in a sandboxed Deno runtime - MCPU usage: infoc\n\n" +
+            "Run JavaScript/TypeScript code (script) in a sandboxed Deno runtime - MCPU usage: infoc\n\n" +
             "Use shellId for persistent state between calls. " +
-            "Set background: true to run asynchronously (returns { jobId, pid }).\n" +
+            "Set background: true to run asynchronously (returns { scriptId, pid }).\n" +
             (permSummary ? `Permissions: ${permSummary}` : "No permissions configured.") +
             "\n\nIMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.\n" +
             "❌ BAD: cmd('sh', ['-c', 'git log | grep ERROR'])\n" +
@@ -157,15 +152,15 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               },
               shellId: {
                 type: "string",
-                description: "Shell ID for persistent state (env, cwd, vars). Required for background jobs.",
+                description: "Shell ID for persistent state (env, cwd, vars). Required for background scripts.",
               },
               background: {
                 type: "boolean",
-                description: "Run in background (default: false). Returns { jobId, pid } instead of waiting for completion.",
+                description: "Run in background (default: false). Returns { scriptId, pid } instead of waiting for completion.",
               },
               timeout: {
                 type: "number",
-                description: "Timeout in milliseconds (default: 30000). Ignored for background jobs.",
+                description: "Timeout in milliseconds (default: 30000). Ignored for background scripts.",
               },
               env: {
                 type: "object",
@@ -245,8 +240,6 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             properties: {},
           },
         },
-        // REMOVED: bg, jobs, jobOutput, kill, fg (SSH-64)
-        // Use: exec(background:true), listJobs, getJobOutput, killJob, waitJob instead
         {
           name: "task",
           description:
@@ -269,18 +262,18 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             required: ["name"],
           },
         },
-        // New job management tools (SSH-61/62)
+        // Script management tools (SSH-90)
         {
-          name: "listJobs",
+          name: "listScripts",
           description:
-            "List jobs in a shell with optional filtering. " +
-            "Returns jobs sorted by start time (newest first).",
+            "List scripts (code executions) in a shell with optional filtering. " +
+            "Returns scripts sorted by start time (newest first).",
           inputSchema: {
             type: "object",
             properties: {
               shellId: {
                 type: "string",
-                description: "Shell ID to list jobs from",
+                description: "Shell ID to list scripts from",
               },
               filter: {
                 type: "object",
@@ -288,15 +281,15 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                   status: {
                     type: "string",
                     enum: ["running", "completed", "failed"],
-                    description: "Filter by job status",
+                    description: "Filter by script status",
                   },
                   background: {
                     type: "boolean",
-                    description: "Filter by background/foreground jobs",
+                    description: "Filter by background/foreground scripts",
                   },
                   limit: {
                     type: "number",
-                    description: "Maximum number of jobs to return",
+                    description: "Maximum number of scripts to return",
                   },
                 },
                 description: "Optional filter criteria",
@@ -306,75 +299,75 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           },
         },
         {
-          name: "getJobOutput",
+          name: "getScriptOutput",
           description:
-            "Get buffered output from a job. " +
+            "Get buffered output from a script. " +
             "Supports incremental reads via 'since' offset.",
           inputSchema: {
             type: "object",
             properties: {
               shellId: {
                 type: "string",
-                description: "Shell ID containing the job",
+                description: "Shell ID containing the script",
               },
-              jobId: {
+              scriptId: {
                 type: "string",
-                description: "Job ID to get output from",
+                description: "Script ID to get output from",
               },
               since: {
                 type: "number",
                 description: "Byte offset to start reading from (for incremental reads)",
               },
             },
-            required: ["shellId", "jobId"],
+            required: ["shellId", "scriptId"],
           },
         },
         {
-          name: "killJob",
+          name: "killScript",
           description:
-            "Kill a running job by sending a signal. " +
+            "Kill a running script by sending a signal. " +
             "Default signal is SIGTERM. Use SIGKILL for force kill.",
           inputSchema: {
             type: "object",
             properties: {
               shellId: {
                 type: "string",
-                description: "Shell ID containing the job",
+                description: "Shell ID containing the script",
               },
-              jobId: {
+              scriptId: {
                 type: "string",
-                description: "Job ID to kill",
+                description: "Script ID to kill",
               },
               signal: {
                 type: "string",
                 description: "Signal to send (SIGTERM, SIGKILL, etc.)",
               },
             },
-            required: ["shellId", "jobId"],
+            required: ["shellId", "scriptId"],
           },
         },
         {
-          name: "waitJob",
+          name: "waitScript",
           description:
-            "Wait for a background job to complete. " +
-            "Returns the job output and exit status when done.",
+            "Wait for a background script to complete. " +
+            "Returns the script output and exit status when done.",
           inputSchema: {
             type: "object",
             properties: {
               shellId: {
                 type: "string",
-                description: "Shell ID containing the job",
+                description: "Shell ID containing the script",
               },
-              jobId: {
+              scriptId: {
                 type: "string",
-                description: "Job ID to wait for",
+                description: "Script ID to wait for",
               },
               timeout: {
                 type: "number",
                 description: "Maximum time to wait in milliseconds",
               },
             },
-            required: ["shellId", "jobId"],
+            required: ["shellId", "scriptId"],
           },
         },
       ],
@@ -387,8 +380,8 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
     try {
       switch (name) {
-        case "exec": {
-          const parsed = ExecSchema.parse(args);
+        case "run": {
+          const parsed = RunSchema.parse(args);
 
           // Background execution requires a shell
           if (parsed.background && !parsed.shellId) {
@@ -415,9 +408,9 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             shell.env = { ...shell.env, ...parsed.env };
           }
 
-          // Background execution: launch job and return immediately
+          // Background execution: launch script and return immediately
           if (parsed.background) {
-            const job = await launchCodeJob(parsed.code, config, shell);
+            const script = await launchCodeScript(parsed.code, config, shell);
             // Restore original env
             shell.env = originalEnv;
 
@@ -426,8 +419,8 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 {
                   type: "text",
                   text: JSON.stringify({
-                    jobId: job.id,
-                    pid: job.pid,
+                    scriptId: script.id,
+                    pid: script.pid,
                     shellId: shell.id,
                     background: true,
                   }, null, 2),
@@ -456,7 +449,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             content: [
               {
                 type: "text",
-                text: formatExecResult(result, parsed.shellId, result.jobId),
+                text: formatRunResult(result, parsed.shellId, result.scriptId),
               },
             ],
             isError: !result.success,
@@ -560,9 +553,6 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           };
         }
 
-        // REMOVED: bg, jobs, jobOutput, kill, fg handlers (SSH-64)
-        // Use: exec(background:true), listJobs, getJobOutput, killJob, waitJob instead
-
         case "task": {
           const parsed = TaskSchema.parse(args);
 
@@ -598,35 +588,35 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           }
         }
 
-        // New job management tools (SSH-61/62)
-        case "listJobs": {
-          const parsed = ListJobsSchema.parse(args);
-          const jobs = shellManager.listJobs(parsed.shellId, parsed.filter);
+        // Script management tools (SSH-90)
+        case "listScripts": {
+          const parsed = ListScriptsSchema.parse(args);
+          const scripts = shellManager.listScripts(parsed.shellId, parsed.filter);
 
-          if (jobs.length === 0) {
+          if (scripts.length === 0) {
             return {
               content: [
                 {
                   type: "text",
-                  text: "No jobs found",
+                  text: "No scripts found",
                 },
               ],
             };
           }
 
-          // Serialize jobs (newest first, already sorted by listJobs)
-          const serialized = jobs.map((j) => ({
-            id: j.id,
-            code: j.code.length > 100 ? `${j.code.slice(0, 100)}...` : j.code,
-            pid: j.pid,
-            status: j.status,
-            background: j.background,
-            startedAt: j.startedAt.toISOString(),
-            duration: j.duration,
-            exitCode: j.exitCode,
+          // Serialize scripts (newest first, already sorted by listScripts)
+          const serialized = scripts.map((s) => ({
+            id: s.id,
+            code: s.code.length > 100 ? `${s.code.slice(0, 100)}...` : s.code,
+            pid: s.pid,
+            status: s.status,
+            background: s.background,
+            startedAt: s.startedAt.toISOString(),
+            duration: s.duration,
+            exitCode: s.exitCode,
             truncated: {
-              stdout: j.stdoutTruncated,
-              stderr: j.stderrTruncated,
+              stdout: s.stdoutTruncated,
+              stderr: s.stderrTruncated,
             },
           }));
 
@@ -640,30 +630,30 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           };
         }
 
-        case "getJobOutput": {
-          const parsed = GetJobOutputSchema.parse(args);
-          const job = shellManager.getJob(parsed.shellId, parsed.jobId);
+        case "getScriptOutput": {
+          const parsed = GetScriptOutputSchema.parse(args);
+          const script = shellManager.getScript(parsed.shellId, parsed.scriptId);
 
-          if (!job) {
+          if (!script) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Job not found: ${parsed.jobId}`,
+                  text: `Script not found: ${parsed.scriptId}`,
                 },
               ],
               isError: true,
             };
           }
 
-          const output = getJobOutput(job, parsed.since);
+          const output = getScriptOutput(script, parsed.since);
 
           return {
             content: [
               {
                 type: "text",
                 text: JSON.stringify({
-                  jobId: job.id,
+                  scriptId: script.id,
                   status: output.status,
                   stdout: output.stdout,
                   stderr: output.stderr,
@@ -676,16 +666,16 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           };
         }
 
-        case "killJob": {
+        case "killScript": {
           const parsed = KillJobSchema.parse(args);
-          const job = shellManager.getJob(parsed.shellId, parsed.jobId);
+          const script = shellManager.getScript(parsed.shellId, parsed.scriptId);
 
-          if (!job) {
+          if (!script) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Job not found: ${parsed.jobId}`,
+                  text: `Script not found: ${parsed.scriptId}`,
                 },
               ],
               isError: true,
@@ -693,69 +683,69 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           }
 
           const signal = (parsed.signal ?? "SIGTERM") as Deno.Signal;
-          await killJob(job, signal);
+          await killScript(script, signal);
 
           return {
             content: [
               {
                 type: "text",
-                text: `Job ${parsed.jobId} killed with ${signal}`,
+                text: `Script ${parsed.scriptId} killed with ${signal}`,
               },
             ],
           };
         }
 
-        case "waitJob": {
-          const parsed = WaitJobSchema.parse(args);
-          const job = shellManager.getJob(parsed.shellId, parsed.jobId);
+        case "waitScript": {
+          const parsed = WaitScriptSchema.parse(args);
+          const script = shellManager.getScript(parsed.shellId, parsed.scriptId);
 
-          if (!job) {
+          if (!script) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Job not found: ${parsed.jobId}`,
+                  text: `Script not found: ${parsed.scriptId}`,
                 },
               ],
               isError: true,
             };
           }
 
-          if (job.status !== "running") {
-            // Job already completed
+          if (script.status !== "running") {
+            // Script already completed
             return {
               content: [
                 {
                   type: "text",
                   text: JSON.stringify({
-                    jobId: job.id,
-                    status: job.status,
-                    stdout: job.stdout,
-                    stderr: job.stderr,
-                    exitCode: job.exitCode,
-                    duration: job.duration,
+                    scriptId: script.id,
+                    status: script.status,
+                    stdout: script.stdout,
+                    stderr: script.stderr,
+                    exitCode: script.exitCode,
+                    duration: script.duration,
                     truncated: {
-                      stdout: job.stdoutTruncated,
-                      stderr: job.stderrTruncated,
+                      stdout: script.stdoutTruncated,
+                      stderr: script.stderrTruncated,
                     },
                   }, null, 2),
                 },
               ],
-              isError: job.status === "failed",
+              isError: script.status === "failed",
             };
           }
 
-          // Wait for job completion with optional timeout
+          // Wait for script completion with optional timeout
           const startTime = Date.now();
           const timeoutMs = parsed.timeout ?? 30000;
 
-          while (job.status === "running") {
+          while (script.status === "running") {
             if (Date.now() - startTime > timeoutMs) {
               return {
                 content: [
                   {
                     type: "text",
-                    text: `Timeout waiting for job ${parsed.jobId}`,
+                    text: `Timeout waiting for script ${parsed.scriptId}`,
                   },
                 ],
                 isError: true,
@@ -769,20 +759,20 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
               {
                 type: "text",
                 text: JSON.stringify({
-                  jobId: job.id,
-                  status: job.status,
-                  stdout: job.stdout,
-                  stderr: job.stderr,
-                  exitCode: job.exitCode,
-                  duration: job.duration,
+                  scriptId: script.id,
+                  status: script.status,
+                  stdout: script.stdout,
+                  stderr: script.stderr,
+                  exitCode: script.exitCode,
+                  duration: script.duration,
                   truncated: {
-                    stdout: job.stdoutTruncated,
-                    stderr: job.stderrTruncated,
+                    stdout: script.stdoutTruncated,
+                    stderr: script.stderrTruncated,
                   },
                 }, null, 2),
               },
             ],
-            isError: job.status === "failed",
+            isError: script.status === "failed",
           };
         }
 
@@ -824,86 +814,86 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
     }
   });
 
+  /**
+   * Format run result for MCP response
+   */
+  function formatRunResult(
+    result: {
+      stdout: string;
+      stderr: string;
+      code: number;
+      success: boolean;
+    },
+    shellId?: string,
+    scriptId?: string,
+  ): string {
+    const parts: string[] = [];
+
+    if (result.stdout) {
+      parts.push(result.stdout);
+    }
+
+    if (result.stderr) {
+      parts.push(`[stderr]\n${result.stderr}`);
+    }
+
+    if (!result.success) {
+      parts.push(`[exit code: ${result.code}]`);
+    }
+
+    const meta: string[] = [];
+    if (shellId) meta.push(`shell: ${shellId}`);
+    if (scriptId) meta.push(`script: ${scriptId}`);
+    if (meta.length > 0) {
+      parts.push(`[${meta.join(", ")}]`);
+    }
+
+    return parts.join("\n") || "(no output)";
+  }
+
+  /**
+   * Format task result for MCP response
+   */
+  function formatTaskResult(
+    taskName: string,
+    result: { stdout: string; stderr: string; code: number; success: boolean },
+  ): string {
+    const parts: string[] = [];
+
+    parts.push(`Task: ${taskName}`);
+    parts.push("");
+
+    if (result.stdout) {
+      parts.push(result.stdout);
+    }
+
+    if (result.stderr) {
+      parts.push(`[stderr]\n${result.stderr}`);
+    }
+
+    if (!result.success) {
+      parts.push(`\n[exit code: ${result.code}]`);
+    }
+
+    return parts.join("\n") || "(no output)";
+  }
+
+  /**
+   * Format error for MCP response
+   */
+  function formatError(error: {
+    code: string;
+    message: string;
+    suggestion?: string;
+  }): string {
+    let text = `Error [${error.code}]: ${error.message}`;
+    if (error.suggestion) {
+      text += `\n\nSuggestion: ${error.suggestion}`;
+    }
+    return text;
+  }
+
   return server;
-}
-
-/**
- * Format execution result for MCP response
- */
-function formatExecResult(
-  result: {
-    stdout: string;
-    stderr: string;
-    code: number;
-    success: boolean;
-  },
-  shellId?: string,
-  jobId?: string,
-): string {
-  const parts: string[] = [];
-
-  if (result.stdout) {
-    parts.push(result.stdout);
-  }
-
-  if (result.stderr) {
-    parts.push(`[stderr]\n${result.stderr}`);
-  }
-
-  if (!result.success) {
-    parts.push(`[exit code: ${result.code}]`);
-  }
-
-  const meta: string[] = [];
-  if (shellId) meta.push(`shell: ${shellId}`);
-  if (jobId) meta.push(`job: ${jobId}`);
-  if (meta.length > 0) {
-    parts.push(`[${meta.join(", ")}]`);
-  }
-
-  return parts.join("\n") || "(no output)";
-}
-
-/**
- * Format task result for MCP response
- */
-function formatTaskResult(
-  taskName: string,
-  result: { stdout: string; stderr: string; code: number; success: boolean },
-): string {
-  const parts: string[] = [];
-
-  parts.push(`Task: ${taskName}`);
-  parts.push("");
-
-  if (result.stdout) {
-    parts.push(result.stdout);
-  }
-
-  if (result.stderr) {
-    parts.push(`[stderr]\n${result.stderr}`);
-  }
-
-  if (!result.success) {
-    parts.push(`\n[exit code: ${result.code}]`);
-  }
-
-  return parts.join("\n") || "(no output)";
-}
-
-/**
- * Format error for MCP response
- */
-function formatError(error: {
-  code: string;
-  message: string;
-  suggestion?: string;
-}): string {
-  let text = `Error [${error.code}]: ${error.message}`;
-  if (error.suggestion) {
-    text += `\n\nSuggestion: ${error.suggestion}`;
-  }
-  return text;
 }
 
 /**

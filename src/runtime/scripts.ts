@@ -1,18 +1,18 @@
 /**
- * Background job control for SafeShell
+ * Background script control for SafeShell
  *
  * Provides functionality to:
- * - Launch background jobs (code or external commands)
- * - Track running jobs with buffered output
- * - Query job status and output
- * - Stop jobs with signal support
- * - Stream job output (foreground mode)
+ * - Launch background scripts (code or external commands)
+ * - Track running scripts with buffered output
+ * - Query script status and output
+ * - Stop scripts with signal support
+ * - Stream script output (foreground mode)
  */
 
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
-import type { Job, SafeShellConfig, Shell } from "../core/types.ts";
-import { JOB_OUTPUT_LIMIT } from "../core/types.ts";
+import type { SafeShellConfig, Script, Shell } from "../core/types.ts";
+import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { executionError } from "../core/errors.ts";
 
@@ -23,7 +23,7 @@ const TEMP_DIR = "/tmp/safesh/scripts";
  */
 export function truncateOutput(
   output: string,
-  limit: number = JOB_OUTPUT_LIMIT,
+  limit: number = SCRIPT_OUTPUT_LIMIT,
 ): { text: string; truncated: boolean } {
   if (output.length <= limit) {
     return { text: output, truncated: false };
@@ -32,24 +32,24 @@ export function truncateOutput(
 }
 
 /**
- * Generate a new job ID for a shell
+ * Generate a new script ID for a shell
  */
-export function generateJobId(shell: Shell): string {
-  const seq = shell.jobSequence++;
-  return `job-${shell.id}-${seq}`;
+export function generateScriptId(shell: Shell): string {
+  const seq = shell.scriptSequence++;
+  return `script-${shell.id}-${seq}`;
 }
 
 /**
- * Create a new job record
+ * Create a new script record
  */
-export function createJob(
+export function createScript(
   shell: Shell,
   code: string,
   background: boolean,
   pid: number = 0,
-): Job {
+): Script {
   return {
-    id: generateJobId(shell),
+    id: generateScriptId(shell),
     code,
     pid,
     status: "running",
@@ -59,17 +59,18 @@ export function createJob(
     stderrTruncated: false,
     startedAt: new Date(),
     background,
+    jobIds: [],
   };
 }
 
 /**
- * Launch a background job from code
+ * Launch a background script from code
  */
-export async function launchCodeJob(
+export async function launchCodeScript(
   code: string,
   config: SafeShellConfig,
   shell: Shell,
-): Promise<Job> {
+): Promise<Script> {
   // Ensure temp directory exists
   await ensureDir(TEMP_DIR);
 
@@ -112,29 +113,29 @@ export async function launchCodeJob(
   // Spawn process
   const process = command.spawn();
 
-  // Create job with new structure
-  const job = createJob(shell, code, true, process.pid);
-  job.process = process;
+  // Create script with new structure
+  const script = createScript(shell, code, true, process.pid);
+  script.process = process;
 
   // Add to shell maps
-  shell.jobs.set(job.id, job);
-  shell.jobsByPid.set(job.pid, job.id);
+  shell.scripts.set(script.id, script);
+  shell.scriptsByPid.set(script.pid, script.id);
 
   // Start collecting output in background
-  collectJobOutput(job);
+  collectScriptOutput(script);
 
-  return job;
+  return script;
 }
 
 /**
- * Launch a background job from external command
+ * Launch a background script from external command
  */
-export async function launchCommandJob(
+export async function launchCommandScript(
   command: string,
   args: string[],
   config: SafeShellConfig,
   shell: Shell,
-): Promise<Job> {
+): Promise<Script> {
   // Build environment
   const processEnv = buildEnv(config, shell);
 
@@ -150,32 +151,32 @@ export async function launchCommandJob(
   // Spawn process
   const process = cmd.spawn();
 
-  // Create job with command as code
+  // Create script with command as code
   const code = `${command} ${args.join(" ")}`;
-  const job = createJob(shell, code, true, process.pid);
-  job.process = process;
+  const script = createScript(shell, code, true, process.pid);
+  script.process = process;
 
   // Add to shell maps
-  shell.jobs.set(job.id, job);
-  shell.jobsByPid.set(job.pid, job.id);
+  shell.scripts.set(script.id, script);
+  shell.scriptsByPid.set(script.pid, script.id);
 
   // Start collecting output in background
-  collectJobOutput(job);
+  collectScriptOutput(script);
 
-  return job;
+  return script;
 }
 
 /**
- * Get buffered output from a job
+ * Get buffered output from a script
  */
-export function getJobOutput(
-  job: Job,
+export function getScriptOutput(
+  script: Script,
   since?: number,
 ): {
   stdout: string;
   stderr: string;
   offset: number;
-  status: Job["status"];
+  status: Script["status"];
   exitCode?: number;
   truncated: { stdout: boolean; stderr: boolean };
 } {
@@ -183,69 +184,69 @@ export function getJobOutput(
   const stderrOffset = since ?? 0;
 
   return {
-    stdout: job.stdout.slice(stdoutOffset),
-    stderr: job.stderr.slice(stderrOffset),
-    offset: job.stdout.length,
-    status: job.status,
-    exitCode: job.exitCode,
+    stdout: script.stdout.slice(stdoutOffset),
+    stderr: script.stderr.slice(stderrOffset),
+    offset: script.stdout.length,
+    status: script.status,
+    exitCode: script.exitCode,
     truncated: {
-      stdout: job.stdoutTruncated,
-      stderr: job.stderrTruncated,
+      stdout: script.stdoutTruncated,
+      stderr: script.stderrTruncated,
     },
   };
 }
 
 /**
- * Kill a job with specified signal
+ * Kill a script with specified signal
  */
-export async function killJob(job: Job, signal: Deno.Signal = "SIGTERM"): Promise<void> {
-  if (!job.process) {
-    throw executionError("Job process not available");
+export async function killScript(script: Script, signal: Deno.Signal = "SIGTERM"): Promise<void> {
+  if (!script.process) {
+    throw executionError("Script process not available");
   }
 
-  if (job.status !== "running") {
-    throw executionError(`Job is not running (status: ${job.status})`);
+  if (script.status !== "running") {
+    throw executionError(`Script is not running (status: ${script.status})`);
   }
 
   // Send signal to process
   try {
-    job.process.kill(signal);
+    script.process.kill(signal);
 
     // Wait for process to exit (with timeout)
     const timeoutId = setTimeout(() => {
       // Force kill if still running after 5 seconds
       try {
-        job.process?.kill("SIGKILL");
+        script.process?.kill("SIGKILL");
       } catch {
         // Already dead
       }
     }, 5000);
 
-    await job.process.status;
+    await script.process.status;
     clearTimeout(timeoutId);
 
-    job.status = "failed";
-    job.exitCode = -1;
-    job.completedAt = new Date();
-    job.duration = job.completedAt.getTime() - job.startedAt.getTime();
-    job.process = undefined; // Clear to allow GC
+    script.status = "failed";
+    script.exitCode = -1;
+    script.completedAt = new Date();
+    script.duration = script.completedAt.getTime() - script.startedAt.getTime();
+    script.process = undefined; // Clear to allow GC
   } catch (error) {
-    throw executionError(`Failed to kill job: ${error instanceof Error ? error.message : String(error)}`);
+    throw executionError(`Failed to kill script: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 /**
- * Stream job output (foreground mode)
+ * Stream script output (foreground mode)
  *
  * Note: This returns buffered output since the streams are already being
  * collected in the background. For true streaming, use this before
- * collectJobOutput is called.
+ * collectScriptOutput is called.
  */
-export async function* streamJobOutput(
-  job: Job,
+export async function* streamScriptOutput(
+  script: Script,
 ): AsyncGenerator<{ type: "stdout" | "stderr" | "exit"; data?: string; code?: number }> {
-  if (!job.process) {
-    throw executionError("Job process not available");
+  if (!script.process) {
+    throw executionError("Script process not available");
   }
 
   // Since streams are already being collected, we'll poll the buffered output
@@ -253,19 +254,19 @@ export async function* streamJobOutput(
   let lastStdoutLen = 0;
   let lastStderrLen = 0;
 
-  // Poll for new output while job is running
-  while (job.status === "running") {
+  // Poll for new output while script is running
+  while (script.status === "running") {
     // Check for new stdout
-    if (job.stdout.length > lastStdoutLen) {
-      const newStdout = job.stdout.slice(lastStdoutLen);
-      lastStdoutLen = job.stdout.length;
+    if (script.stdout.length > lastStdoutLen) {
+      const newStdout = script.stdout.slice(lastStdoutLen);
+      lastStdoutLen = script.stdout.length;
       yield { type: "stdout", data: newStdout };
     }
 
     // Check for new stderr
-    if (job.stderr.length > lastStderrLen) {
-      const newStderr = job.stderr.slice(lastStderrLen);
-      lastStderrLen = job.stderr.length;
+    if (script.stderr.length > lastStderrLen) {
+      const newStderr = script.stderr.slice(lastStderrLen);
+      lastStderrLen = script.stderr.length;
       yield { type: "stderr", data: newStderr };
     }
 
@@ -273,44 +274,44 @@ export async function* streamJobOutput(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
-  // Yield any remaining output after job completes
-  if (job.stdout.length > lastStdoutLen) {
-    const newStdout = job.stdout.slice(lastStdoutLen);
+  // Yield any remaining output after script completes
+  if (script.stdout.length > lastStdoutLen) {
+    const newStdout = script.stdout.slice(lastStdoutLen);
     yield { type: "stdout", data: newStdout };
   }
 
-  if (job.stderr.length > lastStderrLen) {
-    const newStderr = job.stderr.slice(lastStderrLen);
+  if (script.stderr.length > lastStderrLen) {
+    const newStderr = script.stderr.slice(lastStderrLen);
     yield { type: "stderr", data: newStderr };
   }
 
   // Yield exit status
-  yield { type: "exit", code: job.exitCode ?? -1 };
+  yield { type: "exit", code: script.exitCode ?? -1 };
 }
 
 /**
- * Collect job output in background (non-blocking)
+ * Collect script output in background (non-blocking)
  */
-function collectJobOutput(job: Job): void {
-  if (!job.process) return;
+function collectScriptOutput(script: Script): void {
+  if (!script.process) return;
 
   const decoder = new TextDecoder();
 
   // Collect stdout with truncation
   (async () => {
-    const reader = job.process!.stdout.getReader();
+    const reader = script.process!.stdout.getReader();
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
           const decoded = decoder.decode(value);
-          job.stdout += decoded;
+          script.stdout += decoded;
 
           // Apply truncation if needed
-          if (job.stdout.length > JOB_OUTPUT_LIMIT) {
-            job.stdout = job.stdout.slice(-JOB_OUTPUT_LIMIT);
-            job.stdoutTruncated = true;
+          if (script.stdout.length > SCRIPT_OUTPUT_LIMIT) {
+            script.stdout = script.stdout.slice(-SCRIPT_OUTPUT_LIMIT);
+            script.stdoutTruncated = true;
           }
         }
       }
@@ -323,19 +324,19 @@ function collectJobOutput(job: Job): void {
 
   // Collect stderr with truncation
   (async () => {
-    const reader = job.process!.stderr.getReader();
+    const reader = script.process!.stderr.getReader();
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
           const decoded = decoder.decode(value);
-          job.stderr += decoded;
+          script.stderr += decoded;
 
           // Apply truncation if needed
-          if (job.stderr.length > JOB_OUTPUT_LIMIT) {
-            job.stderr = job.stderr.slice(-JOB_OUTPUT_LIMIT);
-            job.stderrTruncated = true;
+          if (script.stderr.length > SCRIPT_OUTPUT_LIMIT) {
+            script.stderr = script.stderr.slice(-SCRIPT_OUTPUT_LIMIT);
+            script.stderrTruncated = true;
           }
         }
       }
@@ -349,19 +350,19 @@ function collectJobOutput(job: Job): void {
   // Wait for process completion in background
   (async () => {
     try {
-      const status = await job.process!.status;
-      job.status = status.code === 0 ? "completed" : "failed";
-      job.exitCode = status.code;
-      job.completedAt = new Date();
-      job.duration = job.completedAt.getTime() - job.startedAt.getTime();
-      job.process = undefined; // Clear to allow GC
+      const status = await script.process!.status;
+      script.status = status.code === 0 ? "completed" : "failed";
+      script.exitCode = status.code;
+      script.completedAt = new Date();
+      script.duration = script.completedAt.getTime() - script.startedAt.getTime();
+      script.process = undefined; // Clear to allow GC
     } catch (error) {
-      console.error("Error waiting for job:", error);
-      job.status = "failed";
-      job.exitCode = -1;
-      job.completedAt = new Date();
-      job.duration = job.completedAt.getTime() - job.startedAt.getTime();
-      job.process = undefined; // Clear to allow GC
+      console.error("Error waiting for script:", error);
+      script.status = "failed";
+      script.exitCode = -1;
+      script.completedAt = new Date();
+      script.duration = script.completedAt.getTime() - script.startedAt.getTime();
+      script.process = undefined; // Clear to allow GC
     }
   })();
 }
