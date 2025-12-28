@@ -18,6 +18,7 @@ import {
   buildEpilogue,
   extractShellState,
 } from "./preamble.ts";
+import { getEffectivePermissions } from "../core/permissions.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
@@ -177,7 +178,9 @@ function processJobEvents(shell: Shell, script: Script, events: JobEvent[]): voi
  */
 export function buildPermissionFlags(config: SafeShellConfig, cwd: string): string[] {
   const flags: string[] = [];
-  const perms = config.permissions ?? {};
+
+  // Get effective permissions with defaults applied
+  const perms = getEffectivePermissions(config, cwd);
 
   // Helper to expand path variables
   const expandPath = (p: string): string => {
@@ -188,9 +191,24 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
       .replace(/\$HOME/g, Deno.env.get("HOME") ?? "");
   };
 
-  // Read permissions - always include temp dir and safesh source for imports
+  // Helper to resolve symlinks and return BOTH original and resolved paths
+  // Important for macOS where /tmp -> /private/tmp - Deno checks literal path
+  const resolveWithBoth = (p: string): string[] => {
+    try {
+      const resolved = Deno.realPathSync(p);
+      // Return both if different (e.g., /tmp and /private/tmp)
+      return resolved !== p ? [p, resolved] : [p];
+    } catch {
+      // Path doesn't exist yet, return as-is
+      return [p];
+    }
+  };
+
+  // Read permissions - use effective perms which include defaults like /tmp
   const readPaths = [...(perms.read ?? [])];
-  if (!readPaths.includes("/tmp") && !readPaths.includes(TEMP_DIR)) {
+
+  // Always include temp dir for script files
+  if (!readPaths.includes(TEMP_DIR)) {
     readPaths.push(TEMP_DIR);
   }
 
@@ -201,18 +219,20 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   }
 
   if (readPaths.length) {
-    const paths = readPaths.map(expandPath).join(",");
+    const paths = readPaths.map(expandPath).flatMap(resolveWithBoth).join(",");
     flags.push(`--allow-read=${paths}`);
   }
 
-  // Write permissions - always include temp dir
+  // Write permissions - use effective perms which include defaults like /tmp
   const writePaths = [...(perms.write ?? [])];
-  if (!writePaths.includes("/tmp") && !writePaths.includes(TEMP_DIR)) {
+
+  // Always include temp dir for script files
+  if (!writePaths.includes(TEMP_DIR)) {
     writePaths.push(TEMP_DIR);
   }
 
   if (writePaths.length) {
-    const paths = writePaths.map(expandPath).join(",");
+    const paths = writePaths.map(expandPath).flatMap(resolveWithBoth).join(",");
     flags.push(`--allow-write=${paths}`);
   }
 
