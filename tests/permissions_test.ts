@@ -236,23 +236,23 @@ Deno.test({
 Deno.test({
   name: "validatePath - respects operation type (read vs write)",
   async fn() {
+    // Use paths outside /tmp to avoid default permissions
     const config: SafeShellConfig = {
       permissions: {
-        read: ["/tmp/readable"],
-        write: ["/tmp/writable"],
+        read: ["/custom/readable"],
+        write: ["/custom/writable"],
       },
     };
 
-    // Read operation on readable path should work
-    // (path doesn't need to exist for validation)
+    // Read operation on write-only path should fail
     await assertRejects(
-      () => validatePath("/tmp/writable/file.txt", config, "/", "read"),
+      () => validatePath("/custom/writable/file.txt", config, "/", "read"),
       SafeShellError,
     );
 
-    // Write operation on writable path should work
+    // Write operation on read-only path should fail
     await assertRejects(
-      () => validatePath("/tmp/readable/file.txt", config, "/", "write"),
+      () => validatePath("/custom/readable/file.txt", config, "/", "write"),
       SafeShellError,
     );
   },
