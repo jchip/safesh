@@ -260,6 +260,9 @@ export function mergeConfigs(
 ): SafeShellConfig {
   return {
     workspace: override.workspace ?? base.workspace,
+    projectDir: override.projectDir ?? base.projectDir,
+    allowProjectCommands: override.allowProjectCommands ?? base.allowProjectCommands,
+    allowProjectFiles: override.allowProjectFiles ?? base.allowProjectFiles,
     permissions: mergePermissions(
       base.permissions ?? {},
       override.permissions ?? {},
@@ -462,7 +465,69 @@ export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
     config.workspace = resolveWorkspace(config.workspace);
   }
 
+  // Resolve projectDir path if provided
+  if (config.projectDir) {
+    config.projectDir = resolveWorkspace(config.projectDir);
+  }
+
   return config;
+}
+
+/**
+ * MCP initialization args that can override config
+ */
+export interface McpInitArgs {
+  /** Project directory (base for relative paths and auto-allow) */
+  projectDir?: string;
+  /** Current working directory (takes precedence over projectDir for cwd) */
+  cwd?: string;
+  /** Allow any command under projectDir */
+  allowProjectCommands?: boolean;
+  /** Allow read/write under projectDir */
+  allowProjectFiles?: boolean;
+}
+
+/**
+ * Load config with MCP args override
+ * MCP args take precedence over file-based config
+ */
+export async function loadConfigWithArgs(
+  baseCwd: string,
+  mcpArgs?: McpInitArgs,
+): Promise<{ config: SafeShellConfig; effectiveCwd: string }> {
+  // Load base config from files
+  let config = await loadConfig(baseCwd);
+
+  // Apply MCP args overrides
+  if (mcpArgs) {
+    const overrides: SafeShellConfig = {};
+
+    if (mcpArgs.projectDir) {
+      overrides.projectDir = resolveWorkspace(mcpArgs.projectDir);
+    }
+
+    if (mcpArgs.allowProjectCommands !== undefined) {
+      overrides.allowProjectCommands = mcpArgs.allowProjectCommands;
+    }
+
+    if (mcpArgs.allowProjectFiles !== undefined) {
+      overrides.allowProjectFiles = mcpArgs.allowProjectFiles;
+    }
+
+    if (Object.keys(overrides).length > 0) {
+      config = mergeConfigs(config, overrides);
+    }
+  }
+
+  // Determine effective cwd: mcpArgs.cwd > mcpArgs.projectDir > baseCwd
+  let effectiveCwd = baseCwd;
+  if (mcpArgs?.cwd) {
+    effectiveCwd = resolveWorkspace(mcpArgs.cwd);
+  } else if (mcpArgs?.projectDir) {
+    effectiveCwd = resolveWorkspace(mcpArgs.projectDir);
+  }
+
+  return { config, effectiveCwd };
 }
 
 /**

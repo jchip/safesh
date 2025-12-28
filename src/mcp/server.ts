@@ -21,7 +21,7 @@ import {
 import { z } from "zod";
 import { executeCode } from "../runtime/executor.ts";
 import { createShellManager, type ShellManager } from "../runtime/shell.ts";
-import { loadConfig, mergeConfigs } from "../core/config.ts";
+import { loadConfigWithArgs, mergeConfigs, type McpInitArgs } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
 import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
@@ -118,7 +118,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
     },
   );
 
-  const registry = createRegistry(config);
+  const registry = createRegistry(config, cwd);
   const shellManager = createShellManager(cwd);
 
   // Build permission summary for tool descriptions
@@ -1068,15 +1068,48 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 }
 
 /**
+ * Parse CLI args for MCP initialization
+ */
+function parseMcpArgs(args: string[]): McpInitArgs {
+  const result: McpInitArgs = {};
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const nextArg = args[i + 1];
+
+    if (arg === "--project-dir" && nextArg) {
+      result.projectDir = nextArg;
+      i++;
+    } else if (arg === "--cwd" && nextArg) {
+      result.cwd = nextArg;
+      i++;
+    } else if (arg === "--allow-project-commands") {
+      result.allowProjectCommands = true;
+    } else if (arg === "--allow-project-files") {
+      result.allowProjectFiles = true;
+    } else if (arg?.startsWith("--project-dir=")) {
+      result.projectDir = arg.slice("--project-dir=".length);
+    } else if (arg?.startsWith("--cwd=")) {
+      result.cwd = arg.slice("--cwd=".length);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Main entry point
  */
 async function main() {
-  // Load configuration
-  const cwd = Deno.cwd();
-  const config = await loadConfig(cwd);
+  // Parse CLI args
+  const mcpArgs = parseMcpArgs(Deno.args);
+
+  // Load configuration with MCP args override
+  const baseCwd = Deno.cwd();
+  const { config, effectiveCwd } = await loadConfigWithArgs(baseCwd, mcpArgs);
 
   // Create server
-  const server = createServer(config, cwd);
+  const server = createServer(config, effectiveCwd);
 
   // Connect via stdio
   const transport = new StdioServerTransport();
@@ -1084,6 +1117,15 @@ async function main() {
 
   // Log startup (to stderr to not interfere with MCP protocol)
   console.error("SafeShell MCP Server started");
+  if (config.projectDir) {
+    console.error(`  projectDir: ${config.projectDir}`);
+  }
+  if (config.allowProjectCommands) {
+    console.error("  allowProjectCommands: true");
+  }
+  if (config.allowProjectFiles) {
+    console.error("  allowProjectFiles: true");
+  }
 }
 
 // Run if this is the main module

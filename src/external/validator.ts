@@ -138,15 +138,23 @@ export function validateCommand(
   args: string[],
   registry: CommandRegistry,
 ): ValidationResult {
-  const normalizedCmd = normalizeCommand(command);
+  // Try original command first (for path-based commands like ./scripts/build.sh)
+  let config = registry.get(command);
+  let cmdToCheck = command;
+
+  // If not found, try normalized command (for /usr/bin/git -> git)
+  if (!config) {
+    const normalizedCmd = normalizeCommand(command);
+    config = registry.get(normalizedCmd);
+    cmdToCheck = normalizedCmd;
+  }
 
   // Check if command is whitelisted
-  const config = registry.get(normalizedCmd);
   if (!config) {
     return {
       valid: false,
-      error: commandNotWhitelisted(normalizedCmd),
-      command: normalizedCmd,
+      error: commandNotWhitelisted(cmdToCheck),
+      command: cmdToCheck,
       flags: [],
     };
   }
@@ -160,8 +168,8 @@ export function validateCommand(
     if (!subcommand) {
       return {
         valid: false,
-        error: subcommandNotAllowed(normalizedCmd, "(none)", config.allow),
-        command: normalizedCmd,
+        error: subcommandNotAllowed(cmdToCheck, "(none)", config.allow),
+        command: cmdToCheck,
         flags,
       };
     }
@@ -169,8 +177,8 @@ export function validateCommand(
     if (!config.allow.includes(subcommand)) {
       return {
         valid: false,
-        error: subcommandNotAllowed(normalizedCmd, subcommand, config.allow),
-        command: normalizedCmd,
+        error: subcommandNotAllowed(cmdToCheck, subcommand, config.allow),
+        command: cmdToCheck,
         subcommand,
         flags,
       };
@@ -183,8 +191,8 @@ export function validateCommand(
       if (isFlagDenied(flag, config.denyFlags)) {
         return {
           valid: false,
-          error: flagNotAllowed(normalizedCmd, flag, config.denyFlags),
-          command: normalizedCmd,
+          error: flagNotAllowed(cmdToCheck, flag, config.denyFlags),
+          command: cmdToCheck,
           subcommand,
           flags,
         };
@@ -200,11 +208,11 @@ export function validateCommand(
         valid: false,
         error: new SafeShellError(
           "FLAG_NOT_ALLOWED",
-          `Required flag(s) missing for '${normalizedCmd}': ${missing.join(", ")}`,
-          { command: normalizedCmd, allowed: config.requireFlags },
+          `Required flag(s) missing for '${cmdToCheck}': ${missing.join(", ")}`,
+          { command: cmdToCheck, allowed: config.requireFlags },
           `Add the required flag(s): ${missing.join(", ")}`,
         ),
-        command: normalizedCmd,
+        command: cmdToCheck,
         subcommand,
         flags,
       };
@@ -213,7 +221,7 @@ export function validateCommand(
 
   return {
     valid: true,
-    command: normalizedCmd,
+    command: cmdToCheck,
     subcommand,
     flags,
   };

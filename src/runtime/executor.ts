@@ -225,8 +225,16 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
 
   // Run permissions (for external commands)
   // Filter to only commands that exist to avoid Deno warnings (cached)
-  if (perms.run?.length) {
-    const existingCommands = filterExistingCommands(perms.run, cwd);
+  const runCommands = [...(perms.run ?? [])];
+
+  // If allowProjectCommands is true, add projectDir to allow running any command there
+  // This is a broad permission - Deno will allow running any file under projectDir
+  if (config.allowProjectCommands && config.projectDir) {
+    runCommands.push(config.projectDir);
+  }
+
+  if (runCommands.length) {
+    const existingCommands = filterExistingCommands(runCommands, cwd);
     if (existingCommands.length) {
       flags.push(`--allow-run=${existingCommands.join(",")}`);
     }

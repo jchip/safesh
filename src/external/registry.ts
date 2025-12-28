@@ -6,6 +6,7 @@
  */
 
 import type { ExternalCommandConfig, SafeShellConfig } from "../core/types.ts";
+import { isCommandWithinProjectDir } from "../core/permissions.ts";
 
 /**
  * Default configurations for common commands
@@ -55,8 +56,15 @@ export const DEFAULT_COMMAND_CONFIGS: Record<string, ExternalCommandConfig> = {
  */
 export class CommandRegistry {
   private commands: Map<string, ExternalCommandConfig> = new Map();
+  private projectDir?: string;
+  private allowProjectCommands?: boolean;
+  private cwd?: string;
 
-  constructor(config?: SafeShellConfig) {
+  constructor(config?: SafeShellConfig, cwd?: string) {
+    this.projectDir = config?.projectDir;
+    this.allowProjectCommands = config?.allowProjectCommands;
+    this.cwd = cwd;
+
     if (config?.external) {
       for (const [command, cmdConfig] of Object.entries(config.external)) {
         this.register(command, cmdConfig);
@@ -83,14 +91,42 @@ export class CommandRegistry {
    * Returns undefined if command is not whitelisted
    */
   get(command: string): ExternalCommandConfig | undefined {
-    return this.commands.get(command);
+    // Check explicit registration first
+    const registered = this.commands.get(command);
+    if (registered) {
+      return registered;
+    }
+
+    // If allowProjectCommands is true, auto-allow commands within projectDir
+    if (this.allowProjectCommands && this.projectDir) {
+      if (isCommandWithinProjectDir(command, this.projectDir, this.cwd)) {
+        // Return a permissive config for project commands
+        return {
+          allow: true,
+          pathArgs: { autoDetect: true, validateSandbox: true },
+        };
+      }
+    }
+
+    return undefined;
   }
 
   /**
    * Check if a command is whitelisted
    */
   isWhitelisted(command: string): boolean {
-    return this.commands.has(command);
+    if (this.commands.has(command)) {
+      return true;
+    }
+
+    // Check if command is within projectDir when allowProjectCommands is true
+    if (this.allowProjectCommands && this.projectDir) {
+      if (isCommandWithinProjectDir(command, this.projectDir, this.cwd)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -152,8 +188,8 @@ export class CommandRegistry {
 /**
  * Create a registry from a SafeShell config
  */
-export function createRegistry(config: SafeShellConfig): CommandRegistry {
-  const registry = new CommandRegistry();
+export function createRegistry(config: SafeShellConfig, cwd?: string): CommandRegistry {
+  const registry = new CommandRegistry(config, cwd);
 
   // Get allowed run commands from permissions
   const allowedRun = config.permissions?.run ?? [];

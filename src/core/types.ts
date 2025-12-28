@@ -77,6 +77,24 @@ export interface SafeShellConfig {
   /** Workspace directory for scoped file access (supports ~/path) */
   workspace?: string;
 
+  /**
+   * Project directory - base directory for the project.
+   * Set via MCP args. Used with allowProjectCommands/allowProjectFiles.
+   */
+  projectDir?: string;
+
+  /**
+   * Allow executing any command under projectDir without explicit permission.
+   * Requires projectDir to be set.
+   */
+  allowProjectCommands?: boolean;
+
+  /**
+   * Allow read/write for files under projectDir without explicit permission.
+   * Requires projectDir to be set.
+   */
+  allowProjectFiles?: boolean;
+
   /** Deno permission configuration */
   permissions?: PermissionsConfig;
 
