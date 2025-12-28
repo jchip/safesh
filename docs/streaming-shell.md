@@ -4,6 +4,7 @@ A Gulp-inspired streaming API for TypeScript shell operations with lazy evaluati
 
 ## Table of Contents
 
+- [Fluent Shell API ($)](#fluent-shell-api-)
 - [Quick Start](#quick-start)
 - [MCP Server Integration](#mcp-server-integration)
 - [Core Concepts](#core-concepts)
@@ -13,37 +14,98 @@ A Gulp-inspired streaming API for TypeScript shell operations with lazy evaluati
 - [Migration Guide](#migration-guide)
 - [Example Scripts](#example-scripts)
 
-## Quick Start
+## Fluent Shell API ($)
+
+The **recommended** way to use SafeShell is through the fluent `$` API - a simple, chainable interface for file-based text processing:
 
 ```typescript
-import { cat, lines, grep } from "safesh:*";
+// Process log files with shell-like syntax
+await $('app.log').lines().grep(/ERROR/).head(10).print();
 
-// Process log file
+// Collect results into array
+const errors = await $('app.log').lines().grep(/ERROR/).collect();
+
+// Transform and save
+await $('data.txt').lines().map(l => l.toUpperCase()).save('output.txt');
+
+// Count, filter, analyze
+const errorCount = await $('server.log').lines().grep(/ERROR/).count();
+const firstError = await $('app.log').lines().grep(/FATAL/).first();
+
+// Create from arrays or text
+const fruits = await $.from(['apple', 'banana', 'cherry']).grep(/a/).collect();
+const lines = await $.text('line1\nline2').lines().collect();
+```
+
+### $ API Methods
+
+| Method | Type | Description |
+|--------|------|-------------|
+| `$('file.txt')` | Constructor | Create from file path |
+| `$.from(array)` | Constructor | Create from string array |
+| `$.text(string)` | Constructor | Create from text content |
+| `$.wrap(stream)` | Constructor | Wrap existing Stream |
+| `.lines()` | Transform | Split into lines |
+| `.grep(pattern)` | Transform | Filter by regex/string |
+| `.head(n)` | Transform | Take first n items |
+| `.tail(n)` | Transform | Take last n items |
+| `.filter(fn)` | Transform | Filter with predicate |
+| `.map(fn)` | Transform | Transform items |
+| `.take(n)` | Transform | Alias for head() |
+| `.print()` | Terminal | Output to stdout |
+| `.save(path)` | Terminal | Write to file |
+| `.collect()` | Terminal | Return as array |
+| `.first()` | Terminal | Get first item |
+| `.count()` | Terminal | Count items |
+| `.forEach(fn)` | Terminal | Iterate with function |
+| `.stream()` | Escape | Get underlying Stream |
+
+### Escape Hatch
+
+When you need advanced Stream operations, use `.stream()` to access the full Stream API:
+
+```typescript
+const stream = $('data.txt').lines().stream();
+await stream.pipe(customTransform()).pipe(flatMap(fn)).collect();
+```
+
+## Quick Start
+
+For advanced streaming operations beyond the `$` API:
+
+```typescript
+// Low-level streaming with pipe()
 const errors = await cat("app.log")
   .pipe(lines())
   .pipe(grep(/ERROR/))
   .collect();
 
-// Find and copy TypeScript files
+// File operations with glob
 await src("src/**/*.ts")
   .pipe(filter((f) => !f.path.includes(".test.")))
   .pipe(dest("dist/"));
 
-// Run git command
+// Command execution
 const result = await git("status").exec();
 console.log(result.stdout);
 ```
 
 ## MCP Server Integration
 
-The streaming shell API is fully available when SafeShell runs as an MCP server. All streaming functions are auto-imported and ready to use in the `exec` tool.
+The streaming shell API is fully available when SafeShell runs as an MCP server. The `$` API and all streaming functions are auto-imported and ready to use.
 
 ### Using Through MCP Tools
 
 ```typescript
 // Through Claude Desktop or other MCP clients
-// Use the 'exec' tool with streaming shell code
+// Use the 'run' tool with code
 
+// Fluent $ API (recommended)
+{
+  "code": "const errors = await $('app.log').lines().grep(/ERROR/).head(10).collect(); console.log('Errors:', errors);"
+}
+
+// Or with streaming API
 {
   "code": `
     const errors = await cat("app.log")
@@ -183,23 +245,36 @@ The streaming shell API is fully available when SafeShell runs as an MCP server.
 
 ### Auto-imported Functions
 
-When using the MCP `exec` tool, these streaming shell functions are automatically available:
+When using the MCP `run` tool, these are automatically available:
+
+**Fluent Shell API (Primary):**
+- `$('file')` - Create from file path
+- `$.from(array)` - Create from array
+- `$.text(string)` - Create from text
+- `$.wrap(stream)` - Wrap existing stream
 
 **Core Streams:**
 - `createStream()`, `fromArray()`, `empty()`
 
 **Transforms:**
-- `filter()`, `map()`, `flatMap()`, `take()`
+- `filter()`, `map()`, `flatMap()`, `take()`, `head()`, `tail()`
 - `lines()`, `grep()`
 
 **I/O:**
 - `stdout()`, `stderr()`, `tee()`
 
 **File System:**
+- `fs.*` - read, write, exists, readJson, writeJson, etc.
 - `glob()`, `src()`, `cat()`, `dest()`
 
 **Commands:**
 - `cmd()`, `git()`, `docker()`, `deno()`
+
+**ShellJS-like:**
+- `pwd()`, `which()`, `test()`, `echo()`, `cd()`, etc.
+
+**Shell Context:**
+- `$shell` - Persistent state (id, cwd, env, vars)
 
 No imports needed - just start using them!
 
@@ -593,7 +668,10 @@ cat app.log | grep ERROR | head -10
 ```
 
 ```typescript
-// TypeScript
+// SafeShell - Fluent API (recommended)
+await $('app.log').lines().grep(/ERROR/).head(10).print();
+
+// SafeShell - Streaming API
 await cat("app.log")
   .pipe(lines())
   .pipe(grep(/ERROR/))
@@ -610,7 +688,7 @@ find src -name "*.ts" -not -path "*/test/*" -exec cp {} dist/ \;
 ```
 
 ```typescript
-// TypeScript
+// SafeShell
 await glob("src/**/*.ts")
   .pipe(filter((f) => !f.path.includes("/test/")))
   .pipe(dest("dist/"));
@@ -624,12 +702,28 @@ git log --oneline | grep fix | wc -l
 ```
 
 ```typescript
-// TypeScript
+// SafeShell
 const count = await git("log", "--oneline")
   .stdout()
   .pipe(lines())
   .pipe(grep(/fix/))
   .count();
+```
+
+#### Quick Text Processing
+
+```bash
+# Shell
+head -5 file.txt
+tail -10 file.txt
+wc -l file.txt
+```
+
+```typescript
+// SafeShell - Fluent API
+const first5 = await $('file.txt').lines().head(5).collect();
+const last10 = await $('file.txt').lines().tail(10).collect();
+const lineCount = await $('file.txt').lines().count();
 ```
 
 ### From Node.js Streams
