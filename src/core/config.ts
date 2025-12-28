@@ -324,7 +324,7 @@ export function getLocalConfigPath(cwd: string): string {
 
 /**
  * Load local config from .claude/safesh.local.ts and convert to SafeShellConfig
- * Local config only supports allowedCommands, which gets merged into external
+ * Local config adds allowedCommands to both external and permissions.run
  */
 async function loadLocalConfig(cwd: string): Promise<SafeShellConfig | null> {
   const localPath = getLocalConfigPath(cwd);
@@ -343,30 +343,36 @@ async function loadLocalConfig(cwd: string): Promise<SafeShellConfig | null> {
     const localConfig = module.default as SafeshLocalConfig;
 
     // Convert SafeshLocalConfig to SafeShellConfig
-    // Only merge allowedCommands into external section
     if (!localConfig.allowedCommands || localConfig.allowedCommands.length === 0) {
       return null;
     }
 
     const external: Record<string, ExternalCommandConfig> = {};
+    const runPermissions: string[] = [];
 
     for (const cmd of localConfig.allowedCommands) {
       if (typeof cmd === "string") {
         // Simple string: allow all subcommands
         external[cmd] = { allow: true };
+        runPermissions.push(cmd);
       } else {
         // Object with command, subcommands, flags
-        const { command, subcommands, flags } = cmd;
+        const { command, subcommands } = cmd;
         external[command] = {
           allow: subcommands && subcommands.length > 0 ? subcommands : true,
-          // Flags in local config are treated as allowed flags (not deny/require)
-          // Since we don't have an "allowFlags" concept, we'll ignore flags for now
-          // or could use requireFlags if needed
         };
+        runPermissions.push(command);
       }
     }
 
-    return { external };
+    // Return config with both external and permissions.run
+    // This ensures commands are both configured and allowed to run
+    return {
+      external,
+      permissions: {
+        run: runPermissions,
+      },
+    };
   } catch (error) {
     // Log warning but don't fail
     console.warn(

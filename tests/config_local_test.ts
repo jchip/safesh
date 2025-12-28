@@ -264,3 +264,68 @@ Deno.test("loadConfig - local config has highest priority", async () => {
     await cleanupTestDir(testDir);
   }
 });
+
+// ============================================================================
+// Registry Integration Tests
+// ============================================================================
+
+Deno.test("loadConfig - local config adds commands to permissions.run", async () => {
+  const testDir = await createTestDir("permissions-run-test");
+
+  try {
+    // Write local config with commands
+    await writeLocalConfig(testDir, {
+      allowedCommands: ["cargo", "rustc", "make"],
+    });
+
+    // Load config
+    const config = await loadConfig(testDir);
+
+    // Verify commands are in both external and permissions.run
+    assertExists(config.external);
+    assertEquals(config.external.cargo?.allow, true);
+    assertEquals(config.external.rustc?.allow, true);
+    assertEquals(config.external.make?.allow, true);
+
+    // Verify permissions.run includes the commands
+    assertExists(config.permissions?.run);
+    assertEquals(config.permissions.run.includes("cargo"), true);
+    assertEquals(config.permissions.run.includes("rustc"), true);
+    assertEquals(config.permissions.run.includes("make"), true);
+  } finally {
+    await cleanupTestDir(testDir);
+  }
+});
+
+Deno.test("loadConfig - local config permissions.run merges with existing", async () => {
+  const testDir = await createTestDir("permissions-merge-test");
+
+  try {
+    // Write project config with existing run permission
+    const projectConfigPath = join(testDir, "safesh.config.ts");
+    await Deno.writeTextFile(
+      projectConfigPath,
+      `export default {
+        permissions: {
+          run: ["git", "docker"],
+        },
+      };`,
+    );
+
+    // Write local config with additional commands
+    await writeLocalConfig(testDir, {
+      allowedCommands: ["cargo"],
+    });
+
+    // Load config
+    const config = await loadConfig(testDir);
+
+    // Verify all commands are in permissions.run
+    assertExists(config.permissions?.run);
+    assertEquals(config.permissions.run.includes("git"), true);
+    assertEquals(config.permissions.run.includes("docker"), true);
+    assertEquals(config.permissions.run.includes("cargo"), true);
+  } finally {
+    await cleanupTestDir(testDir);
+  }
+});
