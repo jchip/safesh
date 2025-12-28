@@ -82,6 +82,50 @@ deno install --allow-all -n safesh src/cli/main.ts
 
 ## Quick Start
 
+### The Fluent Shell API (`$`)
+
+The primary way to use SafeShell is through the fluent `$` API - a chainable, shell-like interface for file and text processing:
+
+```typescript
+// Read and process files with shell-like pipelines
+await $('app.log').lines().grep(/ERROR/).head(10).print();
+
+// Collect results
+const errors = await $('app.log').lines().grep(/ERROR/).collect();
+
+// Transform and save
+await $('data.txt').lines().map(l => l.toUpperCase()).save('output.txt');
+
+// From arrays or text
+await $.from(['apple', 'banana', 'cherry']).grep(/a/).print();
+const lines = await $.text('hello\nworld').lines().collect();
+
+// Count and analyze
+const errorCount = await $('server.log').lines().grep(/ERROR/).count();
+const first = await $('config.json').lines().first();
+```
+
+**Available methods:**
+- **Transforms**: `.lines()`, `.grep(pattern)`, `.head(n)`, `.tail(n)`, `.filter(fn)`, `.map(fn)`, `.take(n)`
+- **Terminals**: `.print()`, `.save(path)`, `.collect()`, `.first()`, `.count()`, `.forEach(fn)`
+- **Escape hatch**: `.stream()` - access underlying Stream for advanced operations
+
+### Command Execution
+
+```typescript
+// Run commands with fluent API
+const result = await cmd('ls', ['-la']).exec();
+console.log(result.stdout);
+
+// Git, Docker, Deno shortcuts
+await git('status').exec();
+await docker('ps').exec();
+await deno('test').exec();
+
+// Pipe commands together
+await cmd('cat', ['file.txt']).pipe('grep', ['pattern']).pipe('sort').exec();
+```
+
 ### 1. Create a Config File
 
 Create `safesh.config.ts` in your project root:
@@ -421,28 +465,85 @@ Configs are validated for security issues:
 
 ## Usage Examples
 
+### Fluent Shell API (`$`) - Primary Interface
+
+```javascript
+// Process log files - simple and readable
+await $('app.log').lines().grep(/ERROR/).head(10).print();
+
+// Collect results into array
+const errors = await $('app.log').lines().grep(/ERROR/).collect();
+
+// Filter, transform, and save
+await $('data.csv')
+  .lines()
+  .filter(line => !line.startsWith('#'))
+  .map(line => line.toUpperCase())
+  .save('output.csv');
+
+// Count occurrences
+const errorCount = await $('server.log').lines().grep(/ERROR/).count();
+
+// Get first match
+const firstError = await $('app.log').lines().grep(/FATAL/).first();
+
+// Create from arrays or text
+const result = await $.from(['apple', 'banana', 'cherry'])
+  .grep(/a/)
+  .collect();  // ['apple', 'banana']
+
+const lines = await $.text('line1\nline2\nline3')
+  .lines()
+  .map(l => l.toUpperCase())
+  .collect();  // ['LINE1', 'LINE2', 'LINE3']
+
+// Iterate with for-await-of
+for await (const line of $('log.txt').lines().grep(/ERROR/)) {
+  console.log('Found:', line);
+}
+```
+
+### Command Execution
+
+```javascript
+// Execute commands
+const result = await cmd('ls', ['-la']).exec();
+console.log(result.stdout);
+
+// Git, Docker, Deno shortcuts
+const status = await git('status', '--short').exec();
+const containers = await docker('ps').exec();
+const version = await deno('--version').exec();
+
+// Pipe commands together (like Unix pipes)
+await cmd('echo', ['hello\nworld\nfoo'])
+  .pipe('grep', ['o'])
+  .pipe('sort')
+  .exec();
+
+// Stream command output
+const commits = await git('log', '--oneline')
+  .stdout()
+  .pipe(lines())
+  .pipe(grep(/fix:/))
+  .collect();
+```
+
 ### File Operations
 
 ```javascript
-// Read file
+// Read/write files
 const content = await fs.read("data.txt");
-
-// Write file
 await fs.write("output.txt", "Hello, world!");
 
-// Read JSON
-const data = await fs.readJson("config.json");
-
-// Write JSON
+// JSON helpers
+const config = await fs.readJson("config.json");
 await fs.writeJson("data.json", { foo: "bar" });
 
-// Check existence
+// Check existence and copy
 if (await fs.exists("file.txt")) {
-  console.log("File exists");
+  await fs.copy("file.txt", "backup.txt");
 }
-
-// Copy files
-await fs.copy("source.txt", "dest.txt");
 
 // Walk directory tree
 for await (const entry of fs.walk(".", { exts: [".ts"] })) {
@@ -450,39 +551,14 @@ for await (const entry of fs.walk(".", { exts: [".ts"] })) {
 }
 ```
 
-### Text Processing
+### Advanced Streaming (escape hatch from $)
 
 ```javascript
-// Read file and process lines
-const lines = await text.read("file.txt");
-const filtered = lines.filter(line => line.includes("ERROR"));
+// Use $ escape hatch for advanced Stream operations
+const stream = $('data.txt').lines().stream();
+await stream.pipe(customTransform()).collect();
 
-// Grep for patterns
-const matches = await text.grep("**/*.ts", /TODO/);
-for (const match of matches) {
-  console.log(`${match.path}:${match.line}: ${match.text}`);
-}
-
-// Head and tail
-const first10 = await text.head("log.txt", 10);
-const last20 = await text.tail("log.txt", 20);
-
-// Word count
-const wc = await text.wc("document.txt");
-console.log(`Lines: ${wc.lines}, Words: ${wc.words}`);
-```
-
-### Streaming Shell API
-
-```javascript
-// Process log files with streaming pipeline
-const errors = await cat("app.log")
-  .pipe(lines())
-  .pipe(grep(/ERROR/))
-  .pipe(take(10))
-  .collect();
-
-// Find and analyze code
+// Or use low-level streaming API directly
 await glob("src/**/*.ts")
   .pipe(filter(f => !f.path.includes(".test.")))
   .pipe(flatMap(file =>
@@ -495,13 +571,6 @@ await glob("src/**/*.ts")
     console.log(`${file}: ${line}`);
   });
 
-// Stream git command output
-const commits = await git("log", "--oneline")
-  .stdout()
-  .pipe(lines())
-  .pipe(grep(/fix:/))
-  .collect();
-
 // Count lines of code across modules
 const loc = await glob("src/**/*.ts")
   .pipe(filter(f => !f.path.includes(".test.")))
@@ -509,20 +578,18 @@ const loc = await glob("src/**/*.ts")
   .count();
 ```
 
-### Shell Operations
+### ShellJS-like Commands
 
 ```javascript
-// Execute external command
-const result = await $("git", ["status", "--short"]);
-console.log(result.stdout);
+// Familiar shell commands
+console.log(pwd());
+console.log(await which('git'));
+console.log(await test('-f', 'deno.json'));  // true if file exists
+console.log(await test('-d', 'src'));        // true if directory exists
 
-// Check exit code
-if (result.code === 0) {
-  console.log("Success!");
-}
-
-// Capture output
-const files = await $("ls", ["-la"]);
+// Directory stack
+pushd('/tmp');
+popd();
 ```
 
 ### Task Composition
