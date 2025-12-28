@@ -31,19 +31,15 @@ export class ShellManager {
   }
 
   /**
-   * Create a new shell
-   *
-   * @param options - Initial shell options
-   * @returns New shell
+   * Create a Shell object with default values
    */
-  create(options: { cwd?: string; env?: Record<string, string>; description?: string } = {}): Shell {
-    // Enforce shell limit with LRU eviction
-    if (this.shells.size >= MAX_SHELLS) {
-      this.evictLeastRecentShell();
-    }
-
+  private createShellObject(options: {
+    cwd?: string;
+    env?: Record<string, string>;
+    description?: string;
+  } = {}): Shell {
     const now = new Date();
-    const shell: Shell = {
+    return {
       id: crypto.randomUUID(),
       description: options.description,
       cwd: options.cwd ?? this.defaultCwd,
@@ -56,7 +52,21 @@ export class ShellManager {
       createdAt: now,
       lastActivityAt: now,
     };
+  }
 
+  /**
+   * Create a new shell
+   *
+   * @param options - Initial shell options
+   * @returns New shell
+   */
+  create(options: { cwd?: string; env?: Record<string, string>; description?: string } = {}): Shell {
+    // Enforce shell limit with LRU eviction
+    if (this.shells.size >= MAX_SHELLS) {
+      this.evictLeastRecentShell();
+    }
+
+    const shell = this.createShellObject(options);
     this.shells.set(shell.id, shell);
     return shell;
   }
@@ -90,21 +100,7 @@ export class ShellManager {
     }
 
     // Create temporary shell (not stored)
-    const now = new Date();
-    const shell: Shell = {
-      id: crypto.randomUUID(),
-      cwd: fallback.cwd ?? this.defaultCwd,
-      env: fallback.env ?? {},
-      vars: {},
-      scripts: new Map(),
-      scriptsByPid: new Map(),
-      scriptSequence: 0,
-      jobs: new Map(),
-      createdAt: now,
-      lastActivityAt: now,
-    };
-
-    return { shell, isTemporary: true };
+    return { shell: this.createShellObject(fallback), isTemporary: true };
   }
 
   /**

@@ -219,11 +219,8 @@ Deno.test({
     const sideEffectResults: number[] = [];
 
     const result = await fromArray([1, 2, 3])
-      .pipe(tee(async function* (stream) {
-        for await (const item of stream) {
-          sideEffectResults.push(item * 10);
-          yield item;
-        }
+      .pipe(tee((item) => {
+        sideEffectResults.push(item * 10);
       }))
       .collect();
 
@@ -236,11 +233,14 @@ Deno.test({
 });
 
 Deno.test({
-  name: "tee - works with stdout for simultaneous output",
+  name: "tee - works with custom stdout writing",
   async fn() {
+    const encoder = new TextEncoder();
     const output = await captureStdout(async () => {
       const result = await fromArray(["a", "b", "c"])
-        .pipe(tee(stdout()))
+        .pipe(tee(async (item) => {
+          await Deno.stdout.write(encoder.encode(item + "\n"));
+        }))
         .collect();
 
       // Data passes through
@@ -253,11 +253,14 @@ Deno.test({
 });
 
 Deno.test({
-  name: "tee - works with stderr for simultaneous output",
+  name: "tee - works with custom stderr writing",
   async fn() {
+    const encoder = new TextEncoder();
     const output = await captureStderr(async () => {
       const result = await fromArray(["x", "y", "z"])
-        .pipe(tee(stderr()))
+        .pipe(tee(async (item) => {
+          await Deno.stderr.write(encoder.encode(item + "\n"));
+        }))
         .collect();
 
       // Data passes through
@@ -276,17 +279,11 @@ Deno.test({
     const log2: string[] = [];
 
     const result = await fromArray(["item1", "item2"])
-      .pipe(tee(async function* (stream) {
-        for await (const item of stream) {
-          log1.push(`log1: ${item}`);
-          yield item;
-        }
+      .pipe(tee((item) => {
+        log1.push(`log1: ${item}`);
       }))
-      .pipe(tee(async function* (stream) {
-        for await (const item of stream) {
-          log2.push(`log2: ${item}`);
-          yield item;
-        }
+      .pipe(tee((item) => {
+        log2.push(`log2: ${item}`);
       }))
       .collect();
 
@@ -301,12 +298,9 @@ Deno.test({
   async fn() {
     let sideEffectCalled = false;
 
-    const result = await fromArray([])
-      .pipe(tee(async function* (stream) {
-        for await (const item of stream) {
-          sideEffectCalled = true;
-          yield item;
-        }
+    const result = await fromArray<string>([])
+      .pipe(tee(() => {
+        sideEffectCalled = true;
       }))
       .collect();
 
@@ -316,16 +310,13 @@ Deno.test({
 });
 
 Deno.test({
-  name: "tee - side effect can transform data type",
+  name: "tee - side effect can compute from data",
   async fn() {
     const lengths: number[] = [];
 
     const result = await fromArray(["a", "bb", "ccc"])
-      .pipe(tee(async function* (stream) {
-        for await (const item of stream) {
-          lengths.push(item.length);
-          yield item;
-        }
+      .pipe(tee((item) => {
+        lengths.push(item.length);
       }))
       .collect();
 
@@ -343,11 +334,8 @@ Deno.test({
     let executed = false;
 
     const stream = fromArray([1, 2, 3])
-      .pipe(tee(async function* (source) {
-        for await (const item of source) {
-          executed = true;
-          yield item;
-        }
+      .pipe(tee(() => {
+        executed = true;
       }));
 
     // Should not have executed yet
@@ -363,6 +351,7 @@ Deno.test({
   name: "Integration - complex pipeline with stdout, stderr, and tee",
   async fn() {
     const debugLog: string[] = [];
+    const encoder = new TextEncoder();
 
     const stdoutOutput = await captureStdout(async () => {
       const stderrOutput = await captureStderr(async () => {
@@ -374,11 +363,8 @@ Deno.test({
             }
           })
           // Log to debug
-          .pipe(tee(async function* (stream) {
-            for await (const n of stream) {
-              debugLog.push(`debug: ${n}`);
-              yield n;
-            }
+          .pipe(tee((n) => {
+            debugLog.push(`debug: ${n}`);
           }))
           // Write even numbers to stdout
           .pipe(async function* (stream) {
@@ -390,21 +376,15 @@ Deno.test({
               }
             }
           })
-          .pipe(tee(async function* (stream) {
-            for await (const s of stream) {
-              if (s.startsWith("even")) {
-                await Deno.stdout.write(new TextEncoder().encode(s + "\n"));
-              }
-              yield s;
+          .pipe(tee(async (s) => {
+            if (s.startsWith("even")) {
+              await Deno.stdout.write(encoder.encode(s + "\n"));
             }
           }))
           // Write odd numbers to stderr
-          .pipe(tee(async function* (stream) {
-            for await (const s of stream) {
-              if (s.startsWith("odd")) {
-                await Deno.stderr.write(new TextEncoder().encode(s + "\n"));
-              }
-              yield s;
+          .pipe(tee(async (s) => {
+            if (s.startsWith("odd")) {
+              await Deno.stderr.write(encoder.encode(s + "\n"));
             }
           }))
           .collect();

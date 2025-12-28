@@ -124,38 +124,37 @@ export function stderr(): Transform<string, string> {
  * Apply a side effect while passing through data
  *
  * Like the Unix tee command - allows simultaneous processing of data.
- * The side effect transform is applied, and all items are passed through.
+ * Each item is passed to the side effect function AND yielded for further processing.
  *
- * @param sideEffect - Transform to apply as side effect
+ * @param sideEffect - Function to call for each item (for side effects only)
  * @returns Transform that applies side effect and passes through
  *
  * @example
  * ```ts
- * // Print while collecting (using tee + stdout)
+ * // Print while collecting
  * const errors = await cat("app.log")
  *   .pipe(lines())
  *   .pipe(grep(/ERROR/))
- *   .pipe(tee(stdout()))
+ *   .pipe(tee(line => console.log(line)))
  *   .collect();
  *
  * // Log to file while processing
  * const results = await processData()
- *   .pipe(tee(writeToFile("debug.log")))
+ *   .pipe(tee(async item => await logToFile(item)))
  *   .pipe(map(transform))
  *   .collect();
  *
  * // Multiple side effects can be chained
  * await data
- *   .pipe(tee(stdout()))
- *   .pipe(tee(logToFile))
+ *   .pipe(tee(console.log))
  *   .pipe(tee(sendToMetrics))
  *   .collect();
  * ```
  */
-export function tee<T>(sideEffect: Transform<T, T>): Transform<T, T> {
+export function tee<T>(sideEffect: (item: T) => void | Promise<void>): Transform<T, T> {
   return async function* (stream) {
-    const sideStream = sideEffect(stream);
-    for await (const item of sideStream) {
+    for await (const item of stream) {
+      await sideEffect(item);
       yield item;
     }
   };

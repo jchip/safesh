@@ -9,6 +9,7 @@
 
 import { createStream, type Stream } from "./stream.ts";
 import { writeStdin } from "./io.ts";
+import { collectStreamBytes } from "../core/utils.ts";
 
 // Job tracking marker for communication with main process
 const JOB_MARKER = "__SAFESH_JOB__:";
@@ -266,8 +267,8 @@ export class Command {
 
     // Write stdin, read outputs, and wait for status concurrently
     const promises: Promise<unknown>[] = [
-      this.readStream(process.stdout),
-      this.readStream(process.stderr),
+      collectStreamBytes(process.stdout),
+      collectStreamBytes(process.stderr),
       process.status,
     ];
     const stdinPromise = this.setupStdin(process, stdinData);
@@ -480,36 +481,6 @@ export class Command {
     return this.streamOne("stderr");
   }
 
-  /**
-   * Read all bytes from a ReadableStream
-   */
-  private async readStream(
-    stream: ReadableStream<Uint8Array>,
-  ): Promise<Uint8Array> {
-    const chunks: Uint8Array[] = [];
-    const reader = stream.getReader();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    // Concatenate all chunks
-    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    return result;
-  }
 
   /**
    * Resolve stdin data from upstream command or options
