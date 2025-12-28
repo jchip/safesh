@@ -330,6 +330,105 @@ export class ShellManager {
     return scripts;
   }
 
+  // ==========================================================================
+  // Job Management (processes spawned within scripts)
+  // ==========================================================================
+
+  /** Job sequence counter per shell */
+  private jobSequences: Map<string, number> = new Map();
+
+  /**
+   * Generate a unique job ID for a shell
+   */
+  generateJobId(shellId: string): string {
+    const seq = this.jobSequences.get(shellId) ?? 0;
+    this.jobSequences.set(shellId, seq + 1);
+    return `job-${shellId.slice(0, 8)}-${seq}`;
+  }
+
+  /**
+   * Add a job to a shell and link it to its parent script
+   */
+  addJob(shellId: string, job: Job): boolean {
+    const shell = this.shells.get(shellId);
+    if (!shell) return false;
+
+    // Add job to shell's job map
+    shell.jobs.set(job.id, job);
+
+    // Link job to parent script
+    const script = shell.scripts.get(job.scriptId);
+    if (script && !script.jobIds.includes(job.id)) {
+      script.jobIds.push(job.id);
+    }
+
+    return true;
+  }
+
+  /**
+   * Get a job by ID
+   */
+  getJob(shellId: string, jobId: string): Job | undefined {
+    const shell = this.shells.get(shellId);
+    return shell?.jobs.get(jobId);
+  }
+
+  /**
+   * Update a job's status and output
+   */
+  updateJob(
+    shellId: string,
+    jobId: string,
+    updates: Partial<Pick<Job, "status" | "exitCode" | "stdout" | "stderr" | "completedAt" | "duration">>,
+  ): boolean {
+    const job = this.getJob(shellId, jobId);
+    if (!job) return false;
+
+    if (updates.status !== undefined) job.status = updates.status;
+    if (updates.exitCode !== undefined) job.exitCode = updates.exitCode;
+    if (updates.stdout !== undefined) job.stdout = updates.stdout;
+    if (updates.stderr !== undefined) job.stderr = updates.stderr;
+    if (updates.completedAt !== undefined) job.completedAt = updates.completedAt;
+    if (updates.duration !== undefined) job.duration = updates.duration;
+
+    return true;
+  }
+
+  /**
+   * List jobs in a shell, optionally filtered by script
+   */
+  listJobs(
+    shellId: string,
+    filter?: {
+      scriptId?: string;
+      status?: "running" | "completed" | "failed";
+      limit?: number;
+    },
+  ): Job[] {
+    const shell = this.shells.get(shellId);
+    if (!shell) return [];
+
+    let jobs = Array.from(shell.jobs.values());
+
+    // Apply filters
+    if (filter?.scriptId !== undefined) {
+      jobs = jobs.filter((j) => j.scriptId === filter.scriptId);
+    }
+    if (filter?.status !== undefined) {
+      jobs = jobs.filter((j) => j.status === filter.status);
+    }
+
+    // Sort by startedAt descending (newest first)
+    jobs.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+
+    // Apply limit
+    if (filter?.limit !== undefined && filter.limit > 0) {
+      jobs = jobs.slice(0, filter.limit);
+    }
+
+    return jobs;
+  }
+
   /**
    * Estimate memory usage of a shell
    */
@@ -458,6 +557,17 @@ export class ShellManager {
       background: boolean;
       startedAt: string;
       duration?: number;
+      jobIds: string[];
+    }[];
+    jobs: {
+      id: string;
+      scriptId: string;
+      command: string;
+      args: string[];
+      status: string;
+      exitCode?: number;
+      startedAt: string;
+      duration?: number;
     }[];
     createdAt: string;
     lastActivityAt: string;
@@ -475,6 +585,17 @@ export class ShellManager {
         background: s.background,
         startedAt: s.startedAt.toISOString(),
         duration: s.duration,
+        jobIds: s.jobIds,
+      })),
+      jobs: Array.from(shell.jobs.values()).map((j) => ({
+        id: j.id,
+        scriptId: j.scriptId,
+        command: j.command,
+        args: j.args,
+        status: j.status,
+        exitCode: j.exitCode,
+        startedAt: j.startedAt.toISOString(),
+        duration: j.duration,
       })),
       createdAt: shell.createdAt.toISOString(),
       lastActivityAt: shell.lastActivityAt.toISOString(),
