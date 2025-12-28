@@ -1,94 +1,87 @@
 ---
 name: safesh-permission
-description: Handle safesh COMMAND_NOT_ALLOWED errors by prompting user and updating project config
+description: Check command permissions before executing via safesh, prompt user if needed
 allowed-tools: Read, Edit, Write
 ---
 
-# SafeShell Permission Workflow
+# SafeShell Command Permission Workflow
 
-When using the safesh MCP server and a command is blocked due to permissions, follow this workflow to get user approval and update the project config.
+Before executing external commands via safesh, always check if they are allowed and prompt the user if needed.
 
-## Recognizing Permission Errors
+## Pre-Flight Permission Check
 
-When safesh returns an error with `type: "COMMAND_NOT_ALLOWED"`:
+**BEFORE** sending code to safesh that includes external commands (via `cmd()`, `git()`, `docker()`, etc.):
 
-```json
-{
-  "error": {
-    "type": "COMMAND_NOT_ALLOWED",
-    "command": "cargo",
-    "message": "Command 'cargo' is not in the allowed list"
-  }
-}
-```
+1. Read `.claude/safesh.local.ts` to check if the command is already allowed
+2. If NOT allowed, prompt the user for permission
+3. If approved, update the config file
+4. THEN execute the code
 
-## Workflow
+This prevents partial script execution when a command is blocked midway.
 
-### 1. Prompt the User
+## Checking Permissions
 
-Ask the user for permission to allow the command:
+Read the project's config file:
 
 ```
-The command 'cargo' is not allowed in safesh.
-Would you like to add it to the project's allowed commands?
-- Yes: Add to .claude/safesh.local.ts (persists for this project)
-- No: Cancel the operation
+.claude/safesh.local.ts
 ```
 
-### 2. If User Approves
-
-Edit or create `.claude/safesh.local.ts` in the project root:
-
-**If file doesn't exist**, create it:
-
+Example contents:
 ```typescript
 export default {
-  allowedCommands: ["cargo"]
+  allowedCommands: ["cargo", "rustc", "make"]
 };
 ```
 
-**If file exists**, add the command to the array:
+If the command you need (e.g., `npm`) is not in `allowedCommands`, you must prompt first.
+
+## Prompting the User
+
+Ask clearly:
+
+```
+The command 'npm' is not in the allowed list for safesh.
+Would you like to add it to .claude/safesh.local.ts?
+- Yes: Add and proceed
+- No: Cancel
+```
+
+## Updating the Config
+
+**If file doesn't exist**, create `.claude/safesh.local.ts`:
 
 ```typescript
 export default {
-  allowedCommands: ["cargo", "rustc", "NEW_COMMAND"]
+  allowedCommands: ["npm"]
 };
 ```
 
-### 3. Retry the Operation
-
-After updating the config, retry the original safesh operation. The command should now be allowed.
-
-**Using retry_id (if available):**
-
-If the error includes a `retry_id`, you can use it for a faster retry:
+**If file exists**, add to the array:
 
 ```typescript
-// Original call returned:
-// { error: { type: "COMMAND_NOT_ALLOWED", command: "cargo" }, retry_id: "abc123" }
-
-// After updating config, retry with:
-safesh.run({ retry_id: "abc123" })
+export default {
+  allowedCommands: ["cargo", "rustc", "npm"]  // added npm
+};
 ```
 
-The retry will use the same code and context as the original call.
+## Then Execute
 
-## Config File Format
+Only after the config is updated, send the code to safesh.
 
-The `.claude/safesh.local.ts` file supports:
+## Config Format
 
 ```typescript
 export default {
   allowedCommands: [
     // Simple string - allows command with any args
     "cargo",
-    "deno",
+    "make",
 
-    // Object - granular control
+    // Object - granular control (optional)
     {
       command: "git",
-      subcommands: ["status", "log", "diff", "add", "commit"],
-      flags: ["--verbose", "-v"]
+      subcommands: ["status", "log", "diff", "add", "commit"]
     }
   ]
 };
@@ -96,7 +89,7 @@ export default {
 
 ## Important Notes
 
-- Only commands within the project workspace can be allowed via this config
-- System-level commands (outside workspace) require manual user configuration in `~/.config/safesh/config.ts`
-- The `.claude/` directory is typically gitignored, so permissions are local to each developer
-- Always inform the user what command is being added before modifying the config
+- Always check BEFORE executing, not after failure
+- Commands under `${PROJECT_DIR}` are project-scoped
+- System commands outside workspace require manual config in `~/.config/safesh/config.ts`
+- The `.claude/` directory is typically gitignored (local to each developer)
