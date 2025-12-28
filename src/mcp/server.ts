@@ -21,7 +21,7 @@ import {
 import { z } from "zod";
 import { executeCode } from "../runtime/executor.ts";
 import { createShellManager, type ShellManager } from "../runtime/shell.ts";
-import { loadConfig } from "../core/config.ts";
+import { loadConfig, mergeConfigs } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
 import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
@@ -35,11 +35,13 @@ import { runTask, listTasks } from "../runner/tasks.ts";
 
 // Tool schemas
 const RunSchema = z.object({
-  code: z.string().describe("JavaScript/TypeScript code to execute"),
+  code: z.string().optional().describe("JavaScript/TypeScript code to execute (optional if retry_id provided)"),
   shellId: z.string().optional().describe("Shell ID to use"),
   background: z.boolean().optional().describe("Run in background (async), returns { scriptId, pid }"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
+  retry_id: z.string().optional().describe("Retry ID from a previous COMMAND_NOT_ALLOWED error"),
+  allow: z.array(z.string()).optional().describe("Commands to temporarily allow for this retry"),
 });
 
 const StartShellSchema = z.object({
@@ -156,7 +158,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             properties: {
               code: {
                 type: "string",
-                description: "JavaScript/TypeScript code to execute. " +
+                description: "JavaScript/TypeScript code to execute (optional if retry_id provided). " +
                   "Example streaming: await cat('file.txt').pipe(lines()).pipe(grep(/ERROR/)).collect()",
               },
               shellId: {
@@ -176,8 +178,16 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
                 additionalProperties: { type: "string" },
                 description: "Additional environment variables to set",
               },
+              retry_id: {
+                type: "string",
+                description: "Retry ID from a previous COMMAND_NOT_ALLOWED error. Use with 'allow' to retry with temp permissions.",
+              },
+              allow: {
+                type: "array",
+                items: { type: "string" },
+                description: "Commands to temporarily allow for this retry (e.g., ['cargo', 'rustc']).",
+              },
             },
-            required: ["code"],
           },
         },
         {
@@ -429,8 +439,61 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
         case "run": {
           const parsed = RunSchema.parse(args);
 
+          // Handle retry workflow
+          let code: string;
+          let shellId: string | undefined = parsed.shellId;
+          let execTimeout: number | undefined = parsed.timeout;
+          let background: boolean | undefined = parsed.background;
+          let execConfig = config;
+
+          if (parsed.retry_id) {
+            // Retry mode: get memoized context
+            const retry = shellManager.consumePendingRetry(parsed.retry_id);
+            if (!retry) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Retry not found or expired: ${parsed.retry_id}`,
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            code = retry.code;
+            shellId = retry.shellId;
+            execTimeout = retry.context.timeout;
+            background = retry.context.background;
+
+            // Merge allowed commands into temp config
+            if (parsed.allow && parsed.allow.length > 0) {
+              const allowedCommands = parsed.allow;
+              execConfig = mergeConfigs(config, {
+                permissions: {
+                  run: allowedCommands,
+                },
+                external: Object.fromEntries(
+                  allowedCommands.map((cmd) => [cmd, { allow: true }]),
+                ),
+              });
+            }
+          } else if (parsed.code) {
+            code = parsed.code;
+          } else {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Either 'code' or 'retry_id' must be provided",
+                },
+              ],
+              isError: true,
+            };
+          }
+
           // Background execution requires a shell
-          if (parsed.background && !parsed.shellId) {
+          if (background && !shellId) {
             return {
               content: [
                 {
@@ -444,7 +507,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
           // Get or create shell
           const { shell, isTemporary } = shellManager.getOrTemp(
-            parsed.shellId,
+            shellId,
             { cwd, env: parsed.env },
           );
 
@@ -455,8 +518,8 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
           }
 
           // Background execution: launch script and return immediately
-          if (parsed.background) {
-            const script = await launchCodeScript(parsed.code, config, shell);
+          if (background) {
+            const script = await launchCodeScript(code, execConfig, shell);
             // Restore original env
             shell.env = originalEnv;
 
@@ -477,14 +540,47 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 
           // Foreground execution: wait for completion
           const result = await executeCode(
-            parsed.code,
-            config,
-            { timeout: parsed.timeout, cwd: shell.cwd },
+            code,
+            execConfig,
+            { timeout: execTimeout, cwd: shell.cwd },
             shell,
           );
 
           // Restore original env
           shell.env = originalEnv;
+
+          // Check for blocked command - create pending retry
+          if (result.blockedCommand) {
+            const retry = shellManager.createPendingRetry(
+              code,
+              result.blockedCommand,
+              {
+                cwd: shell.cwd,
+                env: parsed.env,
+                timeout: execTimeout,
+                background,
+              },
+              shellId,
+            );
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    error: {
+                      type: "COMMAND_NOT_ALLOWED",
+                      command: result.blockedCommand,
+                      message: `Command '${result.blockedCommand}' is not allowed`,
+                    },
+                    retry_id: retry.id,
+                    hint: `To retry with permission, call run with: { retry_id: "${retry.id}", allow: ["${result.blockedCommand}"] }`,
+                  }, null, 2),
+                },
+              ],
+              isError: true,
+            };
+          }
 
           // Update shell vars if not temporary
           if (!isTemporary && result.success && shell.vars) {
@@ -495,7 +591,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
             content: [
               {
                 type: "text",
-                text: formatRunResult(result, parsed.shellId, result.scriptId),
+                text: formatRunResult(result, shellId, result.scriptId),
               },
             ],
             isError: !result.success,
