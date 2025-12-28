@@ -12,6 +12,7 @@ export default {
       "which", "whereis", "type", "realpath", "dirname", "basename",
 
       // Text processing
+      "cat", "head", "tail", "sort", "uniq", "wc", "grep", "cut",
       "awk", "sed", "tr", "column", "comm", "join", "paste", "xargs",
       "jq", "yq", "xmllint",
 
@@ -67,6 +68,14 @@ export default {
     basename: { allow: true },
 
     // Text processing
+    cat: { allow: true },
+    head: { allow: true },
+    tail: { allow: true },
+    sort: { allow: true },
+    uniq: { allow: true },
+    wc: { allow: true },
+    grep: { allow: true },
+    cut: { allow: true },
     awk: { allow: true },
     sed: { allow: true },
     tr: { allow: true },
