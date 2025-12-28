@@ -29,48 +29,6 @@ export function expandPaths(paths: string[], cwd: string): string[] {
 }
 
 /**
- * Build Deno permission flags from config
- */
-export function buildPermissionFlags(
-  config: SafeShellConfig,
-  cwd: string,
-): string[] {
-  const flags: string[] = [];
-  const perms = config.permissions ?? {};
-
-  // Read permissions
-  if (perms.read?.length) {
-    const paths = expandPaths(perms.read, cwd);
-    flags.push(`--allow-read=${paths.join(",")}`);
-  }
-
-  // Write permissions
-  if (perms.write?.length) {
-    const paths = expandPaths(perms.write, cwd);
-    flags.push(`--allow-write=${paths.join(",")}`);
-  }
-
-  // Network permissions
-  if (perms.net === true) {
-    flags.push("--allow-net");
-  } else if (Array.isArray(perms.net) && perms.net.length) {
-    flags.push(`--allow-net=${perms.net.join(",")}`);
-  }
-
-  // Run permissions (for external commands)
-  if (perms.run?.length) {
-    flags.push(`--allow-run=${perms.run.join(",")}`);
-  }
-
-  // Env permissions
-  if (perms.env?.length) {
-    flags.push(`--allow-env=${perms.env.join(",")}`);
-  }
-
-  return flags;
-}
-
-/**
  * Check if a path is within allowed directories
  */
 export function isPathAllowed(
