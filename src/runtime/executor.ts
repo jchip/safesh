@@ -56,6 +56,9 @@ async function hashCode(code: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Marker used to identify shell state output for syncing vars back
+const SHELL_STATE_MARKER = "__SAFESH_STATE__:";
+
 /**
  * Build the preamble that gets prepended to user code
  *
@@ -88,9 +91,10 @@ function buildPreamble(shell?: Shell): string {
   ];
 
   if (shell) {
+    // Use 'let' so $shell can be reassigned, and make vars mutable
     lines.push(
-      "// Shell context available as $shell",
-      `const $shell = ${JSON.stringify({
+      "// Shell context available as $shell (mutable for var persistence)",
+      `const $shell: { id: string; cwd: string; env: Record<string, string>; vars: Record<string, unknown> } = ${JSON.stringify({
         id: shell.id,
         cwd: shell.cwd,
         env: shell.env,
@@ -106,6 +110,44 @@ function buildPreamble(shell?: Shell): string {
   );
 
   return lines.join("\n");
+}
+
+/**
+ * Build epilogue that outputs shell state for syncing back
+ */
+function buildEpilogue(hasShell: boolean): string {
+  if (!hasShell) return "";
+
+  return `
+// SafeShell epilogue - output shell state for syncing
+console.log("${SHELL_STATE_MARKER}" + JSON.stringify($shell.vars));
+`;
+}
+
+/**
+ * Extract shell state from output and return cleaned output
+ */
+function extractShellState(output: string): { cleanOutput: string; vars?: Record<string, unknown> } {
+  const lines = output.split("\n");
+  const stateLineIndex = lines.findIndex(line => line.startsWith(SHELL_STATE_MARKER));
+
+  if (stateLineIndex === -1) {
+    return { cleanOutput: output };
+  }
+
+  const stateLine = lines[stateLineIndex]!;
+  const jsonStr = stateLine.slice(SHELL_STATE_MARKER.length);
+
+  // Remove the state line from output
+  lines.splice(stateLineIndex, 1);
+  const cleanOutput = lines.join("\n");
+
+  try {
+    const vars = JSON.parse(jsonStr) as Record<string, unknown>;
+    return { cleanOutput, vars };
+  } catch {
+    return { cleanOutput: output };
+  }
 }
 
 /**
@@ -254,9 +296,17 @@ export async function executeCode(
   const hash = await hashCode(code);
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
-  // Build full code with preamble
+  // Build full code with preamble, user code wrapped in try/finally, and epilogue
   const preamble = buildPreamble(shell);
-  const fullCode = preamble + code;
+  const epilogue = buildEpilogue(!!shell);
+
+  // Wrap user code in try/finally to ensure epilogue runs even on error
+  let fullCode: string;
+  if (shell) {
+    fullCode = `${preamble}try {\n${code}\n} finally {\n${epilogue}\n}`;
+  } else {
+    fullCode = preamble + code;
+  }
 
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
@@ -310,9 +360,15 @@ export async function executeCode(
       return { status, stdout, stderr };
     })();
 
-    const { status, stdout, stderr } = await deadline(outputPromise, timeoutMs);
+    const { status, stdout: rawStdout, stderr } = await deadline(outputPromise, timeoutMs);
 
-    // Update job with results
+    // Extract shell state from output and sync vars back
+    const { cleanOutput: stdout, vars } = extractShellState(rawStdout);
+    if (shell && vars) {
+      shell.vars = vars;
+    }
+
+    // Update job with results (using cleaned output)
     if (job) {
       const stdoutResult = truncateOutput(stdout);
       const stderrResult = truncateOutput(stderr);
