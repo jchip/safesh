@@ -35,8 +35,9 @@ SafeShell is a security-first execution environment built on Deno that provides:
 
 ### AI Assistant Integration
 
-- **MCP Tools** - `exec`, `run`, `task`, `bg`, `jobs`, `kill`, `fg`
-- **Session Support** - Persistent state between tool calls
+- **MCP Tools** - `exec`, `task`, `startShell`, `listShells`, `listJobs`, `waitJob`
+- **Shell Support** - Persistent state (cwd, env, variables) between tool calls
+- **Background Jobs** - Launch async jobs with `background: true`, poll or wait for completion
 - **Structured Errors** - AI-friendly error messages with suggestions
 - **No Interactive Prompts** - Fully automated execution
 
@@ -149,12 +150,14 @@ safesh repl
 
 Once configured in your MCP client (e.g., Claude Desktop), use the tools:
 
-- `exec` - Execute JS/TS code
-- `run` - Run whitelisted external commands
+- `exec` - Execute JS/TS code (use `background: true` for async)
 - `task` - Execute defined tasks
-- `startSession` - Create persistent session
-- `bg` - Launch background job
-- `jobs` - List running jobs
+- `startShell` - Create persistent shell for state
+- `listShells` - List active shells
+- `listJobs` - List jobs in a shell
+- `getJobOutput` - Get buffered job output
+- `waitJob` - Wait for background job to complete
+- `killJob` - Stop a running job
 
 ## Configuration Reference
 
@@ -246,36 +249,28 @@ Execute JavaScript/TypeScript code in a sandboxed environment.
 
 **Parameters:**
 - `code` (required) - JS/TS code to execute
-- `sessionId` (optional) - Session ID for persistent state
+- `shellId` (optional) - Shell ID for persistent state
+- `background` (optional) - Run asynchronously, returns `{ jobId, pid }`
 - `timeout` (optional) - Timeout in milliseconds
 - `env` (optional) - Additional environment variables
 
-**Example:**
+**Example (sync):**
 ```typescript
 {
   "code": "const files = await fs.readDir('.'); console.log(files)",
-  "sessionId": "my-session"
+  "shellId": "my-shell"
 }
+// Returns: { stdout, stderr, code, success, jobId }
 ```
 
-### `run` - Execute External Command
-
-Execute a whitelisted external command.
-
-**Parameters:**
-- `command` (required) - Command name (must be whitelisted)
-- `args` (optional) - Command arguments
-- `sessionId` (optional) - Session ID for cwd/env context
-- `cwd` (optional) - Working directory override
-- `timeout` (optional) - Timeout in milliseconds
-
-**Example:**
+**Example (background):**
 ```typescript
 {
-  "command": "git",
-  "args": ["status", "--short"],
-  "sessionId": "my-session"
+  "code": "await longRunningTask()",
+  "shellId": "my-shell",
+  "background": true
 }
+// Returns: { jobId, pid, shellId, background: true }
 ```
 
 ### `task` - Execute Task
@@ -284,81 +279,90 @@ Execute a task defined in configuration.
 
 **Parameters:**
 - `name` (required) - Task name from config.tasks
-- `sessionId` (optional) - Session ID for context
+- `shellId` (optional) - Shell ID for context
 
 **Example:**
 ```typescript
 {
   "name": "test",
-  "sessionId": "my-session"
+  "shellId": "my-shell"
 }
 ```
 
-### Session Management
+### Shell Management
 
-**`startSession`** - Create a new session
+Shells provide persistent state (cwd, env, variables) between tool calls.
+
+**`startShell`** - Create a new shell
 ```typescript
 {
   "cwd": "/path/to/project",
   "env": { "DEBUG": "true" }
 }
+// Returns: { shellId, cwd, env, vars, jobs, createdAt }
 ```
 
-**`updateSession`** - Update session state
+**`updateShell`** - Update shell state
 ```typescript
 {
-  "sessionId": "my-session",
+  "shellId": "abc-123",
   "cwd": "/new/path",
   "env": { "NEW_VAR": "value" }
 }
 ```
 
-**`endSession`** - End a session
+**`endShell`** - End a shell and clean up
 ```typescript
 {
-  "sessionId": "my-session"
+  "shellId": "abc-123"
 }
 ```
 
-**`listSessions`** - List all active sessions
+**`listShells`** - List all active shells with their state
 
-### Background Jobs
+### Job Management
 
-**`bg`** - Launch background job
+All executions are tracked as jobs within their shell. Jobs provide history and debugging.
+
+**`listJobs`** - List jobs in a shell
 ```typescript
 {
-  "code": "await longRunningTask()",
-  "sessionId": "my-session"
+  "shellId": "abc-123",
+  "filter": {
+    "status": "running",  // or "completed", "failed"
+    "background": true,
+    "limit": 10
+  }
 }
+// Returns: [{ id, code, pid, status, background, startedAt, duration }]
 ```
 
-**`jobs`** - List running jobs
+**`getJobOutput`** - Get buffered output from a job
 ```typescript
 {
-  "sessionId": "my-session"  // optional filter
+  "shellId": "abc-123",
+  "jobId": "job-abc-123-0",
+  "since": 0  // byte offset for incremental reads
 }
+// Returns: { stdout, stderr, offset, status, exitCode, truncated }
 ```
 
-**`jobOutput`** - Get buffered job output
+**`waitJob`** - Wait for a background job to complete
 ```typescript
 {
-  "jobId": "job-123",
-  "since": 0  // byte offset
+  "shellId": "abc-123",
+  "jobId": "job-abc-123-0",
+  "timeout": 30000
 }
+// Returns: { stdout, stderr, exitCode, status, duration }
 ```
 
-**`kill`** - Stop a job
+**`killJob`** - Stop a running job
 ```typescript
 {
-  "jobId": "job-123",
-  "signal": "SIGTERM"
-}
-```
-
-**`fg`** - Stream job output
-```typescript
-{
-  "jobId": "job-123"
+  "shellId": "abc-123",
+  "jobId": "job-abc-123-0",
+  "signal": "SIGTERM"  // or "SIGKILL"
 }
 ```
 
@@ -548,47 +552,56 @@ export default {
 };
 ```
 
-### Session State
+### Shell State
 
 ```javascript
-// Sessions persist cwd, env, and variables
-const session = await startSession({ cwd: "/project" });
+// Shells persist cwd, env, and variables
+const shell = await startShell({ cwd: "/project" });
 
-// Execute with session context
+// Execute with shell context - variables persist via $shell.vars
 await exec({
-  code: "$session.vars.counter = ($session.vars.counter || 0) + 1",
-  sessionId: session.id,
+  code: "$shell.vars.counter = ($shell.vars.counter || 0) + 1",
+  shellId: shell.shellId,
 });
 
-// Variables persist
+// Variables persist across exec calls
 await exec({
-  code: "console.log($session.vars.counter)", // Prints: 1
-  sessionId: session.id,
+  code: "console.log($shell.vars.counter)", // Prints: 1
+  shellId: shell.shellId,
 });
+
+// Clean up when done
+await endShell({ shellId: shell.shellId });
 ```
 
 ### Background Jobs
 
 ```javascript
-// Launch long-running job
-const job = await bg({
+// Launch long-running job with background: true
+const { jobId, shellId } = await exec({
   code: `
     for (let i = 0; i < 100; i++) {
       console.log(\`Progress: \${i}%\`);
       await new Promise(r => setTimeout(r, 100));
     }
   `,
+  shellId: shell.shellId,
+  background: true,
 });
 
 // Check job status
-const allJobs = await jobs();
+const jobs = await listJobs({ shellId });
 
-// Get buffered output
-const output = await jobOutput({ jobId: job.jobId });
+// Get buffered output (supports incremental reads)
+const output = await getJobOutput({ shellId, jobId });
 console.log(output.stdout);
 
-// Stream output in real-time
-await fg({ jobId: job.jobId });
+// Or wait for completion
+const result = await waitJob({ shellId, jobId, timeout: 30000 });
+console.log(result.stdout);
+
+// Kill a running job if needed
+await killJob({ shellId, jobId, signal: "SIGTERM" });
 ```
 
 ## CLI Reference
