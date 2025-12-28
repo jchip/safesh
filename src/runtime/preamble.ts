@@ -48,6 +48,9 @@ export function buildPreamble(shell?: Shell): string {
     "// Import shelljs-like commands",
     `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
     "",
+    "// Import fluent shell API",
+    `import $, { FluentShell } from 'file://${stdlibPath}shell.ts';`,
+    "",
   ];
 
   if (shell) {
