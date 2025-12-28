@@ -329,3 +329,74 @@ Deno.test("loadConfig - local config permissions.run merges with existing", asyn
     await cleanupTestDir(testDir);
   }
 });
+
+// ============================================================================
+// Project Command Tests (path-based)
+// ============================================================================
+
+Deno.test("loadConfig - extracts project commands with name and path", async () => {
+  const testDir = await createTestDir("project-commands-test");
+
+  try {
+    // Write local config with project commands
+    const configPath = join(testDir, ".claude", "safesh.local.ts");
+    await Deno.writeTextFile(
+      configPath,
+      `export default {
+        allowedCommands: [
+          { name: "build", path: "./scripts/build.sh" },
+          { name: "test", path: "./scripts/test.sh" }
+        ]
+      };`,
+    );
+
+    // Load config
+    const config = await loadConfig(testDir);
+
+    // Verify paths are added to permissions.run
+    assertExists(config.permissions?.run);
+    assertEquals(config.permissions.run.includes("./scripts/build.sh"), true);
+    assertEquals(config.permissions.run.includes("./scripts/test.sh"), true);
+  } finally {
+    await cleanupTestDir(testDir);
+  }
+});
+
+Deno.test("loadConfig - handles mixed command types", async () => {
+  const testDir = await createTestDir("mixed-types-test");
+
+  try {
+    // Write local config with mixed command types
+    const configPath = join(testDir, ".claude", "safesh.local.ts");
+    await Deno.writeTextFile(
+      configPath,
+      `export default {
+        allowedCommands: [
+          "cargo",
+          { command: "git", subcommands: ["status", "log"] },
+          { name: "build", path: "./scripts/build.sh" }
+        ]
+      };`,
+    );
+
+    // Load config
+    const config = await loadConfig(testDir);
+
+    // Verify all types are handled
+    assertExists(config.external);
+    assertExists(config.permissions?.run);
+
+    // Simple command
+    assertEquals(config.external.cargo?.allow, true);
+    assertEquals(config.permissions.run.includes("cargo"), true);
+
+    // Command with subcommands
+    assertEquals(config.external.git?.allow, ["status", "log"]);
+    assertEquals(config.permissions.run.includes("git"), true);
+
+    // Project command (path)
+    assertEquals(config.permissions.run.includes("./scripts/build.sh"), true);
+  } finally {
+    await cleanupTestDir(testDir);
+  }
+});

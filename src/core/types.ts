@@ -106,7 +106,20 @@ export interface SafeshLocalConfig {
     command: string;
     subcommands?: string[];
     flags?: string[];
+  } | {
+    /** Name for the command (used in init()) */
+    name: string;
+    /** Path to the command (relative to project) */
+    path: string;
   })[];
+}
+
+/**
+ * Project command config (path-based command in local config)
+ */
+export interface ProjectCommandConfig {
+  name: string;
+  path: string;
 }
 
 // ============================================================================

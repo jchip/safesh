@@ -322,19 +322,33 @@ export function getLocalConfigPath(cwd: string): string {
   return join(cwd, ".claude", "safesh.local.ts");
 }
 
+/** Project command with name and path */
+interface ProjectCommand {
+  name: string;
+  path: string;
+}
+
+/** Result of loading local config */
+interface LocalConfigResult {
+  config: SafeShellConfig | null;
+  projectCommands: ProjectCommand[];
+}
+
 /**
  * Load local config from .claude/safesh.local.ts and convert to SafeShellConfig
  * Local config adds allowedCommands to both external and permissions.run
+ * Also extracts project commands (path-based) for init() validation
  */
-async function loadLocalConfig(cwd: string): Promise<SafeShellConfig | null> {
+async function loadLocalConfig(cwd: string): Promise<LocalConfigResult> {
   const localPath = getLocalConfigPath(cwd);
+  const emptyResult: LocalConfigResult = { config: null, projectCommands: [] };
 
   try {
     // Convert to file path for stat check
     const filePath = localPath.startsWith("file://") ? fromFileUrl(localPath) : localPath;
     await Deno.stat(filePath);
   } catch {
-    return null; // File doesn't exist - this is normal
+    return emptyResult; // File doesn't exist - this is normal
   }
 
   try {
@@ -344,18 +358,24 @@ async function loadLocalConfig(cwd: string): Promise<SafeShellConfig | null> {
 
     // Convert SafeshLocalConfig to SafeShellConfig
     if (!localConfig.allowedCommands || localConfig.allowedCommands.length === 0) {
-      return null;
+      return emptyResult;
     }
 
     const external: Record<string, ExternalCommandConfig> = {};
     const runPermissions: string[] = [];
+    const projectCommands: ProjectCommand[] = [];
 
     for (const cmd of localConfig.allowedCommands) {
       if (typeof cmd === "string") {
         // Simple string: allow all subcommands
         external[cmd] = { allow: true };
         runPermissions.push(cmd);
-      } else {
+      } else if ("name" in cmd && "path" in cmd) {
+        // Project command with name and path
+        projectCommands.push({ name: cmd.name, path: cmd.path });
+        // Also add path to run permissions so Deno allows it
+        runPermissions.push(cmd.path);
+      } else if ("command" in cmd) {
         // Object with command, subcommands, flags
         const { command, subcommands } = cmd;
         external[command] = {
@@ -366,12 +386,14 @@ async function loadLocalConfig(cwd: string): Promise<SafeShellConfig | null> {
     }
 
     // Return config with both external and permissions.run
-    // This ensures commands are both configured and allowed to run
     return {
-      external,
-      permissions: {
-        run: runPermissions,
+      config: {
+        external,
+        permissions: {
+          run: runPermissions,
+        },
       },
+      projectCommands,
     };
   } catch (error) {
     // Log warning but don't fail
@@ -380,8 +402,19 @@ async function loadLocalConfig(cwd: string): Promise<SafeShellConfig | null> {
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    return null;
+    return emptyResult;
   }
+}
+
+/** Cached project commands from last loadConfig call */
+let cachedProjectCommands: ProjectCommand[] = [];
+
+/**
+ * Get project commands from the last loaded config
+ * Used by executor to pass to subprocess via environment variable
+ */
+export function getProjectCommands(): ProjectCommand[] {
+  return cachedProjectCommands;
 }
 
 /**
@@ -416,10 +449,13 @@ export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
 
   // Load local config (.claude/safesh.local.ts)
   // This has highest priority for allowedCommands
-  const localConfig = await loadLocalConfig(cwd);
-  if (localConfig) {
-    config = mergeConfigs(config, localConfig);
+  const localResult = await loadLocalConfig(cwd);
+  if (localResult.config) {
+    config = mergeConfigs(config, localResult.config);
   }
+
+  // Cache project commands for executor to use
+  cachedProjectCommands = localResult.projectCommands;
 
   // Resolve workspace path if provided
   if (config.workspace) {
