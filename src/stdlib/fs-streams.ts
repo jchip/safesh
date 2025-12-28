@@ -14,6 +14,7 @@ import type { SafeShellConfig } from "../core/types.ts";
 import { expandGlob, type ExpandGlobOptions } from "@std/fs/expand-glob";
 import { resolve, dirname, relative, join } from "@std/path";
 import { ensureDir } from "@std/fs/ensure-dir";
+import { getRealPath, getDefaultConfig } from "./fs.ts";
 
 /**
  * File object - represents a file with metadata (like Vinyl from Gulp)
@@ -59,32 +60,6 @@ export interface GlobOptions {
 
   /** SafeShell config for sandbox validation */
   config?: SafeShellConfig;
-}
-
-/**
- * Get real path, handling symlinks and non-existent paths
- */
-function getRealPath(path: string): string {
-  try {
-    return Deno.realPathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/**
- * Get default config with current directory as sandbox
- */
-function getDefaultConfig(cwd: string): SafeShellConfig {
-  // Resolve /tmp to real path (on macOS, /tmp is a symlink to /private/tmp)
-  const tmpPath = getRealPath("/tmp");
-
-  return {
-    permissions: {
-      read: [cwd, tmpPath],
-      write: [cwd, tmpPath],
-    },
-  };
 }
 
 /**

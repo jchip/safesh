@@ -31,7 +31,7 @@ export interface SandboxOptions {
 /**
  * Get real path, handling symlinks and non-existent paths
  */
-function getRealPath(path: string): string {
+export function getRealPath(path: string): string {
   try {
     return Deno.realPathSync(path);
   } catch {
@@ -42,7 +42,7 @@ function getRealPath(path: string): string {
 /**
  * Get default config with current directory as sandbox
  */
-function getDefaultConfig(cwd: string): SafeShellConfig {
+export function getDefaultConfig(cwd: string): SafeShellConfig {
   // Resolve /tmp to real path (on macOS, /tmp is a symlink to /private/tmp)
   const tmpPath = getRealPath("/tmp");
   const realCwd = getRealPath(cwd);

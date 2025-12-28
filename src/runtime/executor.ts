@@ -11,7 +11,7 @@ import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
 import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
-import { hashCode, buildEnv } from "../core/utils.ts";
+import { hashCode, buildEnv, collectStreamText } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
@@ -308,8 +308,8 @@ export async function executeCode(
     const outputPromise = (async () => {
       const [status, stdout, stderr] = await Promise.all([
         process.status,
-        collectStream(process.stdout),
-        collectStream(process.stderr),
+        collectStreamText(process.stdout),
+        collectStreamText(process.stderr),
       ]);
       return { status, stdout, stderr };
     })();
@@ -390,29 +390,6 @@ export async function executeCode(
   }
 }
 
-/**
- * Collect a readable stream into a string
- */
-async function collectStream(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) chunks.push(value);
-  }
-
-  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return new TextDecoder().decode(result);
-}
 
 /**
  * Find Deno config file (deno.json or deno.jsonc)
@@ -504,8 +481,8 @@ export async function executeFile(
     const outputPromise = (async () => {
       const [status, stdout, stderr] = await Promise.all([
         process.status,
-        collectStream(process.stdout),
-        collectStream(process.stderr),
+        collectStreamText(process.stdout),
+        collectStreamText(process.stderr),
       ]);
       return { status, stdout, stderr };
     })();
