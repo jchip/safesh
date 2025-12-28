@@ -135,11 +135,11 @@ export async function validatePath(
     }
   }
 
-  // Get allowed paths for this operation
-  const perms = config.permissions ?? {};
+  // Get allowed paths for this operation (using effective permissions with defaults)
+  const effectivePerms = getEffectivePermissions(config, cwd);
   const allowedPaths = operation === "write"
-    ? (perms.write ?? [])
-    : (perms.read ?? []);
+    ? (effectivePerms.write ?? [])
+    : (effectivePerms.read ?? []);
 
   if (allowedPaths.length === 0 && !(config.allowProjectFiles && config.projectDir)) {
     throw pathViolation(requestedPath, [], absolutePath);
