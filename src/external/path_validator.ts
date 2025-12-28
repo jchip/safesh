@@ -7,7 +7,7 @@
 
 import { resolve } from "@std/path";
 import type { ExternalCommandConfig, SafeShellConfig } from "../core/types.ts";
-import { expandPath, isPathAllowed } from "../core/permissions.ts";
+import { expandPath, isPathAllowed, isWithinWorkspace } from "../core/permissions.ts";
 import { pathViolation, symlinkViolation } from "../core/errors.ts";
 
 /**
@@ -188,10 +188,12 @@ export async function validatePathArgs(
     ...(perms.write ?? []),
   ];
 
-  if (allowedPaths.length === 0) {
-    // No allowed paths configured, can't validate
+  if (allowedPaths.length === 0 && !config.workspace) {
+    // No allowed paths configured and no workspace, can't validate
     return;
   }
+
+  const workspace = config.workspace;
 
   // Validate each extracted path
   for (const extracted of extractedPaths) {
@@ -204,7 +206,7 @@ export async function validatePathArgs(
     }
 
     // Expand path variables
-    pathToCheck = expandPath(pathToCheck, cwd);
+    pathToCheck = expandPath(pathToCheck, cwd, workspace);
 
     // Resolve to absolute path
     const absolutePath = resolve(cwd, pathToCheck);
@@ -218,15 +220,20 @@ export async function validatePathArgs(
       realPath = absolutePath;
     }
 
+    // If workspace is configured and path is within workspace, allow it
+    if (workspace && isWithinWorkspace(realPath, workspace)) {
+      continue;
+    }
+
     // Check against allowed paths
-    if (!isPathAllowed(realPath, allowedPaths, cwd)) {
+    if (!isPathAllowed(realPath, allowedPaths, cwd, workspace)) {
       if (realPath !== absolutePath) {
         // Symlink resolved to outside location
-        const expandedAllowed = allowedPaths.map((p) => expandPath(p, cwd));
+        const expandedAllowed = allowedPaths.map((p) => expandPath(p, cwd, workspace));
         throw symlinkViolation(extracted.path, realPath, expandedAllowed);
       }
 
-      const expandedAllowed = allowedPaths.map((p) => expandPath(p, cwd));
+      const expandedAllowed = allowedPaths.map((p) => expandPath(p, cwd, workspace));
       throw pathViolation(extracted.path, expandedAllowed, realPath);
     }
   }

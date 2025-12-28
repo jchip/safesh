@@ -9,23 +9,53 @@ import type { PermissionsConfig, SafeShellConfig } from "./types.ts";
 import { pathViolation, symlinkViolation } from "./errors.ts";
 
 /**
- * Expand path variables like ${CWD}, ${HOME}
+ * Resolve workspace path - expand ~ and convert to absolute path
  */
-export function expandPath(path: string, cwd: string): string {
+export function resolveWorkspace(workspace: string): string {
+  let path = workspace;
+
+  // Expand ~ to HOME
+  if (path.startsWith("~/")) {
+    const home = Deno.env.get("HOME") ?? "";
+    path = home + path.slice(1);
+  }
+
+  // Resolve to absolute path
+  return resolve(path);
+}
+
+/**
+ * Check if a path is within the workspace directory
+ */
+export function isWithinWorkspace(path: string, workspace: string): boolean {
+  const absolutePath = resolve(path);
+  const absoluteWorkspace = resolve(workspace);
+
+  return absolutePath === absoluteWorkspace ||
+         absolutePath.startsWith(absoluteWorkspace + "/");
+}
+
+/**
+ * Expand path variables like ${CWD}, ${HOME}, ${WORKSPACE}
+ */
+export function expandPath(path: string, cwd: string, workspace?: string): string {
   const home = Deno.env.get("HOME") ?? "";
+  const workspaceResolved = workspace ?? "";
 
   return path
     .replace(/\$\{CWD\}/g, cwd)
     .replace(/\$\{HOME\}/g, home)
+    .replace(/\$\{WORKSPACE\}/g, workspaceResolved)
     .replace(/\$CWD\b/g, cwd)
-    .replace(/\$HOME\b/g, home);
+    .replace(/\$HOME\b/g, home)
+    .replace(/\$WORKSPACE\b/g, workspaceResolved);
 }
 
 /**
  * Expand all paths in a list
  */
-export function expandPaths(paths: string[], cwd: string): string[] {
-  return paths.map((p) => expandPath(p, cwd));
+export function expandPaths(paths: string[], cwd: string, workspace?: string): string[] {
+  return paths.map((p) => expandPath(p, cwd, workspace));
 }
 
 /**
@@ -35,9 +65,10 @@ export function isPathAllowed(
   path: string,
   allowedPaths: string[],
   cwd: string,
+  workspace?: string,
 ): boolean {
   const absolutePath = resolve(cwd, path);
-  const expandedAllowed = expandPaths(allowedPaths, cwd).map((p) =>
+  const expandedAllowed = expandPaths(allowedPaths, cwd, workspace).map((p) =>
     resolve(cwd, p)
   );
 
@@ -69,7 +100,8 @@ export async function validatePath(
     throw pathViolation(requestedPath, [], absolutePath);
   }
 
-  const expandedAllowed = expandPaths(allowedPaths, cwd);
+  const workspace = config.workspace;
+  const expandedAllowed = expandPaths(allowedPaths, cwd, workspace);
 
   // Resolve symlinks to get real path
   let realPath: string;
@@ -81,7 +113,7 @@ export async function validatePath(
   }
 
   // Check if real path is within allowed directories
-  if (!isPathAllowed(realPath, allowedPaths, cwd)) {
+  if (!isPathAllowed(realPath, allowedPaths, cwd, workspace)) {
     if (realPath !== absolutePath) {
       // Symlink resolved to a different location
       throw symlinkViolation(requestedPath, realPath, expandedAllowed);
