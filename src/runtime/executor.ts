@@ -37,6 +37,12 @@ function filterExistingCommands(commands: string[]): string[] {
 
   const existing = commands.filter((cmd) => {
     try {
+      // For full paths, check if file exists directly
+      if (cmd.startsWith("/")) {
+        const stat = Deno.statSync(cmd);
+        return stat.isFile;
+      }
+      // For command names, use which
       const result = new Deno.Command("which", {
         args: [cmd],
         stderr: "null",
