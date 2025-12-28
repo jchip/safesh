@@ -664,6 +664,72 @@ export function git(...args: unknown[]): Command {
 }
 
 /**
+ * Create a docker command
+ *
+ * Convenience function for docker commands with optional options.
+ *
+ * @example
+ * ```ts
+ * // Simple docker command
+ * const result = await docker("ps").exec();
+ *
+ * // With arguments
+ * const result = await docker("run", "-it", "alpine").exec();
+ *
+ * // With options
+ * const result = await docker({ cwd: "/project" }, "compose", "up").exec();
+ * ```
+ */
+export function docker(options: CommandOptions, ...args: string[]): Command;
+export function docker(...args: string[]): Command;
+export function docker(...args: unknown[]): Command {
+  if (
+    args.length > 0 &&
+    typeof args[0] === "object" &&
+    !Array.isArray(args[0])
+  ) {
+    const options = args[0] as CommandOptions;
+    const dockerArgs = args.slice(1) as string[];
+    return new Command("docker", dockerArgs, options);
+  } else {
+    return new Command("docker", args as string[], {});
+  }
+}
+
+/**
+ * Create a deno command
+ *
+ * Convenience function for deno commands with optional options.
+ *
+ * @example
+ * ```ts
+ * // Simple deno command
+ * const result = await deno("--version").exec();
+ *
+ * // Run a script
+ * const result = await deno("run", "script.ts").exec();
+ *
+ * // With options
+ * const result = await deno({ cwd: "/project" }, "task", "build").exec();
+ * ```
+ */
+export function deno(options: CommandOptions, ...args: string[]): Command;
+export function deno(...args: string[]): Command;
+export function deno(...args: unknown[]): Command {
+  if (
+    args.length > 0 &&
+    typeof args[0] === "object" &&
+    !Array.isArray(args[0])
+  ) {
+    const options = args[0] as CommandOptions;
+    const denoArgs = args.slice(1) as string[];
+    return new Command("deno", denoArgs, options);
+  } else {
+    return new Command("deno", args as string[], {});
+  }
+}
+
+/**
  * Create a data source for piping text to commands (heredoc equivalent)
  *
  * Returns a Command-like object that can be piped to other commands.

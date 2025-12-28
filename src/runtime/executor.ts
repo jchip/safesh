@@ -11,12 +11,12 @@ import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
 import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
+import { hashCode, buildEnv } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
   buildEpilogue,
   extractShellState,
-  SHELL_STATE_MARKER,
 } from "./preamble.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
@@ -50,16 +50,6 @@ function filterExistingCommands(commands: string[]): string[] {
 
   existingCommandsCache.set(cacheKey, existing);
   return existing;
-}
-
-/**
- * Hash code to create a cache key
- */
-async function hashCode(code: string): Promise<string> {
-  const data = new TextEncoder().encode(code);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 // Marker for job events (must match command.ts)
@@ -224,59 +214,6 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   }
 
   return flags;
-}
-
-/**
- * Build environment variables for subprocess
- */
-function buildEnv(
-  config: SafeShellConfig,
-  shell?: Shell,
-  scriptId?: string,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  const envConfig = config.env ?? {};
-  const allowList = envConfig.allow ?? [];
-  const maskPatterns = envConfig.mask ?? [];
-
-  // Helper to check if a key matches any mask pattern
-  const isMasked = (key: string): boolean => {
-    return maskPatterns.some((pattern) => {
-      const regex = new RegExp(
-        "^" + pattern.replace(/\*/g, ".*") + "$",
-      );
-      return regex.test(key);
-    });
-  };
-
-  // Copy allowed env vars that aren't masked
-  for (const key of allowList) {
-    if (!isMasked(key)) {
-      const value = Deno.env.get(key);
-      if (value !== undefined) {
-        result[key] = value;
-      }
-    }
-  }
-
-  // Merge shell env vars (they override)
-  if (shell?.env) {
-    for (const [key, value] of Object.entries(shell.env)) {
-      if (!isMasked(key)) {
-        result[key] = value;
-      }
-    }
-  }
-
-  // Add shell and script context for job tracking
-  if (shell) {
-    result["SAFESH_SHELL_ID"] = shell.id;
-  }
-  if (scriptId) {
-    result["SAFESH_SCRIPT_ID"] = scriptId;
-  }
-
-  return result;
 }
 
 /**

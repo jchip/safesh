@@ -13,6 +13,7 @@ import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import type { SafeShellConfig, Script, Shell } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
+import { hashCode, buildEnv } from "../core/utils.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { executionError } from "../core/errors.ts";
 import { buildPreamble } from "./preamble.ts";
@@ -368,56 +369,3 @@ function collectScriptOutput(script: Script): void {
   })();
 }
 
-/**
- * Helper: Hash code for caching
- */
-async function hashCode(code: string): Promise<string> {
-  const data = new TextEncoder().encode(code);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * Helper: Build environment variables
- */
-function buildEnv(
-  config: SafeShellConfig,
-  shell: Shell,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  const envConfig = config.env ?? {};
-  const allowList = envConfig.allow ?? [];
-  const maskPatterns = envConfig.mask ?? [];
-
-  // Helper to check if a key matches any mask pattern
-  const isMasked = (key: string): boolean => {
-    return maskPatterns.some((pattern) => {
-      const regex = new RegExp(
-        "^" + pattern.replace(/\*/g, ".*") + "$",
-      );
-      return regex.test(key);
-    });
-  };
-
-  // Copy allowed env vars that aren't masked
-  for (const key of allowList) {
-    if (!isMasked(key)) {
-      const value = Deno.env.get(key);
-      if (value !== undefined) {
-        result[key] = value;
-      }
-    }
-  }
-
-  // Merge shell env vars (they override)
-  if (shell.env) {
-    for (const [key, value] of Object.entries(shell.env)) {
-      if (!isMasked(key)) {
-        result[key] = value;
-      }
-    }
-  }
-
-  return result;
-}
