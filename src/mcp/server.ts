@@ -22,7 +22,7 @@ import {
 import { z } from "zod";
 import { executeCode } from "../runtime/executor.ts";
 import { createShellManager, type ShellManager } from "../runtime/shell.ts";
-import { loadConfigWithArgs, mergeConfigs, type McpInitArgs } from "../core/config.ts";
+import { loadConfigWithArgs, mergeConfigs, saveToLocalJson, loadConfig, type McpInitArgs } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
 import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
@@ -109,6 +109,7 @@ const RunSchema = z.object({
   env: z.record(z.string()).optional().describe("Additional environment variables"),
   retry_id: z.string().optional().describe("Retry ID from a previous COMMAND_NOT_ALLOWED error"),
   allow: z.array(z.string()).optional().describe("Commands to temporarily allow for this retry"),
+  userChoice: z.number().min(1).max(3).optional().describe("User's permission choice: 1=once, 2=session, 3=always (save to .claude/safesh.local.json)"),
 });
 
 const StartShellSchema = z.object({
@@ -326,6 +327,11 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
                 type: "array",
                 items: { type: "string" },
                 description: "Commands to temporarily allow for this retry (e.g., ['cargo', 'rustc']).",
+              },
+              userChoice: {
+                type: "number",
+                enum: [1, 2, 3],
+                description: "User's permission choice: 1=once (temp), 2=session (memory), 3=always (save to .claude/safesh.local.json).",
               },
             },
           },
@@ -606,17 +612,54 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
             execTimeout = retry.context.timeout;
             background = retry.context.background;
 
-            // Merge allowed commands into temp config
+            // Handle userChoice if provided
+            const userChoice = parsed.userChoice;
             if (parsed.allow && parsed.allow.length > 0) {
               const allowedCommands = parsed.allow;
-              execConfig = mergeConfigs(configHolder.config, {
-                permissions: {
-                  run: allowedCommands,
-                },
-                external: Object.fromEntries(
-                  allowedCommands.map((cmd) => [cmd, { allow: true }]),
-                ),
-              });
+
+              if (userChoice === 3) {
+                // Always allow: save to JSON and reload config
+                try {
+                  await saveToLocalJson(configHolder.cwd, allowedCommands);
+                  // Reload config to pick up the new permissions
+                  configHolder.config = await loadConfig(configHolder.cwd);
+                  execConfig = configHolder.config;
+                  // Recreate registry with updated config
+                  registry = createRegistry(configHolder.config, configHolder.cwd);
+                } catch (error) {
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: `Failed to save to .claude/safesh.local.json: ${error instanceof Error ? error.message : String(error)}`,
+                      },
+                    ],
+                    isError: true,
+                  };
+                }
+              } else if (userChoice === 2) {
+                // Allow for session: add to session allowlist
+                shellManager.addSessionAllowedCommands(allowedCommands);
+                // Also merge into temp config for this execution
+                execConfig = mergeConfigs(configHolder.config, {
+                  permissions: {
+                    run: allowedCommands,
+                  },
+                  external: Object.fromEntries(
+                    allowedCommands.map((cmd) => [cmd, { allow: true }]),
+                  ),
+                });
+              } else {
+                // userChoice=1 or not specified: allow once (temp config only)
+                execConfig = mergeConfigs(configHolder.config, {
+                  permissions: {
+                    run: allowedCommands,
+                  },
+                  external: Object.fromEntries(
+                    allowedCommands.map((cmd) => [cmd, { allow: true }]),
+                  ),
+                });
+              }
             }
           } else if (parsed.code) {
             code = parsed.code;
@@ -643,6 +686,19 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
               ],
               isError: true,
             };
+          }
+
+          // Merge session-level allowed commands into config
+          const sessionCommands = shellManager.getSessionAllowedCommands();
+          if (sessionCommands.length > 0) {
+            execConfig = mergeConfigs(execConfig, {
+              permissions: {
+                run: sessionCommands,
+              },
+              external: Object.fromEntries(
+                sessionCommands.map((cmd) => [cmd, { allow: true }]),
+              ),
+            });
           }
 
           // Get or create shell
@@ -714,7 +770,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
                       message: `Command '${result.blockedCommand}' is not allowed`,
                     },
                     retry_id: retry.id,
-                    hint: `STOP: Use AskUserQuestion with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. If approved, retry with { retry_id: "${retry.id}", allow: ["${result.blockedCommand}"] }. For "Always", add to .claude/safesh.local.ts.`,
+                    hint: `STOP: Use AskUserQuestion with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Then retry with { retry_id: "${retry.id}", allow: ["${result.blockedCommand}"], userChoice: N } where N=1 (once), 2 (session), or 3 (always - saves to .claude/safesh.local.json).`,
                   }, null, 2),
                 },
               ],

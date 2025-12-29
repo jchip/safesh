@@ -443,4 +443,45 @@ describe("ShellManager", () => {
       assertEquals(retry.shellId, shell.id);
     });
   });
+
+  describe("session allowed commands", () => {
+    it("starts with empty session allowlist", () => {
+      const commands = manager.getSessionAllowedCommands();
+      assertEquals(commands.length, 0);
+    });
+
+    it("adds commands to session allowlist", () => {
+      manager.addSessionAllowedCommands(["cargo", "rustc"]);
+
+      const commands = manager.getSessionAllowedCommands();
+      assertEquals(commands.includes("cargo"), true);
+      assertEquals(commands.includes("rustc"), true);
+    });
+
+    it("checks if command is session allowed", () => {
+      manager.addSessionAllowedCommands(["cargo"]);
+
+      assertEquals(manager.isSessionAllowed("cargo"), true);
+      assertEquals(manager.isSessionAllowed("rustc"), false);
+    });
+
+    it("merges with existing session commands", () => {
+      manager.addSessionAllowedCommands(["cargo"]);
+      manager.addSessionAllowedCommands(["rustc", "make"]);
+
+      const commands = manager.getSessionAllowedCommands();
+      assertEquals(commands.includes("cargo"), true);
+      assertEquals(commands.includes("rustc"), true);
+      assertEquals(commands.includes("make"), true);
+    });
+
+    it("does not duplicate commands", () => {
+      manager.addSessionAllowedCommands(["cargo", "rustc"]);
+      manager.addSessionAllowedCommands(["cargo", "make"]);
+
+      const commands = manager.getSessionAllowedCommands();
+      const cargoCount = commands.filter((c) => c === "cargo").length;
+      assertEquals(cargoCount, 1);
+    });
+  });
 });

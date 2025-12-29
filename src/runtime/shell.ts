@@ -29,9 +29,35 @@ export class ShellManager {
   private defaultCwd: string;
   private shellSequence = 0;
   private retrySequence = 0;
+  /** Session-level allowed commands (persists across shells within the MCP session) */
+  private sessionAllowedCommands: Set<string> = new Set();
 
   constructor(defaultCwd: string) {
     this.defaultCwd = defaultCwd;
+  }
+
+  /**
+   * Add commands to the session-level allowlist
+   * Used when userChoice=2 (allow for session)
+   */
+  addSessionAllowedCommands(commands: string[]): void {
+    for (const cmd of commands) {
+      this.sessionAllowedCommands.add(cmd);
+    }
+  }
+
+  /**
+   * Get all session-level allowed commands
+   */
+  getSessionAllowedCommands(): string[] {
+    return Array.from(this.sessionAllowedCommands);
+  }
+
+  /**
+   * Check if a command is allowed at the session level
+   */
+  isSessionAllowed(command: string): boolean {
+    return this.sessionAllowedCommands.has(command);
   }
 
   /**

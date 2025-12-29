@@ -328,6 +328,14 @@ export function getLocalConfigPath(cwd: string): string {
   return join(cwd, ".claude", "safesh.local.ts");
 }
 
+/**
+ * Get the local JSON config path (.claude/safesh.local.json)
+ * This file has precedence over .claude/safesh.local.ts and is machine-writable
+ */
+export function getLocalJsonConfigPath(cwd: string): string {
+  return join(cwd, ".claude", "safesh.local.json");
+}
+
 /** Project command with name and path */
 interface ProjectCommand {
   name: string;
@@ -412,6 +420,72 @@ async function loadLocalConfig(cwd: string): Promise<LocalConfigResult> {
   }
 }
 
+/** JSON format for .claude/safesh.local.json */
+interface LocalJsonConfig {
+  allowedCommands?: string[];
+}
+
+/**
+ * Load local JSON config from .claude/safesh.local.json
+ * Returns the config or null if file doesn't exist
+ */
+async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null> {
+  const jsonPath = getLocalJsonConfigPath(cwd);
+
+  try {
+    await Deno.stat(jsonPath);
+  } catch {
+    return null; // File doesn't exist
+  }
+
+  try {
+    const content = await Deno.readTextFile(jsonPath);
+    return JSON.parse(content) as LocalJsonConfig;
+  } catch (error) {
+    console.warn(
+      `⚠️  Failed to load local JSON config from ${jsonPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Save commands to .claude/safesh.local.json
+ * Creates the .claude directory if it doesn't exist
+ * Merges with existing commands (adds new, doesn't remove existing)
+ */
+export async function saveToLocalJson(cwd: string, commands: string[]): Promise<void> {
+  const jsonPath = getLocalJsonConfigPath(cwd);
+  const claudeDir = join(cwd, ".claude");
+
+  // Ensure .claude directory exists
+  try {
+    await Deno.mkdir(claudeDir, { recursive: true });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.AlreadyExists)) {
+      throw error;
+    }
+  }
+
+  // Load existing config
+  const existing = await loadLocalJsonConfig(cwd);
+  const existingCommands = new Set(existing?.allowedCommands ?? []);
+
+  // Merge with new commands
+  for (const cmd of commands) {
+    existingCommands.add(cmd);
+  }
+
+  // Write updated config
+  const config: LocalJsonConfig = {
+    allowedCommands: Array.from(existingCommands).sort(),
+  };
+
+  await Deno.writeTextFile(jsonPath, JSON.stringify(config, null, 2) + "\n");
+}
+
 /** Cached project commands from last loadConfig call */
 let cachedProjectCommands: ProjectCommand[] = [];
 
@@ -454,7 +528,6 @@ export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
   }
 
   // Load local config (.claude/safesh.local.ts)
-  // This has highest priority for allowedCommands
   const localResult = await loadLocalConfig(cwd);
   if (localResult.config) {
     config = mergeConfigs(config, localResult.config);
@@ -462,6 +535,26 @@ export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
 
   // Cache project commands for executor to use
   cachedProjectCommands = localResult.projectCommands;
+
+  // Load local JSON config (.claude/safesh.local.json)
+  // This has highest priority - machine-writable config for persistence
+  const jsonConfig = await loadLocalJsonConfig(cwd);
+  if (jsonConfig?.allowedCommands && jsonConfig.allowedCommands.length > 0) {
+    const external: Record<string, ExternalCommandConfig> = {};
+    const runPermissions: string[] = [];
+
+    for (const cmd of jsonConfig.allowedCommands) {
+      external[cmd] = { allow: true };
+      runPermissions.push(cmd);
+    }
+
+    config = mergeConfigs(config, {
+      external,
+      permissions: {
+        run: runPermissions,
+      },
+    });
+  }
 
   // Resolve workspace path if provided
   if (config.workspace) {
