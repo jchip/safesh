@@ -202,6 +202,48 @@ function glob(
 - Convenience: `Promise<Entry[]>` or `Promise<string[]>`
 - Checks: `Promise<boolean>` or `Promise<number>`
 
+### shelljs.* - ShellJS-Compatible Commands
+
+**Purpose**: Unix command implementations that respect Deno's sandbox permissions
+
+**Design Rationale**:
+- External system commands like `rm`, `cp`, `mv` run outside Deno's sandbox
+- These TypeScript implementations use Deno's sandboxed filesystem APIs
+- Provides familiar shelljs-style API for file operations
+
+**Current Commands**:
+- `rm(options?, ...paths)` - Remove files/directories (-r, -f)
+- `cp(options?, ...sources, dest)` - Copy files/directories (-r, -n, -u)
+- `mv(options?, ...sources, dest)` - Move/rename files (-f, -n)
+- `mkdir(options?, ...paths)` - Create directories (-p)
+- `touch(options?, ...paths)` - Create/update timestamps (-c, -a, -m)
+- `ls(options?, ...paths)` - List directory contents (-a, -l, -R, -d)
+- `chmod(mode, ...paths)` - Change file permissions
+- `ln(options?, source, dest)` - Create links (-s, -f)
+- `cat(options?, ...paths)` - Concatenate files (-n)
+- `echo(options?, ...args)` - Print text (-n, -e)
+- `test(flag, path)` - Test file attributes (-e, -f, -d, etc.)
+- `which(command)` - Locate command in PATH
+- `cd(path)` / `pwd()` - Directory navigation
+
+**Standard Signature**:
+```typescript
+// Options as first string arg (-rf, -p, etc.)
+await rm("-rf", "some-dir");
+await mkdir("-p", "path/to/dir");
+
+// Or as object
+await rm({ recursive: true, force: true }, "some-dir");
+```
+
+**Return Types**:
+- Most commands: `ShellString` with `.toString()`, `.stdout`, `.stderr`, `.code`
+- ls: `ShellArray<string>` with array methods
+
+**Security Note**:
+These commands use Deno's `--allow-write` restricted paths (${CWD}, /tmp by default).
+Attempts to access paths outside the sandbox fail with "Permission denied" errors.
+
 ### $.* - Fluent Shell API
 
 **Purpose**: Chainable, ergonomic API for common shell-like workflows
