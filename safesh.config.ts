@@ -31,6 +31,9 @@ export default {
 
       // Misc
       "env", "printenv", "echo", "printf", "tee", "timeout", "time",
+
+      // Node.js build tools
+      "fyn", "xrun", "nvx",
     ],
   },
   external: {
@@ -131,5 +134,10 @@ export default {
     tee: { allow: true },
     timeout: { allow: true },
     time: { allow: true },
+
+    // Node.js build tools
+    fyn: { allow: true },      // Package manager (npm alternative)
+    xrun: { allow: true },     // Task runner (@xarc/run)
+    nvx: { allow: true },      // Local npx (node_modules only)
   },
 };
