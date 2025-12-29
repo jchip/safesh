@@ -241,8 +241,13 @@ await rm({ recursive: true, force: true }, "some-dir");
 - ls: `ShellArray<string>` with array methods
 
 **Security Note**:
-These commands use Deno's `--allow-write` restricted paths (${CWD}, /tmp by default).
-Attempts to access paths outside the sandbox fail with "Permission denied" errors.
+These commands use Deno's sandboxed filesystem APIs. Write permissions are restricted to:
+- `projectDir` (if `allowProjectFiles: true`) - immutable sandbox boundary
+- `/tmp` - always allowed for scratch operations
+
+IMPORTANT: `cd()` changes the working directory but does NOT expand the sandbox.
+Deno's `--allow-write` flags are set at subprocess spawn time and cannot be changed.
+This prevents using `cd()` to escape the sandbox for destructive operations like `rm`.
 
 ### $.* - Fluent Shell API
 

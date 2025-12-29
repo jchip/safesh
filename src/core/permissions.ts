@@ -176,6 +176,11 @@ export async function validatePaths(
 
 /**
  * Get effective permissions by merging defaults with config
+ *
+ * IMPORTANT: Write permissions are based on projectDir, not cwd.
+ * This ensures cd() cannot be used to escape the sandbox.
+ * Deno's --allow-write flags are set at subprocess spawn time
+ * and cannot be changed by user code.
  */
 export function getEffectivePermissions(
   config: SafeShellConfig,
@@ -183,11 +188,13 @@ export function getEffectivePermissions(
 ): PermissionsConfig {
   const perms = config.permissions ?? {};
 
-  // Always include /tmp for scratch operations
+  // Default read includes cwd for convenience (read is less dangerous)
+  // Default write is ONLY /tmp - projectDir must be explicitly enabled
   const defaultRead = [cwd, "/tmp"];
   const defaultWrite = ["/tmp"];
 
   // Include projectDir in read/write if allowProjectFiles is true
+  // projectDir is the immutable sandbox boundary (unlike cwd which can change via cd())
   if (config.allowProjectFiles && config.projectDir) {
     defaultRead.push(config.projectDir);
     defaultWrite.push(config.projectDir);
