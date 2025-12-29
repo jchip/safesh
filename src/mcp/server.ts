@@ -714,7 +714,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
                       message: `Command '${result.blockedCommand}' is not allowed`,
                     },
                     retry_id: retry.id,
-                    hint: `STOP: Ask user for permission using AskUserQuestion tool FIRST. Only retry with { retry_id: "${retry.id}", allow: ["${result.blockedCommand}"] } if user approves.`,
+                    hint: `STOP: Use AskUserQuestion with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. If approved, retry with { retry_id: "${retry.id}", allow: ["${result.blockedCommand}"] }. For "Always", add to .claude/safesh.local.ts.`,
                   }, null, 2),
                 },
               ],
