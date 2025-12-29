@@ -714,7 +714,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
                       message: `Command '${result.blockedCommand}' is not allowed`,
                     },
                     retry_id: retry.id,
-                    hint: `To retry with permission, call run with: { retry_id: "${retry.id}", allow: ["${result.blockedCommand}"] }`,
+                    hint: `MUST ask user to confirm with safesh-permission skill FIRST, then retry with: { retry_id: "${retry.id}", allow: ["${result.blockedCommand}"] }`,
                   }, null, 2),
                 },
               ],
