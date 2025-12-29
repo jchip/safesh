@@ -106,6 +106,24 @@ export interface Stream<T> extends AsyncIterable<T> {
    * ```
    */
   count(): Promise<number>;
+
+  /**
+   * Collect all values and join them into a single string
+   *
+   * Terminal operation - executes the entire pipeline.
+   * For string streams (like stdout lines), joins with newlines.
+   * For non-string streams, converts each item to string first.
+   *
+   * @param separator - Separator between items (default: "\n")
+   * @returns Promise resolving to joined string
+   *
+   * @example
+   * ```ts
+   * const output = await git('log', '--oneline').stdout().text();
+   * console.log(output);
+   * ```
+   */
+  text(separator?: string): Promise<string>;
 }
 
 /**
@@ -169,6 +187,14 @@ class StreamImpl<T> implements Stream<T> {
       count++;
     }
     return count;
+  }
+
+  /**
+   * Collect all values and join into a string
+   */
+  async text(separator: string = "\n"): Promise<string> {
+    const items = await this.collect();
+    return items.map(item => String(item)).join(separator);
   }
 }
 
