@@ -88,7 +88,7 @@ export const PERMISSIVE_PRESET: SafeShellConfig = {
     read: ["${CWD}", "/tmp", "${HOME}"],
     write: ["${CWD}", "/tmp"],
     net: true,
-    run: ["git", "deno", "node", "npm", "pnpm", "yarn", "fyn", "nvx", "xrun", "docker", "make", "cargo", "chmod", "du", "grep", "rm", "mkdir", "cp", "mv", "touch", "ln"],
+    run: ["git", "deno", "node", "npm", "pnpm", "yarn", "fyn", "nvx", "xrun", "docker", "make", "cargo", "chmod", "du", "grep"],
     env: ["HOME", "PATH", "TERM", "USER", "LANG", "EDITOR", "SHELL"],
   },
   external: {
@@ -110,12 +110,6 @@ export const PERMISSIVE_PRESET: SafeShellConfig = {
     chmod: { allow: true },
     du: { allow: true },
     grep: { allow: true },
-    rm: { allow: true },
-    mkdir: { allow: true },
-    cp: { allow: true },
-    mv: { allow: true },
-    touch: { allow: true },
-    ln: { allow: true },
   },
   env: {
     allow: [

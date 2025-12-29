@@ -86,3 +86,21 @@ export { env, getEnv, setEnv, deleteEnv, getAllEnv } from "./env.ts";
 
 export { ln, parseLnOptions } from "./ln.ts";
 export type { LnOptions } from "./ln.ts";
+
+export { rm, parseRmOptions } from "./rm.ts";
+export type { RmOptions } from "./rm.ts";
+
+export { cp, parseCpOptions } from "./cp.ts";
+export type { CpOptions } from "./cp.ts";
+
+export { mv, parseMvOptions } from "./mv.ts";
+export type { MvOptions } from "./mv.ts";
+
+export { mkdir, parseMkdirOptions } from "./mkdir.ts";
+export type { MkdirOptions } from "./mkdir.ts";
+
+export { touch, parseTouchOptions } from "./touch.ts";
+export type { TouchOptions } from "./touch.ts";
+
+export { ls, parseLsOptions } from "./ls.ts";
+export type { LsOptions } from "./ls.ts";

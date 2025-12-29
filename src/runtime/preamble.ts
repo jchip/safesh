@@ -46,7 +46,7 @@ export function buildPreamble(shell?: Shell): { preamble: string; preambleLineCo
     `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, init } from 'file://${stdlibPath}command.ts';`,
     "",
     "// Import shelljs-like commands",
-    `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
+    `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
     "",
     "// Import fluent shell API",
     `import $, { FluentShell } from 'file://${stdlibPath}shell.ts';`,
