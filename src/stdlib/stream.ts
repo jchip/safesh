@@ -124,6 +124,22 @@ export interface Stream<T> extends AsyncIterable<T> {
    * ```
    */
   text(separator?: string): Promise<string>;
+
+  /**
+   * Print all values to stdout
+   *
+   * Terminal operation - executes the entire pipeline and prints to stdout.
+   * Each item is printed on its own line.
+   *
+   * @returns Promise that resolves when all values have been printed
+   *
+   * @example
+   * ```ts
+   * await git('status').stdout().print();
+   * await cmd('curl', ['-s', url]).stdout().print();
+   * ```
+   */
+  print(): Promise<void>;
 }
 
 /**
@@ -195,6 +211,15 @@ class StreamImpl<T> implements Stream<T> {
   async text(separator: string = "\n"): Promise<string> {
     const items = await this.collect();
     return items.map(item => String(item)).join(separator);
+  }
+
+  /**
+   * Print all values to stdout
+   */
+  async print(): Promise<void> {
+    for await (const item of this) {
+      console.log(String(item));
+    }
   }
 }
 
