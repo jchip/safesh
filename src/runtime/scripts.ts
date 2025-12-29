@@ -16,7 +16,7 @@ import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
 import { hashCode, buildEnv } from "../core/utils.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { executionError } from "../core/errors.ts";
-import { buildPreamble } from "./preamble.ts";
+import { buildPreamble, buildErrorHandler } from "./preamble.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 
@@ -79,9 +79,10 @@ export async function launchCodeScript(
   const hash = await hashCode(code);
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
-  // Build full code with preamble
-  const preamble = buildPreamble(shell);
-  const fullCode = preamble + code;
+  // Build full code with preamble and error handler
+  const { preamble, preambleLineCount } = buildPreamble(shell);
+  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, true);
+  const fullCode = preamble + code + errorHandler;
 
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);

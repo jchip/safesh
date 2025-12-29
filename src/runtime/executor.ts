@@ -15,7 +15,7 @@ import { hashCode, buildEnv, collectStreamText } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
-  buildEpilogue,
+  buildErrorHandler,
   extractShellState,
 } from "./preamble.ts";
 import { getEffectivePermissions } from "../core/permissions.ts";
@@ -309,17 +309,12 @@ export async function executeCode(
   const hash = await hashCode(code);
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
-  // Build full code with preamble, user code wrapped in try/finally, and epilogue
-  const preamble = buildPreamble(shell);
-  const epilogue = buildEpilogue(!!shell);
+  // Build full code with preamble, user code, and error handler
+  const { preamble, preambleLineCount } = buildPreamble(shell);
+  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell);
 
-  // Wrap user code in try/finally to ensure epilogue runs even on error
-  let fullCode: string;
-  if (shell) {
-    fullCode = `${preamble}try {\n${code}\n} finally {\n${epilogue}\n}`;
-  } else {
-    fullCode = preamble + code;
-  }
+  // Structure: preamble (with async IIFE start) + user code + error handler (closes IIFE with catch)
+  const fullCode = preamble + code + errorHandler;
 
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
@@ -610,9 +605,10 @@ export async function* executeCodeStreaming(
   const hash = await hashCode(code);
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
-  // Build full code with preamble
-  const preamble = buildPreamble(shell);
-  const fullCode = preamble + code;
+  // Build full code with preamble and error handler
+  const { preamble, preambleLineCount } = buildPreamble(shell);
+  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell);
+  const fullCode = preamble + code + errorHandler;
 
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);

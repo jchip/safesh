@@ -28,7 +28,7 @@ function getStdlibPath(): string {
  * - Streaming shell API (cat, glob, git, lines, grep, map, filter, etc.)
  * - ShellJS-like commands (echo, cd, pwd, chmod, etc.)
  */
-export function buildPreamble(shell?: Shell): string {
+export function buildPreamble(shell?: Shell): { preamble: string; preambleLineCount: number } {
   const stdlibPath = getStdlibPath();
 
   const lines: string[] = [
@@ -67,23 +67,66 @@ export function buildPreamble(shell?: Shell): string {
     );
   }
 
+  // Count lines so far for line number mapping (before the async function line)
+  const preambleLineCount = lines.length + 1; // +1 for the function declaration line
+
   lines.push(
-    "// User code starts here",
-    "",
+    "// User code wrapped in async function for error handling",
+    "(async () => {",
   );
 
-  return lines.join("\n");
+  return { preamble: lines.join("\n"), preambleLineCount };
 }
 
 /**
- * Build epilogue that outputs shell state for syncing back
+ * Build the error-handling wrapper that closes the async IIFE
+ *
+ * @param scriptPath - Path to the script file (for stack trace line mapping)
+ * @param preambleLineCount - Number of preamble lines (for line number offset)
+ * @param hasShell - Whether to output shell state after execution
  */
-export function buildEpilogue(hasShell: boolean): string {
-  if (!hasShell) return "";
+export function buildErrorHandler(scriptPath: string, preambleLineCount: number, hasShell: boolean): string {
+  const shellOutput = hasShell
+    ? `console.log("${SHELL_STATE_MARKER}" + JSON.stringify($shell.vars));`
+    : "";
 
   return `
-// SafeShell epilogue - output shell state for syncing
-console.log("${SHELL_STATE_MARKER}" + JSON.stringify($shell.vars));
+})().then(() => {
+  ${shellOutput}
+}).catch((e) => {
+  // Known friendly error patterns that don't need stack traces
+  const FRIENDLY = [/^Command not found:/, /^Command ".+" is not allowed/, /^Project command/];
+  const msg = e instanceof Error ? e.message : String(e);
+
+  // Check if friendly error
+  if (FRIENDLY.some(p => p.test(msg))) {
+    console.error("Error: " + msg);
+    Deno.exit(1);
+  }
+
+  // For other errors, try to find user code line in stack
+  const stack = e instanceof Error ? (e.stack ?? "") : "";
+  const scriptPath = ${JSON.stringify(scriptPath)};
+  const preambleLines = ${preambleLineCount};
+
+  for (const line of stack.split("\\n")) {
+    if (line.includes(scriptPath)) {
+      const m = line.match(/:(\\d+):\\d+\\)?$/);
+      if (m) {
+        const userLine = parseInt(m[1], 10) - preambleLines;
+        if (userLine > 0) {
+          console.error("Error: " + msg + "\\n  at line " + userLine + " in your code");
+          Deno.exit(1);
+        }
+      }
+      break;
+    }
+  }
+
+  // Fallback: just show the error message
+  console.error("Error: " + msg);
+  Deno.exit(1);
+});
 `;
 }
 
