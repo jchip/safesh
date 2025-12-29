@@ -20,7 +20,7 @@ import {
   RootsListChangedNotificationSchema,
 } from "@mcp/sdk/types.js";
 import { z } from "zod";
-import { executeCode } from "../runtime/executor.ts";
+import { executeCode, executeFile } from "../runtime/executor.ts";
 import { createShellManager, type ShellManager } from "../runtime/shell.ts";
 import { loadConfigWithArgs, mergeConfigs, saveToLocalJson, loadConfig, type McpInitArgs } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
@@ -102,7 +102,8 @@ function applyRootsToConfig(
 
 // Tool schemas
 const RunSchema = z.object({
-  code: z.string().optional().describe("JavaScript/TypeScript code to execute (optional if retry_id provided)"),
+  code: z.string().optional().describe("JavaScript/TypeScript code to execute (optional if file or retry_id provided)"),
+  file: z.string().optional().describe("Path to .ts file to execute (relative to cwd). File should import from 'safesh:stdlib'"),
   shellId: z.string().optional().describe("Shell ID to use"),
   background: z.boolean().optional().describe("Run in background (async), returns { scriptId, pid }"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
@@ -299,8 +300,13 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
             properties: {
               code: {
                 type: "string",
-                description: "JavaScript/TypeScript code to execute (optional if retry_id provided). " +
+                description: "JavaScript/TypeScript code to execute (optional if file or retry_id provided). " +
                   "Example streaming: await cat('file.txt').pipe(lines()).pipe(grep(/ERROR/)).collect()",
+              },
+              file: {
+                type: "string",
+                description: "Path to .ts file to execute (relative to cwd). " +
+                  "File should import from 'safesh:stdlib': import { fs, cmd, git, $ } from 'safesh:stdlib'",
               },
               shellId: {
                 type: "string",
@@ -661,6 +667,44 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
                 });
               }
             }
+          } else if (parsed.file) {
+            // File execution - run the file directly with safesh:stdlib available
+            const { shell, isTemporary } = shellManager.getOrTemp(
+              shellId,
+              { cwd: configHolder.cwd, env: parsed.env },
+            );
+
+            // Merge session-level allowed commands into config
+            const sessionCmds = shellManager.getSessionAllowedCommands();
+            let fileConfig = execConfig;
+            if (sessionCmds.length > 0) {
+              fileConfig = mergeConfigs(fileConfig, {
+                permissions: { run: sessionCmds },
+                external: Object.fromEntries(sessionCmds.map((c) => [c, { allow: true }])),
+              });
+            }
+
+            const result = await executeFile(
+              parsed.file,
+              fileConfig,
+              { timeout: execTimeout, cwd: shell.cwd },
+              shell,
+            );
+
+            // Cleanup temporary shell
+            if (isTemporary) {
+              shellManager.end(shell.id);
+            }
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: formatRunResult(result, shellId, result.scriptId),
+                },
+              ],
+              isError: !result.success,
+            };
           } else if (parsed.code) {
             code = parsed.code;
           } else {
@@ -668,7 +712,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
               content: [
                 {
                   type: "text",
-                  text: "Either 'code' or 'retry_id' must be provided",
+                  text: "Either 'code', 'file', or 'retry_id' must be provided",
                 },
               ],
               isError: true,
