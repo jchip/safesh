@@ -69,6 +69,7 @@ export async function generateImportMap(
   // Resolve from this file's location (src/core/import_map.ts -> src/)
   const safeshSrcDir = new URL("../", import.meta.url).pathname;
 
+  importMap.imports!["safesh:stdlib"] = `file://${safeshSrcDir}stdlib/mod.ts`;
   importMap.imports!["safesh:fs"] = `file://${safeshSrcDir}stdlib/fs.ts`;
   importMap.imports!["safesh:text"] = `file://${safeshSrcDir}stdlib/text.ts`;
   importMap.imports!["safesh:glob"] = `file://${safeshSrcDir}stdlib/glob.ts`;
