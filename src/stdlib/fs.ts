@@ -458,6 +458,9 @@ export async function readDir(
   return entries;
 }
 
+/** Alias for readDir (unix/node.js convention) */
+export const readdir = readDir;
+
 /**
  * Options for walk operation
  */
