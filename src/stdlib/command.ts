@@ -183,6 +183,7 @@ export class Command {
     try {
       return command.spawn();
     } catch (err: unknown) {
+      // Handle permission denied
       if (
         err instanceof Deno.errors.NotCapable ||
         (err instanceof Error && err.message.includes("NotCapable"))
@@ -198,6 +199,17 @@ export class Command {
           `Command "${this.cmd}" is not allowed. Add it to permissions.run in safesh.config.ts.`,
         );
       }
+
+      // Handle command not found
+      if (
+        err instanceof Deno.errors.NotFound ||
+        (err instanceof Error && err.message.includes("entity not found"))
+      ) {
+        throw new Error(
+          `Command not found: "${this.cmd}". Is it installed and in your PATH?`,
+        );
+      }
+
       throw err;
     }
   }

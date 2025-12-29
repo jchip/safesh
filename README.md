@@ -8,7 +8,7 @@ SafeShell is a security-first execution environment built on Deno that provides:
 
 - **Sandboxed Code Execution** - Run JS/TS code with pre-configured filesystem, network, and command permissions
 - **Whitelisted External Commands** - Control exactly which commands (git, docker, etc.) can run, with subcommand and flag-level restrictions
-- **No Permission Prompts** - Configure permissions once, execute repeatedly without interactive prompts
+- **Configurable Permissions** - Whitelist commands upfront or grant permissions on-demand when blocked
 - **Built-in Standard Library** - File operations, text processing, and shell utilities available by default
 - **MCP Server Integration** - Use as a Model Context Protocol server for AI assistants like Claude
 - **Session Management** - Persistent state (cwd, env, variables) across multiple executions
@@ -39,7 +39,7 @@ SafeShell is a security-first execution environment built on Deno that provides:
 - **Shell Support** - Persistent state (cwd, env, variables) between tool calls
 - **Background Jobs** - Launch async jobs with `background: true`, poll or wait for completion
 - **Structured Errors** - AI-friendly error messages with suggestions
-- **No Interactive Prompts** - Fully automated execution
+- **Controlled Permissions** - Whitelisted commands run automatically; blocked commands trigger a permission flow
 
 ## Installation
 
