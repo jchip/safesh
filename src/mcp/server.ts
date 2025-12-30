@@ -303,23 +303,14 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
     }
 
     let execConfig = configHolder.config;
-    const isProjectCommand = retry.blockedProjectCommands && retry.blockedProjectCommands.length > 0;
     const retryCwd = retry.context.cwd;
 
     if (allow && allow.length > 0) {
       if (userChoice === 3) {
         // Always allow: save to JSON and reload config
         try {
-          // Project commands need to be saved as objects, regular commands as strings
-          // Use retry's cwd, not current cwd (user might have switched projects)
-          if (isProjectCommand && retry.blockedProjectCommands) {
-            await saveToLocalJson(retryCwd, [], retry.blockedProjectCommands);
-          } else {
-            await saveToLocalJson(retryCwd, allow);
-          }
-          // Reload config from retry's project
+          await saveToLocalJson(retryCwd, allow);
           execConfig = await loadConfig(retryCwd);
-          // Also update current config if same project
           if (retryCwd === configHolder.cwd) {
             configHolder.config = execConfig;
             registry = createRegistry(configHolder.config, configHolder.cwd);
@@ -337,14 +328,14 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
           };
         }
       } else if (userChoice === 2) {
-        // Allow for session: add to session allowlist
+        // Allow for session
         shellManager.addSessionAllowedCommands(allow);
         execConfig = mergeConfigs(configHolder.config, {
           permissions: { run: allow },
           external: Object.fromEntries(allow.map((cmd) => [cmd, { allow: true }])),
         });
       } else {
-        // userChoice=1 or not specified: allow once (temp config only)
+        // Allow once
         execConfig = mergeConfigs(configHolder.config, {
           permissions: { run: allow },
           external: Object.fromEntries(allow.map((cmd) => [cmd, { allow: true }])),
@@ -416,28 +407,22 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
     timeout: number | undefined,
     background: boolean | undefined,
     shellId: string | undefined,
-    blockedProjectCommands?: Array<{ name: string; path: string }>,
   ): { content: { type: string; text: string }[]; isError: boolean } {
     const retry = shellManager.createPendingRetry(
       code,
       blockedCommand,
       { cwd: shell.cwd, env, timeout, background },
       shellId,
-      blockedProjectCommands,
     );
-
-    const isProjectCommand = blockedProjectCommands && blockedProjectCommands.length > 0;
-    const errorType = isProjectCommand ? "PROJECT_COMMAND_NOT_ALLOWED" : "COMMAND_NOT_ALLOWED";
 
     return {
       content: [{
         type: "text",
         text: JSON.stringify({
           error: {
-            type: errorType,
+            type: "COMMAND_NOT_ALLOWED",
             command: blockedCommand,
             message: `Command '${blockedCommand}' is not allowed`,
-            ...(isProjectCommand && { projectCommands: blockedProjectCommands }),
           },
           retry_id: retry.id,
           hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", allow: ["${blockedCommand}"], userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
@@ -871,7 +856,6 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
               execTimeout,
               background,
               shellId,
-              result.blockedProjectCommands,
             );
           }
 
