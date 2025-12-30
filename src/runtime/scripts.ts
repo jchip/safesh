@@ -18,6 +18,8 @@ import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { executionError } from "../core/errors.ts";
 import { buildPreamble, buildErrorHandler } from "./preamble.ts";
 
+import { generateImportMap } from "../core/import_map.ts";
+
 const TEMP_DIR = "/tmp/safesh/scripts";
 
 /**
@@ -87,19 +89,24 @@ export async function launchCodeScript(
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
 
+  // Generate import map from policy
+  const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
+  const importMapPath = await generateImportMap(importPolicy);
+
   // Build command
   const permFlags = buildPermissionFlags(config, shell.cwd);
-  const configPath = await findConfig(shell.cwd);
+  
+  // Always use SafeShell's deno.json for stdlib imports
+  const safeshRoot = new URL("../../", import.meta.url).pathname;
+  const safeshConfig = join(safeshRoot, "deno.json");
 
   const args = [
     "run",
     "--no-prompt",
+    `--import-map=${importMapPath}`,
+    `--config=${safeshConfig}`,
     ...permFlags,
   ];
-
-  if (configPath) {
-    args.push(`--config=${configPath}`);
-  }
 
   args.push(scriptPath);
 

@@ -123,7 +123,7 @@ Deno.test({
   sanitizeOps: false,
   fn: async () => {
     const code = `
-      import { join } from "jsr:@std/path";
+      const { join } = await import("jsr:@std/path");
       const result = join("foo", "bar");
       console.log(result);
     `;
@@ -317,10 +317,9 @@ Deno.test("executeFile - runs a TypeScript file", async () => {
 Deno.test("executeFile - supports imports in file", async () => {
   const testFile = join("/tmp", "test-imports.ts");
   const code = `
-    import { join } from "jsr:@std/path";
+    const { join } = await import("jsr:@std/path");
     console.log(join("a", "b"));
   `;
-
   try {
     await Deno.writeTextFile(testFile, code);
     const result = await executeFile(testFile, testConfig);

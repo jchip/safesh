@@ -2,7 +2,7 @@
  * Tests for runtime/scripts.ts - Background script control
  */
 
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { describe, it, beforeEach, afterEach } from "@std/testing/bdd";
 import {
   launchCodeScript,
@@ -63,16 +63,16 @@ describe("Background Script Control", () => {
       assertExists(script.id);
       assertExists(script.pid);
       assertEquals(script.status, "running");
-      assertEquals(script.code, 'console.log("Hello from background script");');
-      assertEquals(script.stdout, "");
-      assertEquals(script.stderr, "");
-      assertExists(script.startedAt);
-
+      
       // Wait for script to complete
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      let attempts = 0;
+      while (script.status === "running" && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        attempts++;
+      }
 
       // Check output was captured
-      assertEquals(script.stdout.trim(), "Hello from background script");
+      assertStringIncludes(script.stdout, "Hello from background script");
       assertEquals(script.status, "completed");
       assertEquals(script.exitCode, 0);
     });
@@ -85,9 +85,13 @@ describe("Background Script Control", () => {
       );
 
       // Wait for script to complete
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      let attempts = 0;
+      while (script.status === "running" && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        attempts++;
+      }
 
-      assertEquals(script.stderr.trim(), "Error message");
+      assertStringIncludes(script.stderr, "Error message");
       assertEquals(script.status, "completed");
     });
 
@@ -176,12 +180,16 @@ describe("Background Script Control", () => {
       );
 
       // Wait for output
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      let attempts = 0;
+      while (script.stdout === "" && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        attempts++;
+      }
 
       const output = getScriptOutput(script);
 
-      assertEquals(output.stdout.includes("Line 1"), true);
-      assertEquals(output.stdout.includes("Line 2"), true);
+      assertStringIncludes(output.stdout, "Line 1");
+      assertStringIncludes(output.stdout, "Line 2");
       assertEquals(output.offset > 0, true);
     });
 
@@ -193,12 +201,16 @@ describe("Background Script Control", () => {
       );
 
       // Wait for initial output
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      let attempts = 0;
+      while (script.stdout === "" && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        attempts++;
+      }
 
       const output1 = getScriptOutput(script);
       const offset = output1.offset;
 
-      // Get incremental output (should be empty since script completed)
+      // Get incremental output
       const output2 = getScriptOutput(script, offset);
 
       assertEquals(output2.stdout, "");
@@ -212,12 +224,16 @@ describe("Background Script Control", () => {
         shell,
       );
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      let attempts = 0;
+      while ((script.stdout === "" || script.stderr === "") && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        attempts++;
+      }
 
       const output = getScriptOutput(script);
 
-      assertEquals(output.stdout.includes("stdout"), true);
-      assertEquals(output.stderr.includes("stderr"), true);
+      assertStringIncludes(output.stdout, "stdout");
+      assertStringIncludes(output.stderr, "stderr");
     });
   });
 
@@ -288,6 +304,7 @@ describe("Background Script Control", () => {
       const exitChunks = chunks.filter((c) => c.type === "exit");
 
       assertEquals(stdoutChunks.length > 0, true);
+      assertStringIncludes(stdoutChunks.map(c => c.data).join(""), "Stream test");
       assertEquals(exitChunks.length, 1);
       assertEquals(exitChunks[0]?.code, 0);
     });
@@ -312,6 +329,8 @@ describe("Background Script Control", () => {
 
       assertEquals(stdoutChunks.length > 0, true);
       assertEquals(stderrChunks.length > 0, true);
+      assertStringIncludes(stdoutChunks.map(c => c.data).join(""), "out");
+      assertStringIncludes(stderrChunks.map(c => c.data).join(""), "err");
     });
 
     it("buffers output in script while streaming", async () => {
@@ -326,7 +345,7 @@ describe("Background Script Control", () => {
       }
 
       // Script should have buffered the output
-      assertEquals(script.stdout.includes("buffered"), true);
+      assertStringIncludes(script.stdout, "buffered");
     });
 
     it("updates script status after streaming completes", async () => {

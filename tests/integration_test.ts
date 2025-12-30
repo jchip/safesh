@@ -133,7 +133,7 @@ Deno.test("E2E: exec() enforces write permissions", async () => {
 Deno.test("E2E: exec() blocks write outside sandbox", async () => {
   const code = `
     // Try to write outside sandbox
-    await Deno.writeTextFile("/tmp/unauthorized.txt", "fail");
+    await Deno.writeTextFile(new URL("./unauthorized.txt", "file://" + Deno.cwd() + "/").pathname, "fail");
   `;
 
   const result = await executeCode(code, testConfig);
@@ -254,18 +254,19 @@ Deno.test("E2E: Path sandbox blocks access outside boundaries", async () => {
 Deno.test("E2E: Path sandbox handles relative paths", async () => {
   await setupTestEnv();
 
-  const now = new Date();
-  const shell = {
-    id: "test-shell",
-    cwd: "/tmp/safesh-test",
-    env: {},
-    vars: {},
-    jobs: new Map(),
-    jobsByPid: new Map(),
-    jobSequence: 0,
-    createdAt: now,
-    lastActivityAt: now,
-  };
+    const shell = {
+      id: "shell-1",
+      cwd: "/tmp",
+      env: {},
+      vars: {},
+      jobs: new Map(),
+      scripts: new Map(),
+      scriptsByPid: new Map(),
+      scriptSequence: 0,
+      jobSequence: 0,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+    };
 
   const result = await runExternal(
     "cat",
@@ -393,7 +394,7 @@ Deno.test("E2E: Import policy blocks unauthorized imports", async () => {
   };
 
   const code = `
-    import { something } from "npm:malicious-package";
+    const { something } = await import("npm:malicious-package");
   `;
 
   await assertRejects(
@@ -416,7 +417,7 @@ Deno.test("E2E: Import policy allows trusted imports", async () => {
   };
 
   const code = `
-    import { assertEquals } from "jsr:@std/assert";
+    const { assertEquals } = await import("jsr:@std/assert");
     assertEquals(1, 1);
     console.log("Import successful");
   `;

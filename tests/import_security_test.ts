@@ -217,7 +217,7 @@ describe("Import Security", () => {
       const { DEFAULT_CONFIG } = await import("../src/core/config.ts");
 
       const code = `
-        import { join } from "jsr:@std/path";
+        const { join } = await import("jsr:@std/path");
         console.log(join("a", "b"));
       `;
 
@@ -260,7 +260,7 @@ describe("Import Security", () => {
       });
 
       const code = `
-        import lodash from "npm:lodash";
+        const lodash = await import("npm:lodash");
         console.log("lodash allowed");
       `;
 
