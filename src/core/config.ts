@@ -62,7 +62,7 @@ export const STANDARD_PRESET: SafeShellConfig = {
     read: ["${CWD}", "/tmp"],
     write: ["${CWD}", "/tmp"],
     net: [],
-    run: [],
+    run: ["lsof", "ps"],
     env: ["HOME", "PATH", "TERM", "USER", "LANG"],
   },
   external: {},
