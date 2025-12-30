@@ -397,7 +397,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
   }
 
   /**
-   * Format a blocked command response with retry information
+   * Format a blocked command response with retry information (single command)
    */
   function formatBlockedCommandResponse(
     code: string,
@@ -426,6 +426,54 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
           },
           retry_id: retry.id,
           hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", allow: ["${blockedCommand}"], userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
+        }, null, 2),
+      }],
+      isError: true,
+    };
+  }
+
+  /**
+   * Format a blocked commands response with retry information (multiple commands from init())
+   */
+  function formatBlockedCommandsResponse(
+    code: string,
+    blockedCommands: string[],
+    notFoundCommands: string[],
+    shell: Shell,
+    env: Record<string, string> | undefined,
+    timeout: number | undefined,
+    background: boolean | undefined,
+    shellId: string | undefined,
+  ): { content: { type: string; text: string }[]; isError: boolean } {
+    const retry = shellManager.createPendingRetryMulti(
+      code,
+      blockedCommands,
+      notFoundCommands,
+      { cwd: shell.cwd, env, timeout, background },
+      shellId,
+    );
+
+    const allBlocked = [...blockedCommands];
+    const errors: Array<{ command: string; error: string }> = [];
+
+    for (const cmd of blockedCommands) {
+      errors.push({ command: cmd, error: "COMMAND_NOT_ALLOWED" });
+    }
+    for (const cmd of notFoundCommands) {
+      errors.push({ command: cmd, error: "COMMAND_NOT_FOUND" });
+    }
+
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          error: {
+            type: "COMMANDS_BLOCKED",
+            commands: errors,
+            message: `${blockedCommands.length} command(s) not allowed, ${notFoundCommands.length} command(s) not found`,
+          },
+          retry_id: retry.id,
+          hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", allow: ${JSON.stringify(allBlocked)}, userChoice: N } where N=1 (once), 2 (session), or 3 (always). Note: Commands not found cannot be allowed - they must be fixed in code.`,
         }, null, 2),
       }],
       isError: true,
@@ -846,7 +894,21 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
           const result = await executeCode(code, execConfig, { timeout: execTimeout, cwd: shell.cwd }, shell);
           shell.env = originalEnv;
 
-          // Check for blocked command - create pending retry
+          // Check for blocked commands from init() (multiple commands)
+          if (result.blockedCommands?.length || result.notFoundCommands?.length) {
+            return formatBlockedCommandsResponse(
+              code,
+              result.blockedCommands ?? [],
+              result.notFoundCommands ?? [],
+              shell,
+              parsed.env,
+              execTimeout,
+              background,
+              shellId,
+            );
+          }
+
+          // Check for blocked command (legacy single command)
           if (result.blockedCommand) {
             return formatBlockedCommandResponse(
               code,

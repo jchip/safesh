@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { Shell } from "../core/types.ts";
+import type { Shell, SafeShellConfig } from "../core/types.ts";
 
 // Marker used to identify shell state output for syncing vars back
 export const SHELL_STATE_MARKER = "__SAFESH_STATE__:";
@@ -20,15 +20,54 @@ function getStdlibPath(): string {
 }
 
 /**
+ * Config subset needed for permission checking in init()
+ */
+export interface PreambleConfig {
+  projectDir?: string;
+  allowProjectCommands?: boolean;
+  allowedCommands: string[]; // Merged from permissions.run + external keys
+  cwd: string;
+}
+
+/**
+ * Extract the config subset needed for preamble
+ */
+export function extractPreambleConfig(config: SafeShellConfig, cwd: string): PreambleConfig {
+  const allowedCommands = new Set<string>();
+
+  // Add from permissions.run
+  if (config.permissions?.run) {
+    for (const cmd of config.permissions.run) {
+      allowedCommands.add(cmd);
+    }
+  }
+
+  // Add from external command configs
+  if (config.external) {
+    for (const cmd of Object.keys(config.external)) {
+      allowedCommands.add(cmd);
+    }
+  }
+
+  return {
+    projectDir: config.projectDir,
+    allowProjectCommands: config.allowProjectCommands,
+    allowedCommands: Array.from(allowedCommands),
+    cwd,
+  };
+}
+
+/**
  * Build the preamble that gets prepended to user code
  *
  * The preamble injects:
  * - Shell context as $shell
+ * - Config for permission checking as $config
  * - Standard library (fs, text)
  * - Streaming shell API (cat, glob, git, lines, grep, map, filter, etc.)
  * - ShellJS-like commands (echo, cd, pwd, chmod, etc.)
  */
-export function buildPreamble(shell?: Shell): { preamble: string; preambleLineCount: number } {
+export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): { preamble: string; preambleLineCount: number } {
   const stdlibPath = getStdlibPath();
 
   const lines: string[] = [
@@ -43,7 +82,7 @@ export function buildPreamble(shell?: Shell): { preamble: string; preambleLineCo
     `import { filter, map, flatMap, take, head, tail, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
     `import { stdout, stderr, tee } from 'file://${stdlibPath}io.ts';`,
     `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
-    `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, init } from 'file://${stdlibPath}command.ts';`,
+    `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, init, initCmds } from 'file://${stdlibPath}command.ts';`,
     "",
     "// Import shelljs-like commands",
     `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
@@ -63,6 +102,15 @@ export function buildPreamble(shell?: Shell): { preamble: string; preambleLineCo
         env: shell.env,
         vars: shell.vars,
       })};`,
+      "",
+    );
+  }
+
+  if (preambleConfig) {
+    // Config for permission checking in init()
+    lines.push(
+      "// Config for permission checking",
+      `const $config: { projectDir?: string; allowProjectCommands?: boolean; allowedCommands: string[]; cwd: string } = ${JSON.stringify(preambleConfig)};`,
       "",
     );
   }

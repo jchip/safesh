@@ -364,7 +364,7 @@ export class ShellManager {
   private pendingRetries: Map<string, PendingRetry> = new Map();
 
   /**
-   * Create a pending retry for a blocked command
+   * Create a pending retry for a blocked command (legacy single command)
    */
   createPendingRetry(
     code: string,
@@ -387,6 +387,39 @@ export class ShellManager {
       shellId,
       context,
       blockedCommand,
+      createdAt: new Date(),
+    };
+
+    this.pendingRetries.set(retry.id, retry);
+    return retry;
+  }
+
+  /**
+   * Create a pending retry for multiple blocked commands (from init())
+   */
+  createPendingRetryMulti(
+    code: string,
+    blockedCommands: string[],
+    notFoundCommands: string[],
+    context: PendingRetry["context"],
+    shellId?: string,
+  ): PendingRetry {
+    // Cleanup expired retries first
+    this.cleanupExpiredRetries();
+
+    // Enforce limit with FIFO eviction
+    if (this.pendingRetries.size >= MAX_PENDING_RETRIES) {
+      const oldest = this.pendingRetries.keys().next().value;
+      if (oldest) this.pendingRetries.delete(oldest);
+    }
+
+    const retry: PendingRetry = {
+      id: `rt${++this.retrySequence}`,
+      code,
+      shellId,
+      context,
+      blockedCommands,
+      notFoundCommands,
       createdAt: new Date(),
     };
 

@@ -17,6 +17,7 @@ import {
   buildPreamble,
   buildErrorHandler,
   extractShellState,
+  extractPreambleConfig,
 } from "./preamble.ts";
 import { getEffectivePermissions, expandPath } from "../core/permissions.ts";
 
@@ -65,6 +66,7 @@ function filterExistingCommands(commands: string[], cwd: string): string[] {
 const STDERR_MARKERS = {
   job: "__SAFESH_JOB__:",
   cmdError: "__SAFESH_CMD_ERROR__:",
+  initError: "__SAFESH_INIT_ERROR__:",
 } as const;
 
 /** Job event from subprocess */
@@ -88,6 +90,13 @@ interface CommandErrorEvent {
   command: string;
 }
 
+/** Init error event from subprocess (from init() permission check) */
+interface InitErrorEvent {
+  type: "COMMANDS_BLOCKED";
+  notAllowed: string[];
+  notFound: string[];
+}
+
 /** Parse a marker line, returns parsed JSON or null if invalid */
 function parseMarkerLine<T>(line: string, marker: string): T | null {
   if (!line.startsWith(marker)) return null;
@@ -105,10 +114,12 @@ function extractStderrEvents(stderr: string): {
   cleanStderr: string;
   jobEvents: JobEvent[];
   cmdErrors: CommandErrorEvent[];
+  initErrors: InitErrorEvent[];
 } {
   const lines = stderr.split("\n");
   const jobEvents: JobEvent[] = [];
   const cmdErrors: CommandErrorEvent[] = [];
+  const initErrors: InitErrorEvent[] = [];
   const cleanLines: string[] = [];
 
   for (const line of lines) {
@@ -124,10 +135,16 @@ function extractStderrEvents(stderr: string): {
       continue;
     }
 
+    const initError = parseMarkerLine<InitErrorEvent>(line, STDERR_MARKERS.initError);
+    if (initError) {
+      initErrors.push(initError);
+      continue;
+    }
+
     cleanLines.push(line);
   }
 
-  return { cleanStderr: cleanLines.join("\n"), jobEvents, cmdErrors };
+  return { cleanStderr: cleanLines.join("\n"), jobEvents, cmdErrors, initErrors };
 }
 
 /**
@@ -303,7 +320,8 @@ export async function executeCode(
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
   // Build full code with preamble, user code, and error handler
-  const { preamble, preambleLineCount } = buildPreamble(shell);
+  const preambleConfig = extractPreambleConfig(config, cwd);
+  const { preamble, preambleLineCount } = buildPreamble(shell, preambleConfig);
   const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell);
 
   // Structure: preamble (with async IIFE start) + user code + error handler (closes IIFE with catch)
@@ -370,14 +388,19 @@ export async function executeCode(
     }
 
     // Extract job events and command errors from stderr
-    const { cleanStderr: stderr, jobEvents, cmdErrors } = extractStderrEvents(rawStderr);
+    const { cleanStderr: stderr, jobEvents, cmdErrors, initErrors } = extractStderrEvents(rawStderr);
     if (shell && script && jobEvents.length > 0) {
       processJobEvents(shell, script, jobEvents);
     }
 
-    // Check for blocked command (first one wins)
+    // Check for blocked command (legacy single command)
     const firstCmdError = cmdErrors[0];
     const blockedCommand = firstCmdError?.command;
+
+    // Check for init errors (multiple commands)
+    const firstInitError = initErrors[0];
+    const blockedCommands = firstInitError?.notAllowed.length ? firstInitError.notAllowed : undefined;
+    const notFoundCommands = firstInitError?.notFound.length ? firstInitError.notFound : undefined;
 
     // Update script with results (using cleaned output)
     if (script) {
@@ -401,6 +424,8 @@ export async function executeCode(
       success: status.code === 0,
       scriptId: script?.id,
       blockedCommand,
+      blockedCommands,
+      notFoundCommands,
     };
   } catch (error) {
     // Kill the process and cancel streams on timeout or error
@@ -599,7 +624,8 @@ export async function* executeCodeStreaming(
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
   // Build full code with preamble and error handler
-  const { preamble, preambleLineCount } = buildPreamble(shell);
+  const preambleConfig = extractPreambleConfig(config, cwd);
+  const { preamble, preambleLineCount } = buildPreamble(shell, preambleConfig);
   const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell);
   const fullCode = preamble + code + errorHandler;
 

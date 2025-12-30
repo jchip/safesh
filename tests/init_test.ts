@@ -1,62 +1,21 @@
 /**
  * Tests for init() command registration
+ *
+ * Note: The permission checking logic is tested in src/core/command_permission.test.ts
+ * These tests verify the init() function behavior when $config is not available
+ * (file execution mode where Deno sandbox enforces permissions)
  */
 
-import { assertEquals, assertThrows } from "@std/assert";
-import { join } from "@std/path";
-
-// Mock the environment variable for project commands
-function setProjectCommands(commands: Array<{ name: string; path: string }>): void {
-  if (commands.length > 0) {
-    Deno.env.set("SAFESH_PROJECT_COMMANDS", JSON.stringify(commands));
-  } else {
-    Deno.env.delete("SAFESH_PROJECT_COMMANDS");
-  }
-}
-
-// Import init after setting up env mocks
+import { assertEquals } from "@std/assert";
 import { init } from "../src/stdlib/command.ts";
 
 // ============================================================================
-// Permission Tests
+// Basic Registration Tests (No $config - file execution mode)
 // ============================================================================
 
-Deno.test("init - throws when command not in allowed list", () => {
-  // Clear any existing project commands
-  setProjectCommands([]);
-
-  assertThrows(
-    () => {
-      init({
-        myTool: "./scripts/my-tool.sh",
-      });
-    },
-    Error,
-    "Project command(s) not allowed: myTool",
-  );
-});
-
-Deno.test("init - throws with helpful message for multiple commands", () => {
-  setProjectCommands([]);
-
-  assertThrows(
-    () => {
-      init({
-        tool1: "./scripts/tool1.sh",
-        tool2: "./scripts/tool2.sh",
-      });
-    },
-    Error,
-    "tool1, tool2",
-  );
-});
-
-Deno.test("init - succeeds when command is allowed", () => {
-  setProjectCommands([
-    { name: "myTool", path: "./scripts/my-tool.sh" },
-  ]);
-
-  const commands = init({
+Deno.test("init - returns async function", async () => {
+  // In file execution mode (no $config), init just creates wrappers
+  const commands = await init({
     myTool: "./scripts/my-tool.sh",
   });
 
@@ -64,14 +23,8 @@ Deno.test("init - succeeds when command is allowed", () => {
   assertEquals(commands.myTool.path, "./scripts/my-tool.sh");
 });
 
-Deno.test("init - succeeds with multiple allowed commands", () => {
-  setProjectCommands([
-    { name: "build", path: "./scripts/build.sh" },
-    { name: "test", path: "./scripts/test.sh" },
-    { name: "deploy", path: "./scripts/deploy.sh" },
-  ]);
-
-  const commands = init({
+Deno.test("init - registers multiple commands", async () => {
+  const commands = await init({
     build: "./scripts/build.sh",
     test: "./scripts/test.sh",
   });
@@ -82,48 +35,12 @@ Deno.test("init - succeeds with multiple allowed commands", () => {
   assertEquals(commands.test.path, "./scripts/test.sh");
 });
 
-Deno.test("init - throws if path doesn't match", () => {
-  setProjectCommands([
-    { name: "build", path: "./scripts/build.sh" },
-  ]);
-
-  assertThrows(
-    () => {
-      init({
-        build: "./other/build.sh", // wrong path
-      });
-    },
-    Error,
-    "Project command(s) not allowed: build",
-  );
-});
-
-Deno.test("init - throws if name doesn't match", () => {
-  setProjectCommands([
-    { name: "build", path: "./scripts/build.sh" },
-  ]);
-
-  assertThrows(
-    () => {
-      init({
-        compile: "./scripts/build.sh", // wrong name
-      });
-    },
-    Error,
-    "Project command(s) not allowed: compile",
-  );
-});
-
 // ============================================================================
-// Registered Command Tests
+// Registered Command Interface Tests
 // ============================================================================
 
-Deno.test("init - registered command has correct interface", () => {
-  setProjectCommands([
-    { name: "myScript", path: "./scripts/my-script.sh" },
-  ]);
-
-  const commands = init({
+Deno.test("init - registered command has correct interface", async () => {
+  const commands = await init({
     myScript: "./scripts/my-script.sh",
   });
 
@@ -135,12 +52,8 @@ Deno.test("init - registered command has correct interface", () => {
   assertEquals(commands.myScript.path, "./scripts/my-script.sh");
 });
 
-Deno.test("init - cmd() returns Command for piping", () => {
-  setProjectCommands([
-    { name: "myScript", path: "./scripts/my-script.sh" },
-  ]);
-
-  const commands = init({
+Deno.test("init - cmd() returns Command for piping", async () => {
+  const commands = await init({
     myScript: "./scripts/my-script.sh",
   });
 
@@ -151,11 +64,15 @@ Deno.test("init - cmd() returns Command for piping", () => {
   assertEquals(typeof cmd.stream, "function");
 });
 
-// ============================================================================
-// Cleanup
-// ============================================================================
+Deno.test("init - basic command names work", async () => {
+  // In file execution mode, basic names just create wrappers
+  const commands = await init({
+    git: "git",
+    deno: "deno",
+  });
 
-// Clean up environment after tests
-Deno.test("cleanup", () => {
-  Deno.env.delete("SAFESH_PROJECT_COMMANDS");
+  assertEquals(commands.git.name, "git");
+  assertEquals(commands.git.path, "git");
+  assertEquals(commands.deno.name, "deno");
+  assertEquals(commands.deno.path, "deno");
 });

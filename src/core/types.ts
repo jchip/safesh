@@ -268,8 +268,12 @@ export interface ExecResult {
   success: boolean;
   /** Script ID if tracked in a shell */
   scriptId?: string;
-  /** Blocked command if a command was not allowed */
+  /** Blocked command if a command was not allowed (legacy single command) */
   blockedCommand?: string;
+  /** Commands not allowed (from init() upfront check) */
+  blockedCommands?: string[];
+  /** Commands not found (from init() upfront check) */
+  notFoundCommands?: string[];
 }
 
 export interface RunOptions extends ExecOptions {
@@ -315,8 +319,12 @@ export interface PendingRetry {
     timeout?: number;
     background?: boolean;
   };
-  /** Command that was blocked */
-  blockedCommand: string;
+  /** Command that was blocked (legacy single command) */
+  blockedCommand?: string;
+  /** Commands not allowed (from init() upfront check) */
+  blockedCommands?: string[];
+  /** Commands not found (from init() upfront check) */
+  notFoundCommands?: string[];
   /** Creation timestamp (for TTL) */
   createdAt: Date;
 }

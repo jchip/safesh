@@ -915,11 +915,134 @@ export interface RegisteredCommand {
   readonly name: string;
 }
 
+// Init error marker for permission check failures (parsed by executor)
+const INIT_ERROR_MARKER = "__SAFESH_INIT_ERROR__:";
+
+/**
+ * Config interface injected by preamble for permission checking
+ */
+interface PreambleConfig {
+  projectDir?: string;
+  allowProjectCommands?: boolean;
+  allowedCommands: string[];
+  cwd: string;
+}
+
+// Reference to $config injected by preamble (may not exist in file execution mode)
+declare const $config: PreambleConfig | undefined;
+
+/**
+ * Check if a command exists at the given path
+ */
+async function checkCommandExists(path: string): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(path);
+    return stat.isFile;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a command is in the allowed list
+ */
+function isInAllowedList(command: string, allowedCommands: string[]): boolean {
+  return allowedCommands.includes(command);
+}
+
+/**
+ * Get the basename of a path
+ */
+function getBasename(path: string): string {
+  const parts = path.split("/");
+  return parts[parts.length - 1] ?? path;
+}
+
+/**
+ * Resolve a path relative to a directory
+ */
+function resolvePath(base: string, relative: string): string {
+  if (relative.startsWith("/")) return relative;
+  // Simple path join
+  const basePath = base.endsWith("/") ? base : base + "/";
+  return basePath + relative;
+}
+
+/**
+ * Permission check result
+ */
+type PermResult =
+  | { allowed: true; resolvedPath: string }
+  | { allowed: false; error: "COMMAND_NOT_ALLOWED"; command: string }
+  | { allowed: false; error: "COMMAND_NOT_FOUND"; command: string };
+
+/**
+ * Check permission for a single command using the decision tree
+ */
+async function checkPermission(
+  command: string,
+  config: PreambleConfig,
+): Promise<PermResult> {
+  const { allowedCommands, projectDir, allowProjectCommands, cwd } = config;
+
+  // Is command basic name only (no `/`)?
+  if (!command.includes("/")) {
+    if (isInAllowedList(command, allowedCommands)) {
+      return { allowed: true, resolvedPath: command };
+    }
+    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command };
+  }
+
+  // Has `/` - check basename first
+  const cmdBasename = getBasename(command);
+  if (isInAllowedList(cmdBasename, allowedCommands)) {
+    const resolvedPath = command.startsWith("/")
+      ? command
+      : resolvePath(cwd, command);
+    return { allowed: true, resolvedPath };
+  }
+
+  // Full path (starts with `/`)? → allowed_check(verbatim)
+  if (command.startsWith("/")) {
+    if (isInAllowedList(command, allowedCommands)) {
+      return { allowed: true, resolvedPath: command };
+    }
+    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command };
+  }
+
+  // Relative path - check CWD first
+  const cwdPath = resolvePath(cwd, command);
+  if (await checkCommandExists(cwdPath)) {
+    if (isInAllowedList(cwdPath, allowedCommands)) {
+      return { allowed: true, resolvedPath: cwdPath };
+    }
+    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command: cwdPath };
+  }
+
+  // Check projectDir
+  if (projectDir) {
+    const projectPath = resolvePath(projectDir, command);
+    if (await checkCommandExists(projectPath)) {
+      // config allows project cmds? → ALLOWED
+      if (allowProjectCommands) {
+        return { allowed: true, resolvedPath: projectPath };
+      }
+      if (isInAllowedList(projectPath, allowedCommands)) {
+        return { allowed: true, resolvedPath: projectPath };
+      }
+      return { allowed: false, error: "COMMAND_NOT_ALLOWED", command: projectPath };
+    }
+  }
+
+  // Not found
+  return { allowed: false, error: "COMMAND_NOT_FOUND", command };
+}
+
 /**
  * Initialize commands for convenient access
  *
- * Creates named command wrappers for easy execution. Permission is checked
- * at execution time (same as cmd()), not at init time.
+ * Validates permissions for ALL commands upfront. If any commands are blocked
+ * or not found, throws an error with details about ALL failures (not just first).
  *
  * @param commands - Map of command names to paths
  * @param options - Optional command options (cwd, env, etc.)
@@ -927,7 +1050,7 @@ export interface RegisteredCommand {
  *
  * @example
  * ```ts
- * const commands = init({
+ * const commands = await init({
  *   cargo: "cargo",
  *   build: "./scripts/build.sh"
  * });
@@ -939,25 +1062,134 @@ export interface RegisteredCommand {
  * const result = await commands.build.cmd(["--json"]).pipe("jq", [".version"]).exec();
  * ```
  */
-export function init<T extends Record<string, string>>(
+export async function init<T extends Record<string, string>>(
   commands: T,
   options?: CommandOptions,
-): { [K in keyof T]: RegisteredCommand } {
+): Promise<{ [K in keyof T]: RegisteredCommand }> {
   const result = {} as { [K in keyof T]: RegisteredCommand };
 
-  for (const [name, path] of Object.entries(commands)) {
-    (result as Record<string, RegisteredCommand>)[name] = {
-      name,
-      path,
-      exec: async (args: string[] = []) => {
-        return await new Command(path, args, options).exec();
-      },
-      stream: (args: string[] = []) => {
-        return new Command(path, args, options).stream();
-      },
-      cmd: (args: string[] = []) => {
-        return new Command(path, args, options);
-      },
+  // Check if $config is available (injected by preamble)
+  // Using typeof to avoid ReferenceError if $config doesn't exist
+  const config = typeof $config !== "undefined" ? $config : undefined;
+
+  if (config) {
+    // Check permissions for all commands upfront
+    const notAllowed: string[] = [];
+    const notFound: string[] = [];
+    const resolvedPaths: Record<string, string> = {};
+
+    const entries = Object.entries(commands);
+    const checks = await Promise.all(
+      entries.map(async ([name, path]) => {
+        const result = await checkPermission(path, config);
+        return { name, path, result };
+      }),
+    );
+
+    for (const { name, path, result: permResult } of checks) {
+      if (permResult.allowed) {
+        resolvedPaths[name] = permResult.resolvedPath;
+      } else if (permResult.error === "COMMAND_NOT_ALLOWED") {
+        notAllowed.push(permResult.command);
+      } else if (permResult.error === "COMMAND_NOT_FOUND") {
+        notFound.push(permResult.command);
+      }
+    }
+
+    // If any errors, emit marker and throw
+    if (notAllowed.length > 0 || notFound.length > 0) {
+      const errorEvent = {
+        type: "COMMANDS_BLOCKED",
+        notAllowed,
+        notFound,
+      };
+      console.error(`${INIT_ERROR_MARKER}${JSON.stringify(errorEvent)}`);
+
+      const errors: string[] = [];
+      if (notAllowed.length > 0) {
+        errors.push(`Commands not allowed: ${notAllowed.join(", ")}`);
+      }
+      if (notFound.length > 0) {
+        errors.push(`Commands not found: ${notFound.join(", ")}`);
+      }
+      throw new Error(errors.join(". "));
+    }
+
+    // All permissions passed - create wrappers with resolved paths
+    for (const [name, path] of entries) {
+      const resolvedPath = resolvedPaths[name] ?? path;
+      (result as Record<string, RegisteredCommand>)[name] = {
+        name,
+        path: resolvedPath,
+        exec: async (args: string[] = []) => {
+          return await new Command(resolvedPath, args, options).exec();
+        },
+        stream: (args: string[] = []) => {
+          return new Command(resolvedPath, args, options).stream();
+        },
+        cmd: (args: string[] = []) => {
+          return new Command(resolvedPath, args, options);
+        },
+      };
+    }
+  } else {
+    // No config available (file execution mode) - create wrappers without permission check
+    // Permissions will be enforced by Deno sandbox at execution time
+    for (const [name, path] of Object.entries(commands)) {
+      (result as Record<string, RegisteredCommand>)[name] = {
+        name,
+        path,
+        exec: async (args: string[] = []) => {
+          return await new Command(path, args, options).exec();
+        },
+        stream: (args: string[] = []) => {
+          return new Command(path, args, options).stream();
+        },
+        cmd: (args: string[] = []) => {
+          return new Command(path, args, options);
+        },
+      };
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Simple command callable - just call it with args
+ */
+export type CommandFn = (...args: string[]) => Promise<CommandResult>;
+
+/**
+ * Initialize commands with a simpler API - returns callable functions
+ *
+ * @param commands - Map of command names to paths
+ * @param options - Optional command options (cwd, env, etc.)
+ * @returns Object with callable command functions
+ *
+ * @example
+ * ```ts
+ * const cmds = await initCmds({
+ *   cargo: "cargo",
+ *   build: "./scripts/build.sh"
+ * });
+ *
+ * await cmds.cargo("build", "--release");
+ * await cmds.build("--verbose");
+ * ```
+ */
+export async function initCmds<T extends Record<string, string>>(
+  commands: T,
+  options?: CommandOptions,
+): Promise<{ [K in keyof T]: CommandFn }> {
+  // Use init() for permission checking
+  const registered = await init(commands, options);
+
+  const result = {} as { [K in keyof T]: CommandFn };
+
+  for (const [name, reg] of Object.entries(registered)) {
+    (result as Record<string, CommandFn>)[name] = (...args: string[]) => {
+      return reg.exec(args);
     };
   }
 
