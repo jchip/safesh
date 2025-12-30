@@ -4,9 +4,27 @@
 
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { executeCode, executeFile, buildPermissionFlags } from "../src/runtime/executor.ts";
-import type { SafeShellConfig } from "../src/core/types.ts";
+import type { SafeShellConfig, Shell } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import { join } from "@std/path";
+
+/** Create a test Shell object with required properties */
+function makeTestShell(overrides: Partial<Shell> = {}): Shell {
+  const now = new Date();
+  return {
+    id: "test-session",
+    cwd: Deno.cwd(),
+    env: {},
+    vars: {},
+    scripts: new Map(),
+    scriptsByPid: new Map(),
+    scriptSequence: 0,
+    jobs: new Map(),
+    createdAt: now,
+    lastActivityAt: now,
+    ...overrides,
+  };
+}
 
 const testConfig: SafeShellConfig = {
   permissions: {
@@ -144,18 +162,7 @@ Deno.test({
 
 Deno.test("executeCode - uses session cwd", async () => {
   // Use /tmp as a valid cwd that exists
-  const now = new Date();
-  const session = {
-    id: "test-session",
-    cwd: "/tmp",
-    env: {},
-    vars: {},
-    jobs: new Map(),
-    jobsByPid: new Map(),
-    jobSequence: 0,
-    createdAt: now,
-    lastActivityAt: now,
-  };
+  const session = makeTestShell({ cwd: "/tmp" });
 
   const code = `
     console.log(Deno.cwd());
@@ -168,18 +175,7 @@ Deno.test("executeCode - uses session cwd", async () => {
 });
 
 Deno.test("executeCode - passes session env vars", async () => {
-  const now = new Date();
-  const session = {
-    id: "test-session",
-    cwd: Deno.cwd(),
-    env: { TEST_VAR: "test-value" },
-    vars: {},
-    jobs: new Map(),
-    jobsByPid: new Map(),
-    jobSequence: 0,
-    createdAt: now,
-    lastActivityAt: now,
-  };
+  const session = makeTestShell({ env: { TEST_VAR: "test-value" } });
 
   const config: SafeShellConfig = {
     ...testConfig,
@@ -200,18 +196,12 @@ Deno.test("executeCode - passes session env vars", async () => {
 });
 
 Deno.test("executeCode - provides shell context via $shell", async () => {
-  const now = new Date();
-  const shell = {
+  const shell = makeTestShell({
     id: "test-shell",
     cwd: "/tmp",
     env: { FOO: "bar" },
     vars: { myVar: "myValue" },
-    jobs: new Map(),
-    jobsByPid: new Map(),
-    jobSequence: 0,
-    createdAt: now,
-    lastActivityAt: now,
-  };
+  });
 
   const code = `
     console.log($shell.id);
@@ -349,18 +339,7 @@ Deno.test("executeFile - supports imports in file", async () => {
 Deno.test("executeFile - uses session cwd", async () => {
   const testFile = join("/tmp", "test-cwd.ts");
   const code = 'console.log(Deno.cwd());';
-  const now = new Date();
-  const session = {
-    id: "test-session",
-    cwd: "/tmp",
-    env: {},
-    vars: {},
-    jobs: new Map(),
-    jobsByPid: new Map(),
-    jobSequence: 0,
-    createdAt: now,
-    lastActivityAt: now,
-  };
+  const session = makeTestShell({ cwd: "/tmp" });
 
   try {
     await Deno.writeTextFile(testFile, code);
