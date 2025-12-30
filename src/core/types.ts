@@ -270,6 +270,8 @@ export interface ExecResult {
   scriptId?: string;
   /** Blocked command if a command was not allowed */
   blockedCommand?: string;
+  /** Blocked project commands (for init() errors) */
+  blockedProjectCommands?: Array<{ name: string; path: string }>;
 }
 
 export interface RunOptions extends ExecOptions {
@@ -317,6 +319,8 @@ export interface PendingRetry {
   };
   /** Command that was blocked */
   blockedCommand: string;
+  /** Project commands that were blocked (for init() errors) */
+  blockedProjectCommands?: Array<{ name: string; path: string }>;
   /** Creation timestamp (for TTL) */
   createdAt: Date;
 }

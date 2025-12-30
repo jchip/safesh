@@ -400,6 +400,7 @@ export async function executeCode(
     // Check for blocked command (first one wins)
     const firstCmdError = cmdErrors[0];
     const blockedCommand = firstCmdError?.command;
+    const blockedProjectCommands = firstCmdError?.commands;
 
     // Update script with results (using cleaned output)
     if (script) {
@@ -423,6 +424,7 @@ export async function executeCode(
       success: status.code === 0,
       scriptId: script?.id,
       blockedCommand,
+      blockedProjectCommands,
     };
   } catch (error) {
     // Kill the process and cancel streams on timeout or error

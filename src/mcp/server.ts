@@ -303,12 +303,18 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
     }
 
     let execConfig = configHolder.config;
+    const isProjectCommand = retry.blockedProjectCommands && retry.blockedProjectCommands.length > 0;
 
     if (allow && allow.length > 0) {
       if (userChoice === 3) {
         // Always allow: save to JSON and reload config
         try {
-          await saveToLocalJson(configHolder.cwd, allow);
+          // Project commands need to be saved as objects, regular commands as strings
+          if (isProjectCommand && retry.blockedProjectCommands) {
+            await saveToLocalJson(configHolder.cwd, [], retry.blockedProjectCommands);
+          } else {
+            await saveToLocalJson(configHolder.cwd, allow);
+          }
           configHolder.config = await loadConfig(configHolder.cwd);
           execConfig = configHolder.config;
           registry = createRegistry(configHolder.config, configHolder.cwd);
@@ -404,22 +410,28 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
     timeout: number | undefined,
     background: boolean | undefined,
     shellId: string | undefined,
+    blockedProjectCommands?: Array<{ name: string; path: string }>,
   ): { content: { type: string; text: string }[]; isError: boolean } {
     const retry = shellManager.createPendingRetry(
       code,
       blockedCommand,
       { cwd: shell.cwd, env, timeout, background },
       shellId,
+      blockedProjectCommands,
     );
+
+    const isProjectCommand = blockedProjectCommands && blockedProjectCommands.length > 0;
+    const errorType = isProjectCommand ? "PROJECT_COMMAND_NOT_ALLOWED" : "COMMAND_NOT_ALLOWED";
 
     return {
       content: [{
         type: "text",
         text: JSON.stringify({
           error: {
-            type: "COMMAND_NOT_ALLOWED",
+            type: errorType,
             command: blockedCommand,
             message: `Command '${blockedCommand}' is not allowed`,
+            ...(isProjectCommand && { projectCommands: blockedProjectCommands }),
           },
           retry_id: retry.id,
           hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", allow: ["${blockedCommand}"], userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
@@ -853,6 +865,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
               execTimeout,
               background,
               shellId,
+              result.blockedProjectCommands,
             );
           }
 
