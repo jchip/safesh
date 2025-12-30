@@ -65,7 +65,6 @@ function filterExistingCommands(commands: string[], cwd: string): string[] {
 const STDERR_MARKERS = {
   job: "__SAFESH_JOB__:",
   cmdError: "__SAFESH_CMD_ERROR__:",
-  projectCmdError: "__SAFESH_PROJECT_CMD_ERROR__:",
 } as const;
 
 /** Job event from subprocess */
@@ -85,9 +84,8 @@ interface JobEvent {
 
 /** Command error event from subprocess */
 interface CommandErrorEvent {
-  type: "COMMAND_NOT_ALLOWED" | "PROJECT_COMMANDS_NOT_ALLOWED";
+  type: "COMMAND_NOT_ALLOWED";
   command: string;
-  commands?: Array<{ name: string; path: string }>;
 }
 
 /** Parse a marker line, returns parsed JSON or null if invalid */
@@ -123,23 +121,6 @@ function extractStderrEvents(stderr: string): {
     const cmdError = parseMarkerLine<CommandErrorEvent>(line, STDERR_MARKERS.cmdError);
     if (cmdError) {
       cmdErrors.push(cmdError);
-      continue;
-    }
-
-    const projectCmdError = parseMarkerLine<{ type: string; commands: Array<{ name: string; path: string }> }>(
-      line,
-      STDERR_MARKERS.projectCmdError,
-    );
-    if (projectCmdError) {
-      // Convert project command errors to CommandErrorEvent format (use first command)
-      const firstCmd = projectCmdError.commands[0];
-      if (firstCmd) {
-        cmdErrors.push({
-          type: "PROJECT_COMMANDS_NOT_ALLOWED",
-          command: firstCmd.name,
-          commands: projectCmdError.commands,
-        });
-      }
       continue;
     }
 
@@ -272,16 +253,13 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
     }
   }
 
-  // Env permissions - always include SAFESH_* for job tracking and init()
+  // Env permissions - always include SAFESH_* for job tracking
   const envVars = [...(perms.env ?? [])];
   if (!envVars.includes("SAFESH_SHELL_ID")) {
     envVars.push("SAFESH_SHELL_ID");
   }
   if (!envVars.includes("SAFESH_SCRIPT_ID")) {
     envVars.push("SAFESH_SCRIPT_ID");
-  }
-  if (!envVars.includes("SAFESH_PROJECT_COMMANDS")) {
-    envVars.push("SAFESH_PROJECT_COMMANDS");
   }
   if (envVars.length) {
     flags.push(`--allow-env=${envVars.join(",")}`);
@@ -400,7 +378,6 @@ export async function executeCode(
     // Check for blocked command (first one wins)
     const firstCmdError = cmdErrors[0];
     const blockedCommand = firstCmdError?.command;
-    const blockedProjectCommands = firstCmdError?.commands;
 
     // Update script with results (using cleaned output)
     if (script) {
@@ -424,7 +401,6 @@ export async function executeCode(
       success: status.code === 0,
       scriptId: script?.id,
       blockedCommand,
-      blockedProjectCommands,
     };
   } catch (error) {
     // Kill the process and cancel streams on timeout or error

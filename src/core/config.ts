@@ -339,33 +339,19 @@ export function getLocalJsonConfigPath(cwd: string): string {
   return join(cwd, ".claude", "safesh.local.json");
 }
 
-/** Project command with name and path */
-interface ProjectCommand {
-  name: string;
-  path: string;
-}
-
-/** Result of loading local config */
-interface LocalConfigResult {
-  config: SafeShellConfig | null;
-  projectCommands: ProjectCommand[];
-}
-
 /**
  * Load local config from .claude/safesh.local.ts and convert to SafeShellConfig
  * Local config adds allowedCommands to both external and permissions.run
- * Also extracts project commands (path-based) for init() validation
  */
-async function loadLocalConfig(cwd: string): Promise<LocalConfigResult> {
+async function loadLocalConfig(cwd: string): Promise<{ config: SafeShellConfig | null }> {
   const localPath = getLocalConfigPath(cwd);
-  const emptyResult: LocalConfigResult = { config: null, projectCommands: [] };
 
   try {
     // Convert to file path for stat check
     const filePath = localPath.startsWith("file://") ? fromFileUrl(localPath) : localPath;
     await Deno.stat(filePath);
   } catch {
-    return emptyResult; // File doesn't exist - this is normal
+    return { config: null }; // File doesn't exist - this is normal
   }
 
   try {
@@ -375,12 +361,11 @@ async function loadLocalConfig(cwd: string): Promise<LocalConfigResult> {
 
     // Convert SafeshLocalConfig to SafeShellConfig
     if (!localConfig.allowedCommands || localConfig.allowedCommands.length === 0) {
-      return emptyResult;
+      return { config: null };
     }
 
     const external: Record<string, ExternalCommandConfig> = {};
     const runPermissions: string[] = [];
-    const projectCommands: ProjectCommand[] = [];
 
     for (const cmd of localConfig.allowedCommands) {
       if (typeof cmd === "string") {
@@ -388,9 +373,8 @@ async function loadLocalConfig(cwd: string): Promise<LocalConfigResult> {
         external[cmd] = { allow: true };
         runPermissions.push(cmd);
       } else if ("name" in cmd && "path" in cmd) {
-        // Project command with name and path
-        projectCommands.push({ name: cmd.name, path: cmd.path });
-        // Also add path to run permissions so Deno allows it
+        // Command with name and path - add path to permissions
+        external[cmd.path] = { allow: true };
         runPermissions.push(cmd.path);
       } else if ("command" in cmd) {
         // Object with command, subcommands, flags
@@ -402,24 +386,15 @@ async function loadLocalConfig(cwd: string): Promise<LocalConfigResult> {
       }
     }
 
-    // Return config with both external and permissions.run
     return {
       config: {
         external,
-        permissions: {
-          run: runPermissions,
-        },
+        permissions: { run: runPermissions },
       },
-      projectCommands,
     };
   } catch (error) {
-    // Log warning but don't fail
-    console.warn(
-      `⚠️  Failed to load local config from ${localPath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return emptyResult;
+    console.warn(`⚠️  Failed to load local config from ${localPath}: ${error instanceof Error ? error.message : String(error)}`);
+    return { config: null };
   }
 }
 
@@ -454,23 +429,12 @@ async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null>
   }
 }
 
-/** Type for allowed command entries (string or project command object) */
-type AllowedCommandEntry = string | { name: string; path: string };
-
 /**
  * Save commands to .claude/safesh.local.json
  * Creates the .claude directory if it doesn't exist
  * Merges with existing commands (adds new, doesn't remove existing)
- *
- * @param cwd - Project directory
- * @param commands - Simple command strings to add to run permissions
- * @param projectCommands - Project command objects { name, path } for init()
  */
-export async function saveToLocalJson(
-  cwd: string,
-  commands: string[],
-  projectCommands?: Array<{ name: string; path: string }>,
-): Promise<void> {
+export async function saveToLocalJson(cwd: string, commands: string[]): Promise<void> {
   const jsonPath = getLocalJsonConfigPath(cwd);
   const claudeDir = join(cwd, ".claude");
 
@@ -483,57 +447,19 @@ export async function saveToLocalJson(
     }
   }
 
-  // Load existing config
+  // Load existing and merge
   const existing = await loadLocalJsonConfig(cwd);
-  const existingEntries = existing?.allowedCommands ?? [];
+  const allCommands = new Set<string>(existing?.allowedCommands?.filter((c): c is string => typeof c === "string") ?? []);
 
-  // Separate existing entries into strings and objects
-  const existingStrings = new Set<string>();
-  const existingObjects = new Map<string, { name: string; path: string }>();
-
-  for (const entry of existingEntries) {
-    if (typeof entry === "string") {
-      existingStrings.add(entry);
-    } else if (entry && typeof entry === "object" && "name" in entry) {
-      existingObjects.set(`${entry.name}:${entry.path}`, entry);
-    }
-  }
-
-  // Merge new simple commands
   for (const cmd of commands) {
-    existingStrings.add(cmd);
+    allCommands.add(cmd);
   }
 
-  // Merge new project commands
-  if (projectCommands) {
-    for (const pc of projectCommands) {
-      existingObjects.set(`${pc.name}:${pc.path}`, pc);
-    }
-  }
-
-  // Combine and sort
-  const allEntries: AllowedCommandEntry[] = [
-    ...Array.from(existingStrings).sort(),
-    ...Array.from(existingObjects.values()).sort((a, b) => a.name.localeCompare(b.name)),
-  ];
-
-  // Write updated config
   const config: LocalJsonConfig = {
-    allowedCommands: allEntries,
+    allowedCommands: Array.from(allCommands).sort(),
   };
 
   await Deno.writeTextFile(jsonPath, JSON.stringify(config, null, 2) + "\n");
-}
-
-/** Cached project commands from last loadConfig call */
-let cachedProjectCommands: ProjectCommand[] = [];
-
-/**
- * Get project commands from the last loaded config
- * Used by executor to pass to subprocess via environment variable
- */
-export function getProjectCommands(): ProjectCommand[] {
-  return cachedProjectCommands;
 }
 
 /** Options for loading config */
@@ -598,41 +524,17 @@ export async function loadConfig(
     config = mergeConfigs(config, localResult.config);
   }
 
-  // Cache project commands for executor to use
-  cachedProjectCommands = localResult.projectCommands;
-
   // Load local JSON config (.claude/safesh.local.json)
   // This has highest priority - machine-writable config for persistence
   const jsonConfig = await loadLocalJsonConfig(cwd);
   if (jsonConfig?.allowedCommands && jsonConfig.allowedCommands.length > 0) {
-    const external: Record<string, ExternalCommandConfig> = {};
-    const runPermissions: string[] = [];
-    const jsonProjectCommands: ProjectCommand[] = [];
-
-    for (const cmd of jsonConfig.allowedCommands) {
-      if (typeof cmd === "string") {
-        // Simple command string
-        external[cmd] = { allow: true };
-        runPermissions.push(cmd);
-      } else if (cmd && typeof cmd === "object" && "name" in cmd && "path" in cmd) {
-        // Project command object - add to both project commands AND run permissions
-        const pc = cmd as ProjectCommand;
-        jsonProjectCommands.push(pc);
-        // Also allow as regular command so RegisteredCommand.exec() works
-        external[pc.path] = { allow: true };
-        runPermissions.push(pc.path);
-      }
+    const commands = jsonConfig.allowedCommands.filter((c): c is string => typeof c === "string");
+    if (commands.length > 0) {
+      config = mergeConfigs(config, {
+        external: Object.fromEntries(commands.map((cmd) => [cmd, { allow: true }])),
+        permissions: { run: commands },
+      });
     }
-
-    // Merge project commands from JSON with those from TS config
-    cachedProjectCommands = [...cachedProjectCommands, ...jsonProjectCommands];
-
-    config = mergeConfigs(config, {
-      external,
-      permissions: {
-        run: runPermissions,
-      },
-    });
   }
 
   // Resolve workspace path if provided

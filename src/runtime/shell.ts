@@ -371,7 +371,6 @@ export class ShellManager {
     blockedCommand: string,
     context: PendingRetry["context"],
     shellId?: string,
-    blockedProjectCommands?: Array<{ name: string; path: string }>,
   ): PendingRetry {
     // Cleanup expired retries first
     this.cleanupExpiredRetries();
@@ -388,7 +387,6 @@ export class ShellManager {
       shellId,
       context,
       blockedCommand,
-      blockedProjectCommands,
       createdAt: new Date(),
     };
 

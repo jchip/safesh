@@ -900,26 +900,7 @@ export function toCmdLines(
 // ============================================================================
 
 /**
- * Environment variable name for allowed project commands
- * Set by preamble, contains JSON array of { name, path } objects
- */
-const PROJECT_COMMANDS_ENV = "SAFESH_PROJECT_COMMANDS";
-
-/**
- * Project command error marker for permission failures
- */
-const PROJECT_CMD_ERROR_MARKER = "__SAFESH_PROJECT_CMD_ERROR__:";
-
-/**
- * Interface for project command configuration
- */
-interface ProjectCommand {
-  name: string;
-  path: string;
-}
-
-/**
- * A registered project command that can be executed
+ * A registered command that can be executed
  */
 export interface RegisteredCommand {
   /** Execute the command with arguments */
@@ -935,77 +916,23 @@ export interface RegisteredCommand {
 }
 
 /**
- * Get allowed project commands from environment
- */
-function getAllowedProjectCommands(): ProjectCommand[] {
-  const envValue = Deno.env.get(PROJECT_COMMANDS_ENV);
-  if (!envValue) {
-    return [];
-  }
-  try {
-    return JSON.parse(envValue) as ProjectCommand[];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Check if a path is allowed as a project command
- */
-function isProjectCommandAllowed(name: string, path: string): ProjectCommand | null {
-  const allowed = getAllowedProjectCommands();
-
-  // Check for exact match by name and path
-  const match = allowed.find(
-    (cmd) => cmd.name === name && cmd.path === path
-  );
-
-  return match ?? null;
-}
-
-/**
- * Create a registered command object
- */
-function createRegisteredCommand(name: string, path: string, options?: CommandOptions): RegisteredCommand {
-  return {
-    name,
-    path,
-    exec: async (args: string[] = []) => {
-      return await new Command(path, args, options).exec();
-    },
-    stream: (args: string[] = []) => {
-      return new Command(path, args, options).stream();
-    },
-    cmd: (args: string[] = []) => {
-      return new Command(path, args, options);
-    },
-  };
-}
-
-/**
- * Initialize project commands with permission checking
+ * Initialize commands for convenient access
  *
- * Registers project-local commands (scripts, binaries under project directory)
- * that require explicit permission in `.claude/safesh.local.ts`.
- *
- * Permission is checked at init() time, not at execution time.
- * This prevents partial script execution when a command is blocked midway.
+ * Creates named command wrappers for easy execution. Permission is checked
+ * at execution time (same as cmd()), not at init time.
  *
  * @param commands - Map of command names to paths
  * @param options - Optional command options (cwd, env, etc.)
- * @returns Object with registered command factories
- * @throws Error if any command is not in the allowed list
+ * @returns Object with registered command wrappers
  *
  * @example
  * ```ts
- * // Register project commands
  * const commands = init({
- *   fyngram: "./packages/fyngram/fyngram",
+ *   cargo: "cargo",
  *   build: "./scripts/build.sh"
  * });
  *
- * // Use registered commands
- * await commands.fyngram.exec(["build"]);
+ * await commands.cargo.exec(["build"]);
  * await commands.build.exec(["--release"]);
  *
  * // Can also get Command for piping
@@ -1017,47 +944,21 @@ export function init<T extends Record<string, string>>(
   options?: CommandOptions,
 ): { [K in keyof T]: RegisteredCommand } {
   const result = {} as { [K in keyof T]: RegisteredCommand };
-  const notAllowed: Array<{ name: string; path: string }> = [];
 
-  // Check all commands before registering any
   for (const [name, path] of Object.entries(commands)) {
-    const allowed = isProjectCommandAllowed(name, path);
-    if (!allowed) {
-      notAllowed.push({ name, path });
-    }
-  }
-
-  // If any commands are not allowed, emit error and throw
-  if (notAllowed.length > 0) {
-    const errorInfo = {
-      type: "PROJECT_COMMANDS_NOT_ALLOWED",
-      commands: notAllowed,
-      message: `Project commands not allowed. Add to .claude/safesh.local.ts`,
-      hint: notAllowed.map(
-        (c) => `{ name: "${c.name}", path: "${c.path}" }`
-      ).join(", "),
-    };
-
-    // Emit error marker for main process
-    console.error(`${PROJECT_CMD_ERROR_MARKER}${JSON.stringify(errorInfo)}`);
-
-    const names = notAllowed.map((c) => c.name).join(", ");
-    throw new Error(
-      `Project command(s) not allowed: ${names}\n` +
-      `Add to .claude/safesh.local.ts:\n` +
-      `  allowedCommands: [\n` +
-      notAllowed.map((c) => `    { name: "${c.name}", path: "${c.path}" }`).join(",\n") +
-      `\n  ]`
-    );
-  }
-
-  // All commands allowed, create registered commands
-  for (const [name, path] of Object.entries(commands)) {
-    (result as Record<string, RegisteredCommand>)[name] = createRegisteredCommand(
+    (result as Record<string, RegisteredCommand>)[name] = {
       name,
       path,
-      options
-    );
+      exec: async (args: string[] = []) => {
+        return await new Command(path, args, options).exec();
+      },
+      stream: (args: string[] = []) => {
+        return new Command(path, args, options).stream();
+      },
+      cmd: (args: string[] = []) => {
+        return new Command(path, args, options);
+      },
+    };
   }
 
   return result;
