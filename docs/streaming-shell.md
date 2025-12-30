@@ -268,7 +268,7 @@ When using the MCP `run` tool, these are automatically available:
 - `glob()`, `src()`, `cat()`, `dest()`
 
 **Commands:**
-- `cmd()`, `git()`, `docker()`, `deno()`
+- `cmd()`, `git()`, `docker()`, `deno()`, `initCmds()`
 
 **ShellJS-like:**
 - `pwd()`, `which()`, `test()`, `echo()`, `cd()`, etc.
@@ -518,6 +518,32 @@ Create a git command.
 ```typescript
 const status = await git("status").exec();
 ```
+
+#### `initCmds(commands: string[], options?: CommandOptions): Promise<CommandFn[]>`
+
+Register external commands with upfront permission checking. Returns callable functions in the same order as input.
+
+```typescript
+// Register commands - permissions checked at init time
+const [cargo, curl, build] = await initCmds([
+  "cargo",
+  "curl",
+  "./scripts/build.sh",  // project-local scripts work too
+]);
+
+// Call commands directly (returns Promise<CommandResult>)
+await cargo("build", "--release");
+await curl("-s", "https://api.example.com");
+await build("--verbose");
+```
+
+**Built-in helpers** (no `initCmds` needed):
+- `git()`, `docker()`, `deno()` - always available
+
+**When to use initCmds**:
+- Any command without a built-in helper
+- Project-local scripts (relative paths)
+- Commands requiring explicit permission
 
 #### Command Options
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-SafeShell uses a simple, upfront permission model where commands are validated at declaration time via `init()`, not at execution time.
+SafeShell uses a simple, upfront permission model where commands are validated at declaration time via `initCmds()`, not at execution time.
 
 ## Key Principles
 
@@ -11,8 +11,8 @@ SafeShell uses a simple, upfront permission model where commands are validated a
    - Local config (project-level)
    - User scope config
    - Defaults
-3. **Upfront declaration via init()** - Clients declare commands with `init()` to avoid mid-script permission failures
-4. **Permission check at init time** - Critical that `init()` validates permissions immediately
+3. **Upfront declaration via initCmds()** - Clients declare commands with `initCmds()` to avoid mid-script permission failures
+4. **Permission check at init time** - Critical that `initCmds()` validates permissions immediately
 
 ## Permission Logic
 
@@ -38,7 +38,7 @@ Where `allowed_check(x)` = check if `x` is in the allowed commands list.
 
 ## Workflow
 
-1. **init() phase**
+1. **initCmds() phase**
    - Client declares all external commands needed
    - Check permission for each command
    - Collect list of unallowed commands
@@ -46,7 +46,7 @@ Where `allowed_check(x)` = check if `x` is in the allowed commands list.
    - This allows user to grant permissions for all at once
 
 2. **Execution phase**
-   - Once `init()` passes, proceed with execution
+   - Once `initCmds()` passes, proceed with execution
    - All declared external commands will work
    - FS access still limited by Deno sandbox
 
@@ -58,28 +58,39 @@ Where `allowed_check(x)` = check if `x` is in the allowed commands list.
 
 ```typescript
 // Declare commands upfront - permission checked here
-const commands = init({
-  curl: "curl",
-  cargo: "cargo",
-  myScript: "./scripts/build.sh",  // project-local
-});
+const [curl, cargo, myScript] = await initCmds([
+  "curl",
+  "cargo",
+  "./scripts/build.sh",  // project-local
+]);
 
-// If init() succeeds, these will work
-await commands.curl.exec(["-s", "https://api.example.com"]);
-await commands.cargo.exec(["build", "--release"]);
-await commands.myScript.stdout().print();
+// If initCmds() succeeds, these will work
+await curl("-s", "https://api.example.com");
+await cargo("build", "--release");
+await myScript();
 ```
 
 ## Error Handling
 
-When commands are not allowed, `init()` returns:
+When commands are not allowed, `initCmds()` throws and the MCP server returns:
 
 ```json
 {
-  "error": "COMMAND_NOT_ALLOWED",
-  "commands": ["curl", "cargo"],
-  "retry_id": "rt1"
+  "error": {
+    "type": "COMMANDS_BLOCKED",
+    "commands": [
+      { "command": "curl", "error": "COMMAND_NOT_ALLOWED" },
+      { "command": "cargo", "error": "COMMAND_NOT_ALLOWED" }
+    ],
+    "message": "2 command(s) not allowed, 0 command(s) not found"
+  },
+  "retry_id": "rt1",
+  "hint": "STOP: Present this error to user with options..."
 }
 ```
 
-Client presents options to user and retries with permission choice.
+**Retry workflow:**
+1. Present error and options to user (1=once, 2=session, 3=always, 4=deny)
+2. On user choice 1-3, retry with: `run({ retry_id: "rt1", userChoice: N })`
+3. Server applies userChoice to ALL blocked commands
+4. On choice 4 (deny), stop and report error

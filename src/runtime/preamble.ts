@@ -107,10 +107,10 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
   }
 
   if (preambleConfig) {
-    // Config for permission checking in init()
+    // Config for permission checking in init() - must be global for imported modules to access
     lines.push(
-      "// Config for permission checking",
-      `const $config: { projectDir?: string; allowProjectCommands?: boolean; allowedCommands: string[]; cwd: string } = ${JSON.stringify(preambleConfig)};`,
+      "// Config for permission checking (global for initCmds access)",
+      `(globalThis as any).$config = ${JSON.stringify(preambleConfig)};`,
       "",
     );
   }
