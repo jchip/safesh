@@ -7,6 +7,54 @@
 import type { SafeShellConfig, Shell } from "./types.ts";
 import { getProjectCommands } from "./config.ts";
 
+// ============================================================================
+// Path Utilities
+// ============================================================================
+
+/**
+ * Get real path, handling symlinks and non-existent paths
+ *
+ * Returns the resolved real path if possible, otherwise returns the input path.
+ * Useful for normalizing paths that may contain symlinks (e.g., /tmp -> /private/tmp on macOS).
+ */
+export function getRealPath(path: string): string {
+  try {
+    return Deno.realPathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Get default config with current directory as sandbox
+ *
+ * Creates a minimal SafeShellConfig allowing read/write to the current directory
+ * and /tmp. Resolves /tmp to its real path for symlink handling.
+ */
+export function getDefaultConfig(cwd: string): SafeShellConfig {
+  const tmpPath = getRealPath("/tmp");
+  const realCwd = getRealPath(cwd);
+
+  return {
+    permissions: {
+      read: [realCwd, tmpPath],
+      write: [realCwd, tmpPath],
+    },
+  };
+}
+
+/**
+ * Get default allowed paths for sandbox validation
+ *
+ * Returns an array of paths that are allowed by default: cwd and /tmp.
+ * Resolves symlinks to real paths.
+ */
+export function getDefaultAllowedPaths(cwd: string): string[] {
+  const tmpPath = getRealPath("/tmp");
+  const realCwd = getRealPath(cwd);
+  return [realCwd, tmpPath];
+}
+
 /**
  * Hash code string using SHA-256
  *
