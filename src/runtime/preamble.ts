@@ -82,7 +82,7 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `import { filter, map, flatMap, take, head, tail, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
     `import { stdout, stderr, tee } from 'file://${stdlibPath}io.ts';`,
     `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
-    `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, init, initCmds } from 'file://${stdlibPath}command.ts';`,
+    `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds } from 'file://${stdlibPath}command.ts';`,
     "",
     "// Import shelljs-like commands",
     `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,

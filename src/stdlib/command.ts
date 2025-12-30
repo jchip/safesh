@@ -896,24 +896,8 @@ export function toCmdLines(
 }
 
 // ============================================================================
-// Project Command Registration
+// Command Registration
 // ============================================================================
-
-/**
- * A registered command that can be executed
- */
-export interface RegisteredCommand {
-  /** Execute the command with arguments */
-  exec(args?: string[]): Promise<CommandResult>;
-  /** Execute and stream output */
-  stream(args?: string[]): AsyncGenerator<StreamChunk>;
-  /** Create a Command for piping */
-  cmd(args?: string[]): Command;
-  /** The path to the command */
-  readonly path: string;
-  /** The registered name */
-  readonly name: string;
-}
 
 // Init error marker for permission check failures (parsed by executor)
 const INIT_ERROR_MARKER = "__SAFESH_INIT_ERROR__:";
@@ -1039,6 +1023,11 @@ async function checkPermission(
 }
 
 /**
+ * Command callable - call with args to execute
+ */
+export type CommandFn = (...args: string[]) => Promise<CommandResult>;
+
+/**
  * Initialize commands for convenient access
  *
  * Validates permissions for ALL commands upfront. If any commands are blocked
@@ -1046,27 +1035,24 @@ async function checkPermission(
  *
  * @param commands - Map of command names to paths
  * @param options - Optional command options (cwd, env, etc.)
- * @returns Object with registered command wrappers
+ * @returns Object with callable command functions
  *
  * @example
  * ```ts
- * const commands = await init({
+ * const cmds = await initCmds({
  *   cargo: "cargo",
  *   build: "./scripts/build.sh"
  * });
  *
- * await commands.cargo.exec(["build"]);
- * await commands.build.exec(["--release"]);
- *
- * // Can also get Command for piping
- * const result = await commands.build.cmd(["--json"]).pipe("jq", [".version"]).exec();
+ * await cmds.cargo("build", "--release");
+ * await cmds.build("--verbose");
  * ```
  */
-export async function init<T extends Record<string, string>>(
+export async function initCmds<T extends Record<string, string>>(
   commands: T,
   options?: CommandOptions,
-): Promise<{ [K in keyof T]: RegisteredCommand }> {
-  const result = {} as { [K in keyof T]: RegisteredCommand };
+): Promise<{ [K in keyof T]: CommandFn }> {
+  const result = {} as { [K in keyof T]: CommandFn };
 
   // Check if $config is available (injected by preamble)
   // Using typeof to avoid ReferenceError if $config doesn't exist
@@ -1086,7 +1072,7 @@ export async function init<T extends Record<string, string>>(
       }),
     );
 
-    for (const { name, path, result: permResult } of checks) {
+    for (const { name, result: permResult } of checks) {
       if (permResult.allowed) {
         resolvedPaths[name] = permResult.resolvedPath;
       } else if (permResult.error === "COMMAND_NOT_ALLOWED") {
@@ -1115,82 +1101,21 @@ export async function init<T extends Record<string, string>>(
       throw new Error(errors.join(". "));
     }
 
-    // All permissions passed - create wrappers with resolved paths
+    // All permissions passed - create callable command functions
     for (const [name, path] of entries) {
       const resolvedPath = resolvedPaths[name] ?? path;
-      (result as Record<string, RegisteredCommand>)[name] = {
-        name,
-        path: resolvedPath,
-        exec: async (args: string[] = []) => {
-          return await new Command(resolvedPath, args, options).exec();
-        },
-        stream: (args: string[] = []) => {
-          return new Command(resolvedPath, args, options).stream();
-        },
-        cmd: (args: string[] = []) => {
-          return new Command(resolvedPath, args, options);
-        },
+      (result as Record<string, CommandFn>)[name] = (...args: string[]) => {
+        return new Command(resolvedPath, args, options).exec();
       };
     }
   } else {
-    // No config available (file execution mode) - create wrappers without permission check
+    // No config available (file execution mode) - create callables without permission check
     // Permissions will be enforced by Deno sandbox at execution time
     for (const [name, path] of Object.entries(commands)) {
-      (result as Record<string, RegisteredCommand>)[name] = {
-        name,
-        path,
-        exec: async (args: string[] = []) => {
-          return await new Command(path, args, options).exec();
-        },
-        stream: (args: string[] = []) => {
-          return new Command(path, args, options).stream();
-        },
-        cmd: (args: string[] = []) => {
-          return new Command(path, args, options);
-        },
+      (result as Record<string, CommandFn>)[name] = (...args: string[]) => {
+        return new Command(path, args, options).exec();
       };
     }
-  }
-
-  return result;
-}
-
-/**
- * Simple command callable - just call it with args
- */
-export type CommandFn = (...args: string[]) => Promise<CommandResult>;
-
-/**
- * Initialize commands with a simpler API - returns callable functions
- *
- * @param commands - Map of command names to paths
- * @param options - Optional command options (cwd, env, etc.)
- * @returns Object with callable command functions
- *
- * @example
- * ```ts
- * const cmds = await initCmds({
- *   cargo: "cargo",
- *   build: "./scripts/build.sh"
- * });
- *
- * await cmds.cargo("build", "--release");
- * await cmds.build("--verbose");
- * ```
- */
-export async function initCmds<T extends Record<string, string>>(
-  commands: T,
-  options?: CommandOptions,
-): Promise<{ [K in keyof T]: CommandFn }> {
-  // Use init() for permission checking
-  const registered = await init(commands, options);
-
-  const result = {} as { [K in keyof T]: CommandFn };
-
-  for (const [name, reg] of Object.entries(registered)) {
-    (result as Record<string, CommandFn>)[name] = (...args: string[]) => {
-      return reg.exec(args);
-    };
   }
 
   return result;
