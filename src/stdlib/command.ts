@@ -912,8 +912,13 @@ interface PreambleConfig {
   cwd: string;
 }
 
-// Reference to $config injected by preamble (may not exist in file execution mode)
+// Reference to $config injected by preamble (on globalThis, may not exist in file execution mode)
 declare const $config: PreambleConfig | undefined;
+
+/** Get the config from globalThis (where preamble injects it) */
+function getConfig(): PreambleConfig | undefined {
+  return (globalThis as { $config?: PreambleConfig }).$config;
+}
 
 /**
  * Check if a command exists at the given path
@@ -1033,52 +1038,47 @@ export type CommandFn = (...args: string[]) => Promise<CommandResult>;
  * Validates permissions for ALL commands upfront. If any commands are blocked
  * or not found, throws an error with details about ALL failures (not just first).
  *
- * @param commands - Map of command names to paths
+ * @param commands - Array of command paths
  * @param options - Optional command options (cwd, env, etc.)
- * @returns Object with callable command functions
+ * @returns Array of callable command functions (same order as input)
  *
  * @example
  * ```ts
- * const cmds = await initCmds({
- *   cargo: "cargo",
- *   build: "./scripts/build.sh"
- * });
+ * const [cargo, build] = await initCmds(["cargo", "./scripts/build.sh"]);
  *
- * await cmds.cargo("build", "--release");
- * await cmds.build("--verbose");
+ * await cargo("build", "--release");
+ * await build("--verbose");
  * ```
  */
-export async function initCmds<T extends Record<string, string>>(
+export async function initCmds<T extends readonly string[]>(
   commands: T,
   options?: CommandOptions,
 ): Promise<{ [K in keyof T]: CommandFn }> {
-  const result = {} as { [K in keyof T]: CommandFn };
-
-  // Check if $config is available (injected by preamble)
-  // Using typeof to avoid ReferenceError if $config doesn't exist
-  const config = typeof $config !== "undefined" ? $config : undefined;
+  // Get config from globalThis (injected by preamble)
+  const config = getConfig();
 
   if (config) {
     // Check permissions for all commands upfront
     const notAllowed: string[] = [];
     const notFound: string[] = [];
-    const resolvedPaths: Record<string, string> = {};
 
-    const entries = Object.entries(commands);
     const checks = await Promise.all(
-      entries.map(async ([name, path]) => {
+      commands.map(async (path) => {
         const result = await checkPermission(path, config);
-        return { name, path, result };
+        return { path, result };
       }),
     );
 
-    for (const { name, result: permResult } of checks) {
+    const resolvedPaths: string[] = [];
+    for (const { path, result: permResult } of checks) {
       if (permResult.allowed) {
-        resolvedPaths[name] = permResult.resolvedPath;
+        resolvedPaths.push(permResult.resolvedPath);
       } else if (permResult.error === "COMMAND_NOT_ALLOWED") {
         notAllowed.push(permResult.command);
+        resolvedPaths.push(path); // placeholder
       } else if (permResult.error === "COMMAND_NOT_FOUND") {
         notFound.push(permResult.command);
+        resolvedPaths.push(path); // placeholder
       }
     }
 
@@ -1102,21 +1102,14 @@ export async function initCmds<T extends Record<string, string>>(
     }
 
     // All permissions passed - create callable command functions
-    for (const [name, path] of entries) {
-      const resolvedPath = resolvedPaths[name] ?? path;
-      (result as Record<string, CommandFn>)[name] = (...args: string[]) => {
-        return new Command(resolvedPath, args, options).exec();
-      };
-    }
+    return resolvedPaths.map((resolvedPath) => {
+      return (...args: string[]) => new Command(resolvedPath, args, options).exec();
+    }) as { [K in keyof T]: CommandFn };
   } else {
     // No config available (file execution mode) - create callables without permission check
     // Permissions will be enforced by Deno sandbox at execution time
-    for (const [name, path] of Object.entries(commands)) {
-      (result as Record<string, CommandFn>)[name] = (...args: string[]) => {
-        return new Command(path, args, options).exec();
-      };
-    }
+    return commands.map((path) => {
+      return (...args: string[]) => new Command(path, args, options).exec();
+    }) as { [K in keyof T]: CommandFn };
   }
-
-  return result;
 }

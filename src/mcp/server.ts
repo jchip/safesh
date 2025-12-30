@@ -109,7 +109,6 @@ const RunSchema = z.object({
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
   retry_id: z.string().optional().describe("Retry ID from a previous COMMAND_NOT_ALLOWED error"),
-  allow: z.array(z.string()).optional().describe("Commands to temporarily allow for this retry"),
   userChoice: z.number().min(1).max(3).optional().describe("User's permission choice: 1=once, 2=session, 3=always (save to .claude/safesh.local.json)"),
 });
 
@@ -288,7 +287,6 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
    */
   async function handleRetryWorkflow(
     retryId: string,
-    allow: string[] | undefined,
     userChoice: number | undefined,
   ): Promise<RetryResult | RetryError> {
     const retry = shellManager.consumePendingRetry(retryId);
@@ -302,14 +300,23 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
       };
     }
 
+    // Get blocked commands from retry context (not from allow param)
+    const blockedCmds: string[] = [];
+    if (retry.blockedCommand) {
+      blockedCmds.push(retry.blockedCommand);
+    }
+    if (retry.blockedCommands) {
+      blockedCmds.push(...retry.blockedCommands);
+    }
+
     let execConfig = configHolder.config;
     const retryCwd = retry.context.cwd;
 
-    if (allow && allow.length > 0) {
+    if (blockedCmds.length > 0 && userChoice) {
       if (userChoice === 3) {
         // Always allow: save to JSON and reload config
         try {
-          await saveToLocalJson(retryCwd, allow);
+          await saveToLocalJson(retryCwd, blockedCmds);
           execConfig = await loadConfig(retryCwd);
           if (retryCwd === configHolder.cwd) {
             configHolder.config = execConfig;
@@ -329,16 +336,16 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
         }
       } else if (userChoice === 2) {
         // Allow for session
-        shellManager.addSessionAllowedCommands(allow);
+        shellManager.addSessionAllowedCommands(blockedCmds);
         execConfig = mergeConfigs(configHolder.config, {
-          permissions: { run: allow },
-          external: Object.fromEntries(allow.map((cmd) => [cmd, { allow: true }])),
+          permissions: { run: blockedCmds },
+          external: Object.fromEntries(blockedCmds.map((cmd) => [cmd, { allow: true }])),
         });
       } else {
         // Allow once
         execConfig = mergeConfigs(configHolder.config, {
-          permissions: { run: allow },
-          external: Object.fromEntries(allow.map((cmd) => [cmd, { allow: true }])),
+          permissions: { run: blockedCmds },
+          external: Object.fromEntries(blockedCmds.map((cmd) => [cmd, { allow: true }])),
         });
       }
     }
@@ -425,7 +432,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
             message: `Command '${blockedCommand}' is not allowed`,
           },
           retry_id: retry.id,
-          hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", allow: ["${blockedCommand}"], userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
+          hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
         }, null, 2),
       }],
       isError: true,
@@ -473,7 +480,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
             message: `${blockedCommands.length} command(s) not allowed, ${notFoundCommands.length} command(s) not found`,
           },
           retry_id: retry.id,
-          hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", allow: ${JSON.stringify(allBlocked)}, userChoice: N } where N=1 (once), 2 (session), or 3 (always). Note: Commands not found cannot be allowed - they must be fixed in code.`,
+          hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), or 3 (always). Note: Commands not found cannot be allowed - they must be fixed in code.`,
         }, null, 2),
       }],
       isError: true,
@@ -544,12 +551,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
               },
               retry_id: {
                 type: "string",
-                description: "Retry ID from a previous COMMAND_NOT_ALLOWED error. Use with 'allow' to retry with temp permissions.",
-              },
-              allow: {
-                type: "array",
-                items: { type: "string" },
-                description: "Commands to temporarily allow for this retry (e.g., ['cargo', 'rustc']).",
+                description: "Retry ID from a previous COMMAND_NOT_ALLOWED error. Use with userChoice to retry.",
               },
               userChoice: {
                 type: "number",
@@ -819,7 +821,6 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
           if (parsed.retry_id) {
             const retryResult = await handleRetryWorkflow(
               parsed.retry_id,
-              parsed.allow,
               parsed.userChoice,
             );
             if (!retryResult.success) {

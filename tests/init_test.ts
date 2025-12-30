@@ -15,31 +15,26 @@ import { initCmds } from "../src/stdlib/command.ts";
 
 Deno.test("initCmds - returns callable functions", async () => {
   // In file execution mode (no $config), initCmds just creates callable wrappers
-  const cmds = await initCmds({
-    myTool: "./scripts/my-tool.sh",
-  });
+  const [myTool] = await initCmds(["./scripts/my-tool.sh"]);
 
   // Should be a function
-  assertEquals(typeof cmds.myTool, "function");
+  assertEquals(typeof myTool, "function");
 });
 
 Deno.test("initCmds - registers multiple commands", async () => {
-  const cmds = await initCmds({
-    build: "./scripts/build.sh",
-    test: "./scripts/test.sh",
-  });
+  const [build, test] = await initCmds([
+    "./scripts/build.sh",
+    "./scripts/test.sh",
+  ]);
 
-  assertEquals(typeof cmds.build, "function");
-  assertEquals(typeof cmds.test, "function");
+  assertEquals(typeof build, "function");
+  assertEquals(typeof test, "function");
 });
 
 Deno.test("initCmds - basic command names work", async () => {
   // In file execution mode, basic names just create wrappers
-  const cmds = await initCmds({
-    git: "git",
-    deno: "deno",
-  });
+  const [git, deno] = await initCmds(["git", "deno"]);
 
-  assertEquals(typeof cmds.git, "function");
-  assertEquals(typeof cmds.deno, "function");
+  assertEquals(typeof git, "function");
+  assertEquals(typeof deno, "function");
 });
