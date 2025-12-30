@@ -304,20 +304,26 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
 
     let execConfig = configHolder.config;
     const isProjectCommand = retry.blockedProjectCommands && retry.blockedProjectCommands.length > 0;
+    const retryCwd = retry.context.cwd;
 
     if (allow && allow.length > 0) {
       if (userChoice === 3) {
         // Always allow: save to JSON and reload config
         try {
           // Project commands need to be saved as objects, regular commands as strings
+          // Use retry's cwd, not current cwd (user might have switched projects)
           if (isProjectCommand && retry.blockedProjectCommands) {
-            await saveToLocalJson(configHolder.cwd, [], retry.blockedProjectCommands);
+            await saveToLocalJson(retryCwd, [], retry.blockedProjectCommands);
           } else {
-            await saveToLocalJson(configHolder.cwd, allow);
+            await saveToLocalJson(retryCwd, allow);
           }
-          configHolder.config = await loadConfig(configHolder.cwd);
-          execConfig = configHolder.config;
-          registry = createRegistry(configHolder.config, configHolder.cwd);
+          // Reload config from retry's project
+          execConfig = await loadConfig(retryCwd);
+          // Also update current config if same project
+          if (retryCwd === configHolder.cwd) {
+            configHolder.config = execConfig;
+            registry = createRegistry(configHolder.config, configHolder.cwd);
+          }
         } catch (error) {
           return {
             success: false,
