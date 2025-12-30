@@ -61,11 +61,12 @@ function filterExistingCommands(commands: string[], cwd: string): string[] {
   return existing;
 }
 
-// Marker for job events (must match command.ts)
-const JOB_MARKER = "__SAFESH_JOB__:";
-
-// Marker for command permission errors (must match command.ts)
-const CMD_ERROR_MARKER = "__SAFESH_CMD_ERROR__:";
+// Stderr markers (must match command.ts)
+const STDERR_MARKERS = {
+  job: "__SAFESH_JOB__:",
+  cmdError: "__SAFESH_CMD_ERROR__:",
+  projectCmdError: "__SAFESH_PROJECT_CMD_ERROR__:",
+} as const;
 
 /** Job event from subprocess */
 interface JobEvent {
@@ -84,8 +85,19 @@ interface JobEvent {
 
 /** Command error event from subprocess */
 interface CommandErrorEvent {
-  type: "COMMAND_NOT_ALLOWED";
+  type: "COMMAND_NOT_ALLOWED" | "PROJECT_COMMANDS_NOT_ALLOWED";
   command: string;
+  commands?: Array<{ name: string; path: string }>;
+}
+
+/** Parse a marker line, returns parsed JSON or null if invalid */
+function parseMarkerLine<T>(line: string, marker: string): T | null {
+  if (!line.startsWith(marker)) return null;
+  try {
+    return JSON.parse(line.slice(marker.length)) as T;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -102,27 +114,36 @@ function extractStderrEvents(stderr: string): {
   const cleanLines: string[] = [];
 
   for (const line of lines) {
-    if (line.startsWith(JOB_MARKER)) {
-      try {
-        const jsonStr = line.slice(JOB_MARKER.length);
-        const event = JSON.parse(jsonStr) as JobEvent;
-        jobEvents.push(event);
-      } catch {
-        // Invalid JSON, keep the line as-is
-        cleanLines.push(line);
-      }
-    } else if (line.startsWith(CMD_ERROR_MARKER)) {
-      try {
-        const jsonStr = line.slice(CMD_ERROR_MARKER.length);
-        const event = JSON.parse(jsonStr) as CommandErrorEvent;
-        cmdErrors.push(event);
-      } catch {
-        // Invalid JSON, keep the line as-is
-        cleanLines.push(line);
-      }
-    } else {
-      cleanLines.push(line);
+    const jobEvent = parseMarkerLine<JobEvent>(line, STDERR_MARKERS.job);
+    if (jobEvent) {
+      jobEvents.push(jobEvent);
+      continue;
     }
+
+    const cmdError = parseMarkerLine<CommandErrorEvent>(line, STDERR_MARKERS.cmdError);
+    if (cmdError) {
+      cmdErrors.push(cmdError);
+      continue;
+    }
+
+    const projectCmdError = parseMarkerLine<{ type: string; commands: Array<{ name: string; path: string }> }>(
+      line,
+      STDERR_MARKERS.projectCmdError,
+    );
+    if (projectCmdError) {
+      // Convert project command errors to CommandErrorEvent format (use first command)
+      const firstCmd = projectCmdError.commands[0];
+      if (firstCmd) {
+        cmdErrors.push({
+          type: "PROJECT_COMMANDS_NOT_ALLOWED",
+          command: firstCmd.name,
+          commands: projectCmdError.commands,
+        });
+      }
+      continue;
+    }
+
+    cleanLines.push(line);
   }
 
   return { cleanStderr: cleanLines.join("\n"), jobEvents, cmdErrors };
