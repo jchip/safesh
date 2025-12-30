@@ -203,6 +203,7 @@ Deno.test("glob() - respects sandbox boundaries", async () => {
 
     const files = await glob(join(FIXTURES_DIR, "**/*.txt"), {
       config: restrictedConfig,
+      cwd: join(FIXTURES_DIR, "src"),
     }).collect();
 
     // Should find no files since .txt files are outside allowed directory
@@ -309,6 +310,7 @@ Deno.test("cat() - throws on sandbox violation", async () => {
       async () => {
         await cat(join(FIXTURES_DIR, "file1.txt"), {
           config: restrictedConfig,
+          cwd: join(FIXTURES_DIR, "src"),
         }).collect();
       },
       Error,

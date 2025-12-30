@@ -21,6 +21,7 @@ describe("ShellManager", () => {
       assertEquals(shell.cwd, "/tmp/test");
       assertEquals(shell.env, {});
       assertEquals(shell.vars, {});
+      assertEquals(shell.scripts.size, 0);
       assertEquals(shell.jobs.size, 0);
     });
 
@@ -165,13 +166,13 @@ describe("ShellManager", () => {
     });
   });
 
-  describe("job management", () => {
-    it("adds and retrieves jobs", () => {
+  describe("script management", () => {
+    it("adds and retrieves scripts", () => {
       const shell = manager.create();
-      const job = {
-        id: "job-1",
+      const script = {
+        id: "script-1",
         pid: 12345,
-        code: "sleep 10",
+        code: "console.log('test')",
         status: "running" as const,
         startedAt: new Date(),
         stdout: "",
@@ -179,20 +180,21 @@ describe("ShellManager", () => {
         stdoutTruncated: false,
         stderrTruncated: false,
         background: true,
+        jobIds: [],
       };
 
-      manager.addJob(shell.id, job);
-      const retrieved = manager.getJob(shell.id, "job-1");
+      manager.addScript(shell.id, script);
+      const retrieved = manager.getScript(shell.id, "script-1");
 
-      assertEquals(retrieved, job);
+      assertEquals(retrieved, script);
     });
 
-    it("retrieves jobs by PID", () => {
+    it("retrieves scripts by PID", () => {
       const shell = manager.create();
-      const job = {
-        id: "job-1",
+      const script = {
+        id: "script-1",
         pid: 12345,
-        code: "sleep 10",
+        code: "console.log('test')",
         status: "running" as const,
         startedAt: new Date(),
         stdout: "",
@@ -200,20 +202,21 @@ describe("ShellManager", () => {
         stdoutTruncated: false,
         stderrTruncated: false,
         background: true,
+        jobIds: [],
       };
 
-      manager.addJob(shell.id, job);
-      const retrieved = manager.getJobByPid(shell.id, 12345);
+      manager.addScript(shell.id, script);
+      const retrieved = manager.getScriptByPid(shell.id, 12345);
 
-      assertEquals(retrieved, job);
+      assertEquals(retrieved, script);
     });
 
-    it("updates job status", () => {
+    it("updates script status", () => {
       const shell = manager.create();
-      manager.addJob(shell.id, {
-        id: "job-1",
+      manager.addScript(shell.id, {
+        id: "script-1",
         pid: 12345,
-        code: "sleep 10",
+        code: "console.log('test')",
         status: "running",
         startedAt: new Date(),
         stdout: "",
@@ -221,26 +224,27 @@ describe("ShellManager", () => {
         stdoutTruncated: false,
         stderrTruncated: false,
         background: true,
+        jobIds: [],
       });
 
-      manager.updateJob(shell.id, "job-1", {
+      manager.updateScript(shell.id, "script-1", {
         status: "completed",
         exitCode: 0,
         completedAt: new Date(),
         duration: 100,
       });
-      const job = manager.getJob(shell.id, "job-1");
+      const script = manager.getScript(shell.id, "script-1");
 
-      assertEquals(job?.status, "completed");
-      assertEquals(job?.exitCode, 0);
-      assertEquals(job?.duration, 100);
+      assertEquals(script?.status, "completed");
+      assertEquals(script?.exitCode, 0);
+      assertEquals(script?.duration, 100);
     });
 
-    it("lists jobs with filter", () => {
+    it("lists scripts with filter", () => {
       const shell = manager.create();
       const now = new Date();
-      manager.addJob(shell.id, {
-        id: "job-1",
+      manager.addScript(shell.id, {
+        id: "script-1",
         pid: 123,
         code: "cmd1",
         status: "running",
@@ -250,9 +254,10 @@ describe("ShellManager", () => {
         stdoutTruncated: false,
         stderrTruncated: false,
         background: true,
+        jobIds: [],
       });
-      manager.addJob(shell.id, {
-        id: "job-2",
+      manager.addScript(shell.id, {
+        id: "script-2",
         pid: 456,
         code: "cmd2",
         status: "completed",
@@ -262,18 +267,19 @@ describe("ShellManager", () => {
         stdoutTruncated: false,
         stderrTruncated: false,
         background: false,
+        jobIds: [],
       });
 
-      const allJobs = manager.listJobs(shell.id);
-      assertEquals(allJobs.length, 2);
+      const allScripts = manager.listScripts(shell.id);
+      assertEquals(allScripts.length, 2);
 
-      const runningJobs = manager.listJobs(shell.id, { status: "running" });
-      assertEquals(runningJobs.length, 1);
-      assertEquals(runningJobs[0]!.id, "job-1");
+      const runningScripts = manager.listScripts(shell.id, { status: "running" });
+      assertEquals(runningScripts.length, 1);
+      assertEquals(runningScripts[0]!.id, "script-1");
 
-      const bgJobs = manager.listJobs(shell.id, { background: true });
-      assertEquals(bgJobs.length, 1);
-      assertEquals(bgJobs[0]!.id, "job-1");
+      const bgScripts = manager.listScripts(shell.id, { background: true });
+      assertEquals(bgScripts.length, 1);
+      assertEquals(bgScripts[0]!.id, "script-1");
     });
   });
 
@@ -338,8 +344,8 @@ describe("ShellManager", () => {
     it("serializes shell for response", () => {
       const shell = manager.create({ cwd: "/my/dir", env: { FOO: "bar" } });
       shell.vars = { count: 5 };
-      manager.addJob(shell.id, {
-        id: "job-1",
+      manager.addScript(shell.id, {
+        id: "script-1",
         pid: 123,
         code: "test command",
         status: "running",
@@ -349,6 +355,7 @@ describe("ShellManager", () => {
         stdoutTruncated: false,
         stderrTruncated: false,
         background: true,
+        jobIds: [],
       });
 
       const serialized = manager.serialize(shell);
@@ -357,9 +364,9 @@ describe("ShellManager", () => {
       assertEquals(serialized.cwd, "/my/dir");
       assertEquals(serialized.env, { FOO: "bar" });
       assertEquals(serialized.vars, { count: 5 });
-      assertEquals(serialized.jobs.length, 1);
-      assertEquals(serialized.jobs[0]!.id, "job-1");
-      assertEquals(serialized.jobs[0]!.background, true);
+      assertEquals(serialized.scripts.length, 1);
+      assertEquals(serialized.scripts[0]!.id, "script-1");
+      assertEquals(serialized.scripts[0]!.background, true);
     });
   });
 
@@ -369,15 +376,15 @@ describe("ShellManager", () => {
       assertEquals(shell.lastActivityAt instanceof Date, true);
     });
 
-    it("has jobSequence field", () => {
+    it("has scriptSequence field", () => {
       const shell = manager.create();
-      assertEquals(shell.jobSequence, 0);
+      assertEquals(shell.scriptSequence, 0);
     });
 
-    it("has jobsByPid map", () => {
+    it("has scriptsByPid map", () => {
       const shell = manager.create();
-      assertEquals(shell.jobsByPid instanceof Map, true);
-      assertEquals(shell.jobsByPid.size, 0);
+      assertEquals(shell.scriptsByPid instanceof Map, true);
+      assertEquals(shell.scriptsByPid.size, 0);
     });
   });
 
@@ -391,7 +398,7 @@ describe("ShellManager", () => {
       );
 
       assertNotEquals(retry.id, "");
-      assertEquals(retry.id.startsWith("retry-"), true);
+      assertEquals(retry.id.startsWith("retry-"), false); // IDs are rt1, rt2 etc now
       assertEquals(retry.code, "await cmd('cargo', ['build']).exec()");
       assertEquals(retry.blockedCommand, "cargo");
       assertEquals(retry.context.cwd, "/project");

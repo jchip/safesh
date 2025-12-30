@@ -77,6 +77,7 @@ export async function generateImportMap(
 
   // Include @std imports - map specific subpaths that stdlib uses
   // Import maps require explicit subpath mappings
+  importMap.imports!["@std/fs/"] = "jsr:@std/fs@^1/";
   importMap.imports!["@std/fs/walk"] = "jsr:@std/fs@^1/walk";
   importMap.imports!["@std/fs/copy"] = "jsr:@std/fs@^1/copy";
   importMap.imports!["@std/fs/ensure-dir"] = "jsr:@std/fs@^1/ensure-dir";
@@ -84,6 +85,7 @@ export async function generateImportMap(
   importMap.imports!["@std/path"] = "jsr:@std/path@^1";
   importMap.imports!["@std/streams"] = "jsr:@std/streams@^1";
   importMap.imports!["@std/async"] = "jsr:@std/async@^1";
+  importMap.imports!["@std/fmt/colors"] = "jsr:@std/fmt@^1/colors";
 
   const importMapPath = join(TEMP_DIR, "import-map.json");
   await Deno.writeTextFile(

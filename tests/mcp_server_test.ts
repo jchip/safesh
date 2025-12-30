@@ -77,17 +77,19 @@ Deno.test({
     const { executeCode } = await import("../src/runtime/executor.ts");
 
     const now = new Date();
-    const session = {
-      id: "test-session",
-      cwd: Deno.cwd(),
-      env: { TEST_VAR: "test_value" },
-      vars: {},
-      jobs: new Map(),
-      jobsByPid: new Map(),
-      jobSequence: 0,
-      createdAt: now,
-      lastActivityAt: now,
-    };
+      const session = {
+        id: "test-shell",
+        cwd: "/tmp",
+        env: { TEST_VAR: "test_value" },
+        vars: {},
+        jobs: new Map(),
+        scripts: new Map(),
+        scriptsByPid: new Map(),
+        scriptSequence: 0,
+        jobSequence: 0,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+      };
 
     const configWithEnv: SafeShellConfig = {
       ...testConfig,
