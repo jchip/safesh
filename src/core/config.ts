@@ -500,10 +500,36 @@ export function getProjectCommands(): ProjectCommand[] {
   return cachedProjectCommands;
 }
 
+/** Options for loading config */
+export interface LoadConfigOptions {
+  /** Skip validation (default: false) */
+  skipValidation?: boolean;
+  /** Throw on validation errors (default: true) */
+  throwOnErrors?: boolean;
+  /** Log warnings to stderr (default: true) */
+  logWarnings?: boolean;
+}
+
 /**
  * Load and merge all config files
+ *
+ * By default, validates the config and:
+ * - Logs warnings to stderr
+ * - Throws on critical errors (like write:['/'])
+ *
+ * Use skipValidation: true for performance-critical paths or when
+ * validation is handled separately.
  */
-export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
+export async function loadConfig(
+  cwd: string,
+  options: LoadConfigOptions = {},
+): Promise<SafeShellConfig> {
+  const {
+    skipValidation = false,
+    throwOnErrors = true,
+    logWarnings = true,
+  } = options;
+
   let config = { ...DEFAULT_CONFIG };
 
   // Load global config
@@ -569,6 +595,24 @@ export async function loadConfig(cwd: string): Promise<SafeShellConfig> {
     config.projectDir = resolveWorkspace(config.projectDir);
   }
 
+  // Validate config by default
+  if (!skipValidation) {
+    const validation = validateConfig(config);
+
+    // Throw on critical errors
+    if (throwOnErrors && validation.errors.length > 0) {
+      throw configError(
+        `Config validation failed:\n${validation.errors.join("\n")}`,
+      );
+    }
+
+    // Log warnings
+    if (logWarnings && validation.warnings.length > 0) {
+      console.error("⚠️  Config warnings:");
+      validation.warnings.forEach((w) => console.error(`   ${w}`));
+    }
+  }
+
   return config;
 }
 
@@ -631,29 +675,15 @@ export async function loadConfigWithArgs(
 
 /**
  * Load and validate config - throws on validation errors
- * Use this when you want strict validation (e.g., in MCP server startup)
+ *
+ * @deprecated Use loadConfig() instead, which validates by default.
+ * This function is kept for backwards compatibility.
  */
 export async function loadAndValidateConfig(
   cwd: string,
 ): Promise<SafeShellConfig> {
-  const config = await loadConfig(cwd);
-
-  const validation = validateConfig(config);
-
-  // Throw on errors
-  if (validation.errors.length > 0) {
-    throw configError(
-      `Config validation failed:\n${validation.errors.join("\n")}`,
-    );
-  }
-
-  // Log warnings
-  if (validation.warnings.length > 0) {
-    console.warn("⚠️  Config warnings:");
-    validation.warnings.forEach((w) => console.warn(`   ${w}`));
-  }
-
-  return config;
+  // loadConfig now validates by default with throwOnErrors: true
+  return await loadConfig(cwd);
 }
 
 /**

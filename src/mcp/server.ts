@@ -263,6 +263,172 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
     await fetchAndApplyRoots();
   });
 
+  // ============================================================================
+  // Run Tool Helper Functions
+  // ============================================================================
+
+  /** Result of retry workflow processing */
+  interface RetryResult {
+    success: true;
+    code: string;
+    shellId?: string;
+    timeout?: number;
+    background?: boolean;
+    config: SafeShellConfig;
+  }
+
+  /** Error from retry workflow */
+  interface RetryError {
+    success: false;
+    response: { content: { type: string; text: string }[]; isError: boolean };
+  }
+
+  /**
+   * Handle retry workflow - process retry_id and permission choices
+   */
+  async function handleRetryWorkflow(
+    retryId: string,
+    allow: string[] | undefined,
+    userChoice: number | undefined,
+  ): Promise<RetryResult | RetryError> {
+    const retry = shellManager.consumePendingRetry(retryId);
+    if (!retry) {
+      return {
+        success: false,
+        response: {
+          content: [{ type: "text", text: `Retry not found or expired: ${retryId}` }],
+          isError: true,
+        },
+      };
+    }
+
+    let execConfig = configHolder.config;
+
+    if (allow && allow.length > 0) {
+      if (userChoice === 3) {
+        // Always allow: save to JSON and reload config
+        try {
+          await saveToLocalJson(configHolder.cwd, allow);
+          configHolder.config = await loadConfig(configHolder.cwd);
+          execConfig = configHolder.config;
+          registry = createRegistry(configHolder.config, configHolder.cwd);
+        } catch (error) {
+          return {
+            success: false,
+            response: {
+              content: [{
+                type: "text",
+                text: `Failed to save to .claude/safesh.local.json: ${error instanceof Error ? error.message : String(error)}`,
+              }],
+              isError: true,
+            },
+          };
+        }
+      } else if (userChoice === 2) {
+        // Allow for session: add to session allowlist
+        shellManager.addSessionAllowedCommands(allow);
+        execConfig = mergeConfigs(configHolder.config, {
+          permissions: { run: allow },
+          external: Object.fromEntries(allow.map((cmd) => [cmd, { allow: true }])),
+        });
+      } else {
+        // userChoice=1 or not specified: allow once (temp config only)
+        execConfig = mergeConfigs(configHolder.config, {
+          permissions: { run: allow },
+          external: Object.fromEntries(allow.map((cmd) => [cmd, { allow: true }])),
+        });
+      }
+    }
+
+    return {
+      success: true,
+      code: retry.code,
+      shellId: retry.shellId,
+      timeout: retry.context.timeout,
+      background: retry.context.background,
+      config: execConfig,
+    };
+  }
+
+  /**
+   * Execute a file and return the MCP response
+   */
+  async function handleFileExecution(
+    file: string,
+    shellId: string | undefined,
+    env: Record<string, string> | undefined,
+    timeout: number | undefined,
+    config: SafeShellConfig,
+  ): Promise<{ content: { type: string; text: string }[]; isError: boolean }> {
+    const { shell, isTemporary } = shellManager.getOrTemp(
+      shellId,
+      { cwd: configHolder.cwd, env },
+    );
+
+    // Merge session-level allowed commands into config
+    const sessionCmds = shellManager.getSessionAllowedCommands();
+    let fileConfig = config;
+    if (sessionCmds.length > 0) {
+      fileConfig = mergeConfigs(fileConfig, {
+        permissions: { run: sessionCmds },
+        external: Object.fromEntries(sessionCmds.map((c) => [c, { allow: true }])),
+      });
+    }
+
+    const result = await executeFile(
+      file,
+      fileConfig,
+      { timeout, cwd: shell.cwd },
+      shell,
+    );
+
+    // Cleanup temporary shell
+    if (isTemporary) {
+      shellManager.end(shell.id);
+    }
+
+    return {
+      content: [{ type: "text", text: formatRunResult(result, shellId, result.scriptId) }],
+      isError: !result.success,
+    };
+  }
+
+  /**
+   * Format a blocked command response with retry information
+   */
+  function formatBlockedCommandResponse(
+    code: string,
+    blockedCommand: string,
+    shell: Shell,
+    env: Record<string, string> | undefined,
+    timeout: number | undefined,
+    background: boolean | undefined,
+    shellId: string | undefined,
+  ): { content: { type: string; text: string }[]; isError: boolean } {
+    const retry = shellManager.createPendingRetry(
+      code,
+      blockedCommand,
+      { cwd: shell.cwd, env, timeout, background },
+      shellId,
+    );
+
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          error: {
+            type: "COMMAND_NOT_ALLOWED",
+            command: blockedCommand,
+            message: `Command '${blockedCommand}' is not allowed`,
+          },
+          retry_id: retry.id,
+          hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", allow: ["${blockedCommand}"], userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
+        }, null, 2),
+      }],
+      isError: true,
+    };
+  }
+
   // Build permission summary for tool descriptions (uses initial config)
   const perms = configHolder.config.permissions ?? {};
   const permSummary = [
@@ -591,130 +757,42 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
         case "run": {
           const parsed = RunSchema.parse(args);
 
-          // Handle retry workflow
+          // Determine execution context (code, config, shellId, etc.)
           let code: string;
           let shellId: string | undefined = parsed.shellId;
           let execTimeout: number | undefined = parsed.timeout;
           let background: boolean | undefined = parsed.background;
           let execConfig = configHolder.config;
 
+          // Handle retry workflow
           if (parsed.retry_id) {
-            // Retry mode: get memoized context
-            const retry = shellManager.consumePendingRetry(parsed.retry_id);
-            if (!retry) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Retry not found or expired: ${parsed.retry_id}`,
-                  },
-                ],
-                isError: true,
-              };
+            const retryResult = await handleRetryWorkflow(
+              parsed.retry_id,
+              parsed.allow,
+              parsed.userChoice,
+            );
+            if (!retryResult.success) {
+              return retryResult.response;
             }
-
-            code = retry.code;
-            shellId = retry.shellId;
-            execTimeout = retry.context.timeout;
-            background = retry.context.background;
-
-            // Handle userChoice if provided
-            const userChoice = parsed.userChoice;
-            if (parsed.allow && parsed.allow.length > 0) {
-              const allowedCommands = parsed.allow;
-
-              if (userChoice === 3) {
-                // Always allow: save to JSON and reload config
-                try {
-                  await saveToLocalJson(configHolder.cwd, allowedCommands);
-                  // Reload config to pick up the new permissions
-                  configHolder.config = await loadConfig(configHolder.cwd);
-                  execConfig = configHolder.config;
-                  // Recreate registry with updated config
-                  registry = createRegistry(configHolder.config, configHolder.cwd);
-                } catch (error) {
-                  return {
-                    content: [
-                      {
-                        type: "text",
-                        text: `Failed to save to .claude/safesh.local.json: ${error instanceof Error ? error.message : String(error)}`,
-                      },
-                    ],
-                    isError: true,
-                  };
-                }
-              } else if (userChoice === 2) {
-                // Allow for session: add to session allowlist
-                shellManager.addSessionAllowedCommands(allowedCommands);
-                // Also merge into temp config for this execution
-                execConfig = mergeConfigs(configHolder.config, {
-                  permissions: {
-                    run: allowedCommands,
-                  },
-                  external: Object.fromEntries(
-                    allowedCommands.map((cmd) => [cmd, { allow: true }]),
-                  ),
-                });
-              } else {
-                // userChoice=1 or not specified: allow once (temp config only)
-                execConfig = mergeConfigs(configHolder.config, {
-                  permissions: {
-                    run: allowedCommands,
-                  },
-                  external: Object.fromEntries(
-                    allowedCommands.map((cmd) => [cmd, { allow: true }]),
-                  ),
-                });
-              }
-            }
+            code = retryResult.code;
+            shellId = retryResult.shellId;
+            execTimeout = retryResult.timeout;
+            background = retryResult.background;
+            execConfig = retryResult.config;
           } else if (parsed.file) {
-            // File execution - run the file directly with safesh:stdlib available
-            const { shell, isTemporary } = shellManager.getOrTemp(
-              shellId,
-              { cwd: configHolder.cwd, env: parsed.env },
-            );
-
-            // Merge session-level allowed commands into config
-            const sessionCmds = shellManager.getSessionAllowedCommands();
-            let fileConfig = execConfig;
-            if (sessionCmds.length > 0) {
-              fileConfig = mergeConfigs(fileConfig, {
-                permissions: { run: sessionCmds },
-                external: Object.fromEntries(sessionCmds.map((c) => [c, { allow: true }])),
-              });
-            }
-
-            const result = await executeFile(
+            // File execution - delegate to helper
+            return await handleFileExecution(
               parsed.file,
-              fileConfig,
-              { timeout: execTimeout, cwd: shell.cwd },
-              shell,
+              shellId,
+              parsed.env,
+              execTimeout,
+              execConfig,
             );
-
-            // Cleanup temporary shell
-            if (isTemporary) {
-              shellManager.end(shell.id);
-            }
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: formatRunResult(result, shellId, result.scriptId),
-                },
-              ],
-              isError: !result.success,
-            };
           } else if (parsed.code) {
             code = parsed.code;
           } else {
             return {
-              content: [
-                {
-                  type: "text",
-                  text: "Either 'code', 'file', or 'retry_id' must be provided",
-                },
-              ],
+              content: [{ type: "text", text: "Either 'code', 'file', or 'retry_id' must be provided" }],
               isError: true,
             };
           }
@@ -722,12 +800,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
           // Background execution requires a shell
           if (background && !shellId) {
             return {
-              content: [
-                {
-                  type: "text",
-                  text: "shellId is required for background execution",
-                },
-              ],
+              content: [{ type: "text", text: "shellId is required for background execution" }],
               isError: true,
             };
           }
@@ -736,12 +809,8 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
           const sessionCommands = shellManager.getSessionAllowedCommands();
           if (sessionCommands.length > 0) {
             execConfig = mergeConfigs(execConfig, {
-              permissions: {
-                run: sessionCommands,
-              },
-              external: Object.fromEntries(
-                sessionCommands.map((cmd) => [cmd, { allow: true }]),
-              ),
+              permissions: { run: sessionCommands },
+              external: Object.fromEntries(sessionCommands.map((cmd) => [cmd, { allow: true }])),
             });
           }
 
@@ -760,66 +829,31 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
           // Background execution: launch script and return immediately
           if (background) {
             const script = await launchCodeScript(code, execConfig, shell);
-            // Restore original env
             shell.env = originalEnv;
 
             return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({
-                    scriptId: script.id,
-                    pid: script.pid,
-                    shellId: shell.id,
-                    background: true,
-                  }, null, 2),
-                },
-              ],
+              content: [{
+                type: "text",
+                text: JSON.stringify({ scriptId: script.id, pid: script.pid, shellId: shell.id, background: true }, null, 2),
+              }],
             };
           }
 
           // Foreground execution: wait for completion
-          const result = await executeCode(
-            code,
-            execConfig,
-            { timeout: execTimeout, cwd: shell.cwd },
-            shell,
-          );
-
-          // Restore original env
+          const result = await executeCode(code, execConfig, { timeout: execTimeout, cwd: shell.cwd }, shell);
           shell.env = originalEnv;
 
           // Check for blocked command - create pending retry
           if (result.blockedCommand) {
-            const retry = shellManager.createPendingRetry(
+            return formatBlockedCommandResponse(
               code,
               result.blockedCommand,
-              {
-                cwd: shell.cwd,
-                env: parsed.env,
-                timeout: execTimeout,
-                background,
-              },
+              shell,
+              parsed.env,
+              execTimeout,
+              background,
               shellId,
             );
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({
-                    error: {
-                      type: "COMMAND_NOT_ALLOWED",
-                      command: result.blockedCommand,
-                      message: `Command '${result.blockedCommand}' is not allowed`,
-                    },
-                    retry_id: retry.id,
-                    hint: `STOP: Use AskUserQuestion with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Then retry with { retry_id: "${retry.id}", allow: ["${result.blockedCommand}"], userChoice: N } where N=1 (once), 2 (session), or 3 (always - saves to .claude/safesh.local.json).`,
-                  }, null, 2),
-                },
-              ],
-              isError: true,
-            };
           }
 
           // Update shell vars if not temporary
@@ -828,12 +862,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
           }
 
           return {
-            content: [
-              {
-                type: "text",
-                text: formatRunResult(result, shellId, result.scriptId),
-              },
-            ],
+            content: [{ type: "text", text: formatRunResult(result, shellId, result.scriptId) }],
             isError: !result.success,
           };
         }

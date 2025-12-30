@@ -14,7 +14,7 @@ import type { SafeShellConfig } from "../core/types.ts";
 import { expandGlob, type ExpandGlobOptions } from "@std/fs/expand-glob";
 import { resolve, dirname, relative, join } from "@std/path";
 import { ensureDir } from "@std/fs/ensure-dir";
-import { getRealPath, getDefaultConfig } from "./fs.ts";
+import { getRealPath, getDefaultConfig } from "../core/utils.ts";
 
 /**
  * File object - represents a file with metadata (like Vinyl from Gulp)

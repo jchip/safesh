@@ -18,7 +18,7 @@ import {
   buildErrorHandler,
   extractShellState,
 } from "./preamble.ts";
-import { getEffectivePermissions } from "../core/permissions.ts";
+import { getEffectivePermissions, expandPath } from "../core/permissions.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
@@ -182,15 +182,6 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   // Get effective permissions with defaults applied
   const perms = getEffectivePermissions(config, cwd);
 
-  // Helper to expand path variables
-  const expandPath = (p: string): string => {
-    return p
-      .replace(/\$\{CWD\}/g, cwd)
-      .replace(/\$\{HOME\}/g, Deno.env.get("HOME") ?? "")
-      .replace(/\$CWD/g, cwd)
-      .replace(/\$HOME/g, Deno.env.get("HOME") ?? "");
-  };
-
   // Helper to resolve symlinks and return BOTH original and resolved paths
   // Important for macOS where /tmp -> /private/tmp - Deno checks literal path
   const resolveWithBoth = (p: string): string[] => {
@@ -219,7 +210,7 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   }
 
   if (readPaths.length) {
-    const paths = readPaths.map(expandPath).flatMap(resolveWithBoth).join(",");
+    const paths = readPaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
     flags.push(`--allow-read=${paths}`);
   }
 
@@ -232,7 +223,7 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   }
 
   if (writePaths.length) {
-    const paths = writePaths.map(expandPath).flatMap(resolveWithBoth).join(",");
+    const paths = writePaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
     flags.push(`--allow-write=${paths}`);
   }
 
@@ -260,13 +251,16 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
     }
   }
 
-  // Env permissions - always include SAFESH_* for job tracking
+  // Env permissions - always include SAFESH_* for job tracking and init()
   const envVars = [...(perms.env ?? [])];
   if (!envVars.includes("SAFESH_SHELL_ID")) {
     envVars.push("SAFESH_SHELL_ID");
   }
   if (!envVars.includes("SAFESH_SCRIPT_ID")) {
     envVars.push("SAFESH_SCRIPT_ID");
+  }
+  if (!envVars.includes("SAFESH_PROJECT_COMMANDS")) {
+    envVars.push("SAFESH_PROJECT_COMMANDS");
   }
   if (envVars.length) {
     flags.push(`--allow-env=${envVars.join(",")}`);

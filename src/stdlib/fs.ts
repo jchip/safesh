@@ -13,6 +13,7 @@ import { walk as stdWalk, type WalkOptions as StdWalkOptions } from "@std/fs/wal
 import { validatePath, expandPath, isPathAllowed } from "../core/permissions.ts";
 import { pathViolation, executionError } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
+import { getDefaultConfig } from "../core/utils.ts";
 import { glob, globArray, globPaths, type GlobOptions, type GlobEntry } from "./glob.ts";
 
 // Re-export glob utilities
@@ -28,32 +29,8 @@ export interface SandboxOptions {
   cwd?: string;
 }
 
-/**
- * Get real path, handling symlinks and non-existent paths
- */
-export function getRealPath(path: string): string {
-  try {
-    return Deno.realPathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/**
- * Get default config with current directory as sandbox
- */
-export function getDefaultConfig(cwd: string): SafeShellConfig {
-  // Resolve /tmp to real path (on macOS, /tmp is a symlink to /private/tmp)
-  const tmpPath = getRealPath("/tmp");
-  const realCwd = getRealPath(cwd);
-
-  return {
-    permissions: {
-      read: [realCwd, tmpPath],
-      write: [realCwd, tmpPath],
-    },
-  };
-}
+// Re-export getDefaultConfig from core/utils for backwards compatibility
+export { getDefaultConfig } from "../core/utils.ts";
 
 /**
  * Validate read access to a path

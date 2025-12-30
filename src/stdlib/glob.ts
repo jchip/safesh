@@ -12,6 +12,7 @@ import { resolve, normalize, dirname } from "@std/path";
 import { expandPath, isPathAllowed } from "../core/permissions.ts";
 import { pathViolation } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
+import { getDefaultAllowedPaths } from "../core/utils.ts";
 
 /**
  * Options for glob matching
@@ -45,27 +46,6 @@ export interface GlobEntry {
   isFile: boolean;
   /** Whether this is a symlink */
   isSymlink: boolean;
-}
-
-/**
- * Get real path, handling symlinks and non-existent paths
- */
-function getRealPath(path: string): string {
-  try {
-    return Deno.realPathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/**
- * Default sandbox configuration (fallback when no config provided)
- */
-function getDefaultAllowedPaths(cwd: string): string[] {
-  // Resolve /tmp to real path (on macOS, /tmp is a symlink to /private/tmp)
-  const tmpPath = getRealPath("/tmp");
-  const realCwd = getRealPath(cwd);
-  return [realCwd, tmpPath];
 }
 
 /**
