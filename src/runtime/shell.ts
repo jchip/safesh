@@ -20,6 +20,12 @@ import {
 } from "../core/types.ts";
 import { RetryManager } from "./retry-manager.ts";
 import { JobManager } from "./job-manager.ts";
+import {
+  StatePersistence,
+  getStatePersistence,
+  type PersistedShell,
+  type PersistedScript,
+} from "./state-persistence.ts";
 
 /**
  * Shell manager - stores and manages shells
@@ -39,11 +45,97 @@ export class ShellManager {
   private retryManager: RetryManager;
   /** Delegated job management */
   private jobManager: JobManager;
+  /** State persistence (optional, enabled when projectDir provided) */
+  private persistence: StatePersistence | null = null;
 
-  constructor(defaultCwd: string) {
+  constructor(defaultCwd: string, projectDir?: string) {
     this.defaultCwd = defaultCwd;
     this.retryManager = new RetryManager();
     this.jobManager = new JobManager();
+    if (projectDir) {
+      this.persistence = getStatePersistence(projectDir);
+    }
+  }
+
+  /**
+   * Initialize from persisted state
+   * Call this after construction to restore shells from disk
+   */
+  async initFromPersistence(): Promise<void> {
+    if (!this.persistence) return;
+
+    const state = await this.persistence.load();
+
+    // Restore session allowed commands
+    for (const cmd of state.sessionAllowedCommands) {
+      this.sessionAllowedCommands.add(cmd);
+    }
+
+    // Restore shells (but not scripts - those have stale PIDs)
+    for (const persisted of Object.values(state.shells)) {
+      const shell = this.createShellObject({
+        id: persisted.id,
+        cwd: persisted.cwd,
+        env: persisted.env,
+        description: persisted.description,
+      });
+      shell.vars = persisted.vars as Record<string, unknown>;
+      shell.createdAt = new Date(persisted.createdAt);
+      shell.lastActivityAt = new Date(persisted.lastActivityAt);
+      this.shells.set(shell.id, shell);
+
+      // Update shell sequence to avoid ID collisions
+      const match = shell.id.match(/^sh(\d+)$/);
+      if (match && match[1]) {
+        const seq = parseInt(match[1], 10);
+        if (seq >= this.shellSequence) {
+          this.shellSequence = seq;
+        }
+      }
+    }
+
+    console.log(`[ShellManager] Restored ${this.shells.size} shell(s) from persistence`);
+  }
+
+  /**
+   * Flush persistence to disk (call on shutdown)
+   */
+  async flushPersistence(): Promise<void> {
+    if (this.persistence) {
+      await this.persistence.flush();
+    }
+  }
+
+  /**
+   * Convert Shell to PersistedShell for storage
+   */
+  private toPersistedShell(shell: Shell): PersistedShell {
+    return {
+      id: shell.id,
+      cwd: shell.cwd,
+      env: shell.env,
+      vars: shell.vars,
+      createdAt: shell.createdAt.toISOString(),
+      lastActivityAt: shell.lastActivityAt.toISOString(),
+      description: shell.description,
+    };
+  }
+
+  /**
+   * Convert Script to PersistedScript for storage
+   */
+  private toPersistedScript(script: Script, shellId: string): PersistedScript {
+    return {
+      id: script.id,
+      shellId,
+      status: script.status,
+      pid: script.pid,
+      background: script.background,
+      startedAt: script.startedAt.toISOString(),
+      completedAt: script.completedAt?.toISOString(),
+      exitCode: script.exitCode,
+      command: script.code?.slice(0, 100), // Brief preview
+    };
   }
 
   /**
@@ -54,6 +146,8 @@ export class ShellManager {
     for (const cmd of commands) {
       this.sessionAllowedCommands.add(cmd);
     }
+    // Persist session commands
+    this.persistence?.addSessionAllowedCommands(commands);
   }
 
   /**
@@ -109,6 +203,10 @@ export class ShellManager {
 
     const shell = this.createShellObject(options);
     this.shells.set(shell.id, shell);
+
+    // Persist shell
+    this.persistence?.updateShell(this.toPersistedShell(shell));
+
     return shell;
   }
 
@@ -144,6 +242,8 @@ export class ShellManager {
       }
       const shell = this.createShellObject({ id, ...fallback });
       this.shells.set(shell.id, shell);
+      // Persist shell
+      this.persistence?.updateShell(this.toPersistedShell(shell));
       return { shell, isTemporary: false, created: true };
     }
 
@@ -188,6 +288,9 @@ export class ShellManager {
       shell.description = updates.description;
     }
 
+    // Persist shell changes
+    this.persistence?.updateShell(this.toPersistedShell(shell));
+
     return shell;
   }
 
@@ -198,6 +301,7 @@ export class ShellManager {
     const shell = this.shells.get(id);
     if (!shell) return false;
     shell.env[key] = value;
+    this.persistence?.updateShell(this.toPersistedShell(shell));
     return true;
   }
 
@@ -208,6 +312,7 @@ export class ShellManager {
     const shell = this.shells.get(id);
     if (!shell) return false;
     delete shell.env[key];
+    this.persistence?.updateShell(this.toPersistedShell(shell));
     return true;
   }
 
@@ -218,6 +323,7 @@ export class ShellManager {
     const shell = this.shells.get(id);
     if (!shell) return false;
     shell.cwd = path;
+    this.persistence?.updateShell(this.toPersistedShell(shell));
     return true;
   }
 
@@ -228,6 +334,7 @@ export class ShellManager {
     const shell = this.shells.get(id);
     if (!shell) return false;
     shell.vars[key] = value;
+    this.persistence?.updateShell(this.toPersistedShell(shell));
     return true;
   }
 
@@ -246,6 +353,8 @@ export class ShellManager {
     const shell = this.shells.get(id);
     if (shell) {
       shell.lastActivityAt = new Date();
+      // Note: Don't persist on every touch - it's too frequent
+      // Persistence happens on actual state changes
     }
   }
 
@@ -262,6 +371,9 @@ export class ShellManager {
 
     // Check memory and trim if needed
     this.trimShellIfNeeded(shell);
+
+    // Persist script (especially important for background scripts)
+    this.persistence?.updateScript(this.toPersistedScript(script, shellId));
 
     return true;
   }
@@ -334,6 +446,11 @@ export class ShellManager {
     }
     if (updates.process !== undefined) {
       script.process = updates.process;
+    }
+
+    // Persist script on status change
+    if (updates.status !== undefined || updates.exitCode !== undefined) {
+      this.persistence?.updateScript(this.toPersistedScript(script, shellId));
     }
 
     return true;
@@ -559,6 +676,9 @@ export class ShellManager {
     // Clean up job sequence for this shell
     this.jobManager.resetSequence(id);
 
+    // Remove from persistence
+    this.persistence?.removeShell(id);
+
     this.shells.delete(id);
     return true;
   }
@@ -658,7 +778,9 @@ export class ShellManager {
 
 /**
  * Create a shell manager
+ * @param defaultCwd - Default working directory
+ * @param projectDir - Optional project directory for state persistence
  */
-export function createShellManager(defaultCwd: string): ShellManager {
-  return new ShellManager(defaultCwd);
+export function createShellManager(defaultCwd: string, projectDir?: string): ShellManager {
+  return new ShellManager(defaultCwd, projectDir);
 }

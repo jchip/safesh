@@ -22,6 +22,7 @@ import {
 import { z } from "zod";
 import { executeCode, executeFile } from "../runtime/executor.ts";
 import { createShellManager, type ShellManager } from "../runtime/shell.ts";
+import { closeAllStatePersistence } from "../runtime/state-persistence.ts";
 import { loadConfigWithArgs, mergeConfigs, saveToLocalJson, loadConfig, type McpInitArgs } from "../core/config.ts";
 import { createRegistry } from "../external/registry.ts";
 import { validateExternal } from "../external/validator.ts";
@@ -198,7 +199,7 @@ interface ConfigHolder {
 /**
  * Create and configure the MCP server
  */
-export function createServer(initialConfig: SafeShellConfig, initialCwd: string): Server {
+export async function createServer(initialConfig: SafeShellConfig, initialCwd: string): Promise<Server> {
   // Mutable config holder - updated when roots are received
   const configHolder: ConfigHolder = {
     config: initialConfig,
@@ -224,7 +225,10 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
 
   // Create registry and shell manager (will use current config via getter)
   let registry = createRegistry(configHolder.config, configHolder.cwd);
-  const shellManager = createShellManager(configHolder.cwd);
+  const shellManager = createShellManager(configHolder.cwd, configHolder.cwd);
+
+  // Initialize from persisted state (restore shells from previous session)
+  await shellManager.initFromPersistence();
 
   /**
    * Request and apply roots from client
@@ -1426,7 +1430,7 @@ async function main() {
   const { config, effectiveCwd } = await loadConfigWithArgs(baseCwd, mcpArgs);
 
   // Create server
-  const server = createServer(config, effectiveCwd);
+  const server = await createServer(config, effectiveCwd);
 
   // Connect via stdio
   const transport = new StdioServerTransport();
@@ -1443,6 +1447,16 @@ async function main() {
   if (config.allowProjectFiles) {
     console.error("  allowProjectFiles: true");
   }
+
+  // Handle graceful shutdown - flush persistence
+  const shutdown = async () => {
+    console.error("SafeShell MCP Server shutting down...");
+    await closeAllStatePersistence();
+    Deno.exit(0);
+  };
+
+  Deno.addSignalListener("SIGINT", shutdown);
+  Deno.addSignalListener("SIGTERM", shutdown);
 }
 
 // Run if this is the main module
