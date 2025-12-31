@@ -16,6 +16,7 @@ import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
   buildFilePreamble,
+  buildFilePostamble,
   buildErrorHandler,
   extractShellState,
   extractPreambleConfig,
@@ -527,9 +528,10 @@ export async function executeFile(
   // Build preamble to inject $ namespace (no async wrapper for files)
   const preambleConfig = extractPreambleConfig(config, cwd);
   const filePreamble = buildFilePreamble(shell, preambleConfig);
+  const filePostamble = buildFilePostamble(!!shell);
 
-  // Prepend preamble to file code
-  const wrappedCode = filePreamble + fileCode;
+  // Wrap file code with preamble and postamble
+  const wrappedCode = filePreamble + fileCode + filePostamble;
 
   // Write wrapped code to temp file
   await ensureDir(TEMP_DIR);
@@ -580,7 +582,15 @@ export async function executeFile(
       return { status, stdout, stderr };
     })();
 
-    const { status, stdout, stderr } = await deadline(outputPromise, timeoutMs);
+    const { status, stdout: rawStdout, stderr } = await deadline(outputPromise, timeoutMs);
+
+    // Extract shell state from stdout and sync back
+    const { cleanOutput: stdout, cwd, env, vars } = extractShellState(rawStdout);
+    if (shell) {
+      if (cwd) shell.cwd = cwd;
+      if (env) shell.env = env;
+      if (vars) shell.vars = vars;
+    }
 
     return {
       stdout,

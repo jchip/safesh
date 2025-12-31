@@ -194,6 +194,15 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
 }
 
 /**
+ * Build postamble for file execution that outputs shell state
+ * @param hasShell - Whether to output shell state
+ */
+export function buildFilePostamble(hasShell: boolean): string {
+  if (!hasShell) return "";
+  return `\n\n// SafeShell auto-generated postamble - output shell state\nconsole.log("${SHELL_STATE_MARKER}" + JSON.stringify({ CWD: Deno.cwd(), ENV: $.ENV, VARS: $.VARS }));\n`;
+}
+
+/**
  * Build the error-handling wrapper that closes the async IIFE
  *
  * @param scriptPath - Path to the script file (for stack trace line mapping)
