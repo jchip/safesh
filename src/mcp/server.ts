@@ -528,7 +528,7 @@ TWO STREAMING STYLES:
 Note: $.glob() returns File objects {path, base, contents}, not strings. Use f.path for filtering.
 
 SHELL STATE (uppercase, persists across calls): $.ID, $.CWD, $.ENV, $.VARS
-$.ENV persists env vars across calls; auto-merged into Deno.env on next run.
+$.ENV is a plain object (not Map). Use $.ENV.FOO = 'bar', not .set(). Auto-merged into Deno.env.
 
 ASYNC NOTE: Use parentheses for chaining after await:
 (await $.ls('-la')).slice(0, 5)  // correct
