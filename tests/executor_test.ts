@@ -41,7 +41,7 @@ Deno.test("buildPermissionFlags - generates correct flags", () => {
   assertEquals(flags.length, 3);
   assertStringIncludes(flags[0] ?? "", "--allow-read=");
   assertStringIncludes(flags[1] ?? "", "--allow-write=");
-  assertStringIncludes(flags[2] ?? "", "--allow-env=");
+  assertEquals(flags[2], "--allow-env"); // default: allow all env reads
 });
 
 Deno.test("buildPermissionFlags - expands CWD variable", () => {
