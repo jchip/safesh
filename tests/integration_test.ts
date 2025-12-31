@@ -294,7 +294,7 @@ Deno.test("E2E: Shell maintains working directory", async () => {
 
   // Execute code that uses shell cwd
   const code = `
-    console.log("CWD:", $shell.cwd);
+    console.log("CWD:", $.CWD);
   `;
 
   const result = await executeCode(code, testConfig, {}, shell);
@@ -312,7 +312,7 @@ Deno.test("E2E: Shell maintains environment variables", async () => {
   });
 
   const code = `
-    console.log("MY_VAR:", $shell.env.MY_VAR);
+    console.log("MY_VAR:", $.ENV.MY_VAR);
   `;
 
   const result = await executeCode(code, testConfig, {}, shell);
@@ -516,7 +516,7 @@ Deno.test("E2E: Cross-shell isolation", async () => {
   shellManager.setVar(shell2.id, "myvar", "shell2-value");
 
   const code2 = `
-    console.log("Shell 2 ID:", $shell.id);
+    console.log("Shell 2 ID:", $.ID);
   `;
   const result2 = await executeCode(code2, testConfig, {}, shell2);
   assertEquals(result2.success, true);

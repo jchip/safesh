@@ -638,15 +638,15 @@ export default {
 // Shells persist cwd, env, and variables
 const shell = await startShell({ cwd: "/project" });
 
-// Execute with shell context - variables persist via $shell.vars
+// Execute with shell context - variables persist via $.VARS
 await exec({
-  code: "$shell.vars.counter = ($shell.vars.counter || 0) + 1",
+  code: "$.VARS.counter = ($.VARS.counter || 0) + 1",
   shellId: shell.shellId,
 });
 
 // Variables persist across exec calls
 await exec({
-  code: "console.log($shell.vars.counter)", // Prints: 1
+  code: "console.log($.VARS.counter)", // Prints: 1
   shellId: shell.shellId,
 });
 

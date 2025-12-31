@@ -137,7 +137,7 @@ export interface CommandOptions {
  * Provides both buffered (exec) and streaming (stream) execution modes.
  * By default, keeps stdout and stderr separate for clarity.
  */
-export class Command {
+export class Command implements PromiseLike<CommandResult> {
   /** Upstream command whose stdout becomes this command's stdin */
   private upstream?: Command;
 
@@ -146,6 +146,17 @@ export class Command {
     private args: string[] = [],
     private options: CommandOptions = {},
   ) {}
+
+  /**
+   * Make Command thenable - auto-exec when awaited
+   * @example await $.git('status') // returns CommandResult directly
+   */
+  then<TResult1 = CommandResult, TResult2 = never>(
+    onfulfilled?: ((value: CommandResult) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): Promise<TResult1 | TResult2> {
+    return this.exec().then(onfulfilled, onrejected);
+  }
 
   /**
    * Create a Deno.Command with standard configuration
@@ -912,12 +923,13 @@ interface PreambleConfig {
   cwd: string;
 }
 
-// Reference to $config injected by preamble (on globalThis, may not exist in file execution mode)
-declare const $config: PreambleConfig | undefined;
+/** Symbol for internal config access */
+const CONFIG_SYMBOL = Symbol.for('safesh.config');
 
-/** Get the config from globalThis (where preamble injects it) */
+/** Get the config from $ namespace (where preamble injects it) */
 function getConfig(): PreambleConfig | undefined {
-  return (globalThis as { $config?: PreambleConfig }).$config;
+  const $ = (globalThis as { $?: Record<symbol, unknown> }).$;
+  return $?.[CONFIG_SYMBOL] as PreambleConfig | undefined;
 }
 
 /**

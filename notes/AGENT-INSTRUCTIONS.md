@@ -2,6 +2,8 @@
 
 For API reference, use `usage safesh` via mcpu. This doc covers policies not in the MCP schema.
 
+**Global namespace:** `$` - all APIs (e.g., `$.git`, `$.fs`, `$.content`). Shell state: `$.VARS`, `$.CWD`, `$.ENV`, `$.ID`.
+
 ## CRITICAL: SafeShell vs Bash
 
 - **USE** `safesh` MCP for file operations, text processing, command execution

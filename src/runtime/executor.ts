@@ -15,6 +15,7 @@ import { hashCode, buildEnv, collectStreamText } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
+  buildFilePreamble,
   buildErrorHandler,
   extractShellState,
   extractPreambleConfig,
@@ -521,6 +522,19 @@ export async function executeFile(
   const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
   validateImports(fileCode, importPolicy);
 
+  // Build preamble to inject $ namespace (no async wrapper for files)
+  const preambleConfig = extractPreambleConfig(config, cwd);
+  const filePreamble = buildFilePreamble(shell, preambleConfig);
+
+  // Prepend preamble to file code
+  const wrappedCode = filePreamble + fileCode;
+
+  // Write wrapped code to temp file
+  await ensureDir(TEMP_DIR);
+  const hash = await hashCode(wrappedCode);
+  const tempPath = join(TEMP_DIR, `file_${hash}.ts`);
+  await Deno.writeTextFile(tempPath, wrappedCode);
+
   // Generate import map from policy
   const importMapPath = await generateImportMap(importPolicy);
 
@@ -539,7 +553,7 @@ export async function executeFile(
     args.push(`--config=${configPath}`);
   }
 
-  args.push(absolutePath);
+  args.push(tempPath);
 
   // Create command
   const command = new Deno.Command("deno", {
