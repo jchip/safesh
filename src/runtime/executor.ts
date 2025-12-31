@@ -382,9 +382,10 @@ export async function executeCode(
 
     const { status, stdout: rawStdout, stderr: rawStderr } = await deadline(outputPromise, timeoutMs);
 
-    // Extract shell state from stdout and sync env/vars back
-    const { cleanOutput: stdout, env, vars } = extractShellState(rawStdout);
+    // Extract shell state from stdout and sync cwd/env/vars back
+    const { cleanOutput: stdout, cwd, env, vars } = extractShellState(rawStdout);
     if (shell) {
+      if (cwd) shell.cwd = cwd;
       if (env) shell.env = env;
       if (vars) shell.vars = vars;
     }
