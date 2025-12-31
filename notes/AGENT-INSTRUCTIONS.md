@@ -2,7 +2,12 @@
 
 For API reference, use `usage safesh` via mcpu. This doc covers policies not in the MCP schema.
 
-**Global namespace:** `$` - all APIs (e.g., `$.git`, `$.fs`, `$.content`). Shell state: `$.VARS`, `$.CWD`, `$.ENV`, `$.ID`.
+**Global namespace:** `$` - all APIs (e.g., `$.git`, `$.fs`, `$.content`). Shell state: `$.ID`, `$.CWD`, `$.ENV`, `$.VARS`.
+
+## Common Gotchas
+
+- **`$.ENV`** persists across calls and auto-merges into Deno.env on next run. Set once, use everywhere.
+- **`ls()`** returns `string[]` (names only); `ls('-l')` returns formatted strings, NOT objects with properties.
 
 ## CRITICAL: SafeShell vs Bash
 
