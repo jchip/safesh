@@ -534,6 +534,7 @@ TWO STREAMING STYLES:
 • Pipe - glob/cat/git: $.glob('**/*.ts').pipe($.head(5)).collect()
   $.git('log').stdout().pipe($.lines()).pipe($.grep(/fix/)).collect()
 Note: $.glob() returns File objects {path, base, contents}, not strings. Use f.path for filtering.
+Note: $.content().head(1) returns first CHUNK (buffer), not first line. Use $.content().lines().head(1) for lines.
 
 SHELL STATE (uppercase, persists across calls): $.ID, $.CWD, $.ENV, $.VARS
 $.ENV is a plain object (not Map). Use $.ENV.FOO = 'bar', not .set(). Auto-merged into Deno.env.
