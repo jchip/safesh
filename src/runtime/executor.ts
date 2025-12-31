@@ -271,16 +271,16 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
     }
   }
 
-  // Env permissions - always include SAFESH_* for job tracking
-  const envVars = [...(perms.env ?? [])];
-  if (!envVars.includes("SAFESH_SHELL_ID")) {
-    envVars.push("SAFESH_SHELL_ID");
-  }
-  if (!envVars.includes("SAFESH_SCRIPT_ID")) {
-    envVars.push("SAFESH_SCRIPT_ID");
-  }
-  if (envVars.length) {
-    flags.push(`--allow-env=${envVars.join(",")}`);
+  // Env permissions - default to allowing all reads (masking filters secrets from subprocess)
+  const envConfig = config.env ?? {};
+  const allowReadAll = envConfig.allowReadAll !== false; // default true
+
+  if (allowReadAll) {
+    flags.push("--allow-env");
+  } else if (perms.env?.length) {
+    // Restricted mode: only allow specific env vars
+    const envVars = [...perms.env, "SAFESH_SHELL_ID", "SAFESH_SCRIPT_ID"];
+    flags.push(`--allow-env=${[...new Set(envVars)].join(",")}`);
   }
 
   return flags;

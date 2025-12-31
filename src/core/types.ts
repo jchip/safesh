@@ -38,10 +38,12 @@ export interface ExternalCommandConfig {
 }
 
 export interface EnvConfig {
-  /** Environment variables to pass through */
+  /** Environment variables to pass through to subprocess */
   allow?: string[];
   /** Patterns to mask (never expose) - supports wildcards */
   mask?: string[];
+  /** Allow reading all env vars (default: true). Masking still applies. */
+  allowReadAll?: boolean;
 }
 
 export interface ImportPolicy {
