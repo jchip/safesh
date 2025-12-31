@@ -690,6 +690,44 @@ console.log(result.stdout);
 await killJob({ shellId, jobId, signal: "SIGTERM" });
 ```
 
+### Parallel Processing
+
+```javascript
+// Process multiple files concurrently with Promise.all
+const files = ['data1.json', 'data2.json', 'data3.json'];
+
+const results = await Promise.all(
+  files.map(async (file) => {
+    const data = await $.fs.readJson(file);
+    // Simulate processing delay
+    await new Promise(r => setTimeout(r, 500));
+    return { file, recordCount: data.length };
+  })
+);
+
+// All files processed in ~500ms instead of ~1500ms serial
+console.log(results);
+```
+
+### Git Integration
+
+```javascript
+// Build a repository dashboard using $.git
+const [branch, commit, log] = await Promise.all([
+  $.git('branch', '--show-current').then(r => r.stdout.trim()),
+  $.git('rev-parse', '--short', 'HEAD').then(r => r.stdout.trim()),
+  $.git('log', '--oneline', '-5').then(r => r.stdout.trim().split('\n')),
+]);
+
+const dashboard = {
+  currentBranch: branch,
+  latestCommit: commit,
+  recentCommits: log,
+};
+
+console.log(JSON.stringify(dashboard, null, 2));
+```
+
 ## CLI Reference
 
 ```bash
