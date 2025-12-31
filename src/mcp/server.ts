@@ -519,6 +519,7 @@ All APIs on \`$\` (e.g., \`$.git\`, \`$.fs.read\`):
 • cat, glob, lines, grep, filter, map, head, tail - streaming
 • initCmds(['curl']) - register external commands
 • echo, cd, pwd, which, test, ls, rm, cp, mv, mkdir, touch - shell
+  ls() returns string[] (names only); ls('-l') returns formatted strings, not objects
 
 TWO STREAMING STYLES:
 • Fluent - file content: $.content('file.txt').lines().grep(/pat/).head(10).collect()
@@ -526,7 +527,8 @@ TWO STREAMING STYLES:
   $.git('log').stdout().pipe($.lines()).pipe($.grep(/fix/)).collect()
 Note: $.content() reads file content. Use $.glob() for finding files.
 
-SHELL STATE (uppercase): $.VARS, $.CWD, $.ENV, $.ID
+SHELL STATE (uppercase, persists across calls): $.ID, $.CWD, $.ENV, $.VARS
+$.ENV persists env vars across calls; auto-merged into Deno.env on next run.
 
 ASYNC NOTE: Use parentheses for chaining after await:
 (await $.ls('-la')).slice(0, 5)  // correct

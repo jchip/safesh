@@ -382,10 +382,11 @@ export async function executeCode(
 
     const { status, stdout: rawStdout, stderr: rawStderr } = await deadline(outputPromise, timeoutMs);
 
-    // Extract shell state from stdout and sync vars back
-    const { cleanOutput: stdout, vars } = extractShellState(rawStdout);
-    if (shell && vars) {
-      shell.vars = vars;
+    // Extract shell state from stdout and sync env/vars back
+    const { cleanOutput: stdout, env, vars } = extractShellState(rawStdout);
+    if (shell) {
+      if (env) shell.env = env;
+      if (vars) shell.vars = vars;
     }
 
     // Extract job events and command errors from stderr
