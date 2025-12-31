@@ -34,10 +34,11 @@ export {
   toCmd,
   toCmdLines,
   init,
+  initCmds,
   type Command,
   type CommandResult,
   type CommandOptions,
-  type RegisteredCommand,
+  type CommandFn,
 } from "./command.ts";
 
 // Re-export streaming primitives

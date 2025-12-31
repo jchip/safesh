@@ -271,7 +271,18 @@ export function getPreset(preset: SecurityPreset): SafeShellConfig {
 // ============================================================================
 
 /**
- * Merge two permission configs (union)
+ * Merges two PermissionsConfig objects using union strategy for all array fields.
+ *
+ * All fields use array union (deduplicated):
+ * - `read`: Combined read paths from both configs
+ * - `write`: Combined write paths from both configs
+ * - `run`: Combined allowed commands from both configs
+ * - `env`: Combined allowed env vars from both configs
+ * - `net`: Special handling via mergeNetPermissions()
+ *
+ * @param base - The base permissions config (lower priority)
+ * @param override - The override permissions config (higher priority)
+ * @returns Merged PermissionsConfig with deduplicated arrays
  */
 function mergePermissions(
   base: PermissionsConfig,
@@ -287,7 +298,20 @@ function mergePermissions(
 }
 
 /**
- * Merge network permissions
+ * Merges network permission values with special boolean handling.
+ *
+ * Network permissions can be:
+ * - `boolean true`: Allow all network access (most permissive)
+ * - `string[]`: Allow only specific hosts/patterns
+ * - `undefined`: No network access
+ *
+ * Merge logic:
+ * - If EITHER is `true`, result is `true` (allow-all wins)
+ * - Otherwise, arrays are merged with deduplication
+ *
+ * @param base - Base network permission
+ * @param override - Override network permission
+ * @returns Merged network permission (true or string[])
  */
 function mergeNetPermissions(
   base: string[] | boolean | undefined,
@@ -303,7 +327,22 @@ function mergeNetPermissions(
 }
 
 /**
- * Merge external command configs
+ * Merges external command configurations with deep per-command merging.
+ *
+ * For each command:
+ * - If command exists in both: Deep merge the config fields
+ * - If command only in override: Add to result
+ * - If command only in base: Keep in result
+ *
+ * Per-command field merge strategy:
+ * - `allow`: Override wins (boolean or string[])
+ * - `denyFlags`: Union (arrays combined, deduplicated)
+ * - `requireFlags`: Override wins
+ * - `pathArgs`: Override wins
+ *
+ * @param base - Base external commands config
+ * @param override - Override external commands config
+ * @returns Merged external commands config
  */
 function mergeExternalCommands(
   base: Record<string, ExternalCommandConfig>,
@@ -333,7 +372,15 @@ function mergeExternalCommands(
 }
 
 /**
- * Merge env configs
+ * Merges environment variable configurations using union strategy.
+ *
+ * Both fields use array union (deduplicated):
+ * - `allow`: Combined allowed env var patterns
+ * - `mask`: Combined mask patterns (vars matching these are hidden/redacted)
+ *
+ * @param base - Base env config
+ * @param override - Override env config
+ * @returns Merged EnvConfig with deduplicated arrays
  */
 function mergeEnvConfig(
   base: EnvConfig,
@@ -346,7 +393,19 @@ function mergeEnvConfig(
 }
 
 /**
- * Merge import policies
+ * Merges import policies using union strategy for all fields.
+ *
+ * All fields use array union (deduplicated):
+ * - `trusted`: Combined trusted import patterns (highest privilege)
+ * - `allowed`: Combined allowed import patterns
+ * - `blocked`: Combined blocked import patterns (always denied)
+ *
+ * Note: If a pattern appears in both `blocked` and `trusted`/`allowed`,
+ * this creates a conflict that will be caught by validateConfig().
+ *
+ * @param base - Base import policy
+ * @param override - Override import policy
+ * @returns Merged ImportPolicy with deduplicated arrays
  */
 function mergeImportPolicy(
   base: ImportPolicy,
@@ -360,7 +419,64 @@ function mergeImportPolicy(
 }
 
 /**
- * Merge two configs (later overrides earlier, but some fields merge)
+ * Merges two SafeShellConfig objects with field-specific strategies.
+ *
+ * ## Merge Order
+ *
+ * Configs are loaded and merged in this order (later overrides earlier):
+ *
+ * 1. **Built-in** - `STANDARD_PRESET` (hardcoded defaults)
+ * 2. **Global** - `~/.config/safesh/config.[ts|json]` (user preferences)
+ * 3. **Project** - `.config/safesh/config.[ts|json]` (project settings)
+ * 4. **Local** - `.config/safesh/config.local.[ts|json]` (machine-specific)
+ * 5. **MCP args** - Runtime arguments from MCP initialization
+ *
+ * At each level, JSON files take precedence over TS files if both exist.
+ *
+ * ## Field Merge Strategies
+ *
+ * | Field                 | Strategy          | Notes                                              |
+ * |-----------------------|-------------------|---------------------------------------------------|
+ * | `workspace`           | override          | Later value replaces earlier                       |
+ * | `projectDir`          | override          | Later value replaces earlier                       |
+ * | `allowProjectCommands`| override          | Later value replaces earlier                       |
+ * | `allowProjectFiles`   | override          | Later value replaces earlier                       |
+ * | `permissions.read`    | union             | Arrays combined, deduplicated                      |
+ * | `permissions.write`   | union             | Arrays combined, deduplicated                      |
+ * | `permissions.run`     | union             | Arrays combined, deduplicated                      |
+ * | `permissions.env`     | union             | Arrays combined, deduplicated                      |
+ * | `permissions.net`     | special           | `true` wins; otherwise arrays merged               |
+ * | `external`            | deep merge        | Per-command: allow/requireFlags/pathArgs override; denyFlags union |
+ * | `env.allow`           | union             | Arrays combined, deduplicated                      |
+ * | `env.mask`            | union             | Arrays combined, deduplicated                      |
+ * | `imports.trusted`     | union             | Arrays combined, deduplicated                      |
+ * | `imports.allowed`     | union             | Arrays combined, deduplicated                      |
+ * | `imports.blocked`     | union             | Arrays combined, deduplicated                      |
+ * | `tasks`               | shallow merge     | Object.assign (later keys override)                |
+ * | `timeout`             | override          | Later value replaces earlier                       |
+ *
+ * ## Examples
+ *
+ * ```typescript
+ * // Base config
+ * const base = { permissions: { read: ["/tmp"] }, timeout: 30000 };
+ * // Project config
+ * const project = { permissions: { read: ["${CWD}"] }, timeout: 60000 };
+ * // Result
+ * const merged = mergeConfigs(base, project);
+ * // merged.permissions.read = ["/tmp", "${CWD}"]  (union)
+ * // merged.timeout = 60000  (override)
+ * ```
+ *
+ * @param base - The base config (lower priority)
+ * @param override - The override config (higher priority)
+ * @returns Merged SafeShellConfig
+ *
+ * @see mergePermissions - Handles permissions field merging
+ * @see mergeExternalCommands - Handles external commands deep merge
+ * @see mergeEnvConfig - Handles env config merging
+ * @see mergeImportPolicy - Handles import policy merging
+ * @see mergeNetPermissions - Handles special net permission logic
  */
 export function mergeConfigs(
   base: SafeShellConfig,

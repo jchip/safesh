@@ -17,23 +17,33 @@ import {
   SCRIPT_OUTPUT_LIMIT,
   SHELL_MEMORY_LIMIT,
   MAX_SHELLS,
-  PENDING_RETRY_TTL,
-  MAX_PENDING_RETRIES,
 } from "../core/types.ts";
+import { RetryManager } from "./retry-manager.ts";
+import { JobManager } from "./job-manager.ts";
 
 /**
  * Shell manager - stores and manages shells
+ *
+ * Uses composition to delegate specialized concerns:
+ * - RetryManager: handles pending retries for permission workflow
+ * - JobManager: handles job lifecycle within shells
  */
 export class ShellManager {
   private shells: Map<string, Shell> = new Map();
   private defaultCwd: string;
   private shellSequence = 0;
-  private retrySequence = 0;
   /** Session-level allowed commands (persists across shells within the MCP session) */
   private sessionAllowedCommands: Set<string> = new Set();
 
+  /** Delegated retry management */
+  private retryManager: RetryManager;
+  /** Delegated job management */
+  private jobManager: JobManager;
+
   constructor(defaultCwd: string) {
     this.defaultCwd = defaultCwd;
+    this.retryManager = new RetryManager();
+    this.jobManager = new JobManager();
   }
 
   /**
@@ -365,11 +375,8 @@ export class ShellManager {
   }
 
   // ==========================================================================
-  // Pending Retry Management (for permission retry workflow)
+  // Pending Retry Management (delegated to RetryManager)
   // ==========================================================================
-
-  /** Pending retries by ID */
-  private pendingRetries: Map<string, PendingRetry> = new Map();
 
   /**
    * Create a pending retry for a blocked command (legacy single command)
@@ -380,26 +387,7 @@ export class ShellManager {
     context: PendingRetry["context"],
     shellId?: string,
   ): PendingRetry {
-    // Cleanup expired retries first
-    this.cleanupExpiredRetries();
-
-    // Enforce limit with FIFO eviction
-    if (this.pendingRetries.size >= MAX_PENDING_RETRIES) {
-      const oldest = this.pendingRetries.keys().next().value;
-      if (oldest) this.pendingRetries.delete(oldest);
-    }
-
-    const retry: PendingRetry = {
-      id: `rt${++this.retrySequence}`,
-      code,
-      shellId,
-      context,
-      blockedCommand,
-      createdAt: new Date(),
-    };
-
-    this.pendingRetries.set(retry.id, retry);
-    return retry;
+    return this.retryManager.createPendingRetry(code, blockedCommand, context, shellId);
   }
 
   /**
@@ -412,82 +400,32 @@ export class ShellManager {
     context: PendingRetry["context"],
     shellId?: string,
   ): PendingRetry {
-    // Cleanup expired retries first
-    this.cleanupExpiredRetries();
-
-    // Enforce limit with FIFO eviction
-    if (this.pendingRetries.size >= MAX_PENDING_RETRIES) {
-      const oldest = this.pendingRetries.keys().next().value;
-      if (oldest) this.pendingRetries.delete(oldest);
-    }
-
-    const retry: PendingRetry = {
-      id: `rt${++this.retrySequence}`,
-      code,
-      shellId,
-      context,
-      blockedCommands,
-      notFoundCommands,
-      createdAt: new Date(),
-    };
-
-    this.pendingRetries.set(retry.id, retry);
-    return retry;
+    return this.retryManager.createPendingRetryMulti(code, blockedCommands, notFoundCommands, context, shellId);
   }
 
   /**
    * Get a pending retry by ID
    */
   getPendingRetry(id: string): PendingRetry | undefined {
-    const retry = this.pendingRetries.get(id);
-    if (!retry) return undefined;
-
-    // Check TTL
-    if (Date.now() - retry.createdAt.getTime() > PENDING_RETRY_TTL) {
-      this.pendingRetries.delete(id);
-      return undefined;
-    }
-
-    return retry;
+    return this.retryManager.getPendingRetry(id);
   }
 
   /**
    * Consume (get and delete) a pending retry
    */
   consumePendingRetry(id: string): PendingRetry | undefined {
-    const retry = this.getPendingRetry(id);
-    if (retry) {
-      this.pendingRetries.delete(id);
-    }
-    return retry;
-  }
-
-  /**
-   * Cleanup expired pending retries
-   */
-  private cleanupExpiredRetries(): void {
-    const now = Date.now();
-    for (const [id, retry] of this.pendingRetries) {
-      if (now - retry.createdAt.getTime() > PENDING_RETRY_TTL) {
-        this.pendingRetries.delete(id);
-      }
-    }
+    return this.retryManager.consumePendingRetry(id);
   }
 
   // ==========================================================================
-  // Job Management (processes spawned within scripts)
+  // Job Management (delegated to JobManager)
   // ==========================================================================
-
-  /** Job sequence counter per shell */
-  private jobSequences: Map<string, number> = new Map();
 
   /**
    * Generate a unique job ID for a shell
    */
   generateJobId(shellId: string): string {
-    const seq = this.jobSequences.get(shellId) ?? 0;
-    this.jobSequences.set(shellId, seq + 1);
-    return `job-${shellId.slice(0, 8)}-${seq}`;
+    return this.jobManager.generateJobId(shellId);
   }
 
   /**
@@ -496,17 +434,7 @@ export class ShellManager {
   addJob(shellId: string, job: Job): boolean {
     const shell = this.shells.get(shellId);
     if (!shell) return false;
-
-    // Add job to shell's job map
-    shell.jobs.set(job.id, job);
-
-    // Link job to parent script
-    const script = shell.scripts.get(job.scriptId);
-    if (script && !script.jobIds.includes(job.id)) {
-      script.jobIds.push(job.id);
-    }
-
-    return true;
+    return this.jobManager.addJob(shell, job);
   }
 
   /**
@@ -514,7 +442,8 @@ export class ShellManager {
    */
   getJob(shellId: string, jobId: string): Job | undefined {
     const shell = this.shells.get(shellId);
-    return shell?.jobs.get(jobId);
+    if (!shell) return undefined;
+    return this.jobManager.getJob(shell, jobId);
   }
 
   /**
@@ -525,17 +454,9 @@ export class ShellManager {
     jobId: string,
     updates: Partial<Pick<Job, "status" | "exitCode" | "stdout" | "stderr" | "completedAt" | "duration">>,
   ): boolean {
-    const job = this.getJob(shellId, jobId);
-    if (!job) return false;
-
-    if (updates.status !== undefined) job.status = updates.status;
-    if (updates.exitCode !== undefined) job.exitCode = updates.exitCode;
-    if (updates.stdout !== undefined) job.stdout = updates.stdout;
-    if (updates.stderr !== undefined) job.stderr = updates.stderr;
-    if (updates.completedAt !== undefined) job.completedAt = updates.completedAt;
-    if (updates.duration !== undefined) job.duration = updates.duration;
-
-    return true;
+    const shell = this.shells.get(shellId);
+    if (!shell) return false;
+    return this.jobManager.updateJob(shell, jobId, updates);
   }
 
   /**
@@ -551,27 +472,12 @@ export class ShellManager {
   ): Job[] {
     const shell = this.shells.get(shellId);
     if (!shell) return [];
-
-    let jobs = Array.from(shell.jobs.values());
-
-    // Apply filters
-    if (filter?.scriptId !== undefined) {
-      jobs = jobs.filter((j) => j.scriptId === filter.scriptId);
-    }
-    if (filter?.status !== undefined) {
-      jobs = jobs.filter((j) => j.status === filter.status);
-    }
-
-    // Sort by startedAt descending (newest first)
-    jobs.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
-
-    // Apply limit
-    if (filter?.limit !== undefined && filter.limit > 0) {
-      jobs = jobs.slice(0, filter.limit);
-    }
-
-    return jobs;
+    return this.jobManager.listJobs(shell, filter);
   }
+
+  // ==========================================================================
+  // Memory Management
+  // ==========================================================================
 
   /**
    * Estimate memory usage of a shell
@@ -649,6 +555,9 @@ export class ShellManager {
         }
       }
     }
+
+    // Clean up job sequence for this shell
+    this.jobManager.resetSequence(id);
 
     this.shells.delete(id);
     return true;
