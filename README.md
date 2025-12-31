@@ -87,7 +87,7 @@ deno install --allow-all -n safesh src/cli/main.ts
 - **`$.ENV`** is a plain object (not Map like Deno.env). Use `$.ENV.FOO = 'bar'` not `.set()`. Persists across calls.
 - **`ls()`** returns `string[]` (names only); `ls('-l')` returns formatted strings, NOT objects.
 - **`$.glob()`** returns `File` objects `{path, base, contents}`, not strings. Use `f.path` for filtering.
-- **Streaming**: `$.content().head(1)` returns the first **chunk** (buffer), not the first line. Use `$.content().lines().head(1)` for line-based operations.
+- **Streaming**: `$.cat().head(1)` returns the first **chunk** (buffer), not the first line. Use `$.cat().lines().head(1)` for line-based operations.
 
 ### The Fluent Shell API (`$`)
 

@@ -109,8 +109,8 @@ import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln,
  * Works in both code and file execution modes
  */
 export const $ = {
-  // Fluent file API
-  content: fluentShell, FluentShell,
+  // Fluent file API ($.cat('file').lines().grep(/pattern/).collect())
+  cat: fluentShell, FluentShell,
   // Namespaced modules
   fs, text,
   // Command execution
@@ -121,8 +121,8 @@ export const $ = {
   filter, map, flatMap, take, head, tail, lines, grep,
   // I/O streams
   stdout, stderr, tee,
-  // File streaming
-  cat, glob, src, dest,
+  // File streaming (glob, src, dest - streaming cat is global only)
+  glob, src, dest,
   // ShellJS commands
   echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString,
 };

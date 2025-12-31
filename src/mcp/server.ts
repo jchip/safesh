@@ -530,11 +530,11 @@ All APIs on \`$\` (e.g., \`$.git\`, \`$.fs.read\`):
   ls() returns string[] (names only); ls('-l') returns formatted strings, not objects
 
 TWO STREAMING STYLES:
-• Fluent - file content: $.content('file.txt').lines().grep(/pat/).head(10).collect()
+• Fluent - file content: $.cat('file.txt').lines().grep(/pat/).head(10).collect()
 • Pipe - glob/cat/git: $.glob('**/*.ts').pipe($.head(5)).collect()
   $.git('log').stdout().pipe($.lines()).pipe($.grep(/fix/)).collect()
 Note: $.glob() returns File objects {path, base, contents}, not strings. Use f.path for filtering.
-Note: $.content().head(1) returns first CHUNK (buffer), not first line. Use $.content().lines().head(1) for lines.
+Note: $.cat().head(1) returns first CHUNK (buffer), not first line. Use $.cat().lines().head(1) for lines.
 
 SHELL STATE (uppercase, persists across calls): $.ID, $.CWD, $.ENV, $.VARS
 $.ENV is a plain object (not Map). Use $.ENV.FOO = 'bar', not .set(). Auto-merged into Deno.env.
