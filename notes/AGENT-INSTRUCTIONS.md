@@ -7,7 +7,8 @@ For API reference, use `usage safesh` via mcpu. This doc covers policies not in 
 ## Common Gotchas
 
 - **`$.ENV`** persists across calls and auto-merges into Deno.env on next run. Set once, use everywhere.
-- **`ls()`** returns `string[]` (names only); `ls('-l')` returns formatted strings, NOT objects with properties.
+- **`ls()`** returns `string[]` (names only); `ls('-l')` returns formatted strings, NOT objects.
+- **`$.glob()`** returns `File` objects `{path, base, contents}`, not strings. Use `f.path` for filtering.
 
 ## CRITICAL: SafeShell vs Bash
 
