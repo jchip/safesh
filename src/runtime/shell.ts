@@ -64,13 +64,14 @@ export class ShellManager {
    * Create a Shell object with default values
    */
   private createShellObject(options: {
+    id?: string;
     cwd?: string;
     env?: Record<string, string>;
     description?: string;
   } = {}): Shell {
     const now = new Date();
     return {
-      id: `sh${++this.shellSequence}`,
+      id: options.id ?? `sh${++this.shellSequence}`,
       description: options.description,
       cwd: options.cwd ?? this.defaultCwd,
       env: options.env ?? {},
@@ -112,24 +113,28 @@ export class ShellManager {
   }
 
   /**
-   * Get shell or create temporary one
+   * Get shell, create with requested ID if not exists, or create temporary one
    *
    * @param id - Shell ID or undefined
-   * @param fallback - Fallback options for temporary shell
-   * @returns Shell, with notFound=true if id was provided but doesn't exist
+   * @param fallback - Fallback options for new/temporary shell
+   * @returns Shell and whether it's temporary (no ID provided)
    */
-  getOrTemp(
+  getOrCreate(
     id: string | undefined,
     fallback: { cwd?: string; env?: Record<string, string> } = {},
-  ): { shell: Shell; isTemporary: boolean; notFound?: boolean } {
+  ): { shell: Shell; isTemporary: boolean; created?: boolean } {
     if (id) {
-      const shell = this.get(id);
-      if (shell) {
-        return { shell, isTemporary: false };
+      const existing = this.get(id);
+      if (existing) {
+        return { shell: existing, isTemporary: false };
       }
-      // Shell ID was provided but doesn't exist - return error indicator
-      // Still return a temporary shell for the shape, but caller should check notFound
-      return { shell: this.createShellObject(fallback), isTemporary: true, notFound: true };
+      // Shell ID was provided but doesn't exist - create and persist with that ID
+      if (this.shells.size >= MAX_SHELLS) {
+        this.evictLeastRecentShell();
+      }
+      const shell = this.createShellObject({ id, ...fallback });
+      this.shells.set(shell.id, shell);
+      return { shell, isTemporary: false, created: true };
     }
 
     // No shell ID provided - create temporary shell (not stored)
