@@ -52,30 +52,36 @@ describe("ShellManager", () => {
     });
   });
 
-  describe("getOrTemp", () => {
+  describe("getOrCreate", () => {
     it("returns existing shell when ID provided", () => {
       const shell = manager.create();
-      const { shell: retrieved, isTemporary } = manager.getOrTemp(shell.id);
+      const { shell: retrieved, isTemporary } = manager.getOrCreate(shell.id);
 
       assertEquals(retrieved, shell);
       assertEquals(isTemporary, false);
     });
 
-    it("creates temporary shell when ID not found", () => {
-      const { shell, isTemporary } = manager.getOrTemp("nonexistent");
+    it("creates and persists shell when ID not found", () => {
+      const { shell, isTemporary, created } = manager.getOrCreate("my-shell");
 
-      assertEquals(isTemporary, true);
+      assertEquals(isTemporary, false);
+      assertEquals(created, true);
+      assertEquals(shell.id, "my-shell");
       assertEquals(shell.cwd, "/tmp/test"); // Uses default cwd
+
+      // Verify it was persisted
+      const retrieved = manager.get("my-shell");
+      assertEquals(retrieved, shell);
     });
 
     it("creates temporary shell when ID undefined", () => {
-      const { shell, isTemporary } = manager.getOrTemp(undefined);
+      const { shell, isTemporary } = manager.getOrCreate(undefined);
 
       assertEquals(isTemporary, true);
     });
 
     it("uses fallback options for temporary shell", () => {
-      const { shell, isTemporary } = manager.getOrTemp(undefined, {
+      const { shell, isTemporary } = manager.getOrCreate(undefined, {
         cwd: "/fallback",
         env: { KEY: "value" },
       });

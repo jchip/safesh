@@ -11,6 +11,7 @@ import type { ExecResult, RunOptions, SafeShellConfig, Shell } from "../core/typ
 import { createRegistry } from "./registry.ts";
 import { validateExternal } from "./validator.ts";
 import { writeStdin } from "../stdlib/io.ts";
+import { cleanupProcess } from "../core/utils.ts";
 
 const DEFAULT_TIMEOUT = 30000;
 
@@ -94,24 +95,10 @@ export async function runExternal(
       success: status.code === 0,
     };
   } catch (error) {
-    // Kill the process on timeout or error
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Process may have already exited
-    }
+    // Kill the process and cancel streams on timeout or error
+    await cleanupProcess(process);
 
-    // Cancel the streams to prevent leaks
-    try {
-      await process.stdout.cancel();
-    } catch {
-      // Stream may already be closed
-    }
-    try {
-      await process.stderr.cancel();
-    } catch {
-      // Stream may already be closed
-    }
+    // Also close stdin if it was used
     if (hasStdin) {
       try {
         await process.stdin.close();

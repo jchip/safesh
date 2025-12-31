@@ -205,30 +205,207 @@ function processJobEvents(shell: Shell, script: Script, events: JobEvent[]): voi
   }
 }
 
+/** Options for building Deno command arguments */
+interface DenoArgsOptions {
+  /** Permission flags to include */
+  permFlags: string[];
+  /** Import map path */
+  importMapPath: string;
+  /** Config file path (deno.json) */
+  configPath?: string;
+  /** Script path to execute */
+  scriptPath: string;
+}
+
 /**
- * Build Deno permission flags from config
+ * Build Deno run command arguments
  */
-export function buildPermissionFlags(config: SafeShellConfig, cwd: string): string[] {
-  const flags: string[] = [];
+function buildDenoArgs(options: DenoArgsOptions): string[] {
+  const { permFlags, importMapPath, configPath, scriptPath } = options;
+  const args = [
+    "run",
+    "--no-prompt", // Never prompt for permissions
+    `--import-map=${importMapPath}`,
+    ...permFlags,
+  ];
 
-  // Get effective permissions with defaults applied
-  const perms = getEffectivePermissions(config, cwd);
+  if (configPath) {
+    args.push(`--config=${configPath}`);
+  }
 
-  // Helper to resolve symlinks and return BOTH original and resolved paths
-  // Important for macOS where /tmp -> /private/tmp - Deno checks literal path
-  const resolveWithBoth = (p: string): string[] => {
-    try {
-      const resolved = Deno.realPathSync(p);
-      // Return both if different (e.g., /tmp and /private/tmp)
-      return resolved !== p ? [p, resolved] : [p];
-    } catch {
-      // Path doesn't exist yet or can't be resolved, return as-is
-      return [p];
+  args.push(scriptPath);
+  return args;
+}
+
+/** Options for spawning subprocess */
+interface SpawnOptions {
+  /** Deno command arguments */
+  args: string[];
+  /** Working directory */
+  cwd: string;
+  /** Environment variables */
+  env: Record<string, string>;
+  /** Timeout in milliseconds */
+  timeoutMs: number;
+  /** Optional callback invoked with PID immediately after spawn */
+  onSpawn?: (pid: number) => void;
+  /** Optional callback invoked on timeout (before throwing) */
+  onTimeout?: () => void;
+  /** Optional callback invoked on error (before throwing) */
+  onError?: () => void;
+}
+
+/** Raw output from subprocess */
+interface SubprocessOutput {
+  /** Process exit status */
+  status: Deno.CommandStatus;
+  /** Raw stdout text */
+  stdout: string;
+  /** Raw stderr text */
+  stderr: string;
+  /** Process ID */
+  pid: number;
+}
+
+/**
+ * Spawn Deno subprocess and collect output with timeout
+ */
+async function spawnAndCollectOutput(options: SpawnOptions): Promise<SubprocessOutput> {
+  const { args, cwd, env, timeoutMs, onSpawn, onTimeout, onError } = options;
+
+  const command = new Deno.Command("deno", {
+    args,
+    cwd,
+    env,
+    stdout: "piped",
+    stderr: "piped",
+  });
+
+  const process = command.spawn();
+
+  // Notify caller of PID immediately after spawn
+  onSpawn?.(process.pid);
+
+  try {
+    const outputPromise = (async () => {
+      const [status, stdout, stderr] = await Promise.all([
+        process.status,
+        collectStreamText(process.stdout),
+        collectStreamText(process.stderr),
+      ]);
+      return { status, stdout, stderr, pid: process.pid };
+    })();
+
+    return await deadline(outputPromise, timeoutMs);
+  } catch (error) {
+    // Kill the process and cancel streams on timeout or error
+    await cleanupProcess(process);
+
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      onTimeout?.();
+      throw timeoutError(timeoutMs, "exec");
     }
-  };
+    onError?.();
+    throw executionError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
 
-  // Read permissions - use effective perms which include defaults like /tmp
-  const readPaths = [...(perms.read ?? [])];
+/**
+ * Sync extracted shell state back to shell object
+ */
+function syncShellState(
+  shell: Shell | undefined,
+  state: { cwd?: string; env?: Record<string, string>; vars?: Record<string, unknown> },
+): void {
+  if (!shell) return;
+  if (state.cwd) shell.cwd = state.cwd;
+  if (state.env) shell.env = state.env;
+  if (state.vars) shell.vars = state.vars;
+}
+
+/**
+ * Update script record with successful execution results
+ */
+function updateScriptSuccess(
+  script: Script,
+  status: Deno.CommandStatus,
+  stdout: string,
+  stderr: string,
+): void {
+  const stdoutResult = truncateOutput(stdout);
+  const stderrResult = truncateOutput(stderr);
+
+  script.status = status.code === 0 ? "completed" : "failed";
+  script.exitCode = status.code;
+  script.stdout = stdoutResult.text;
+  script.stderr = stderrResult.text;
+  script.stdoutTruncated = stdoutResult.truncated;
+  script.stderrTruncated = stderrResult.truncated;
+  script.completedAt = new Date();
+  script.duration = script.completedAt.getTime() - script.startedAt.getTime();
+}
+
+/**
+ * Update script record with timeout failure
+ */
+function updateScriptTimeout(script: Script, timeoutMs: number): void {
+  script.status = "failed";
+  script.completedAt = new Date();
+  script.duration = script.completedAt.getTime() - script.startedAt.getTime();
+  script.stderr = `Execution timed out after ${timeoutMs}ms`;
+  script.stderrTruncated = false;
+}
+
+/**
+ * Update script record with general failure
+ */
+function updateScriptFailure(script: Script): void {
+  script.status = "failed";
+  script.completedAt = new Date();
+  script.duration = script.completedAt.getTime() - script.startedAt.getTime();
+}
+
+/**
+ * Extract blocked command info from stderr events
+ */
+function extractBlockedCommands(
+  cmdErrors: CommandErrorEvent[],
+  initErrors: InitErrorEvent[],
+): { blockedCommand?: string; blockedCommands?: string[]; notFoundCommands?: string[] } {
+  // Check for blocked command (legacy single command)
+  const firstCmdError = cmdErrors[0];
+  const blockedCommand = firstCmdError?.command;
+
+  // Check for init errors (multiple commands)
+  const firstInitError = initErrors[0];
+  const blockedCommands = firstInitError?.notAllowed.length ? firstInitError.notAllowed : undefined;
+  const notFoundCommands = firstInitError?.notFound.length ? firstInitError.notFound : undefined;
+
+  return { blockedCommand, blockedCommands, notFoundCommands };
+}
+
+/**
+ * Resolve symlinks and return BOTH original and resolved paths.
+ * Important for macOS where /tmp -> /private/tmp - Deno checks literal path.
+ */
+function resolveWithBoth(p: string): string[] {
+  try {
+    const resolved = Deno.realPathSync(p);
+    // Return both if different (e.g., /tmp and /private/tmp)
+    return resolved !== p ? [p, resolved] : [p];
+  } catch {
+    // Path doesn't exist yet or can't be resolved, return as-is
+    return [p];
+  }
+}
+
+/**
+ * Build read permission flag
+ */
+function buildReadPermission(paths: string[], cwd: string): string | null {
+  const readPaths = [...paths];
 
   // Always include temp dir for script files
   if (!readPaths.includes(TEMP_DIR)) {
@@ -242,12 +419,17 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   }
 
   if (readPaths.length) {
-    const paths = readPaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
-    flags.push(`--allow-read=${paths}`);
+    const expanded = readPaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
+    return `--allow-read=${expanded}`;
   }
+  return null;
+}
 
-  // Write permissions - use effective perms which include defaults like /tmp
-  const writePaths = [...(perms.write ?? [])];
+/**
+ * Build write permission flag
+ */
+function buildWritePermission(paths: string[], cwd: string): string | null {
+  const writePaths = [...paths];
 
   // Always include temp dir for script files
   if (!writePaths.includes(TEMP_DIR)) {
@@ -255,45 +437,90 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   }
 
   if (writePaths.length) {
-    const paths = writePaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
-    flags.push(`--allow-write=${paths}`);
+    const expanded = writePaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
+    return `--allow-write=${expanded}`;
   }
+  return null;
+}
 
-  // Network permissions
-  if (perms.net === true) {
-    flags.push("--allow-net");
-  } else if (Array.isArray(perms.net) && perms.net.length) {
-    flags.push(`--allow-net=${perms.net.join(",")}`);
+/**
+ * Build network permission flag
+ */
+function buildNetPermission(net: boolean | string[] | undefined): string | null {
+  if (net === true) {
+    return "--allow-net";
+  } else if (Array.isArray(net) && net.length) {
+    return `--allow-net=${net.join(",")}`;
   }
+  return null;
+}
 
-  // Run permissions (for external commands)
-  // Filter to only commands that exist to avoid Deno warnings (cached)
-  const runCommands = [...(perms.run ?? [])];
+/**
+ * Build run permission flag
+ */
+function buildRunPermission(
+  commands: string[],
+  cwd: string,
+  config: SafeShellConfig,
+): string | null {
+  const runCommands = [...commands];
 
   // If allowProjectCommands is true, add projectDir to allow running any command there
-  // This is a broad permission - Deno will allow running any file under projectDir
   if (config.allowProjectCommands && config.projectDir) {
     runCommands.push(config.projectDir);
   }
 
   if (runCommands.length) {
+    // Filter to only commands that exist to avoid Deno warnings (cached)
     const existingCommands = filterExistingCommands(runCommands, cwd);
     if (existingCommands.length) {
-      flags.push(`--allow-run=${existingCommands.join(",")}`);
+      return `--allow-run=${existingCommands.join(",")}`;
     }
   }
+  return null;
+}
 
-  // Env permissions - default to allowing all reads (masking filters secrets from subprocess)
-  const envConfig = config.env ?? {};
+/**
+ * Build env permission flag
+ */
+function buildEnvPermission(
+  envVars: string[] | undefined,
+  envConfig: { allowReadAll?: boolean },
+): string | null {
   const allowReadAll = envConfig.allowReadAll !== false; // default true
 
   if (allowReadAll) {
-    flags.push("--allow-env");
-  } else if (perms.env?.length) {
+    return "--allow-env";
+  } else if (envVars?.length) {
     // Restricted mode: only allow specific env vars
-    const envVars = [...perms.env, ENV_SHELL_ID, ENV_SCRIPT_ID];
-    flags.push(`--allow-env=${[...new Set(envVars)].join(",")}`);
+    const allVars = [...envVars, ENV_SHELL_ID, ENV_SCRIPT_ID];
+    return `--allow-env=${[...new Set(allVars)].join(",")}`;
   }
+  return null;
+}
+
+/**
+ * Build Deno permission flags from config
+ */
+export function buildPermissionFlags(config: SafeShellConfig, cwd: string): string[] {
+  const flags: string[] = [];
+  const perms = getEffectivePermissions(config, cwd);
+
+  // Build each permission type
+  const readFlag = buildReadPermission(perms.read ?? [], cwd);
+  if (readFlag) flags.push(readFlag);
+
+  const writeFlag = buildWritePermission(perms.write ?? [], cwd);
+  if (writeFlag) flags.push(writeFlag);
+
+  const netFlag = buildNetPermission(perms.net);
+  if (netFlag) flags.push(netFlag);
+
+  const runFlag = buildRunPermission(perms.run ?? [], cwd, config);
+  if (runFlag) flags.push(runFlag);
+
+  const envFlag = buildEnvPermission(perms.env, config.env ?? {});
+  if (envFlag) flags.push(envFlag);
 
   return flags;
 }
@@ -343,127 +570,69 @@ export async function executeCode(
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
 
-  // Generate import map from policy
+  // Generate import map and build command args
   const importMapPath = await generateImportMap(importPolicy);
-
-  // Build command
   const permFlags = buildPermissionFlags(config, cwd);
 
   // Always use SafeShell's deno.json for stdlib imports
   const safeshRoot = new URL("../../", import.meta.url).pathname;
   const safeshConfig = join(safeshRoot, "deno.json");
 
-  const args = [
-    "run",
-    "--no-prompt", // Never prompt for permissions
-    `--import-map=${importMapPath}`,
-    `--config=${safeshConfig}`, // Use SafeShell's config for @std imports
-    ...permFlags,
-  ];
+  const args = buildDenoArgs({
+    permFlags,
+    importMapPath,
+    configPath: safeshConfig, // Use SafeShell's config for @std imports
+    scriptPath,
+  });
 
-  args.push(scriptPath);
-
-  // Create command
-  const command = new Deno.Command("deno", {
+  // Spawn and collect output with callbacks for script tracking
+  const { status, stdout: rawStdout, stderr: rawStderr } = await spawnAndCollectOutput({
     args,
     cwd,
     env: buildEnv(config, shell, script?.id),
-    stdout: "piped",
-    stderr: "piped",
+    timeoutMs,
+    onSpawn: (pid) => {
+      if (script) {
+        script.pid = pid;
+        shell!.scriptsByPid.set(pid, script.id);
+      }
+    },
+    onTimeout: () => {
+      if (script) updateScriptTimeout(script, timeoutMs);
+    },
+    onError: () => {
+      if (script) updateScriptFailure(script);
+    },
   });
 
-  // Spawn process so we can kill it on timeout
-  const process = command.spawn();
+  // Extract shell state from stdout and sync back
+  const { cleanOutput: stdout, ...extractedState } = extractShellState(rawStdout);
+  syncShellState(shell, extractedState);
 
-  // Update script with PID
+  // Extract job events and command errors from stderr
+  const { cleanStderr: stderr, jobEvents, cmdErrors, initErrors } = extractStderrEvents(rawStderr);
+  if (shell && script && jobEvents.length > 0) {
+    processJobEvents(shell, script, jobEvents);
+  }
+
+  // Extract blocked command info
+  const { blockedCommand, blockedCommands, notFoundCommands } = extractBlockedCommands(cmdErrors, initErrors);
+
+  // Update script with results
   if (script) {
-    script.pid = process.pid;
-    shell!.scriptsByPid.set(process.pid, script.id);
+    updateScriptSuccess(script, status, stdout, stderr);
   }
 
-  try {
-    // Create a promise that collects output
-    const outputPromise = (async () => {
-      const [status, stdout, stderr] = await Promise.all([
-        process.status,
-        collectStreamText(process.stdout),
-        collectStreamText(process.stderr),
-      ]);
-      return { status, stdout, stderr };
-    })();
-
-    const { status, stdout: rawStdout, stderr: rawStderr } = await deadline(outputPromise, timeoutMs);
-
-    // Extract shell state from stdout and sync cwd/env/vars back
-    const { cleanOutput: stdout, cwd, env, vars } = extractShellState(rawStdout);
-    if (shell) {
-      if (cwd) shell.cwd = cwd;
-      if (env) shell.env = env;
-      if (vars) shell.vars = vars;
-    }
-
-    // Extract job events and command errors from stderr
-    const { cleanStderr: stderr, jobEvents, cmdErrors, initErrors } = extractStderrEvents(rawStderr);
-    if (shell && script && jobEvents.length > 0) {
-      processJobEvents(shell, script, jobEvents);
-    }
-
-    // Check for blocked command (legacy single command)
-    const firstCmdError = cmdErrors[0];
-    const blockedCommand = firstCmdError?.command;
-
-    // Check for init errors (multiple commands)
-    const firstInitError = initErrors[0];
-    const blockedCommands = firstInitError?.notAllowed.length ? firstInitError.notAllowed : undefined;
-    const notFoundCommands = firstInitError?.notFound.length ? firstInitError.notFound : undefined;
-
-    // Update script with results (using cleaned output)
-    if (script) {
-      const stdoutResult = truncateOutput(stdout);
-      const stderrResult = truncateOutput(stderr);
-
-      script.status = status.code === 0 ? "completed" : "failed";
-      script.exitCode = status.code;
-      script.stdout = stdoutResult.text;
-      script.stderr = stderrResult.text;
-      script.stdoutTruncated = stdoutResult.truncated;
-      script.stderrTruncated = stderrResult.truncated;
-      script.completedAt = new Date();
-      script.duration = script.completedAt.getTime() - script.startedAt.getTime();
-    }
-
-    return {
-      stdout,
-      stderr,
-      code: status.code,
-      success: status.code === 0,
-      scriptId: script?.id,
-      blockedCommand,
-      blockedCommands,
-      notFoundCommands,
-    };
-  } catch (error) {
-    // Kill the process and cancel streams on timeout or error
-    await cleanupProcess(process);
-
-    // Update script with failure
-    if (script) {
-      script.status = "failed";
-      script.completedAt = new Date();
-      script.duration = script.completedAt.getTime() - script.startedAt.getTime();
-      if (error instanceof DOMException && error.name === "TimeoutError") {
-        script.stderr = `Execution timed out after ${timeoutMs}ms`;
-        script.stderrTruncated = false;
-      }
-    }
-
-    if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw timeoutError(timeoutMs, "exec");
-    }
-    throw executionError(
-      error instanceof Error ? error.message : String(error),
-    );
-  }
+  return {
+    stdout,
+    stderr,
+    code: status.code,
+    success: status.code === 0,
+    scriptId: script?.id,
+    blockedCommand,
+    blockedCommands,
+    notFoundCommands,
+  };
 }
 
 
@@ -534,76 +703,36 @@ export async function executeFile(
   const tempPath = join(TEMP_DIR, `file_${hash}.ts`);
   await Deno.writeTextFile(tempPath, wrappedCode);
 
-  // Generate import map from policy
+  // Generate import map and build command args
   const importMapPath = await generateImportMap(importPolicy);
-
-  // Build command
   const permFlags = buildPermissionFlags(config, cwd);
   const configPath = await findConfig(cwd);
 
-  const args = [
-    "run",
-    "--no-prompt",
-    `--import-map=${importMapPath}`,
-    ...permFlags,
-  ];
+  const args = buildDenoArgs({
+    permFlags,
+    importMapPath,
+    configPath,
+    scriptPath: tempPath,
+  });
 
-  if (configPath) {
-    args.push(`--config=${configPath}`);
-  }
-
-  args.push(tempPath);
-
-  // Create command
-  const command = new Deno.Command("deno", {
+  // Spawn and collect output
+  const { status, stdout: rawStdout, stderr } = await spawnAndCollectOutput({
     args,
     cwd,
     env: buildEnv(config, shell),
-    stdout: "piped",
-    stderr: "piped",
+    timeoutMs,
   });
 
-  // Spawn process so we can kill it on timeout
-  const process = command.spawn();
+  // Extract shell state from stdout and sync back
+  const { cleanOutput: stdout, ...extractedState } = extractShellState(rawStdout);
+  syncShellState(shell, extractedState);
 
-  try {
-    // Create a promise that collects output
-    const outputPromise = (async () => {
-      const [status, stdout, stderr] = await Promise.all([
-        process.status,
-        collectStreamText(process.stdout),
-        collectStreamText(process.stderr),
-      ]);
-      return { status, stdout, stderr };
-    })();
-
-    const { status, stdout: rawStdout, stderr } = await deadline(outputPromise, timeoutMs);
-
-    // Extract shell state from stdout and sync back
-    const { cleanOutput: stdout, cwd, env, vars } = extractShellState(rawStdout);
-    if (shell) {
-      if (cwd) shell.cwd = cwd;
-      if (env) shell.env = env;
-      if (vars) shell.vars = vars;
-    }
-
-    return {
-      stdout,
-      stderr,
-      code: status.code,
-      success: status.code === 0,
-    };
-  } catch (error) {
-    // Kill the process and cancel streams on timeout or error
-    await cleanupProcess(process);
-
-    if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw timeoutError(timeoutMs, "exec");
-    }
-    throw executionError(
-      error instanceof Error ? error.message : String(error),
-    );
-  }
+  return {
+    stdout,
+    stderr,
+    code: status.code,
+    success: status.code === 0,
+  };
 }
 
 /**

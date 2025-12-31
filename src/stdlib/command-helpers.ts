@@ -1,0 +1,158 @@
+/**
+ * Command Helper Factory Functions
+ *
+ * Provides convenience factory functions for common commands like git, docker, deno.
+ * Also includes heredoc-style helpers (str, bytes) for piping data to commands.
+ *
+ * @module
+ */
+
+import { Command, type CommandOptions } from "./command.ts";
+
+/**
+ * Overloaded command function type with options-first pattern.
+ * Used internally for git, docker, deno convenience functions.
+ */
+type OverloadedCommandFn = {
+  (options: CommandOptions, ...args: string[]): Command;
+  (...args: string[]): Command;
+};
+
+/**
+ * Create a command factory for a specific command
+ *
+ * Returns a function that creates Command instances for the specified command.
+ * Supports both `cmd(...args)` and `cmd(options, ...args)` signatures.
+ *
+ * @param commandName - The command to create a factory for (e.g., "git", "docker")
+ * @returns A function that creates Command instances
+ */
+export function createCommandFactory(commandName: string): OverloadedCommandFn {
+  return function (...args: unknown[]): Command {
+    // Check if first arg is options object
+    if (
+      args.length > 0 &&
+      typeof args[0] === "object" &&
+      !Array.isArray(args[0])
+    ) {
+      const options = args[0] as CommandOptions;
+      const cmdArgs = args.slice(1) as string[];
+      return new Command(commandName, cmdArgs, options);
+    } else {
+      return new Command(commandName, args as string[], {});
+    }
+  } as OverloadedCommandFn;
+}
+
+/**
+ * Create a git command
+ *
+ * Convenience function for git commands with optional options.
+ *
+ * @example
+ * ```ts
+ * // Simple git command
+ * const result = await git("status").exec();
+ *
+ * // With arguments
+ * const result = await git("commit", "-m", "message").exec();
+ *
+ * // With options
+ * const result = await git({ cwd: "/repo" }, "status").exec();
+ * ```
+ */
+export const git: OverloadedCommandFn = createCommandFactory("git");
+
+/**
+ * Create a docker command
+ *
+ * Convenience function for docker commands with optional options.
+ *
+ * @example
+ * ```ts
+ * // Simple docker command
+ * const result = await docker("ps").exec();
+ *
+ * // With arguments
+ * const result = await docker("run", "-it", "alpine").exec();
+ *
+ * // With options
+ * const result = await docker({ cwd: "/project" }, "compose", "up").exec();
+ * ```
+ */
+export const docker: OverloadedCommandFn = createCommandFactory("docker");
+
+/**
+ * Create a deno command
+ *
+ * Convenience function for deno commands with optional options.
+ *
+ * @example
+ * ```ts
+ * // Simple deno command
+ * const result = await deno("--version").exec();
+ *
+ * // Run a script
+ * const result = await deno("run", "script.ts").exec();
+ *
+ * // With options
+ * const result = await deno({ cwd: "/project" }, "task", "build").exec();
+ * ```
+ */
+export const deno: OverloadedCommandFn = createCommandFactory("deno");
+
+/**
+ * Create a data source for piping text to commands (heredoc equivalent)
+ *
+ * Returns a Command-like object that can be piped to other commands.
+ * The text becomes stdin for the first command in the pipeline.
+ *
+ * @param content - Text content (string or template literal)
+ * @returns Command that can be piped
+ *
+ * @example
+ * ```ts
+ * // Heredoc-style: sort lines
+ * const result = await str(`cherry
+ * apple
+ * banana`).pipe("sort").exec();
+ *
+ * // With variable interpolation
+ * const name = "world";
+ * const result = await str(`Hello ${name}`).pipe("cat").exec();
+ *
+ * // Multi-stage pipeline
+ * const result = await str(`line1
+ * line2
+ * line3`).pipe("grep", ["line2"]).pipe("wc", ["-l"]).exec();
+ * ```
+ */
+export function str(content: string): Command {
+  // Use 'cat' as a pass-through with stdin
+  return new Command("cat", [], { stdin: content });
+}
+
+/**
+ * Create a data source for piping binary data to commands
+ *
+ * Returns a Command-like object that can be piped to other commands.
+ * The data becomes stdin for the first command in the pipeline.
+ *
+ * @param content - Binary data (Uint8Array)
+ * @returns Command that can be piped
+ *
+ * @example
+ * ```ts
+ * // Pipe binary data
+ * const raw = new TextEncoder().encode("hello");
+ * const result = await bytes(raw).pipe("xxd").exec();
+ *
+ * // Read file and process
+ * const content = await Deno.readFile("image.png");
+ * const result = await bytes(content).pipe("file", ["-"]).exec();
+ * ```
+ */
+export function bytes(content: Uint8Array): Command {
+  // Use 'cat' as a pass-through with stdin
+  return new Command("cat", [], { stdin: content });
+}

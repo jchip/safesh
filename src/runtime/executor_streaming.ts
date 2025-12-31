@@ -9,6 +9,7 @@ import { ensureDir } from "@std/fs";
 import { timeout as timeoutError } from "../core/errors.ts";
 import type { ExecOptions, SafeShellConfig, Shell, StreamChunk } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
+import { cleanupProcess } from "../core/utils.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
@@ -211,24 +212,8 @@ export async function* executeCodeStreaming(
     const status = await process.status;
     yield { type: "exit", code: status.code };
   } catch (error) {
-    // Kill process on error/timeout
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Process may have already exited
-    }
-
-    // Cancel streams
-    try {
-      await process.stdout.cancel();
-    } catch {
-      // Stream may already be closed
-    }
-    try {
-      await process.stderr.cancel();
-    } catch {
-      // Stream may already be closed
-    }
+    // Kill process and cancel streams on error/timeout
+    await cleanupProcess(process);
 
     throw error;
   }
@@ -321,24 +306,8 @@ export async function* runCommandStreaming(
     const status = await process.status;
     yield { type: "exit", code: status.code };
   } catch (error) {
-    // Kill process on error/timeout
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Process may have already exited
-    }
-
-    // Cancel streams
-    try {
-      await process.stdout.cancel();
-    } catch {
-      // Stream may already be closed
-    }
-    try {
-      await process.stderr.cancel();
-    } catch {
-      // Stream may already be closed
-    }
+    // Kill process and cancel streams on error/timeout
+    await cleanupProcess(process);
 
     throw error;
   }
