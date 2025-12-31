@@ -159,6 +159,24 @@ export class Command implements PromiseLike<CommandResult> {
   }
 
   /**
+   * Handle rejection - makes Command fully Promise-like
+   * @example await $.cmd('pkill', ['-f', 'foo']).catch(() => {})
+   */
+  catch<TResult = never>(
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null,
+  ): Promise<CommandResult | TResult> {
+    return this.exec().catch(onrejected);
+  }
+
+  /**
+   * Run cleanup regardless of success/failure
+   * @example await $.cmd('test').finally(() => console.log('done'))
+   */
+  finally(onfinally?: (() => void) | null): Promise<CommandResult> {
+    return this.exec().finally(onfinally);
+  }
+
+  /**
    * Create a Deno.Command with standard configuration
    */
   private createCommand(hasStdin: boolean): Deno.Command {
