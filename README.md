@@ -128,7 +128,7 @@ await cmd('cat', ['file.txt']).pipe('grep', ['pattern']).pipe('sort').exec();
 
 ### 1. Create a Config File
 
-Create `safesh.config.ts` in your project root:
+Create `.config/safesh/config.ts` in your project (or `config.json` - JSON overrides TS):
 
 ```typescript
 import type { SafeShellConfig } from "https://raw.githubusercontent.com/your-org/safesh/main/src/core/types.ts";
@@ -212,8 +212,21 @@ SafeShell provides three security presets:
 | Preset | Use Case | Read | Write | Network | Commands |
 |--------|----------|------|-------|---------|----------|
 | `strict` | Untrusted code | CWD, /tmp | /tmp only | None | None |
-| `standard` | Most projects | CWD, /tmp | CWD, /tmp | None | None (configure explicitly) |
-| `permissive` | Development | CWD, /tmp, HOME | CWD, /tmp | All | git, deno, node, docker, etc. |
+| `standard` | Most projects | CWD, /tmp | CWD, /tmp | None | lsof, ps |
+| `permissive` | Development | CWD, /tmp, HOME | CWD, /tmp | All | git, npm, docker, curl, + many inspection tools |
+
+### Configuration Hierarchy
+
+Configs are loaded and merged in this order (later overrides earlier):
+
+| Level | Path | Notes |
+|-------|------|-------|
+| Built-in | (in code) | `STANDARD_PRESET` default |
+| Global | `~/.config/safesh/config.[ts\|json]` | Your personal defaults |
+| Project | `.config/safesh/config.[ts\|json]` | Project-specific |
+| Local | `.config/safesh/config.local.[ts\|json]` | Machine-writable (auto-saved on "always allow") |
+
+**Note:** JSON overrides TS at each level.
 
 ### Configuration Options
 
@@ -690,7 +703,7 @@ safesh repl
 safesh serve
 
 # Options
--c, --config <file>  Config file (default: ./safesh.config.ts)
+-c, --config <file>  Config file (default: .config/safesh/config.ts)
 -v, --verbose        Verbose output
 -h, --help           Show help
 --version            Show version

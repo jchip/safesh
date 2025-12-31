@@ -1,5 +1,5 @@
 /**
- * Tests for .claude/safesh.local.ts and .claude/safesh.local.json config loading
+ * Tests for .config/safesh/config.local.ts and .config/safesh/config.local.json config loading
  */
 
 import { assertEquals, assertExists } from "@std/assert";
@@ -7,6 +7,7 @@ import { join } from "@std/path";
 import {
   getLocalConfigPath,
   getLocalJsonConfigPath,
+  getProjectConfigDir,
   loadConfig,
   saveToLocalJson,
 } from "../src/core/config.ts";
@@ -22,7 +23,7 @@ import type { SafeshLocalConfig } from "../src/core/types.ts";
 async function createTestDir(name: string): Promise<string> {
   const testDir = join("/tmp", `safesh-test-${name}-${Date.now()}`);
   await Deno.mkdir(testDir, { recursive: true });
-  await Deno.mkdir(join(testDir, ".claude"), { recursive: true });
+  await Deno.mkdir(getProjectConfigDir(testDir), { recursive: true });
   return testDir;
 }
 
@@ -33,7 +34,7 @@ async function writeLocalConfig(
   testDir: string,
   config: SafeshLocalConfig,
 ): Promise<void> {
-  const configPath = join(testDir, ".claude", "safesh.local.ts");
+  const configPath = getLocalConfigPath(testDir);
   const content = `export default ${JSON.stringify(config, null, 2)};`;
   await Deno.writeTextFile(configPath, content);
 }
@@ -55,7 +56,7 @@ async function cleanupTestDir(testDir: string): Promise<void> {
 
 Deno.test("getLocalConfigPath - returns correct path", () => {
   const cwd = "/test/project";
-  const expected = "/test/project/.claude/safesh.local.ts";
+  const expected = "/test/project/.config/safesh/config.local.ts";
   assertEquals(getLocalConfigPath(cwd), expected);
 });
 
@@ -165,7 +166,7 @@ Deno.test("loadConfig - invalid local config logs warning but does not fail", as
 
   try {
     // Write invalid TypeScript
-    const configPath = join(testDir, ".claude", "safesh.local.ts");
+    const configPath = getLocalConfigPath(testDir);
     await Deno.writeTextFile(
       configPath,
       "export default { invalid syntax here",
@@ -211,7 +212,7 @@ Deno.test("loadConfig - local config merges with project config", async () => {
 
   try {
     // Write project config
-    const projectConfigPath = join(testDir, "safesh.config.ts");
+    const projectConfigPath = join(getProjectConfigDir(testDir), "config.ts");
     await Deno.writeTextFile(
       projectConfigPath,
       `export default {
@@ -244,7 +245,7 @@ Deno.test("loadConfig - local config has highest priority", async () => {
 
   try {
     // Write project config with git restricted
-    const projectConfigPath = join(testDir, "safesh.config.ts");
+    const projectConfigPath = join(getProjectConfigDir(testDir), "config.ts");
     await Deno.writeTextFile(
       projectConfigPath,
       `export default {
@@ -307,7 +308,7 @@ Deno.test("loadConfig - local config permissions.run merges with existing", asyn
 
   try {
     // Write project config with existing run permission
-    const projectConfigPath = join(testDir, "safesh.config.ts");
+    const projectConfigPath = join(getProjectConfigDir(testDir), "config.ts");
     await Deno.writeTextFile(
       projectConfigPath,
       `export default {
@@ -344,7 +345,7 @@ Deno.test("loadConfig - extracts project commands with name and path", async () 
 
   try {
     // Write local config with project commands
-    const configPath = join(testDir, ".claude", "safesh.local.ts");
+    const configPath = getLocalConfigPath(testDir);
     await Deno.writeTextFile(
       configPath,
       `export default {
@@ -372,7 +373,7 @@ Deno.test("loadConfig - handles mixed command types", async () => {
 
   try {
     // Write local config with mixed command types
-    const configPath = join(testDir, ".claude", "safesh.local.ts");
+    const configPath = getLocalConfigPath(testDir);
     await Deno.writeTextFile(
       configPath,
       `export default {
@@ -407,12 +408,12 @@ Deno.test("loadConfig - handles mixed command types", async () => {
 });
 
 // ============================================================================
-// JSON Config Tests (.claude/safesh.local.json)
+// JSON Config Tests (.config/safesh/config.local.json)
 // ============================================================================
 
 Deno.test("getLocalJsonConfigPath - returns correct path", () => {
   const cwd = "/test/project";
-  const expected = "/test/project/.claude/safesh.local.json";
+  const expected = "/test/project/.config/safesh/config.local.json";
   assertEquals(getLocalJsonConfigPath(cwd), expected);
 });
 
@@ -424,7 +425,7 @@ Deno.test("saveToLocalJson - creates JSON file with commands", async () => {
     await saveToLocalJson(testDir, ["cargo", "rustc"]);
 
     // Verify file was created
-    const jsonPath = join(testDir, ".claude", "safesh.local.json");
+    const jsonPath = getLocalJsonConfigPath(testDir);
     const content = await Deno.readTextFile(jsonPath);
     const config = JSON.parse(content);
 
@@ -445,7 +446,7 @@ Deno.test("saveToLocalJson - merges with existing commands", async () => {
     await saveToLocalJson(testDir, ["rustc", "make"]);
 
     // Verify merged content
-    const jsonPath = join(testDir, ".claude", "safesh.local.json");
+    const jsonPath = getLocalJsonConfigPath(testDir);
     const content = await Deno.readTextFile(jsonPath);
     const config = JSON.parse(content);
 
@@ -467,7 +468,7 @@ Deno.test("saveToLocalJson - does not duplicate existing commands", async () => 
     await saveToLocalJson(testDir, ["cargo", "make"]);
 
     // Verify no duplicates
-    const jsonPath = join(testDir, ".claude", "safesh.local.json");
+    const jsonPath = getLocalJsonConfigPath(testDir);
     const content = await Deno.readTextFile(jsonPath);
     const config = JSON.parse(content);
 
@@ -482,7 +483,7 @@ Deno.test("loadConfig - loads commands from JSON config", async () => {
 
   try {
     // Write JSON config directly
-    const jsonPath = join(testDir, ".claude", "safesh.local.json");
+    const jsonPath = getLocalJsonConfigPath(testDir);
     await Deno.writeTextFile(
       jsonPath,
       JSON.stringify({ allowedCommands: ["cargo", "rustc"] }, null, 2),
@@ -515,7 +516,7 @@ Deno.test("loadConfig - JSON config has highest priority over TS config", async 
     });
 
     // Write JSON config with additional command
-    const jsonPath = join(testDir, ".claude", "safesh.local.json");
+    const jsonPath = getLocalJsonConfigPath(testDir);
     await Deno.writeTextFile(
       jsonPath,
       JSON.stringify({ allowedCommands: ["cargo"] }, null, 2),
@@ -524,9 +525,8 @@ Deno.test("loadConfig - JSON config has highest priority over TS config", async 
     // Load config
     const config = await loadConfig(testDir);
 
-    // Both should be loaded (JSON is merged after TS)
+    // JSON overrides TS for local config, so only cargo should be from local
     assertExists(config.external);
-    assertEquals(config.external.git?.allow, true); // from TS config
     assertEquals(config.external.cargo?.allow, true); // from JSON config
   } finally {
     await cleanupTestDir(testDir);
@@ -538,7 +538,7 @@ Deno.test("loadConfig - invalid JSON config logs warning but does not fail", asy
 
   try {
     // Write invalid JSON
-    const jsonPath = join(testDir, ".claude", "safesh.local.json");
+    const jsonPath = getLocalJsonConfigPath(testDir);
     await Deno.writeTextFile(jsonPath, "{ invalid json here");
 
     // Load config should succeed
@@ -557,7 +557,7 @@ Deno.test("loadConfig - empty JSON config does not error", async () => {
 
   try {
     // Write empty JSON config
-    const jsonPath = join(testDir, ".claude", "safesh.local.json");
+    const jsonPath = getLocalJsonConfigPath(testDir);
     await Deno.writeTextFile(jsonPath, "{}");
 
     // Load config should succeed
@@ -571,17 +571,17 @@ Deno.test("loadConfig - empty JSON config does not error", async () => {
   }
 });
 
-Deno.test("saveToLocalJson - creates .claude directory if it doesn't exist", async () => {
+Deno.test("saveToLocalJson - creates .config/safesh directory if it doesn't exist", async () => {
   const testDir = join("/tmp", `safesh-test-json-mkdir-${Date.now()}`);
   await Deno.mkdir(testDir, { recursive: true });
 
   try {
-    // .claude directory doesn't exist yet
+    // .config/safesh directory doesn't exist yet
     // saveToLocalJson should create it
     await saveToLocalJson(testDir, ["cargo"]);
 
     // Verify directory and file were created
-    const jsonPath = join(testDir, ".claude", "safesh.local.json");
+    const jsonPath = getLocalJsonConfigPath(testDir);
     const content = await Deno.readTextFile(jsonPath);
     const config = JSON.parse(content);
 

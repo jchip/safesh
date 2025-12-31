@@ -88,13 +88,36 @@ export const PERMISSIVE_PRESET: SafeShellConfig = {
     read: ["${CWD}", "/tmp", "${HOME}"],
     write: ["${CWD}", "/tmp"],
     net: true,
-    run: ["git", "deno", "node", "npm", "pnpm", "yarn", "fyn", "nvx", "xrun", "docker", "make", "cargo", "chmod", "du", "grep"],
+    run: [
+      // Build tools (excluding deno/node which execute arbitrary code)
+      "git", "npm", "pnpm", "yarn", "fyn", "nvx", "xrun",
+      "docker", "make", "cargo",
+      // Process/system inspection (read-only)
+      "ps", "lsof", "netstat", "ss", "pgrep", "pidof", "fuser",
+      "top", "htop", "uptime", "uname", "hostname", "whoami", "id", "groups",
+      // File/directory inspection (read-only)
+      "ls", "file", "stat", "du", "df", "find", "locate", "tree",
+      "which", "whereis", "type", "realpath", "dirname", "basename",
+      // Text processing (read-only, excluding sed -i, xargs)
+      "cat", "head", "tail", "sort", "uniq", "wc", "grep", "cut",
+      "awk", "tr", "column", "comm", "join", "paste",
+      // Encoding/hashing (read-only)
+      "md5", "md5sum", "shasum", "sha256sum", "base64", "xxd", "od", "hexdump",
+      // Compression (read-only - zcat/bzcat/xzcat/zipinfo only)
+      "zcat", "bzcat", "xzcat", "zipinfo",
+      // Network inspection
+      "ping", "host", "dig", "nslookup", "traceroute", "ifconfig", "ip", "arp", "route",
+      "curl", "wget",
+      // Date/time
+      "date", "cal",
+      // Misc (read-only, excluding tee which writes)
+      "env", "printenv", "echo", "printf", "timeout", "time",
+    ],
     env: ["HOME", "PATH", "TERM", "USER", "LANG", "EDITOR", "SHELL"],
   },
   external: {
+    // Build tools (deno/node excluded - they execute arbitrary code)
     git: { allow: true },
-    deno: { allow: true },
-    node: { allow: true },
     npm: { allow: true },
     pnpm: { allow: true },
     yarn: { allow: true },
@@ -107,9 +130,88 @@ export const PERMISSIVE_PRESET: SafeShellConfig = {
     },
     make: { allow: true },
     cargo: { allow: true },
-    chmod: { allow: true },
+    // Process/system inspection
+    ps: { allow: true },
+    lsof: { allow: true },
+    netstat: { allow: true },
+    ss: { allow: true },
+    pgrep: { allow: true },
+    pidof: { allow: true },
+    fuser: { allow: true },
+    top: { allow: true },
+    htop: { allow: true },
+    uptime: { allow: true },
+    uname: { allow: true },
+    hostname: { allow: true },
+    whoami: { allow: true },
+    id: { allow: true },
+    groups: { allow: true },
+    // File/directory inspection (read-only)
+    ls: { allow: true },
+    file: { allow: true },
+    stat: { allow: true },
     du: { allow: true },
+    df: { allow: true },
+    find: { allow: true },
+    locate: { allow: true },
+    tree: { allow: true },
+    which: { allow: true },
+    whereis: { allow: true },
+    type: { allow: true },
+    realpath: { allow: true },
+    dirname: { allow: true },
+    basename: { allow: true },
+    // Text processing (read-only)
+    cat: { allow: true },
+    head: { allow: true },
+    tail: { allow: true },
+    sort: { allow: true },
+    uniq: { allow: true },
+    wc: { allow: true },
     grep: { allow: true },
+    cut: { allow: true },
+    awk: { allow: true },
+    tr: { allow: true },
+    column: { allow: true },
+    comm: { allow: true },
+    join: { allow: true },
+    paste: { allow: true },
+    // Encoding/hashing (read-only)
+    md5: { allow: true },
+    md5sum: { allow: true },
+    shasum: { allow: true },
+    sha256sum: { allow: true },
+    base64: { allow: true },
+    xxd: { allow: true },
+    od: { allow: true },
+    hexdump: { allow: true },
+    // Compression (read-only)
+    zcat: { allow: true },
+    bzcat: { allow: true },
+    xzcat: { allow: true },
+    zipinfo: { allow: true },
+    // Network inspection
+    ping: { allow: true },
+    host: { allow: true },
+    dig: { allow: true },
+    nslookup: { allow: true },
+    traceroute: { allow: true },
+    ifconfig: { allow: true },
+    ip: { allow: true },
+    arp: { allow: true },
+    route: { allow: true },
+    curl: { allow: true },
+    wget: { allow: true },
+    // Date/time
+    date: { allow: true },
+    cal: { allow: true },
+    // Misc (read-only)
+    env: { allow: true },
+    printenv: { allow: true },
+    echo: { allow: true },
+    printf: { allow: true },
+    timeout: { allow: true },
+    time: { allow: true },
   },
   env: {
     allow: [
@@ -285,9 +387,9 @@ export function mergeConfigs(
 }
 
 /**
- * Load a config file if it exists
+ * Load a TypeScript config file if it exists
  */
-async function loadConfigFile(path: string): Promise<SafeShellConfig | null> {
+async function loadTsConfigFile(path: string): Promise<SafeShellConfig | null> {
   try {
     // Convert file:// URL to path for stat
     const filePath = path.startsWith("file://") ? fromFileUrl(path) : path;
@@ -298,7 +400,8 @@ async function loadConfigFile(path: string): Promise<SafeShellConfig | null> {
 
   try {
     // Dynamic import the config file (needs file:// URL)
-    const module = await import(path);
+    const fileUrl = path.startsWith("file://") ? path : `file://${path}`;
+    const module = await import(fileUrl);
     return module.default as SafeShellConfig;
   } catch (error) {
     throw configError(
@@ -310,37 +413,105 @@ async function loadConfigFile(path: string): Promise<SafeShellConfig | null> {
 }
 
 /**
- * Get the global config path
+ * Load a JSON config file if it exists
+ */
+async function loadJsonConfigFile(path: string): Promise<SafeShellConfig | null> {
+  try {
+    await Deno.stat(path);
+  } catch {
+    return null; // File doesn't exist
+  }
+
+  try {
+    const content = await Deno.readTextFile(path);
+    return JSON.parse(content) as SafeShellConfig;
+  } catch (error) {
+    throw configError(
+      `Failed to load config from ${path}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+/**
+ * Load config with JSON-overrides-TS logic
+ * Tries JSON first, falls back to TS if JSON doesn't exist
+ */
+async function loadConfigWithJsonOverride(
+  tsPath: string,
+  jsonPath: string,
+): Promise<SafeShellConfig | null> {
+  // Try JSON first (higher priority)
+  const jsonConfig = await loadJsonConfigFile(jsonPath);
+  if (jsonConfig) {
+    return jsonConfig;
+  }
+
+  // Fall back to TS
+  return await loadTsConfigFile(tsPath);
+}
+
+/**
+ * Get the global config directory
+ */
+export function getGlobalConfigDir(): string {
+  const home = Deno.env.get("HOME") ?? "";
+  return join(home, ".config", "safesh");
+}
+
+/**
+ * Get the global config path (TS)
  */
 export function getGlobalConfigPath(): string {
-  const home = Deno.env.get("HOME") ?? "";
-  return join(home, ".config", "safesh", "config.ts");
+  return join(getGlobalConfigDir(), "config.ts");
 }
 
 /**
- * Get the project config path
+ * Get the global config path (JSON) - overrides TS
+ */
+export function getGlobalConfigJsonPath(): string {
+  return join(getGlobalConfigDir(), "config.json");
+}
+
+/**
+ * Get the project config directory
+ */
+export function getProjectConfigDir(cwd: string): string {
+  return join(cwd, ".config", "safesh");
+}
+
+/**
+ * Get the project config path (TS)
  */
 export function getProjectConfigPath(cwd: string): string {
-  return join(cwd, "safesh.config.ts");
+  return join(getProjectConfigDir(cwd), "config.ts");
 }
 
 /**
- * Get the local config path (.claude/safesh.local.ts)
+ * Get the project config path (JSON) - overrides TS
+ */
+export function getProjectConfigJsonPath(cwd: string): string {
+  return join(getProjectConfigDir(cwd), "config.json");
+}
+
+/**
+ * Get the local config path (TS) - .config/safesh/config.local.ts
  */
 export function getLocalConfigPath(cwd: string): string {
-  return join(cwd, ".claude", "safesh.local.ts");
+  return join(getProjectConfigDir(cwd), "config.local.ts");
 }
 
 /**
- * Get the local JSON config path (.claude/safesh.local.json)
- * This file has precedence over .claude/safesh.local.ts and is machine-writable
+ * Get the local JSON config path - .config/safesh/config.local.json
+ * This file has precedence over config.local.ts and is machine-writable
  */
 export function getLocalJsonConfigPath(cwd: string): string {
-  return join(cwd, ".claude", "safesh.local.json");
+  return join(getProjectConfigDir(cwd), "config.local.json");
 }
 
 /**
- * Load local config from .claude/safesh.local.ts and convert to SafeShellConfig
+ * Load local config from .config/safesh/config.local.ts and convert to SafeShellConfig
  * Local config adds allowedCommands to both external and permissions.run
  */
 async function loadLocalConfig(cwd: string): Promise<{ config: SafeShellConfig | null }> {
@@ -398,13 +569,13 @@ async function loadLocalConfig(cwd: string): Promise<{ config: SafeShellConfig |
   }
 }
 
-/** JSON format for .claude/safesh.local.json */
+/** JSON format for config.local.json */
 interface LocalJsonConfig {
   allowedCommands?: string[];
 }
 
 /**
- * Load local JSON config from .claude/safesh.local.json
+ * Load local JSON config from .config/safesh/config.local.json
  * Returns the config or null if file doesn't exist
  */
 async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null> {
@@ -430,17 +601,17 @@ async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null>
 }
 
 /**
- * Save commands to .claude/safesh.local.json
- * Creates the .claude directory if it doesn't exist
+ * Save commands to .config/safesh/config.local.json
+ * Creates the .config/safesh directory if it doesn't exist
  * Merges with existing commands (adds new, doesn't remove existing)
  */
 export async function saveToLocalJson(cwd: string, commands: string[]): Promise<void> {
   const jsonPath = getLocalJsonConfigPath(cwd);
-  const claudeDir = join(cwd, ".claude");
+  const configDir = getProjectConfigDir(cwd);
 
-  // Ensure .claude directory exists
+  // Ensure .config/safesh directory exists
   try {
-    await Deno.mkdir(claudeDir, { recursive: true });
+    await Deno.mkdir(configDir, { recursive: true });
   } catch (error) {
     if (!(error instanceof Deno.errors.AlreadyExists)) {
       throw error;
@@ -494,9 +665,11 @@ export async function loadConfig(
 
   let config = { ...DEFAULT_CONFIG };
 
-  // Load global config
-  const globalPath = getGlobalConfigPath();
-  const globalConfig = await loadConfigFile(`file://${globalPath}`);
+  // Load global config (JSON overrides TS)
+  const globalConfig = await loadConfigWithJsonOverride(
+    getGlobalConfigPath(),
+    getGlobalConfigJsonPath(),
+  );
   if (globalConfig) {
     // If global config specifies a preset, start from that preset
     if (globalConfig.preset) {
@@ -506,9 +679,11 @@ export async function loadConfig(
     }
   }
 
-  // Load project config
-  const projectPath = getProjectConfigPath(cwd);
-  const projectConfig = await loadConfigFile(`file://${projectPath}`);
+  // Load project config (JSON overrides TS)
+  const projectConfig = await loadConfigWithJsonOverride(
+    getProjectConfigPath(cwd),
+    getProjectConfigJsonPath(cwd),
+  );
   if (projectConfig) {
     // If project config specifies a preset, it takes precedence
     if (projectConfig.preset) {
@@ -518,22 +693,22 @@ export async function loadConfig(
     }
   }
 
-  // Load local config (.claude/safesh.local.ts)
-  const localResult = await loadLocalConfig(cwd);
-  if (localResult.config) {
-    config = mergeConfigs(config, localResult.config);
-  }
-
-  // Load local JSON config (.claude/safesh.local.json)
-  // This has highest priority - machine-writable config for persistence
-  const jsonConfig = await loadLocalJsonConfig(cwd);
-  if (jsonConfig?.allowedCommands && jsonConfig.allowedCommands.length > 0) {
-    const commands = jsonConfig.allowedCommands.filter((c): c is string => typeof c === "string");
+  // Load local config (JSON overrides TS)
+  // config.local.json has highest priority - machine-writable for "always allow"
+  const localJsonConfig = await loadLocalJsonConfig(cwd);
+  if (localJsonConfig?.allowedCommands && localJsonConfig.allowedCommands.length > 0) {
+    const commands = localJsonConfig.allowedCommands.filter((c): c is string => typeof c === "string");
     if (commands.length > 0) {
       config = mergeConfigs(config, {
         external: Object.fromEntries(commands.map((cmd) => [cmd, { allow: true }])),
         permissions: { run: commands },
       });
+    }
+  } else {
+    // Fall back to config.local.ts if no JSON
+    const localResult = await loadLocalConfig(cwd);
+    if (localResult.config) {
+      config = mergeConfigs(config, localResult.config);
     }
   }
 
