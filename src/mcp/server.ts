@@ -544,11 +544,12 @@ await _curl('-s', 'https://example.com');  // if blocked, returns COMMANDS_BLOCK
               code: {
                 type: "string",
                 description: "JavaScript/TypeScript code to execute (optional if file or retry_id provided). " +
-                  "Example streaming: await cat('file.txt').pipe(lines()).pipe(grep(/ERROR/)).collect()",
+                  "For complex scripts with template literals or special chars, prefer 'file' mode to avoid JSON escaping issues. " +
+                  "Example: await cat('file.txt').pipe(lines()).pipe(grep(/ERROR/)).collect()",
               },
               file: {
                 type: "string",
-                description: "Path to .ts file to execute (relative to cwd). " +
+                description: "Path to .ts file to execute (relative to cwd). Recommended for complex scripts. " +
                   "File should import from 'safesh:stdlib': import { fs, cmd, git, _ } from 'safesh:stdlib'",
               },
               shellId: {
