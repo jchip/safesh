@@ -202,7 +202,7 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
  */
 export function buildErrorHandler(scriptPath: string, preambleLineCount: number, hasShell: boolean): string {
   const shellOutput = hasShell
-    ? `console.log("${SHELL_STATE_MARKER}" + JSON.stringify({ ENV: $.ENV, VARS: $.VARS }));`
+    ? `console.log("${SHELL_STATE_MARKER}" + JSON.stringify({ CWD: Deno.cwd(), ENV: $.ENV, VARS: $.VARS }));`
     : "";
 
   return `
@@ -250,6 +250,7 @@ export function buildErrorHandler(scriptPath: string, preambleLineCount: number,
  */
 export function extractShellState(output: string): {
   cleanOutput: string;
+  cwd?: string;
   env?: Record<string, string>;
   vars?: Record<string, unknown>;
 } {
@@ -270,8 +271,8 @@ export function extractShellState(output: string): {
   const cleanOutput = outputLines.join("\n");
 
   try {
-    const state = JSON.parse(jsonStr) as { ENV?: Record<string, string>; VARS?: Record<string, unknown> };
-    return { cleanOutput, env: state.ENV, vars: state.VARS };
+    const state = JSON.parse(jsonStr) as { CWD?: string; ENV?: Record<string, string>; VARS?: Record<string, unknown> };
+    return { cleanOutput, cwd: state.CWD, env: state.ENV, vars: state.VARS };
   } catch {
     return { cleanOutput: output };
   }
