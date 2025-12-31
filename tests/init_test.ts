@@ -2,7 +2,7 @@
  * Tests for initCmds() command registration
  *
  * Note: The permission checking logic is tested in src/core/command_permission.test.ts
- * These tests verify the initCmds() function behavior when $config is not available
+ * These tests verify the initCmds() function behavior when $.config is not available
  * (file execution mode where Deno sandbox enforces permissions)
  */
 
@@ -10,11 +10,11 @@ import { assertEquals } from "@std/assert";
 import { initCmds } from "../src/stdlib/command.ts";
 
 // ============================================================================
-// Basic Registration Tests (No $config - file execution mode)
+// Basic Registration Tests (No $.config - file execution mode)
 // ============================================================================
 
 Deno.test("initCmds - returns callable functions", async () => {
-  // In file execution mode (no $config), initCmds just creates callable wrappers
+  // In file execution mode (no $.config), initCmds just creates callable wrappers
   const [myTool] = await initCmds(["./scripts/my-tool.sh"]);
 
   // Should be a function

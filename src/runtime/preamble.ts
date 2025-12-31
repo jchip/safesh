@@ -61,14 +61,21 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
  * Build the preamble that gets prepended to user code
  *
  * The preamble injects:
- * - Shell context as $shell
- * - Config for permission checking as $config
+ * - Global $ namespace with all APIs
+ * - Shell context directly on $ (ID, CWD, ENV, VARS)
+ * - Config for permission checking (Symbol-keyed)
  * - Standard library (fs, text)
  * - Streaming shell API (cat, glob, git, lines, grep, map, filter, etc.)
  * - ShellJS-like commands (echo, cd, pwd, chmod, etc.)
  */
 export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): { preamble: string; preambleLineCount: number } {
   const stdlibPath = getStdlibPath();
+
+  // Shell context values (or defaults if no shell)
+  const shellId = shell?.id ?? "";
+  const shellCwd = shell?.cwd ?? "";
+  const shellEnv = shell?.env ?? {};
+  const shellVars = shell?.vars ?? {};
 
   const lines: string[] = [
     "// SafeShell auto-generated preamble",
@@ -88,14 +95,21 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
     "",
     "// Import fluent shell API",
-    `import $, { FluentShell } from 'file://${stdlibPath}shell.ts';`,
+    `import fluentShell, { FluentShell } from 'file://${stdlibPath}shell.ts';`,
     "",
-    "// Create _S namespace with all exports (works in both code and file modes)",
-    `(globalThis as any)._S = {`,
+    "// Create $ namespace with all exports",
+    `(globalThis as any).$ = {`,
+    `  // Fluent file API`,
+    `  content: fluentShell, FluentShell,`,
+    `  // Shell context (direct access, uppercase)`,
+    `  ID: ${JSON.stringify(shellId)},`,
+    `  CWD: ${JSON.stringify(shellCwd)},`,
+    `  ENV: ${JSON.stringify(shellEnv)},`,
+    `  VARS: ${JSON.stringify(shellVars)},`,
+    `  // Internal (Symbol-keyed)`,
+    `  [Symbol.for('safesh.config')]: ${preambleConfig ? JSON.stringify(preambleConfig) : "undefined"},`,
     `  // Namespaced modules`,
     `  fs, text,`,
-    `  // Fluent shell API`,
-    `  $, FluentShell,`,
     `  // Command execution`,
     `  cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds,`,
     `  // Streaming primitives`,
@@ -112,29 +126,6 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     "",
   ];
 
-  if (shell) {
-    // Use 'const' for $shell - vars inside are mutable
-    lines.push(
-      "// Shell context available as $shell (mutable for var persistence)",
-      `const $shell: { id: string; cwd: string; env: Record<string, string>; vars: Record<string, unknown> } = ${JSON.stringify({
-        id: shell.id,
-        cwd: shell.cwd,
-        env: shell.env,
-        vars: shell.vars,
-      })};`,
-      "",
-    );
-  }
-
-  if (preambleConfig) {
-    // Config for permission checking in init() - must be global for imported modules to access
-    lines.push(
-      "// Config for permission checking (global for initCmds access)",
-      `(globalThis as any).$config = ${JSON.stringify(preambleConfig)};`,
-      "",
-    );
-  }
-
   // Count lines so far for line number mapping (before the async function line)
   const preambleLineCount = lines.length + 1; // +1 for the function declaration line
 
@@ -147,6 +138,62 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
 }
 
 /**
+ * Build preamble for file execution (no async wrapper)
+ * Just sets up imports and $ namespace, then file runs as-is
+ */
+export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig): string {
+  const stdlibPath = getStdlibPath();
+
+  const shellId = shell?.id ?? "";
+  const shellCwd = shell?.cwd ?? "";
+  const shellEnv = shell?.env ?? {};
+  const shellVars = shell?.vars ?? {};
+
+  const lines: string[] = [
+    "// SafeShell auto-generated preamble for file execution",
+    "",
+    "// Import standard library",
+    `import * as fs from 'file://${stdlibPath}fs.ts';`,
+    `import * as text from 'file://${stdlibPath}text.ts';`,
+    "",
+    "// Import streaming shell API",
+    `import { createStream, fromArray, empty } from 'file://${stdlibPath}stream.ts';`,
+    `import { filter, map, flatMap, take, head, tail, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
+    `import { stdout, stderr, tee } from 'file://${stdlibPath}io.ts';`,
+    `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
+    `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds } from 'file://${stdlibPath}command.ts';`,
+    "",
+    "// Import shelljs-like commands",
+    `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
+    "",
+    "// Import fluent shell API",
+    `import fluentShell, { FluentShell } from 'file://${stdlibPath}shell.ts';`,
+    "",
+    "// Create $ namespace with all exports",
+    `(globalThis as any).$ = {`,
+    `  _: fluentShell, FluentShell,`,
+    `  ID: ${JSON.stringify(shellId)},`,
+    `  CWD: ${JSON.stringify(shellCwd)},`,
+    `  ENV: ${JSON.stringify(shellEnv)},`,
+    `  VARS: ${JSON.stringify(shellVars)},`,
+    `  [Symbol.for('safesh.config')]: ${preambleConfig ? JSON.stringify(preambleConfig) : "undefined"},`,
+    `  fs, text,`,
+    `  cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds,`,
+    `  createStream, fromArray, empty,`,
+    `  filter, map, flatMap, take, head, tail, lines, grep,`,
+    `  stdout, stderr, tee,`,
+    `  cat, glob, src, dest,`,
+    `  echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString,`,
+    `};`,
+    "",
+    "// Original file content below",
+    "",
+  ];
+
+  return lines.join("\n");
+}
+
+/**
  * Build the error-handling wrapper that closes the async IIFE
  *
  * @param scriptPath - Path to the script file (for stack trace line mapping)
@@ -155,7 +202,7 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
  */
 export function buildErrorHandler(scriptPath: string, preambleLineCount: number, hasShell: boolean): string {
   const shellOutput = hasShell
-    ? `console.log("${SHELL_STATE_MARKER}" + JSON.stringify($shell.vars));`
+    ? `console.log("${SHELL_STATE_MARKER}" + JSON.stringify($.VARS));`
     : "";
 
   return `

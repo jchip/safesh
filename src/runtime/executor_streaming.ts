@@ -33,13 +33,13 @@ function buildPreamble(shell?: Shell): string {
 
   const lines: string[] = [
     "// SafeShell auto-generated preamble",
-    "// Session context available as $shell",
-    `const $shell = ${JSON.stringify({
-      id: shell.id,
-      cwd: shell.cwd,
-      env: shell.env,
-      vars: shell.vars,
-    })};`,
+    "// Shell context available on $ namespace",
+    `(globalThis as any).$ = {`,
+    `  ID: ${JSON.stringify(shell.id)},`,
+    `  CWD: ${JSON.stringify(shell.cwd)},`,
+    `  ENV: ${JSON.stringify(shell.env)},`,
+    `  VARS: ${JSON.stringify(shell.vars)},`,
+    `};`,
     "",
     "// User code starts here",
     "",

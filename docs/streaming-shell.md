@@ -273,8 +273,8 @@ When using the MCP `run` tool, these are automatically available:
 **ShellJS-like:**
 - `pwd()`, `which()`, `test()`, `echo()`, `cd()`, etc.
 
-**Shell Context:**
-- `$shell` - Persistent state (id, cwd, env, vars)
+**Shell Context (on `$`, uppercase):**
+- `$.ID`, `$.CWD`, `$.ENV`, `$.VARS` - Persistent state
 
 No imports needed - just start using them!
 

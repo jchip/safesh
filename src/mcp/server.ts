@@ -502,29 +502,39 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
       tools: [
         {
           name: "run",
-          description:
-            "Run JavaScript/TypeScript code (script) in a sandboxed Deno runtime - MCPU usage: infoc\n\n" +
-            "Use shellId for persistent state between calls. " +
-            "Set background: true to run asynchronously (returns { scriptId, pid }).\n" +
-            (permSummary ? `Permissions: ${permSummary}` : "No permissions configured.") +
-            "\n\nIMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.\n" +
-            "❌ BAD: cmd('sh', ['-c', 'git log | grep ERROR'])\n" +
-            "✅ GOOD: _S.git('log').stdout().pipe(_S.lines()).pipe(_S.grep(/ERROR/)).collect()\n\n" +
-            "GLOBAL NAMESPACE `_S`: All APIs available via `_S`:\n" +
-            "• _S.fs.read/write/readJson/writeJson/exists/copy/remove - file operations\n" +
-            "• _S.$ - fluent API for file processing\n" +
-            "• _S.cmd, _S.git, _S.docker, _S.deno - command execution\n" +
-            "• _S.cat, _S.glob, _S.lines, _S.grep, _S.filter, _S.map, _S.head, _S.tail - streaming\n" +
-            "• _S.initCmds(['curl','cargo']) - register external commands (returns callable functions)\n" +
-            "• _S.echo, _S.cd, _S.pwd, _S.which, _S.test, _S.ls, _S.rm, _S.cp, _S.mv, _S.mkdir, _S.touch - shell commands\n\n" +
-            "TWO STREAMING STYLES:\n" +
-            "• Fluent ($): _S.$('file.txt').lines().grep(/pat/).head(10).collect()\n" +
-            "• Pipe (others): _S.cat('file').pipe(_S.lines()).pipe(_S.grep(/pat/)).collect()\n\n" +
-            "SHELL STATE - use $shell.vars for persistent state:\n" +
-            "$shell.vars.counter = 42;  // persists across calls within same shell\n\n" +
-            "EXTERNAL COMMANDS:\n" +
-            "const [_curl] = await _S.initCmds(['curl']);  // checks permissions upfront\n" +
-            "await _curl('-s', 'https://api.example.com');  // if blocked, returns COMMANDS_BLOCKED error",
+          description: `Run JavaScript/TypeScript code in a sandboxed Deno runtime - MCPU usage: infoc
+
+Use shellId for persistent state. Set background: true for async (returns { scriptId, pid }).
+${permSummary ? `Permissions: ${permSummary}` : "No permissions configured."}
+
+IMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.
+❌ BAD: $.cmd('sh', ['-c', 'git log | grep ERROR'])
+✅ GOOD: $.git('log').stdout().pipe($.lines()).pipe($.grep(/ERROR/)).collect()
+
+All APIs on \`$\` (e.g., \`$.git\`, \`$.fs.read\`):
+• fs.read/write/readJson/writeJson/exists/copy/remove - file ops
+• cmd, git, docker, deno - auto-exec when awaited
+  const { stdout } = await $.git('status'); // { code, stdout, stderr }
+  const lines = await $.git('log').stdout().pipe($.lines()).collect(); // streaming
+• cat, glob, lines, grep, filter, map, head, tail - streaming
+• initCmds(['curl']) - register external commands
+• echo, cd, pwd, which, test, ls, rm, cp, mv, mkdir, touch - shell
+
+TWO STREAMING STYLES:
+• Fluent - file content: $.content('file.txt').lines().grep(/pat/).head(10).collect()
+• Pipe - glob/cat/git: $.glob('**/*.ts').pipe($.head(5)).collect()
+  $.git('log').stdout().pipe($.lines()).pipe($.grep(/fix/)).collect()
+Note: $.content() reads file content. Use $.glob() for finding files.
+
+SHELL STATE (uppercase): $.VARS, $.CWD, $.ENV, $.ID
+
+ASYNC NOTE: Use parentheses for chaining after await:
+(await $.ls('-la')).slice(0, 5)  // correct
+await $.ls('-la').slice(0, 5)   // wrong - calls slice on Promise
+
+EXTERNAL COMMANDS:
+const [_curl] = await $.initCmds(['curl']);
+await _curl('-s', 'https://example.com');  // if blocked, returns COMMANDS_BLOCKED`,
           inputSchema: {
             type: "object",
             properties: {
@@ -536,7 +546,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
               file: {
                 type: "string",
                 description: "Path to .ts file to execute (relative to cwd). " +
-                  "File should import from 'safesh:stdlib': import { fs, cmd, git, $ } from 'safesh:stdlib'",
+                  "File should import from 'safesh:stdlib': import { fs, cmd, git, _ } from 'safesh:stdlib'",
               },
               shellId: {
                 type: "string",
@@ -569,10 +579,8 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
         },
         {
           name: "startShell",
-          description:
-            "Create a new shell for persistent state between exec calls. " +
-            "Shells maintain: cwd (working directory), env (environment variables), " +
-            "and vars (persisted JS variables accessible via $shell).",
+          description: `Create a new shell for persistent state between exec calls.
+Shells maintain: cwd (working directory), env (environment variables), and VARS (persisted JS variables accessible via $.VARS).`,
           inputSchema: {
             type: "object",
             properties: {

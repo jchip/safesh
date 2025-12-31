@@ -195,7 +195,7 @@ Deno.test("executeCode - passes session env vars", async () => {
   assertStringIncludes(result.stdout, "test-value");
 });
 
-Deno.test("executeCode - provides shell context via $shell", async () => {
+Deno.test("executeCode - provides shell context via $", async () => {
   const shell = makeTestShell({
     id: "test-shell",
     cwd: "/tmp",
@@ -204,10 +204,10 @@ Deno.test("executeCode - provides shell context via $shell", async () => {
   });
 
   const code = `
-    console.log($shell.id);
-    console.log($shell.cwd);
-    console.log($shell.env.FOO);
-    console.log($shell.vars.myVar);
+    console.log($.ID);
+    console.log($.CWD);
+    console.log($.ENV.FOO);
+    console.log($.VARS.myVar);
   `;
 
   const result = await executeCode(code, testConfig, {}, shell);

@@ -3,10 +3,11 @@
  *
  * Provides shell-like utilities in a safe, sandboxed environment.
  *
- * `_S` is available globally in both code and file execution modes:
+ * `$` is available globally in both code and file execution modes:
  * ```typescript
- * await _S.fs.read('file.txt');
- * await _S.git('status').exec();
+ * await $.fs.read('file.txt');
+ * await $.git('status').exec();
+ * await $.content('file.txt').lines().grep(/pat/).collect();
  * ```
  *
  * @module
@@ -18,8 +19,8 @@ import * as text from "./text.ts";
 export { fs, text };
 export * as shelljs from "./shelljs/mod.ts";
 
-// Re-export fluent shell API
-export { default as $ } from "./shell.ts";
+// Re-export fluent shell API (as content for $.content())
+export { default as _ } from "./shell.ts";
 export { FluentShell } from "./shell.ts";
 
 // Re-export command execution
@@ -93,8 +94,8 @@ export type { SandboxOptions, WalkOptions, WalkEntry } from "./fs.ts";
 export type { GlobOptions } from "./glob.ts";
 export type { GrepMatch, GrepOptions, CountResult, DiffLine } from "./text.ts";
 
-// Import remaining exports for _S namespace
-import { default as $ } from "./shell.ts";
+// Import remaining exports for _$ namespace
+import { default as fluentShell } from "./shell.ts";
 import { FluentShell } from "./shell.ts";
 import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds } from "./command.ts";
 import { createStream, fromArray, empty } from "./stream.ts";
@@ -107,11 +108,11 @@ import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln,
  * Unified namespace for all SafeShell exports
  * Works in both code and file execution modes
  */
-export const _S = {
+export const $ = {
+  // Fluent file API
+  content: fluentShell, FluentShell,
   // Namespaced modules
   fs, text,
-  // Fluent shell API
-  $, FluentShell,
   // Command execution
   cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds,
   // Streaming primitives
@@ -127,4 +128,4 @@ export const _S = {
 };
 
 // Also set on globalThis for universal access
-(globalThis as Record<string, unknown>)._S = _S;
+(globalThis as Record<string, unknown>).$ = $;
