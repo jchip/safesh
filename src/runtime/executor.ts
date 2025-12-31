@@ -11,7 +11,7 @@ import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
 import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
-import { hashCode, buildEnv, collectStreamText } from "../core/utils.ts";
+import { hashCode, buildEnv, collectStreamText, cleanupProcess } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
@@ -22,6 +22,15 @@ import {
   extractPreambleConfig,
 } from "./preamble.ts";
 import { getEffectivePermissions, expandPath } from "../core/permissions.ts";
+import {
+  JOB_MARKER,
+  CMD_ERROR_MARKER,
+  INIT_ERROR_MARKER,
+  ENV_SHELL_ID,
+  ENV_SCRIPT_ID,
+  ERROR_COMMAND_NOT_ALLOWED,
+  ERROR_COMMANDS_BLOCKED,
+} from "../core/constants.ts";
 
 const TEMP_DIR = "/tmp/safesh/scripts";
 const DEFAULT_TIMEOUT = 30000;
@@ -56,6 +65,7 @@ function filterExistingCommands(commands: string[], cwd: string): string[] {
       }).outputSync();
       return result.success;
     } catch {
+      // Command not found or path doesn't exist
       return false;
     }
   });
@@ -64,11 +74,11 @@ function filterExistingCommands(commands: string[], cwd: string): string[] {
   return existing;
 }
 
-// Stderr markers (must match command.ts)
+// Stderr markers - use constants from core/constants.ts
 const STDERR_MARKERS = {
-  job: "__SAFESH_JOB__:",
-  cmdError: "__SAFESH_CMD_ERROR__:",
-  initError: "__SAFESH_INIT_ERROR__:",
+  job: JOB_MARKER,
+  cmdError: CMD_ERROR_MARKER,
+  initError: INIT_ERROR_MARKER,
 } as const;
 
 /** Job event from subprocess */
@@ -88,13 +98,13 @@ interface JobEvent {
 
 /** Command error event from subprocess */
 interface CommandErrorEvent {
-  type: "COMMAND_NOT_ALLOWED";
+  type: typeof ERROR_COMMAND_NOT_ALLOWED;
   command: string;
 }
 
 /** Init error event from subprocess (from init() permission check) */
 interface InitErrorEvent {
-  type: "COMMANDS_BLOCKED";
+  type: typeof ERROR_COMMANDS_BLOCKED;
   notAllowed: string[];
   notFound: string[];
 }
@@ -105,6 +115,7 @@ function parseMarkerLine<T>(line: string, marker: string): T | null {
   try {
     return JSON.parse(line.slice(marker.length)) as T;
   } catch {
+    // Invalid JSON in marker line, treat as regular output
     return null;
   }
 }
@@ -211,7 +222,7 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
       // Return both if different (e.g., /tmp and /private/tmp)
       return resolved !== p ? [p, resolved] : [p];
     } catch {
-      // Path doesn't exist yet, return as-is
+      // Path doesn't exist yet or can't be resolved, return as-is
       return [p];
     }
   };
@@ -280,7 +291,7 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
     flags.push("--allow-env");
   } else if (perms.env?.length) {
     // Restricted mode: only allow specific env vars
-    const envVars = [...perms.env, "SAFESH_SHELL_ID", "SAFESH_SCRIPT_ID"];
+    const envVars = [...perms.env, ENV_SHELL_ID, ENV_SCRIPT_ID];
     flags.push(`--allow-env=${[...new Set(envVars)].join(",")}`);
   }
 
@@ -433,23 +444,7 @@ export async function executeCode(
     };
   } catch (error) {
     // Kill the process and cancel streams on timeout or error
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Process may have already exited
-    }
-
-    // Cancel the streams to prevent leaks
-    try {
-      await process.stdout.cancel();
-    } catch {
-      // Stream may already be closed
-    }
-    try {
-      await process.stderr.cancel();
-    } catch {
-      // Stream may already be closed
-    }
+    await cleanupProcess(process);
 
     // Update script with failure
     if (script) {
@@ -482,7 +477,7 @@ export async function findConfig(cwd: string): Promise<string | undefined> {
     await Deno.stat(denoJson);
     return denoJson;
   } catch {
-    // Not found
+    // deno.json not found, try deno.jsonc
   }
 
   // Check for deno.jsonc
@@ -491,7 +486,7 @@ export async function findConfig(cwd: string): Promise<string | undefined> {
     await Deno.stat(denoJsonc);
     return denoJsonc;
   } catch {
-    // Not found
+    // deno.jsonc not found, no config file in this directory
   }
 
   return undefined;
@@ -600,23 +595,7 @@ export async function executeFile(
     };
   } catch (error) {
     // Kill the process and cancel streams on timeout or error
-    try {
-      process.kill("SIGKILL");
-    } catch {
-      // Process may have already exited
-    }
-
-    // Cancel the streams to prevent leaks
-    try {
-      await process.stdout.cancel();
-    } catch {
-      // Stream may already be closed
-    }
-    try {
-      await process.stderr.cancel();
-    } catch {
-      // Stream may already be closed
-    }
+    await cleanupProcess(process);
 
     if (error instanceof DOMException && error.name === "TimeoutError") {
       throw timeoutError(timeoutMs, "exec");

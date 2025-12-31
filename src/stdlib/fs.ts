@@ -33,6 +33,17 @@ export interface SandboxOptions {
 export { getDefaultConfig } from "../core/utils.ts";
 
 /**
+ * Helper to ensure directory exists, silently ignoring errors if it already exists
+ */
+async function ensureDirSafe(path: string): Promise<void> {
+  try {
+    await ensureDir(path);
+  } catch {
+    // Directory already exists or parent path issue - safe to ignore
+  }
+}
+
+/**
  * Validate read access to a path
  */
 async function validateRead(
@@ -138,11 +149,7 @@ export async function write(
   const dir = dirname(validPath);
 
   // Ensure parent directory exists
-  try {
-    await ensureDir(dir);
-  } catch {
-    // Directory might already exist
-  }
+  await ensureDirSafe(dir);
 
   await Deno.writeTextFile(validPath, content);
 }
@@ -162,11 +169,7 @@ export async function writeBytes(
   const validPath = await validateWrite(path, options);
   const dir = dirname(validPath);
 
-  try {
-    await ensureDir(dir);
-  } catch {
-    // Directory might already exist
-  }
+  await ensureDirSafe(dir);
 
   await Deno.writeFile(validPath, data);
 }
@@ -207,11 +210,7 @@ export async function append(
   const validPath = await validateWrite(path, options);
   const dir = dirname(validPath);
 
-  try {
-    await ensureDir(dir);
-  } catch {
-    // Directory might already exist
-  }
+  await ensureDirSafe(dir);
 
   await Deno.writeTextFile(validPath, content, { append: true });
 }
@@ -239,6 +238,7 @@ export async function exists(
     await Deno.stat(path);
     return true;
   } catch {
+    // Path doesn't exist or access denied - both mean "not accessible"
     return false;
   }
 }
@@ -365,11 +365,7 @@ export async function move(
   await validateWrite(dest, options);
 
   const destDir = dirname(dest);
-  try {
-    await ensureDir(destDir);
-  } catch {
-    // Directory might already exist
-  }
+  await ensureDirSafe(destDir);
 
   await Deno.rename(src, dest);
 }
@@ -392,18 +388,14 @@ export async function touch(
   const validPath = await validateWrite(path, options);
   const dir = dirname(validPath);
 
-  try {
-    await ensureDir(dir);
-  } catch {
-    // Directory might already exist
-  }
+  await ensureDirSafe(dir);
 
   try {
     // Try to update mtime if file exists
     const now = new Date();
     await Deno.utime(validPath, now, now);
   } catch {
-    // File doesn't exist, create it
+    // File doesn't exist or utime failed, create empty file
     await Deno.writeTextFile(validPath, "");
   }
 }
