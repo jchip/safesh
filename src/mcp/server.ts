@@ -370,10 +370,18 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
     timeout: number | undefined,
     config: SafeShellConfig,
   ): Promise<{ content: { type: string; text: string }[]; isError: boolean }> {
-    const { shell, isTemporary } = shellManager.getOrTemp(
+    const { shell, isTemporary, notFound } = shellManager.getOrTemp(
       shellId,
       { cwd: configHolder.cwd, env },
     );
+
+    // Error if shellId was provided but doesn't exist
+    if (notFound) {
+      return {
+        content: [{ type: "text", text: `Shell not found: ${shellId}. Use startShell to create a shell first.` }],
+        isError: true,
+      };
+    }
 
     // Merge session-level allowed commands into config
     const sessionCmds = shellManager.getSessionAllowedCommands();
@@ -883,10 +891,18 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
           }
 
           // Get or create shell
-          const { shell, isTemporary } = shellManager.getOrTemp(
+          const { shell, isTemporary, notFound } = shellManager.getOrTemp(
             shellId,
             { cwd: configHolder.cwd, env: parsed.env },
           );
+
+          // Error if shellId was provided but doesn't exist
+          if (notFound) {
+            return {
+              content: [{ type: "text", text: `Shell not found: ${shellId}. Use startShell to create a shell first.` }],
+              isError: true,
+            };
+          }
 
           // Merge additional env vars into the actual shell temporarily
           const originalEnv = shell.env;
@@ -1050,7 +1066,15 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
           const parsed = TaskSchema.parse(args);
 
           // Get shell for context
-          const { shell } = shellManager.getOrTemp(parsed.shellId, { cwd: configHolder.cwd });
+          const { shell, notFound } = shellManager.getOrTemp(parsed.shellId, { cwd: configHolder.cwd });
+
+          // Error if shellId was provided but doesn't exist
+          if (notFound) {
+            return {
+              content: [{ type: "text", text: `Shell not found: ${parsed.shellId}. Use startShell to create a shell first.` }],
+              isError: true,
+            };
+          }
 
           try {
             const result = await runTask(parsed.name, configHolder.config, {
