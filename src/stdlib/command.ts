@@ -178,12 +178,18 @@ export class Command implements PromiseLike<CommandResult> {
 
   /**
    * Create a Deno.Command with standard configuration
+   * Child processes inherit Deno.env (which includes $.ENV) plus any options.env
    */
   private createCommand(hasStdin: boolean): Deno.Command {
+    // Merge options.env with current Deno.env if provided, otherwise inherit
+    const env = this.options.env
+      ? { ...Deno.env.toObject(), ...this.options.env }
+      : undefined;
+
     return new Deno.Command(this.cmd, {
       args: this.args,
       cwd: this.options.cwd,
-      env: this.options.env,
+      env,
       clearEnv: this.options.clearEnv,
       stdout: "piped",
       stderr: "piped",
