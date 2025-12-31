@@ -395,7 +395,8 @@ async function loadTsConfigFile(path: string): Promise<SafeShellConfig | null> {
     const filePath = path.startsWith("file://") ? fromFileUrl(path) : path;
     await Deno.stat(filePath);
   } catch {
-    return null; // File doesn't exist
+    // Config file doesn't exist, which is normal
+    return null;
   }
 
   try {
@@ -419,7 +420,8 @@ async function loadJsonConfigFile(path: string): Promise<SafeShellConfig | null>
   try {
     await Deno.stat(path);
   } catch {
-    return null; // File doesn't exist
+    // JSON config file doesn't exist, which is normal
+    return null;
   }
 
   try {
@@ -522,7 +524,8 @@ async function loadLocalConfig(cwd: string): Promise<{ config: SafeShellConfig |
     const filePath = localPath.startsWith("file://") ? fromFileUrl(localPath) : localPath;
     await Deno.stat(filePath);
   } catch {
-    return { config: null }; // File doesn't exist - this is normal
+    // Local config file doesn't exist, which is normal
+    return { config: null };
   }
 
   try {
@@ -584,7 +587,8 @@ async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null>
   try {
     await Deno.stat(jsonPath);
   } catch {
-    return null; // File doesn't exist
+    // Local JSON config doesn't exist, which is normal
+    return null;
   }
 
   try {
