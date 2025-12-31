@@ -10,6 +10,11 @@ import { runExternal } from "../external/runner.ts";
 import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 import { runTask as executeTask } from "../runner/tasks.ts";
+import { shellsCommand } from "./commands/shells.ts";
+import { tasksCommand } from "./commands/tasks.ts";
+import { logsCommand } from "./commands/logs.ts";
+import { killCommand } from "./commands/kill.ts";
+import { cleanCommand } from "./commands/clean.ts";
 
 const VERSION = "0.1.0";
 
@@ -20,11 +25,18 @@ USAGE:
   safesh <command> [options]
 
 COMMANDS:
-  exec <code>       Execute JS/TS code in sandbox
-  run <cmd> [args]  Run whitelisted external command
-  task <name>       Run defined task
-  repl              Start interactive REPL
-  serve             Start MCP server
+  exec <code>          Execute JS/TS code in sandbox
+  run <cmd> [args]     Run whitelisted external command
+  task <name>          Run defined task
+  repl                 Start interactive REPL
+  serve                Start MCP server
+
+  State Management (MCP server):
+  shells               List all shells
+  tasks [options]      List scripts/jobs
+  logs <scriptId>      View script output
+  kill <scriptId>      Send SIGTERM to script
+  clean                Remove stale state
 
 OPTIONS:
   -c, --config <file>  Config file (default: ./safesh.config.ts)
@@ -32,12 +44,24 @@ OPTIONS:
   -h, --help           Show this help
   --version            Show version
 
+  Task options:
+  --running            Only show running tasks
+  --shell <shellId>    Filter by shell ID
+  --status <status>    Filter by status (running|completed|failed)
+
 EXAMPLES:
   safesh exec "console.log('hello')"
   safesh run git status
   safesh task build
   safesh repl
   safesh serve
+
+  safesh shells
+  safesh tasks --running
+  safesh tasks --shell sh_abc123
+  safesh logs script_xyz789
+  safesh kill script_xyz789
+  safesh clean
 `;
 
 /**
@@ -129,8 +153,8 @@ async function startRepl(config: SafeShellConfig): Promise<void> {
 
 async function main() {
   const args = parseArgs(Deno.args, {
-    string: ["config"],
-    boolean: ["verbose", "help", "version"],
+    string: ["config", "shell", "status"],
+    boolean: ["verbose", "help", "version", "running"],
     alias: {
       c: "config",
       v: "verbose",
@@ -156,6 +180,45 @@ async function main() {
   const cwd = Deno.cwd();
   const verbose = args.verbose as boolean;
   const configPath = args.config as string;
+
+  // State management commands don't need config
+  const stateCommands = ["shells", "tasks", "logs", "kill", "clean"];
+  if (stateCommands.includes(String(command))) {
+    switch (command) {
+      case "shells":
+        await shellsCommand();
+        break;
+
+      case "tasks":
+        await tasksCommand({
+          running: args.running,
+          shellId: args.shell,
+          status: args.status as "running" | "completed" | "failed" | undefined,
+        });
+        break;
+
+      case "logs":
+        if (rest.length === 0) {
+          console.error("Usage: safesh logs <scriptId>");
+          Deno.exit(1);
+        }
+        await logsCommand(String(rest[0]));
+        break;
+
+      case "kill":
+        if (rest.length === 0) {
+          console.error("Usage: safesh kill <scriptId>");
+          Deno.exit(1);
+        }
+        await killCommand(String(rest[0]));
+        break;
+
+      case "clean":
+        await cleanCommand();
+        break;
+    }
+    return;
+  }
 
   // Load config for all commands except serve (which has its own startup)
   let config: SafeShellConfig | undefined;
