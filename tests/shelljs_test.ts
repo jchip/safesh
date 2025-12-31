@@ -6,7 +6,6 @@ import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import {
   ShellString,
-  ShellArray,
   cat,
   chmod,
   which,
@@ -69,15 +68,6 @@ Deno.test("ShellString - error result", () => {
 Deno.test("ShellString - lines", () => {
   const str = ShellString.ok("line1\nline2\nline3");
   assertEquals(str.lines(), ["line1", "line2", "line3"]);
-});
-
-// ShellArray tests
-Deno.test("ShellArray - basic properties", () => {
-  const arr = new ShellArray(["a", "b", "c"]);
-  assertEquals(arr.length, 3);
-  assertEquals(arr[0], "a");
-  assertEquals(arr.stdout, "a\nb\nc\n");
-  assertEquals(arr.code, 0);
 });
 
 // parseOptions tests
@@ -295,12 +285,12 @@ Deno.test("pushd/popd - basic", async () => {
   try {
     // Push to testDir
     const pushed = pushd(testDir);
-    assertEquals(pushed.code, 0);
+    assertEquals(Array.isArray(pushed), true);
     assertStringIncludes(Deno.cwd(), "shelljs-test");
 
     // Pop back
     const popped = popd();
-    assertEquals(popped.code, 0);
+    assertEquals(Array.isArray(popped), true);
     assertEquals(Deno.cwd(), original);
   } finally {
     Deno.chdir(original);
@@ -314,7 +304,7 @@ Deno.test("dirs - show stack", async () => {
   try {
     pushd(testDir);
     const stack = dirs();
-    assertEquals(stack.code, 0);
+    assertEquals(Array.isArray(stack), true);
     assertEquals(stack.length, 2);
   } finally {
     Deno.chdir(original);

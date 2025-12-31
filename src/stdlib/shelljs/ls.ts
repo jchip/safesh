@@ -7,7 +7,6 @@
  */
 
 import { join, basename } from "@std/path";
-import { ShellArray } from "./types.ts";
 import { parseOptions, flattenArgs, isGlob, expand } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
 
@@ -96,7 +95,8 @@ function formatDate(date: Date | null): string {
  *
  * @param options - Options string (e.g., "-la") or LsOptions object
  * @param paths - Directories/files to list (defaults to current directory)
- * @returns ShellArray with file names
+ * @returns Array of file names (or formatted strings with -l)
+ * @throws Error if path not found or permission denied
  *
  * @example
  * ```ts
@@ -119,7 +119,7 @@ function formatDate(date: Date | null): string {
 export async function ls(
   optionsOrPath?: string | LsOptions,
   ...paths: (string | string[])[]
-): Promise<ShellArray<string>> {
+): Promise<string[]> {
   let options: LsOptions = {};
   let allPaths: string[];
 
@@ -223,13 +223,14 @@ export async function ls(
       }
     }
 
-    return new ShellArray(results);
+    return results;
   } catch (error) {
-    const errMsg = error instanceof Deno.errors.NotFound
-      ? "No such file or directory"
-      : error instanceof Deno.errors.PermissionDenied
-        ? "Permission denied"
-        : (error instanceof Error ? error.message : String(error));
-    return new ShellArray([], `ls: ${errMsg}`, 1);
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error(`ls: No such file or directory`);
+    }
+    if (error instanceof Deno.errors.PermissionDenied) {
+      throw new Error(`ls: Permission denied`);
+    }
+    throw error;
   }
 }
