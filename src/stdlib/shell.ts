@@ -9,10 +9,23 @@
 
 import type { Stream } from "./stream.ts";
 import { createStream } from "./stream.ts";
-import { cat as catStream } from "./fs-streams.ts";
+import { cat as catStream, type File } from "./fs-streams.ts";
 import * as transforms from "./transforms.ts";
 import { stdout as stdoutTransform } from "./io.ts";
 import * as fs from "./fs.ts";
+
+/**
+ * Type guard to check if a value is a File object from glob()
+ */
+function isFile(value: unknown): value is File {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "path" in value &&
+    "base" in value &&
+    "contents" in value
+  );
+}
 
 /**
  * FluentShell - A chainable API for file-based text processing
@@ -37,11 +50,23 @@ export class FluentShell {
   private _stream: Stream<string>;
 
   /**
-   * Create a FluentShell from a file path or existing stream
+   * Create a FluentShell from a file path, File object, or existing stream
    */
-  constructor(source: string | Stream<string>) {
+  constructor(source: string | File | Stream<string>) {
     if (typeof source === "string") {
       this._stream = catStream(source);
+    } else if (isFile(source)) {
+      // File object from glob() - use contents directly if string, otherwise read from path
+      if (typeof source.contents === "string") {
+        this._stream = createStream(
+          (async function* () {
+            yield source.contents as string;
+          })(),
+        );
+      } else {
+        // Binary contents - read as text from path
+        this._stream = catStream(source.path);
+      }
     } else {
       this._stream = source;
     }
@@ -301,17 +326,22 @@ export class FluentShell {
  */
 interface ShellFunction {
   /**
-   * Create a FluentShell from a file path
+   * Create a FluentShell from a file path or File object
    *
-   * @param source - File path
+   * @param source - File path string or File object from glob()
    * @returns FluentShell instance
    *
    * @example
    * ```ts
+   * // From file path
    * await $('app.log').lines().grep(/ERROR/).head(10).print();
+   *
+   * // From File object (e.g., from glob())
+   * const files = await glob('*.ts').collect();
+   * await $(files[0]).lines().head(5).print();
    * ```
    */
-  (source: string): FluentShell;
+  (source: string | File): FluentShell;
 
   /**
    * Create FluentShell from array of strings
@@ -358,9 +388,9 @@ interface ShellFunction {
 }
 
 /**
- * Create a FluentShell from a file path
+ * Create a FluentShell from a file path or File object
  */
-function $(source: string): FluentShell {
+function $(source: string | File): FluentShell {
   return new FluentShell(source);
 }
 
