@@ -28,11 +28,29 @@ import { validateExternal } from "../external/validator.ts";
 import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig, Shell } from "../core/types.ts";
 import {
+  ERROR_COMMAND_NOT_ALLOWED,
+  ERROR_COMMAND_NOT_FOUND,
+  ERROR_COMMANDS_BLOCKED,
+} from "../core/constants.ts";
+import {
   launchCodeScript,
   getScriptOutput,
   killScript,
 } from "../runtime/scripts.ts";
 import { runTask, listTasks } from "../runner/tasks.ts";
+import {
+  createRunToolDescription,
+  createTaskToolDescription,
+  START_SHELL_DESCRIPTION,
+  UPDATE_SHELL_DESCRIPTION,
+  END_SHELL_DESCRIPTION,
+  LIST_SHELLS_DESCRIPTION,
+  LIST_SCRIPTS_DESCRIPTION,
+  GET_SCRIPT_OUTPUT_DESCRIPTION,
+  KILL_SCRIPT_DESCRIPTION,
+  WAIT_SCRIPT_DESCRIPTION,
+  LIST_JOBS_DESCRIPTION,
+} from "./tool-descriptions.ts";
 
 // ============================================================================
 // MCP Roots Support
@@ -427,7 +445,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
         type: "text",
         text: JSON.stringify({
           error: {
-            type: "COMMAND_NOT_ALLOWED",
+            type: ERROR_COMMAND_NOT_ALLOWED,
             command: blockedCommand,
             message: `Command '${blockedCommand}' is not allowed`,
           },
@@ -464,10 +482,10 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
     const errors: Array<{ command: string; error: string }> = [];
 
     for (const cmd of blockedCommands) {
-      errors.push({ command: cmd, error: "COMMAND_NOT_ALLOWED" });
+      errors.push({ command: cmd, error: ERROR_COMMAND_NOT_ALLOWED });
     }
     for (const cmd of notFoundCommands) {
-      errors.push({ command: cmd, error: "COMMAND_NOT_FOUND" });
+      errors.push({ command: cmd, error: ERROR_COMMAND_NOT_FOUND });
     }
 
     return {
@@ -475,7 +493,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
         type: "text",
         text: JSON.stringify({
           error: {
-            type: "COMMANDS_BLOCKED",
+            type: ERROR_COMMANDS_BLOCKED,
             commands: errors,
             message: `${blockedCommands.length} command(s) not allowed, ${notFoundCommands.length} command(s) not found`,
           },
@@ -502,42 +520,7 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
       tools: [
         {
           name: "run",
-          description: `Run JavaScript/TypeScript code in a sandboxed Deno runtime - MCPU usage: infoc
-
-Use shellId for persistent state. Set background: true for async (returns { scriptId, pid }).
-${permSummary ? `Permissions: ${permSummary}` : "No permissions configured."}
-
-IMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.
-❌ BAD: $.cmd('sh', ['-c', 'git log | grep ERROR'])
-✅ GOOD: $.git('log').stdout().pipe($.lines()).pipe($.grep(/ERROR/)).collect()
-
-All APIs on \`$\` (e.g., \`$.git\`, \`$.fs.read\`):
-• fs.read/write/readJson/writeJson/exists/copy/remove - file ops
-• cmd, git, docker, deno - auto-exec when awaited
-  const { stdout } = await $.git('status'); // { code, stdout, stderr }
-  const lines = await $.git('log').stdout().pipe($.lines()).collect(); // streaming
-• cat, glob, lines, grep, filter, map, head, tail - streaming
-• initCmds(['curl']) - register external commands
-• echo, cd, pwd, which, test, ls, rm, cp, mv, mkdir, touch - shell
-  ls() returns string[] (names only); ls('-l') returns formatted strings, not objects
-
-TWO STREAMING STYLES:
-• Fluent - file content: $.cat('file.txt').lines().grep(/pat/).head(10).collect()
-• Pipe - glob/cat/git: $.glob('**/*.ts').pipe($.head(5)).collect()
-  $.git('log').stdout().pipe($.lines()).pipe($.grep(/fix/)).collect()
-Note: $.glob() returns File objects {path, base, contents}, not strings. Use f.path for filtering.
-Note: $.cat().head(1) returns first CHUNK (buffer), not first line. Use $.cat().lines().head(1) for lines.
-
-SHELL STATE (uppercase, persists across calls): $.ID, $.CWD, $.ENV, $.VARS
-$.ENV is a plain object (not Map). Use $.ENV.FOO = 'bar', not .set(). Auto-merged into Deno.env.
-
-ASYNC NOTE: Use parentheses for chaining after await:
-(await $.ls('-la')).slice(0, 5)  // correct
-await $.ls('-la').slice(0, 5)   // wrong - calls slice on Promise
-
-EXTERNAL COMMANDS:
-const [_curl] = await $.initCmds(['curl']);
-await _curl('-s', 'https://example.com');  // if blocked, returns COMMANDS_BLOCKED`,
+          description: createRunToolDescription(permSummary),
           inputSchema: {
             type: "object",
             properties: {
@@ -583,8 +566,7 @@ await _curl('-s', 'https://example.com');  // if blocked, returns COMMANDS_BLOCK
         },
         {
           name: "startShell",
-          description: `Create a new shell for persistent state between exec calls.
-Shells maintain: cwd (working directory), env (environment variables), and VARS (persisted JS variables accessible via $.VARS).`,
+          description: START_SHELL_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
@@ -602,8 +584,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         },
         {
           name: "updateShell",
-          description:
-            "Update shell state: change working directory or set environment variables.",
+          description: UPDATE_SHELL_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
@@ -626,8 +607,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         },
         {
           name: "endShell",
-          description:
-            "End a shell and clean up resources. Stops any background jobs.",
+          description: END_SHELL_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
@@ -641,8 +621,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         },
         {
           name: "listShells",
-          description:
-            "List all active shells with their current state.",
+          description: LIST_SHELLS_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {},
@@ -650,11 +629,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         },
         {
           name: "task",
-          description:
-            "Execute a task defined in config. " +
-            "Tasks can be simple commands (cmd), parallel execution (parallel), " +
-            "or serial execution (serial). Supports task references (string aliases). " +
-            `Available tasks: ${Object.keys(configHolder.config.tasks ?? {}).join(", ") || "(none configured)"}`,
+          description: createTaskToolDescription(Object.keys(configHolder.config.tasks ?? {})),
           inputSchema: {
             type: "object",
             properties: {
@@ -673,9 +648,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         // Script management tools (SSH-90)
         {
           name: "listScripts",
-          description:
-            "List scripts (code executions) in a shell with optional filtering. " +
-            "Returns scripts sorted by start time (newest first).",
+          description: LIST_SCRIPTS_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
@@ -708,9 +681,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         },
         {
           name: "getScriptOutput",
-          description:
-            "Get buffered output from a script. " +
-            "Supports incremental reads via 'since' offset.",
+          description: GET_SCRIPT_OUTPUT_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
@@ -732,9 +703,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         },
         {
           name: "killScript",
-          description:
-            "Kill a running script by sending a signal. " +
-            "Default signal is SIGTERM. Use SIGKILL for force kill.",
+          description: KILL_SCRIPT_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
@@ -756,9 +725,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         },
         {
           name: "waitScript",
-          description:
-            "Wait for a background script to complete. " +
-            "Returns the script output and exit status when done.",
+          description: WAIT_SCRIPT_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
@@ -781,10 +748,7 @@ Shells maintain: cwd (working directory), env (environment variables), and VARS 
         // Job listing (SSH-91)
         {
           name: "listJobs",
-          description:
-            "List jobs (spawned processes) in a shell. " +
-            "Jobs are child processes created by scripts via cmd(), git(), docker(), etc. " +
-            "Returns jobs sorted by start time (newest first).",
+          description: LIST_JOBS_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {

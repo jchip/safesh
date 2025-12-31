@@ -10,18 +10,22 @@
 import { createStream, type Stream } from "./stream.ts";
 import { writeStdin } from "./io.ts";
 import { collectStreamBytes } from "../core/utils.ts";
-
-// Job tracking marker for communication with main process
-const JOB_MARKER = "__SAFESH_JOB__:";
-
-// Command permission error marker for retry workflow
-const CMD_ERROR_MARKER = "__SAFESH_CMD_ERROR__:";
+import {
+  JOB_MARKER,
+  CMD_ERROR_MARKER,
+  INIT_ERROR_MARKER,
+  ENV_SHELL_ID,
+  ENV_SCRIPT_ID,
+  ERROR_COMMAND_NOT_ALLOWED,
+  ERROR_COMMAND_NOT_FOUND,
+  ERROR_COMMANDS_BLOCKED,
+} from "../core/constants.ts";
 
 /**
  * Generate a unique job ID
  */
 function generateJobId(): string {
-  const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
+  const scriptId = Deno.env.get(ENV_SCRIPT_ID);
   const random = crypto.getRandomValues(new Uint32Array(1))[0];
   if (scriptId) {
     // Extract shell ID prefix from script ID (script-{shellId}-{seq})
@@ -35,8 +39,8 @@ function generateJobId(): string {
  * Emit a job event marker to stderr (for main process to parse)
  */
 function emitJobStart(jobId: string, command: string, args: string[], pid: number): void {
-  const shellId = Deno.env.get("SAFESH_SHELL_ID");
-  const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
+  const shellId = Deno.env.get(ENV_SHELL_ID);
+  const scriptId = Deno.env.get(ENV_SCRIPT_ID);
   if (!shellId || !scriptId) return; // Not running in a tracked context
 
   const event = {
@@ -60,7 +64,7 @@ function emitJobEnd(
   exitCode: number,
   startTime: number,
 ): void {
-  const shellId = Deno.env.get("SAFESH_SHELL_ID");
+  const shellId = Deno.env.get(ENV_SHELL_ID);
   if (!shellId) return;
 
   const completedAt = new Date();
@@ -201,7 +205,7 @@ export class Command implements PromiseLike<CommandResult> {
       ) {
         // Emit command error marker for retry workflow
         const errorEvent = {
-          type: "COMMAND_NOT_ALLOWED",
+          type: ERROR_COMMAND_NOT_ALLOWED,
           command: this.cmd,
         };
         console.error(`${CMD_ERROR_MARKER}${JSON.stringify(errorEvent)}`);
@@ -634,6 +638,41 @@ export function cmd(
 }
 
 /**
+ * Overloaded command function type with options-first pattern.
+ * Used internally for git, docker, deno convenience functions.
+ */
+type OverloadedCommandFn = {
+  (options: CommandOptions, ...args: string[]): Command;
+  (...args: string[]): Command;
+};
+
+/**
+ * Create a command factory for a specific command
+ *
+ * Returns a function that creates Command instances for the specified command.
+ * Supports both `cmd(...args)` and `cmd(options, ...args)` signatures.
+ *
+ * @param commandName - The command to create a factory for (e.g., "git", "docker")
+ * @returns A function that creates Command instances
+ */
+function createCommandFactory(commandName: string): OverloadedCommandFn {
+  return function (...args: unknown[]): Command {
+    // Check if first arg is options object
+    if (
+      args.length > 0 &&
+      typeof args[0] === "object" &&
+      !Array.isArray(args[0])
+    ) {
+      const options = args[0] as CommandOptions;
+      const cmdArgs = args.slice(1) as string[];
+      return new Command(commandName, cmdArgs, options);
+    } else {
+      return new Command(commandName, args as string[], {});
+    }
+  } as OverloadedCommandFn;
+}
+
+/**
  * Create a git command
  *
  * Convenience function for git commands with optional options.
@@ -650,22 +689,7 @@ export function cmd(
  * const result = await git({ cwd: "/repo" }, "status").exec();
  * ```
  */
-export function git(options: CommandOptions, ...args: string[]): Command;
-export function git(...args: string[]): Command;
-export function git(...args: unknown[]): Command {
-  // Check if first arg is options object
-  if (
-    args.length > 0 &&
-    typeof args[0] === "object" &&
-    !Array.isArray(args[0])
-  ) {
-    const options = args[0] as CommandOptions;
-    const gitArgs = args.slice(1) as string[];
-    return new Command("git", gitArgs, options);
-  } else {
-    return new Command("git", args as string[], {});
-  }
-}
+export const git: OverloadedCommandFn = createCommandFactory("git");
 
 /**
  * Create a docker command
@@ -684,21 +708,7 @@ export function git(...args: unknown[]): Command {
  * const result = await docker({ cwd: "/project" }, "compose", "up").exec();
  * ```
  */
-export function docker(options: CommandOptions, ...args: string[]): Command;
-export function docker(...args: string[]): Command;
-export function docker(...args: unknown[]): Command {
-  if (
-    args.length > 0 &&
-    typeof args[0] === "object" &&
-    !Array.isArray(args[0])
-  ) {
-    const options = args[0] as CommandOptions;
-    const dockerArgs = args.slice(1) as string[];
-    return new Command("docker", dockerArgs, options);
-  } else {
-    return new Command("docker", args as string[], {});
-  }
-}
+export const docker: OverloadedCommandFn = createCommandFactory("docker");
 
 /**
  * Create a deno command
@@ -717,21 +727,7 @@ export function docker(...args: unknown[]): Command {
  * const result = await deno({ cwd: "/project" }, "task", "build").exec();
  * ```
  */
-export function deno(options: CommandOptions, ...args: string[]): Command;
-export function deno(...args: string[]): Command;
-export function deno(...args: unknown[]): Command {
-  if (
-    args.length > 0 &&
-    typeof args[0] === "object" &&
-    !Array.isArray(args[0])
-  ) {
-    const options = args[0] as CommandOptions;
-    const denoArgs = args.slice(1) as string[];
-    return new Command("deno", denoArgs, options);
-  } else {
-    return new Command("deno", args as string[], {});
-  }
-}
+export const deno: OverloadedCommandFn = createCommandFactory("deno");
 
 /**
  * Create a data source for piping text to commands (heredoc equivalent)
@@ -828,28 +824,50 @@ export function toCmd(
   options?: CommandOptions,
 ): Transform<string, string> {
   return async function* (stream: AsyncIterable<string>) {
-    // Collect all items from stream
-    const items: string[] = [];
-    for await (const item of stream) {
-      items.push(item);
-    }
-
-    // Join with newlines and pass as stdin
-    const input = items.join("\n");
-    const result = await cmd(command, args, {
-      ...options,
-      stdin: input,
-    }).exec();
-
-    if (!result.success) {
-      throw new Error(
-        `toCmd failed: ${command} exited with code ${result.code}`,
-      );
-    }
+    const result = await execStreamToCmd(stream, command, args, options, "toCmd");
 
     // Yield stdout
     yield result.stdout;
   };
+}
+
+/**
+ * Helper to collect stream, pipe to command, and return result
+ *
+ * @param stream - Input stream to collect
+ * @param command - Command to execute
+ * @param args - Command arguments
+ * @param options - Command options
+ * @param fnName - Function name for error messages
+ * @returns Command execution result
+ */
+async function execStreamToCmd(
+  stream: AsyncIterable<string>,
+  command: string,
+  args: string[],
+  options: CommandOptions | undefined,
+  fnName: string,
+): Promise<CommandResult> {
+  // Collect all items from stream
+  const items: string[] = [];
+  for await (const item of stream) {
+    items.push(item);
+  }
+
+  // Join with newlines and pass as stdin
+  const input = items.join("\n");
+  const result = await cmd(command, args, {
+    ...options,
+    stdin: input,
+  }).exec();
+
+  if (!result.success) {
+    throw new Error(
+      `${fnName} failed: ${command} exited with code ${result.code}`,
+    );
+  }
+
+  return result;
 }
 
 /**
@@ -877,24 +895,7 @@ export function toCmdLines(
   options?: CommandOptions,
 ): Transform<string, string> {
   return async function* (stream: AsyncIterable<string>) {
-    // Collect all items from stream
-    const items: string[] = [];
-    for await (const item of stream) {
-      items.push(item);
-    }
-
-    // Join with newlines and pass as stdin
-    const input = items.join("\n");
-    const result = await cmd(command, args, {
-      ...options,
-      stdin: input,
-    }).exec();
-
-    if (!result.success) {
-      throw new Error(
-        `toCmdLines failed: ${command} exited with code ${result.code}`,
-      );
-    }
+    const result = await execStreamToCmd(stream, command, args, options, "toCmdLines");
 
     // Yield each line from stdout
     const outputLines = result.stdout.split("\n");
@@ -910,8 +911,7 @@ export function toCmdLines(
 // Command Registration
 // ============================================================================
 
-// Init error marker for permission check failures (parsed by executor)
-const INIT_ERROR_MARKER = "__SAFESH_INIT_ERROR__:";
+// INIT_ERROR_MARKER imported from constants.ts
 
 /**
  * Config interface injected by preamble for permission checking
@@ -974,8 +974,8 @@ function resolvePath(base: string, relative: string): string {
  */
 type PermResult =
   | { allowed: true; resolvedPath: string }
-  | { allowed: false; error: "COMMAND_NOT_ALLOWED"; command: string }
-  | { allowed: false; error: "COMMAND_NOT_FOUND"; command: string };
+  | { allowed: false; error: typeof ERROR_COMMAND_NOT_ALLOWED; command: string }
+  | { allowed: false; error: typeof ERROR_COMMAND_NOT_FOUND; command: string };
 
 /**
  * Check permission for a single command using the decision tree
@@ -991,7 +991,7 @@ async function checkPermission(
     if (isInAllowedList(command, allowedCommands)) {
       return { allowed: true, resolvedPath: command };
     }
-    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command };
+    return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command };
   }
 
   // Has `/` - check basename first
@@ -1008,7 +1008,7 @@ async function checkPermission(
     if (isInAllowedList(command, allowedCommands)) {
       return { allowed: true, resolvedPath: command };
     }
-    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command };
+    return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command };
   }
 
   // Relative path - check CWD first
@@ -1017,7 +1017,7 @@ async function checkPermission(
     if (isInAllowedList(cwdPath, allowedCommands)) {
       return { allowed: true, resolvedPath: cwdPath };
     }
-    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command: cwdPath };
+    return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command: cwdPath };
   }
 
   // Check projectDir
@@ -1031,12 +1031,12 @@ async function checkPermission(
       if (isInAllowedList(projectPath, allowedCommands)) {
         return { allowed: true, resolvedPath: projectPath };
       }
-      return { allowed: false, error: "COMMAND_NOT_ALLOWED", command: projectPath };
+      return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command: projectPath };
     }
   }
 
   // Not found
-  return { allowed: false, error: "COMMAND_NOT_FOUND", command };
+  return { allowed: false, error: ERROR_COMMAND_NOT_FOUND, command };
 }
 
 /**
@@ -1085,10 +1085,10 @@ export async function initCmds<T extends readonly string[]>(
     for (const { path, result: permResult } of checks) {
       if (permResult.allowed) {
         resolvedPaths.push(permResult.resolvedPath);
-      } else if (permResult.error === "COMMAND_NOT_ALLOWED") {
+      } else if (permResult.error === ERROR_COMMAND_NOT_ALLOWED) {
         notAllowed.push(permResult.command);
         resolvedPaths.push(path); // placeholder
-      } else if (permResult.error === "COMMAND_NOT_FOUND") {
+      } else if (permResult.error === ERROR_COMMAND_NOT_FOUND) {
         notFound.push(permResult.command);
         resolvedPaths.push(path); // placeholder
       }
@@ -1097,7 +1097,7 @@ export async function initCmds<T extends readonly string[]>(
     // If any errors, emit marker and throw
     if (notAllowed.length > 0 || notFound.length > 0) {
       const errorEvent = {
-        type: "COMMANDS_BLOCKED",
+        type: ERROR_COMMANDS_BLOCKED,
         notAllowed,
         notFound,
       };
