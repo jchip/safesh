@@ -24,7 +24,7 @@ const dirStack: string[] = [];
  * ```
  */
 export function pwd(): ShellString {
-  return ShellString.ok(Deno.cwd() + "\n");
+  return ShellString.ok(Deno.cwd());
 }
 
 /**
