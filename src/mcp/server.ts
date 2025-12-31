@@ -525,7 +525,7 @@ TWO STREAMING STYLES:
 • Fluent - file content: $.content('file.txt').lines().grep(/pat/).head(10).collect()
 • Pipe - glob/cat/git: $.glob('**/*.ts').pipe($.head(5)).collect()
   $.git('log').stdout().pipe($.lines()).pipe($.grep(/fix/)).collect()
-Note: $.content() reads file content. Use $.glob() for finding files.
+Note: $.glob() returns File objects {path, base, contents}, not strings. Use f.path for filtering.
 
 SHELL STATE (uppercase, persists across calls): $.ID, $.CWD, $.ENV, $.VARS
 $.ENV persists env vars across calls; auto-merged into Deno.env on next run.
