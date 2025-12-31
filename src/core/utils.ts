@@ -5,6 +5,7 @@
  */
 
 import type { SafeShellConfig, Shell } from "./types.ts";
+import { ENV_SHELL_ID, ENV_SCRIPT_ID } from "./constants.ts";
 
 // ============================================================================
 // Path Utilities
@@ -116,10 +117,10 @@ export function buildEnv(
 
   // Add shell and script context for job tracking
   if (shell) {
-    result["SAFESH_SHELL_ID"] = shell.id;
+    result[ENV_SHELL_ID] = shell.id;
   }
   if (scriptId) {
-    result["SAFESH_SCRIPT_ID"] = scriptId;
+    result[ENV_SCRIPT_ID] = scriptId;
   }
 
   return result;
@@ -164,4 +165,38 @@ export async function collectStreamText(
 ): Promise<string> {
   const bytes = await collectStreamBytes(stream);
   return new TextDecoder().decode(bytes);
+}
+
+// ============================================================================
+// Process Utilities
+// ============================================================================
+
+/**
+ * Cleanup a child process by killing it and canceling its streams
+ *
+ * Handles the common pattern of:
+ * - Killing the process (which may have already exited)
+ * - Canceling stdout stream (which may already be closed)
+ * - Canceling stderr stream (which may already be closed)
+ *
+ * All errors are silently caught since the process/streams may already be closed.
+ */
+export async function cleanupProcess(
+  process: Deno.ChildProcess,
+): Promise<void> {
+  try {
+    process.kill("SIGKILL");
+  } catch {
+    // Process may have already exited
+  }
+  try {
+    await process.stdout.cancel();
+  } catch {
+    // Stream may already be closed
+  }
+  try {
+    await process.stderr.cancel();
+  } catch {
+    // Stream may already be closed
+  }
 }

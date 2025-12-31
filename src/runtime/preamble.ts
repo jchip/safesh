@@ -8,9 +8,10 @@
  */
 
 import type { Shell, SafeShellConfig } from "../core/types.ts";
+import { SHELL_STATE_MARKER } from "../core/constants.ts";
 
-// Marker used to identify shell state output for syncing vars back
-export const SHELL_STATE_MARKER = "__SAFESH_STATE__:";
+// Re-export for backward compatibility
+export { SHELL_STATE_MARKER };
 
 /**
  * Get the absolute path to the stdlib directory

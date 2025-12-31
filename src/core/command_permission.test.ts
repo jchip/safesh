@@ -10,6 +10,7 @@ import {
   isCommandAllowed,
 } from "./command_permission.ts";
 import type { SafeShellConfig } from "./types.ts";
+import { ERROR_COMMAND_NOT_ALLOWED, ERROR_COMMAND_NOT_FOUND } from "./constants.ts";
 
 // Test helper to create minimal config
 function makeConfig(overrides: Partial<SafeShellConfig> = {}): SafeShellConfig {
@@ -59,7 +60,7 @@ Deno.test("checkCommandPermission - basic name command not allowed", async () =>
 
   assertEquals(result.allowed, false);
   if (!result.allowed) {
-    assertEquals(result.error, "COMMAND_NOT_ALLOWED");
+    assertEquals(result.error, ERROR_COMMAND_NOT_ALLOWED);
     assertEquals(result.command, "curl");
   }
 });
@@ -90,7 +91,7 @@ Deno.test("checkCommandPermission - full path not allowed", async () => {
 
   assertEquals(result.allowed, false);
   if (!result.allowed) {
-    assertEquals(result.error, "COMMAND_NOT_ALLOWED");
+    assertEquals(result.error, ERROR_COMMAND_NOT_ALLOWED);
     assertEquals(result.command, "/usr/bin/curl");
   }
 });
@@ -104,7 +105,7 @@ Deno.test("checkCommandPermission - relative path not found", async () => {
 
   assertEquals(result.allowed, false);
   if (!result.allowed) {
-    assertEquals(result.error, "COMMAND_NOT_FOUND");
+    assertEquals(result.error, ERROR_COMMAND_NOT_FOUND);
     assertEquals(result.command, "./nonexistent.sh");
   }
 });
@@ -154,7 +155,7 @@ Deno.test("checkCommandPermission - project command not allowed when disabled", 
 
     assertEquals(result.allowed, false);
     if (!result.allowed) {
-      assertEquals(result.error, "COMMAND_NOT_ALLOWED");
+      assertEquals(result.error, ERROR_COMMAND_NOT_ALLOWED);
     }
   } finally {
     await Deno.remove(tmpDir, { recursive: true });

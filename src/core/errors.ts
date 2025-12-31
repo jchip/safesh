@@ -2,11 +2,16 @@
  * SafeShell error types with AI-friendly messages
  */
 
+import {
+  ERROR_COMMAND_NOT_ALLOWED,
+  ERROR_COMMAND_NOT_FOUND,
+} from "./constants.ts";
+
 export type ErrorCode =
   | "PERMISSION_DENIED"
   | "COMMAND_NOT_WHITELISTED"
-  | "COMMAND_NOT_ALLOWED"
-  | "COMMAND_NOT_FOUND"
+  | typeof ERROR_COMMAND_NOT_ALLOWED
+  | typeof ERROR_COMMAND_NOT_FOUND
   | "SUBCOMMAND_NOT_ALLOWED"
   | "FLAG_NOT_ALLOWED"
   | "PATH_VIOLATION"
@@ -76,7 +81,7 @@ export function commandNotWhitelisted(command: string): SafeShellError {
 
 export function commandNotAllowed(command: string): SafeShellError {
   return new SafeShellError(
-    "COMMAND_NOT_ALLOWED",
+    ERROR_COMMAND_NOT_ALLOWED,
     `Command '${command}' is not allowed`,
     { command },
     `Add '${command}' to permissions.run in safesh.config.ts`,
@@ -85,7 +90,7 @@ export function commandNotAllowed(command: string): SafeShellError {
 
 export function commandNotFound(command: string): SafeShellError {
   return new SafeShellError(
-    "COMMAND_NOT_FOUND",
+    ERROR_COMMAND_NOT_FOUND,
     `Command not found: '${command}' - not found in CWD or projectDir`,
     { command },
     "Verify the path exists or use an absolute path",

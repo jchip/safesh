@@ -2,6 +2,8 @@
  * SafeShell core type definitions
  */
 
+import { ERROR_COMMAND_NOT_ALLOWED } from "./constants.ts";
+
 // ============================================================================
 // Configuration Types
 // ============================================================================
@@ -335,7 +337,7 @@ export interface PendingRetry {
  * Structured error for permission failures
  */
 export interface CommandNotAllowedError {
-  type: "COMMAND_NOT_ALLOWED";
+  type: typeof ERROR_COMMAND_NOT_ALLOWED;
   command: string;
   message: string;
   retry_id: string;

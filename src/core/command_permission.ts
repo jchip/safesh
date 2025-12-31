@@ -9,6 +9,7 @@
 
 import { basename, resolve, join } from "@std/path";
 import type { SafeShellConfig } from "./types.ts";
+import { ERROR_COMMAND_NOT_ALLOWED, ERROR_COMMAND_NOT_FOUND } from "./constants.ts";
 
 /**
  * Result of permission check - allowed with resolved path
@@ -23,7 +24,7 @@ export interface PermissionAllowed {
  */
 export interface PermissionNotAllowed {
   allowed: false;
-  error: "COMMAND_NOT_ALLOWED";
+  error: typeof ERROR_COMMAND_NOT_ALLOWED;
   command: string;
 }
 
@@ -32,7 +33,7 @@ export interface PermissionNotAllowed {
  */
 export interface PermissionNotFound {
   allowed: false;
-  error: "COMMAND_NOT_FOUND";
+  error: typeof ERROR_COMMAND_NOT_FOUND;
   command: string;
 }
 
@@ -123,7 +124,7 @@ export async function checkCommandPermission(
     if (isCommandAllowed(command, allowedCommands)) {
       return { allowed: true, resolvedPath: command };
     }
-    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command };
+    return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command };
   }
 
   // No (has `/`)
@@ -143,7 +144,7 @@ export async function checkCommandPermission(
     if (isCommandAllowed(command, allowedCommands)) {
       return { allowed: true, resolvedPath: command };
     }
-    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command };
+    return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command };
   }
 
   // No (relative path)
@@ -158,7 +159,7 @@ export async function checkCommandPermission(
     if (isCommandAllowed(cwdPath, allowedCommands)) {
       return { allowed: true, resolvedPath: cwdPath };
     }
-    return { allowed: false, error: "COMMAND_NOT_ALLOWED", command: cwdPath };
+    return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command: cwdPath };
   }
 
   // Found in projectDir?
@@ -175,14 +176,14 @@ export async function checkCommandPermission(
       }
       return {
         allowed: false,
-        error: "COMMAND_NOT_ALLOWED",
+        error: ERROR_COMMAND_NOT_ALLOWED,
         command: projectPath,
       };
     }
   }
 
   // Not found → COMMAND_NOT_FOUND error
-  return { allowed: false, error: "COMMAND_NOT_FOUND", command };
+  return { allowed: false, error: ERROR_COMMAND_NOT_FOUND, command };
 }
 
 /**
@@ -225,9 +226,9 @@ export async function checkMultipleCommands(
     results[name] = result;
 
     if (!result.allowed) {
-      if (result.error === "COMMAND_NOT_ALLOWED") {
+      if (result.error === ERROR_COMMAND_NOT_ALLOWED) {
         notAllowed.push(result.command);
-      } else if (result.error === "COMMAND_NOT_FOUND") {
+      } else if (result.error === ERROR_COMMAND_NOT_FOUND) {
         notFound.push(result.command);
       }
     }
