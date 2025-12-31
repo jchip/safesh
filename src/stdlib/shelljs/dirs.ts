@@ -5,7 +5,7 @@
  */
 
 import { resolve } from "@std/path";
-import { ShellString, ShellArray } from "./types.ts";
+import { ShellString } from "./types.ts";
 import { expandTilde } from "./common.ts";
 
 /**
@@ -95,6 +95,7 @@ export interface PushdOptions {
  * @param dir - Directory to push
  * @param options - Pushd options
  * @returns Array of directories in stack
+ * @throws Error if directory not found or stack empty
  *
  * @example
  * ```ts
@@ -106,51 +107,45 @@ export interface PushdOptions {
 export function pushd(
   dir?: string,
   options: PushdOptions = {},
-): ShellArray<string> {
-  try {
-    const cwd = Deno.cwd();
+): string[] {
+  const cwd = Deno.cwd();
 
-    // Handle rotation (+N or -N)
-    if (dir && (dir.match(/^\+\d+$/) || dir.match(/^-\d+$/))) {
-      return rotateStack(dir, options);
-    }
-
-    // Push current directory onto stack
-    dirStack.push(cwd);
-
-    // Determine target directory
-    let target = dir ? expandTilde(dir) : undefined;
-
-    if (!target) {
-      // No arg: swap top two entries
-      if (dirStack.length < 2) {
-        return ShellArray.error("pushd: no other directory", 1);
-      }
-      const top = dirStack.pop()!;
-      target = dirStack.pop()!;
-      dirStack.push(target);
-      dirStack.push(top);
-    }
-
-    // Change to target unless -n
-    if (!options.noChange) {
-      const resolved = resolve(target);
-      Deno.chdir(resolved);
-    }
-
-    const stack = getFullStack();
-
-    if (!options.quiet) {
-      return new ShellArray(stack, "", 0);
-    }
-
-    return new ShellArray(stack, "", 0);
-  } catch (e) {
-    if (e instanceof Deno.errors.NotFound) {
-      return ShellArray.error(`pushd: ${dir}: No such file or directory`, 1);
-    }
-    return ShellArray.error(`pushd: ${e}`, 1);
+  // Handle rotation (+N or -N)
+  if (dir && (dir.match(/^\+\d+$/) || dir.match(/^-\d+$/))) {
+    return rotateStack(dir, options);
   }
+
+  // Push current directory onto stack
+  dirStack.push(cwd);
+
+  // Determine target directory
+  let target = dir ? expandTilde(dir) : undefined;
+
+  if (!target) {
+    // No arg: swap top two entries
+    if (dirStack.length < 2) {
+      throw new Error("pushd: no other directory");
+    }
+    const top = dirStack.pop()!;
+    target = dirStack.pop()!;
+    dirStack.push(target);
+    dirStack.push(top);
+  }
+
+  // Change to target unless -n
+  if (!options.noChange) {
+    const resolved = resolve(target);
+    try {
+      Deno.chdir(resolved);
+    } catch (e) {
+      if (e instanceof Deno.errors.NotFound) {
+        throw new Error(`pushd: ${dir}: No such file or directory`);
+      }
+      throw e;
+    }
+  }
+
+  return getFullStack();
 }
 
 /**
@@ -168,6 +163,7 @@ export interface PopdOptions {
  *
  * @param options - Popd options
  * @returns Array of directories in stack
+ * @throws Error if stack empty
  *
  * @example
  * ```ts
@@ -179,34 +175,24 @@ export interface PopdOptions {
 export function popd(
   arg?: string,
   options: PopdOptions = {},
-): ShellArray<string> {
-  try {
-    if (dirStack.length === 0) {
-      return ShellArray.error("popd: directory stack empty", 1);
-    }
-
-    // Handle index (+N or -N)
-    if (arg && (arg.match(/^\+\d+$/) || arg.match(/^-\d+$/))) {
-      return removeFromStack(arg, options);
-    }
-
-    const target = dirStack.pop()!;
-
-    // Change to target unless -n
-    if (!options.noChange) {
-      Deno.chdir(target);
-    }
-
-    const stack = getFullStack();
-
-    if (!options.quiet) {
-      return new ShellArray(stack, "", 0);
-    }
-
-    return new ShellArray(stack, "", 0);
-  } catch (e) {
-    return ShellArray.error(`popd: ${e}`, 1);
+): string[] {
+  if (dirStack.length === 0) {
+    throw new Error("popd: directory stack empty");
   }
+
+  // Handle index (+N or -N)
+  if (arg && (arg.match(/^\+\d+$/) || arg.match(/^-\d+$/))) {
+    return removeFromStack(arg, options);
+  }
+
+  const target = dirStack.pop()!;
+
+  // Change to target unless -n
+  if (!options.noChange) {
+    Deno.chdir(target);
+  }
+
+  return getFullStack();
 }
 
 /**
@@ -224,6 +210,7 @@ export interface DirsOptions {
  *
  * @param options - Dirs options
  * @returns Array of directories in stack
+ * @throws Error if index out of range
  *
  * @example
  * ```ts
@@ -235,11 +222,11 @@ export interface DirsOptions {
 export function dirs(
   arg?: string,
   options: DirsOptions = {},
-): ShellArray<string> {
+): string[] {
   // Handle -c (clear)
   if (options.clear) {
     dirStack.length = 0;
-    return new ShellArray([], "", 0);
+    return [];
   }
 
   const stack = getFullStack();
@@ -248,12 +235,12 @@ export function dirs(
   if (arg && (arg.match(/^\+\d+$/) || arg.match(/^-\d+$/))) {
     const index = getStackIndex(arg, stack.length);
     if (index < 0 || index >= stack.length) {
-      return ShellArray.error(`dirs: ${arg}: directory stack index out of range`, 1);
+      throw new Error(`dirs: ${arg}: directory stack index out of range`);
     }
-    return new ShellArray([stack[index]!], "", 0);
+    return [stack[index]!];
   }
 
-  return new ShellArray(stack, "", 0);
+  return stack;
 }
 
 /**
@@ -278,12 +265,12 @@ function getStackIndex(arg: string, stackLength: number): number {
 /**
  * Rotate stack
  */
-function rotateStack(arg: string, options: PushdOptions): ShellArray<string> {
+function rotateStack(arg: string, options: PushdOptions): string[] {
   const stack = getFullStack();
   const index = getStackIndex(arg, stack.length);
 
   if (index < 0 || index >= stack.length) {
-    return ShellArray.error(`pushd: ${arg}: directory stack index out of range`, 1);
+    throw new Error(`pushd: ${arg}: directory stack index out of range`);
   }
 
   // Rotate stack to bring index to front
@@ -300,18 +287,18 @@ function rotateStack(arg: string, options: PushdOptions): ShellArray<string> {
     Deno.chdir(rotated[0]);
   }
 
-  return new ShellArray(getFullStack(), "", 0);
+  return getFullStack();
 }
 
 /**
  * Remove entry from stack
  */
-function removeFromStack(arg: string, options: PopdOptions): ShellArray<string> {
+function removeFromStack(arg: string, options: PopdOptions): string[] {
   const stack = getFullStack();
   const index = getStackIndex(arg, stack.length);
 
   if (index < 0 || index >= stack.length) {
-    return ShellArray.error(`popd: ${arg}: directory stack index out of range`, 1);
+    throw new Error(`popd: ${arg}: directory stack index out of range`);
   }
 
   if (index === 0) {
@@ -323,7 +310,7 @@ function removeFromStack(arg: string, options: PopdOptions): ShellArray<string> 
   const internalIndex = dirStack.length - index;
   dirStack.splice(internalIndex, 1);
 
-  return new ShellArray(getFullStack(), "", 0);
+  return getFullStack();
 }
 
 /**

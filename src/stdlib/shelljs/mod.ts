@@ -42,7 +42,7 @@
  */
 
 // Types
-export { ShellString, ShellArray } from "./types.ts";
+export { ShellString } from "./types.ts";
 export type { OptionsMap, ParsedOptions } from "./types.ts";
 
 // Common utilities

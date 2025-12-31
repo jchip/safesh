@@ -509,16 +509,22 @@ export function createServer(initialConfig: SafeShellConfig, initialCwd: string)
             (permSummary ? `Permissions: ${permSummary}` : "No permissions configured.") +
             "\n\nIMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.\n" +
             "❌ BAD: cmd('sh', ['-c', 'git log | grep ERROR'])\n" +
-            "✅ GOOD: git('log').stdout().pipe(lines()).pipe(grep(/ERROR/)).collect()\n\n" +
-            "AUTO-IMPORTED FUNCTIONS:\n" +
-            "• fs: read, write, readJson, writeJson, exists, copy, remove, readDir, walk\n" +
-            "• text: read, grep, head, tail, wc\n" +
-            "• Streaming: cat, glob, src, dest, lines, grep, filter, map, flatMap, take, stdout, stderr, tee, pipe, collect, forEach, count\n" +
-            "• Commands: git, docker, deno, cmd - each returns Command with .exec(), .stdout(), .stderr()\n\n" +
-            "STREAMING EXAMPLES:\n" +
-            "await cat('file.log').pipe(lines()).pipe(grep(/ERROR/)).collect()\n" +
-            "await glob('**/*.ts').pipe(filter(f => !f.path.includes('test'))).count()\n" +
-            "await git('log', '--oneline').stdout().pipe(lines()).pipe(take(10)).collect()",
+            "✅ GOOD: _S.git('log').stdout().pipe(_S.lines()).pipe(_S.grep(/ERROR/)).collect()\n\n" +
+            "GLOBAL NAMESPACE `_S`: All APIs available via `_S`:\n" +
+            "• _S.fs.read/write/readJson/writeJson/exists/copy/remove - file operations\n" +
+            "• _S.$ - fluent API for file processing\n" +
+            "• _S.cmd, _S.git, _S.docker, _S.deno - command execution\n" +
+            "• _S.cat, _S.glob, _S.lines, _S.grep, _S.filter, _S.map, _S.head, _S.tail - streaming\n" +
+            "• _S.initCmds(['curl','cargo']) - register external commands (returns callable functions)\n" +
+            "• _S.echo, _S.cd, _S.pwd, _S.which, _S.test, _S.ls, _S.rm, _S.cp, _S.mv, _S.mkdir, _S.touch - shell commands\n\n" +
+            "TWO STREAMING STYLES:\n" +
+            "• Fluent ($): _S.$('file.txt').lines().grep(/pat/).head(10).collect()\n" +
+            "• Pipe (others): _S.cat('file').pipe(_S.lines()).pipe(_S.grep(/pat/)).collect()\n\n" +
+            "SHELL STATE - use $shell.vars for persistent state:\n" +
+            "$shell.vars.counter = 42;  // persists across calls within same shell\n\n" +
+            "EXTERNAL COMMANDS:\n" +
+            "const [_curl] = await _S.initCmds(['curl']);  // checks permissions upfront\n" +
+            "await _curl('-s', 'https://api.example.com');  // if blocked, returns COMMANDS_BLOCKED error",
           inputSchema: {
             type: "object",
             properties: {

@@ -86,7 +86,6 @@ export {
   env,
   ln,
   ShellString,
-  ShellArray,
 } from "./shelljs/mod.ts";
 
 // Re-export commonly used types
