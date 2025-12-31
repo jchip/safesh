@@ -116,20 +116,23 @@ export class ShellManager {
    *
    * @param id - Shell ID or undefined
    * @param fallback - Fallback options for temporary shell
-   * @returns Shell
+   * @returns Shell, with notFound=true if id was provided but doesn't exist
    */
   getOrTemp(
     id: string | undefined,
     fallback: { cwd?: string; env?: Record<string, string> } = {},
-  ): { shell: Shell; isTemporary: boolean } {
+  ): { shell: Shell; isTemporary: boolean; notFound?: boolean } {
     if (id) {
       const shell = this.get(id);
       if (shell) {
         return { shell, isTemporary: false };
       }
+      // Shell ID was provided but doesn't exist - return error indicator
+      // Still return a temporary shell for the shape, but caller should check notFound
+      return { shell: this.createShellObject(fallback), isTemporary: true, notFound: true };
     }
 
-    // Create temporary shell (not stored)
+    // No shell ID provided - create temporary shell (not stored)
     return { shell: this.createShellObject(fallback), isTemporary: true };
   }
 
