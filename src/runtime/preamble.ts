@@ -171,7 +171,7 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
     "",
     "// Create $ namespace with all exports",
     `(globalThis as any).$ = {`,
-    `  _: fluentShell, FluentShell,`,
+    `  content: fluentShell, FluentShell,`,
     `  ID: ${JSON.stringify(shellId)},`,
     `  CWD: ${JSON.stringify(shellCwd)},`,
     `  ENV: ${JSON.stringify(shellEnv)},`,
