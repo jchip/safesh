@@ -8,7 +8,7 @@
 
 import { resolve, dirname, basename, join } from "@std/path";
 import { copy as stdCopy } from "@std/fs/copy";
-import { ensureDir } from "@std/fs/ensure-dir";
+import { ensureDir as stdEnsureDir } from "@std/fs/ensure-dir";
 import { walk as stdWalk, type WalkOptions as StdWalkOptions } from "@std/fs/walk";
 import { validatePath, expandPath, isPathAllowed } from "../core/permissions.ts";
 import { pathViolation, executionError } from "../core/errors.ts";
@@ -299,6 +299,25 @@ export async function mkdir(
 ): Promise<void> {
   const validPath = await validateWrite(path, options);
   await Deno.mkdir(validPath, mkdirOptions);
+}
+
+/**
+ * Ensure directory exists, creating parent directories as needed
+ *
+ * @param path - Directory path to ensure
+ * @param options - Sandbox options
+ *
+ * @example
+ * ```ts
+ * await ensureDir("path/to/nested/dir");
+ * ```
+ */
+export async function ensureDir(
+  path: string,
+  options: SandboxOptions = {},
+): Promise<void> {
+  const validPath = await validateWrite(path, options);
+  await stdEnsureDir(validPath);
 }
 
 /**
