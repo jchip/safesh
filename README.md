@@ -82,6 +82,12 @@ deno install --allow-all -n safesh src/cli/main.ts
 
 ## Quick Start
 
+### Common Gotchas
+
+- **`$.ENV`** is a plain object (not Map like Deno.env). Use `$.ENV.FOO = 'bar'` not `.set()`. Persists across calls.
+- **`ls()`** returns `string[]` (names only); `ls('-l')` returns formatted strings, NOT objects.
+- **`$.glob()`** returns `File` objects `{path, base, contents}`, not strings. Use `f.path` for filtering.
+
 ### The Fluent Shell API (`$`)
 
 The primary way to use SafeShell is through the fluent `$` API - a chainable, shell-like interface for file and text processing:
