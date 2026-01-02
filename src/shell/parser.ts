@@ -808,70 +808,85 @@ export class TypeScriptGenerator {
       }
 
       // File operations - support globs and expansion
-      case "mkdir":
+      // These return ShellString with code, stdout, stderr
+      case "mkdir": {
+        const shellStrVar = this.nextVar();
         if (hasGlobs) {
           const argsVar = this.nextVar();
           lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`await $.mkdir(...${argsVar});`);
+          lines.push(`const ${shellStrVar} = await $.mkdir(...${argsVar});`);
         } else {
-          lines.push(`await $.mkdir(${simpleArgsStr});`);
+          lines.push(`const ${shellStrVar} = await $.mkdir(${simpleArgsStr});`);
         }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
         return resultVar;
-      case "rm":
+      }
+      case "rm": {
+        const shellStrVar = this.nextVar();
         if (hasGlobs) {
           const argsVar = this.nextVar();
           lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`await $.rm(...${argsVar});`);
+          lines.push(`const ${shellStrVar} = await $.rm(...${argsVar});`);
         } else {
-          lines.push(`await $.rm(${simpleArgsStr});`);
+          lines.push(`const ${shellStrVar} = await $.rm(${simpleArgsStr});`);
         }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
         return resultVar;
-      case "cp":
+      }
+      case "cp": {
+        const shellStrVar = this.nextVar();
         if (hasGlobs) {
           const argsVar = this.nextVar();
           lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`await $.cp(...${argsVar});`);
+          lines.push(`const ${shellStrVar} = await $.cp(...${argsVar});`);
         } else {
-          lines.push(`await $.cp(${simpleArgsStr});`);
+          lines.push(`const ${shellStrVar} = await $.cp(${simpleArgsStr});`);
         }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
         return resultVar;
-      case "mv":
+      }
+      case "mv": {
+        const shellStrVar = this.nextVar();
         if (hasGlobs) {
           const argsVar = this.nextVar();
           lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`await $.mv(...${argsVar});`);
+          lines.push(`const ${shellStrVar} = await $.mv(...${argsVar});`);
         } else {
-          lines.push(`await $.mv(${simpleArgsStr});`);
+          lines.push(`const ${shellStrVar} = await $.mv(${simpleArgsStr});`);
         }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
         return resultVar;
-      case "touch":
+      }
+      case "touch": {
+        const shellStrVar = this.nextVar();
         if (hasGlobs) {
           const argsVar = this.nextVar();
           lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`await $.touch(...${argsVar});`);
+          lines.push(`const ${shellStrVar} = await $.touch(...${argsVar});`);
         } else {
-          lines.push(`await $.touch(${simpleArgsStr});`);
+          lines.push(`const ${shellStrVar} = await $.touch(${simpleArgsStr});`);
         }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
         return resultVar;
-      case "chmod":
+      }
+      case "chmod": {
+        const shellStrVar = this.nextVar();
         if (hasGlobs) {
           const argsVar = this.nextVar();
           lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`await $.chmod(...${argsVar});`);
+          lines.push(`const ${shellStrVar} = await $.chmod(...${argsVar});`);
         } else {
-          lines.push(`await $.chmod(${simpleArgsStr});`);
+          lines.push(`const ${shellStrVar} = await $.chmod(${simpleArgsStr});`);
         }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
         return resultVar;
-      case "ln":
-        lines.push(`await $.ln(${simpleArgsStr});`);
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+      }
+      case "ln": {
+        const shellStrVar = this.nextVar();
+        lines.push(`const ${shellStrVar} = await $.ln(${simpleArgsStr});`);
+        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
         return resultVar;
+      }
       case "which": {
         const whichVar = this.nextVar();
         lines.push(`const ${whichVar} = await $.which(${simpleArgsStr});`);
