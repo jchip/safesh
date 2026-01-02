@@ -21,6 +21,8 @@ IMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.
 
 All APIs on \`$\` (e.g., \`$.git\`, \`$.fs.read\`):
 • fs.read/write/readJson/writeJson/exists/copy/remove - file ops
+  await $.fs.write('file.txt', 'content');  // write file
+  const text = await $.fs.read('file.txt'); // read file
 • cmd, git, docker, deno - auto-exec when awaited
   const { stdout } = await $.git('status'); // { code, stdout, stderr }
   const lines = await $.git('log').stdout().pipe($.lines()).collect(); // streaming
@@ -28,6 +30,7 @@ All APIs on \`$\` (e.g., \`$.git\`, \`$.fs.read\`):
 • initCmds(['curl']) - register external commands
 • echo, cd, pwd, which, test, ls, rm, cp, mv, mkdir, touch - shell
   ls() returns string[] (names only); ls('-l') returns formatted strings, not objects
+NOTE: There is NO $.writeTextFile or $.readTextFile. Use $.fs.write/read or Deno.writeTextFile/readTextFile.
 
 TWO STREAMING STYLES:
 • Fluent - file content: $.cat('file.txt').lines().grep(/pat/).head(10).collect()
