@@ -16,7 +16,8 @@
 // Re-export namespaced modules
 import * as fs from "./fs.ts";
 import * as text from "./text.ts";
-export { fs, text };
+import * as path from "jsr:@std/path";
+export { fs, text, path };
 export * as shelljs from "./shelljs/mod.ts";
 
 // Re-export fluent shell API (as content for $.content())
@@ -114,7 +115,7 @@ export const $ = {
   // Fluent file API ($.cat('file').lines().grep(/pattern/).collect())
   cat: fluentShell, FluentShell,
   // Namespaced modules
-  fs, text,
+  fs, text, path,
   // Command execution
   cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds,
   // Streaming primitives
