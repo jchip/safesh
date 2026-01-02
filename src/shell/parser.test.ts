@@ -375,3 +375,24 @@ Deno.test("integration - variable and tilde together", () => {
   assertEquals(code.includes("Deno.env.get('HOME')"), true);
   assertEquals(code.includes("$.ENV['PROJECT']") || code.includes("Deno.env.get('PROJECT')"), true);
 });
+
+Deno.test("integration - repeated builtins use unique variable names", () => {
+  const { code } = parseShellCommand("echo a; echo b; echo c");
+
+  // Should NOT redeclare the same variable
+  // Count occurrences of 'const _r' - each should be unique
+  const matches = code.match(/const _r\d+/g) ?? [];
+  const uniqueVars = new Set(matches);
+  assertEquals(matches.length, uniqueVars.size, "All variable declarations should be unique");
+
+  // Should have at least 6 unique variables (2 per echo: helper + result)
+  assertEquals(uniqueVars.size >= 6, true);
+});
+
+Deno.test("integration - repeated file ops use unique variable names", () => {
+  const { code } = parseShellCommand("ls; ls; ls");
+
+  const matches = code.match(/const _r\d+/g) ?? [];
+  const uniqueVars = new Set(matches);
+  assertEquals(matches.length, uniqueVars.size, "All variable declarations should be unique");
+});
