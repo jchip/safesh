@@ -63,19 +63,6 @@ export const END_SHELL_DESCRIPTION =
 export const LIST_SHELLS_DESCRIPTION =
   "List all active shells with their current state.";
 
-/**
- * Creates the description for the 'task' tool.
- * @param availableTasks - Array of configured task names
- */
-export function createTaskToolDescription(availableTasks: string[]): string {
-  return (
-    "Execute a task defined in config. " +
-    "Tasks can be simple commands (cmd), parallel execution (parallel), " +
-    "or serial execution (serial). Supports task references (string aliases). " +
-    `Available tasks: ${availableTasks.join(", ") || "(none configured)"}`
-  );
-}
-
 export const LIST_SCRIPTS_DESCRIPTION =
   "List scripts (code executions) in a shell with optional filtering. " +
   "Returns scripts sorted by start time (newest first).";

@@ -38,11 +38,9 @@ import {
   getScriptOutput,
   killScript,
 } from "../runtime/scripts.ts";
-import { runTask, listTasks } from "../runner/tasks.ts";
 import { parseShellCommand } from "../shell/parser.ts";
 import {
   createRunToolDescription,
-  createTaskToolDescription,
   START_SHELL_DESCRIPTION,
   UPDATE_SHELL_DESCRIPTION,
   END_SHELL_DESCRIPTION,
@@ -185,12 +183,6 @@ const KillJobSchema = z.object({
   scriptId: z.string().describe("Script ID containing the process"),
   signal: z.string().optional().describe("Signal to send (default: SIGTERM)"),
 });
-
-const TaskSchema = z.object({
-  name: z.string().describe("Task name from config"),
-  shellId: z.string().optional().describe("Shell ID for persistent state"),
-});
-
 
 /** Mutable config holder - allows updating config after roots are received */
 interface ConfigHolder {
@@ -638,24 +630,6 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             properties: {},
           },
         },
-        {
-          name: "task",
-          description: createTaskToolDescription(Object.keys(configHolder.config.tasks ?? {})),
-          inputSchema: {
-            type: "object",
-            properties: {
-              name: {
-                type: "string",
-                description: "Task name from config.tasks",
-              },
-              shellId: {
-                type: "string",
-                description: "Shell ID for persistent state and cwd/env context",
-              },
-            },
-            required: ["name"],
-          },
-        },
         // Script management tools (SSH-90)
         {
           name: "listScripts",
@@ -1030,41 +1004,6 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
           };
         }
 
-        case "task": {
-          const parsed = TaskSchema.parse(args);
-
-          // Get shell for context (auto-creates with requested ID if not exists)
-          const { shell } = shellManager.getOrCreate(parsed.shellId, { cwd: configHolder.cwd });
-
-          try {
-            const result = await runTask(parsed.name, configHolder.config, {
-              cwd: shell.cwd,
-              shell: shell,
-            });
-
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: formatTaskResult(parsed.name, result),
-                },
-              ],
-              isError: !result.success,
-            };
-          } catch (error) {
-            // Handle task errors
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: error instanceof Error ? error.message : String(error),
-                },
-              ],
-              isError: true,
-            };
-          }
-        }
-
         // Script management tools (SSH-90)
         case "listScripts": {
           const parsed = ListScriptsSchema.parse(args);
@@ -1352,33 +1291,6 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     if (scriptId) meta.push(`script: ${scriptId}`);
     if (meta.length > 0) {
       parts.push(`[${meta.join(", ")}]`);
-    }
-
-    return parts.join("\n") || "(no output)";
-  }
-
-  /**
-   * Format task result for MCP response
-   */
-  function formatTaskResult(
-    taskName: string,
-    result: { stdout: string; stderr: string; code: number; success: boolean },
-  ): string {
-    const parts: string[] = [];
-
-    parts.push(`Task: ${taskName}`);
-    parts.push("");
-
-    if (result.stdout) {
-      parts.push(result.stdout);
-    }
-
-    if (result.stderr) {
-      parts.push(`[stderr]\n${result.stderr}`);
-    }
-
-    if (!result.success) {
-      parts.push(`\n[exit code: ${result.code}]`);
     }
 
     return parts.join("\n") || "(no output)";
