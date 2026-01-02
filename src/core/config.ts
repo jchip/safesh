@@ -68,7 +68,7 @@ export const STANDARD_PRESET: SafeShellConfig = {
       // Process
       "ps", "lsof", "sleep",
       // Text processing
-      "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs",
+      "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs", "sed", "awk", "grep",
       // Path utilities
       "basename", "dirname", "realpath", "readlink",
       // File info
