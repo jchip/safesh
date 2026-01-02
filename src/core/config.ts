@@ -18,75 +18,129 @@ import type {
   PermissionsConfig,
   SafeShellConfig,
   SafeshLocalConfig,
-  SecurityPreset,
 } from "./types.ts";
 import { configError } from "./errors.ts";
 import { resolveWorkspace } from "./permissions.ts";
 
 // ============================================================================
-// Base Safe Commands (shared by STANDARD and PERMISSIVE presets)
+// Default Safe Commands
 // ============================================================================
 
 /**
- * Commands that are considered safe for general use.
- * These are read-only utilities that don't modify system state.
+ * Commands that are safe for general use.
+ *
+ * Note: Many file operations (ls, mkdir, rm, cp, mv, touch, chmod, ln, cd, pwd,
+ * echo, test, which) are implemented as INTERNAL BUILTINS in shelljs and bypass
+ * permission checks entirely. This list is for EXTERNAL commands only.
  */
 const SAFE_COMMANDS = [
-  // System info
-  "date", "whoami", "hostname", "uname", "id", "uptime", "cal",
-  // Process inspection
-  "ps", "lsof", "sleep",
-  // Text processing
-  "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs", "sed", "awk", "grep",
-  // Path utilities
-  "basename", "dirname", "realpath", "readlink",
-  // File info
-  "file", "stat", "diff",
-  // Checksums
-  "md5", "md5sum", "shasum", "sha256sum",
-  // Encoding
-  "base64",
-  // Version control
-  "git",
-  // Misc
-  "env", "printenv", "echo", "printf", "timeout", "time", "which",
+  // ============================================================================
+  // Text Processing
+  // ============================================================================
+  "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs",
+  "sed", "awk", "grep", "egrep", "fgrep",
+  "diff", "cmp", "comm", "paste", "join", "column",
+  "fold", "fmt", "nl", "rev", "tac", "expand", "unexpand",
+  "strings", "tr",
+
+  // ============================================================================
+  // File/Directory Inspection (read-only)
+  // ============================================================================
+  "ls", "find", "tree", "du", "df", "file", "stat",
+  "locate", "whereis", "type",
+  "readlink", "realpath", "basename", "dirname",
+
+  // ============================================================================
+  // Encoding & Hashing
+  // ============================================================================
+  "base64", "xxd", "od", "hexdump",
+  "md5", "md5sum", "shasum", "sha256sum", "sha512sum", "cksum", "sum",
+
+  // ============================================================================
+  // Compression (read-only operations)
+  // ============================================================================
+  "zcat", "bzcat", "xzcat", "lzcat",
+  "gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lz4", "zstd",
+  "tar", "zip", "unzip", "zipinfo",
+
+  // ============================================================================
+  // Process & System Info
+  // ============================================================================
+  "ps", "pgrep", "lsof", "fuser",
+  "top", "htop", "uptime", "w", "who", "users", "last", "lastlog",
+  "uname", "hostname", "hostnamectl", "arch", "nproc", "lscpu", "lsmem",
+  "free", "vmstat", "iostat", "mpstat", "sar",
+  "lsblk", "lsusb", "lspci", "lsmod",
+
+  // ============================================================================
+  // User & Group Info
+  // ============================================================================
+  "whoami", "id", "groups", "getent", "finger",
+
+  // ============================================================================
+  // Date, Time & Locale
+  // ============================================================================
+  "date", "cal", "ncal", "timedatectl",
+  "locale", "localectl",
+
+  // ============================================================================
+  // Math & Sequences
+  // ============================================================================
+  "seq", "bc", "dc", "expr", "factor", "numfmt",
+
+  // ============================================================================
+  // Help & Documentation
+  // ============================================================================
+  "man", "info", "apropos", "whatis", "help",
+
+  // ============================================================================
+  // Version Control
+  // ============================================================================
+  "git", "hg", "svn",
+
+  // ============================================================================
+  // Network Info (read-only)
+  // ============================================================================
+  "ping", "host", "dig", "nslookup", "whois",
+  "netstat", "ss", "ip", "ifconfig", "route", "arp",
+  "traceroute", "tracepath", "mtr",
+  "curl", "wget", "fetch",
+
+  // ============================================================================
+  // Shell Utilities
+  // ============================================================================
+  "echo", "printf", "yes", "true", "false", "test", "[",
+  "env", "printenv", "getconf",
+  "sleep", "timeout", "time", "watch",
+  "xargs", "parallel",
+  "which", "whereis", "command", "type", "hash",
+  "tput", "clear", "reset",
+
+  // ============================================================================
+  // File Creation (requires write permission to target)
+  // ============================================================================
+  "touch", "mkdir", "mktemp", "mkfifo",
+
+  // ============================================================================
+  // Package Managers (read-only operations like list/search)
+  // ============================================================================
+  "brew", "apt", "apt-cache", "dpkg", "rpm", "yum", "dnf", "pacman", "apk",
+  "pip", "pip3", "gem", "cargo", "go", "rustc", "rustup",
+  "node", "deno", "bun",
+  "fyn", "nvx", "xrun", "npm", "pnpm", "yarn",
 ] as const;
 
 // ============================================================================
-// Security Presets
+// Default Configuration
 // ============================================================================
 
 /**
- * Strict preset - maximum security, minimal permissions
- * Use for untrusted code or production environments
+ * Default configuration
+ *
+ * These are sensible defaults that get merged with user/project configs.
+ * Config files can add more allowed commands or modify these settings.
  */
-export const STRICT_PRESET: SafeShellConfig = {
-  permissions: {
-    read: ["${CWD}", "/tmp"],
-    write: ["/tmp"],
-    net: [],
-    run: [],
-    env: ["HOME", "PATH", "TERM"],
-  },
-  external: {},
-  env: {
-    allow: ["HOME", "PATH", "TERM"],
-    mask: ["*_KEY", "*_SECRET", "*_TOKEN", "*_PASSWORD", "*_API*", "AWS_*", "GITHUB_*"],
-  },
-  imports: {
-    trusted: ["jsr:@std/*", "safesh:*"],
-    allowed: [],
-    blocked: ["npm:*", "http:*", "https:*", "file:*"],
-  },
-  tasks: {},
-  timeout: 30000,
-};
-
-/**
- * Standard preset - balanced security and functionality
- * Good default for most projects
- */
-export const STANDARD_PRESET: SafeShellConfig = {
+export const DEFAULT_CONFIG: SafeShellConfig = {
   permissions: {
     read: ["${CWD}", "/tmp"],
     write: ["${CWD}", "/tmp"],
@@ -107,188 +161,6 @@ export const STANDARD_PRESET: SafeShellConfig = {
   tasks: {},
   timeout: 30000,
 };
-
-/**
- * Permissive preset - more relaxed for development
- * Enables common dev tools and broader access
- */
-export const PERMISSIVE_PRESET: SafeShellConfig = {
-  permissions: {
-    read: ["${CWD}", "/tmp", "${HOME}"],
-    write: ["${CWD}", "/tmp"],
-    net: true,
-    run: [
-      // Include all safe commands
-      ...SAFE_COMMANDS,
-      // Build tools (excluding deno/node which execute arbitrary code)
-      "npm", "pnpm", "yarn", "fyn", "nvx", "xrun",
-      "docker", "make", "cargo",
-      // Additional process tools
-      "netstat", "ss", "pgrep", "pidof", "fuser", "top", "htop", "groups",
-      // File/directory inspection
-      "ls", "du", "df", "find", "locate", "tree", "whereis", "type",
-      // Additional text processing
-      "cat", "column", "comm", "join", "paste",
-      // Additional encoding
-      "xxd", "od", "hexdump",
-      // Compression (read-only)
-      "zcat", "bzcat", "xzcat", "zipinfo",
-      // Network tools
-      "ping", "host", "dig", "nslookup", "traceroute", "ifconfig", "ip", "arp", "route",
-      "curl", "wget",
-    ],
-    env: ["HOME", "PATH", "TERM", "USER", "LANG", "EDITOR", "SHELL"],
-  },
-  external: {
-    // Build tools (deno/node excluded - they execute arbitrary code)
-    git: { allow: true },
-    npm: { allow: true },
-    pnpm: { allow: true },
-    yarn: { allow: true },
-    fyn: { allow: true },
-    nvx: { allow: true },
-    xrun: { allow: true },
-    docker: {
-      allow: true,
-      pathArgs: { autoDetect: true, validateSandbox: true },
-    },
-    make: { allow: true },
-    cargo: { allow: true },
-    // Process/system inspection
-    ps: { allow: true },
-    lsof: { allow: true },
-    netstat: { allow: true },
-    ss: { allow: true },
-    pgrep: { allow: true },
-    pidof: { allow: true },
-    fuser: { allow: true },
-    top: { allow: true },
-    htop: { allow: true },
-    uptime: { allow: true },
-    uname: { allow: true },
-    hostname: { allow: true },
-    whoami: { allow: true },
-    id: { allow: true },
-    groups: { allow: true },
-    // File/directory inspection (read-only)
-    ls: { allow: true },
-    file: { allow: true },
-    stat: { allow: true },
-    du: { allow: true },
-    df: { allow: true },
-    find: { allow: true },
-    locate: { allow: true },
-    tree: { allow: true },
-    which: { allow: true },
-    whereis: { allow: true },
-    type: { allow: true },
-    realpath: { allow: true },
-    dirname: { allow: true },
-    basename: { allow: true },
-    // Text processing (read-only)
-    cat: { allow: true },
-    head: { allow: true },
-    tail: { allow: true },
-    sort: { allow: true },
-    uniq: { allow: true },
-    wc: { allow: true },
-    grep: { allow: true },
-    cut: { allow: true },
-    awk: { allow: true },
-    tr: { allow: true },
-    column: { allow: true },
-    comm: { allow: true },
-    join: { allow: true },
-    paste: { allow: true },
-    // Encoding/hashing (read-only)
-    md5: { allow: true },
-    md5sum: { allow: true },
-    shasum: { allow: true },
-    sha256sum: { allow: true },
-    base64: { allow: true },
-    xxd: { allow: true },
-    od: { allow: true },
-    hexdump: { allow: true },
-    // Compression (read-only)
-    zcat: { allow: true },
-    bzcat: { allow: true },
-    xzcat: { allow: true },
-    zipinfo: { allow: true },
-    // Network inspection
-    ping: { allow: true },
-    host: { allow: true },
-    dig: { allow: true },
-    nslookup: { allow: true },
-    traceroute: { allow: true },
-    ifconfig: { allow: true },
-    ip: { allow: true },
-    arp: { allow: true },
-    route: { allow: true },
-    curl: { allow: true },
-    wget: { allow: true },
-    // Date/time
-    date: { allow: true },
-    cal: { allow: true },
-    // Misc (read-only)
-    env: { allow: true },
-    printenv: { allow: true },
-    echo: { allow: true },
-    printf: { allow: true },
-    timeout: { allow: true },
-    time: { allow: true },
-  },
-  env: {
-    allow: [
-      "HOME",
-      "PATH",
-      "TERM",
-      "EDITOR",
-      "SHELL",
-      "USER",
-      "LANG",
-      "LC_*",
-      "DENO_*",
-      "NODE_*",
-    ],
-    mask: [
-      "*_KEY",
-      "*_SECRET",
-      "*_TOKEN",
-      "*_PASSWORD",
-      "*_PRIVATE*",
-      "AWS_*",
-      "GITHUB_TOKEN",
-    ],
-  },
-  imports: {
-    trusted: ["jsr:@std/*", "safesh:*"],
-    allowed: ["jsr:*"],
-    blocked: ["http:*", "https:*"],
-  },
-  tasks: {},
-  timeout: 60000,
-};
-
-/**
- * Default configuration - uses standard preset
- */
-export const DEFAULT_CONFIG: SafeShellConfig = STANDARD_PRESET;
-
-/**
- * Get a preset configuration by name
- */
-export function getPreset(preset: SecurityPreset): SafeShellConfig {
-  switch (preset) {
-    case "strict":
-      return { ...STRICT_PRESET };
-    case "standard":
-      return { ...STANDARD_PRESET };
-    case "permissive":
-      return { ...PERMISSIVE_PRESET };
-    default:
-      throw configError(`Unknown preset: ${preset}`);
-  }
-}
 
 // ============================================================================
 // Config Merging
@@ -449,7 +321,7 @@ function mergeImportPolicy(
  *
  * Configs are loaded and merged in this order (later overrides earlier):
  *
- * 1. **Built-in** - `STANDARD_PRESET` (hardcoded defaults)
+ * 1. **Built-in** - `DEFAULT_CONFIG` (hardcoded defaults)
  * 2. **Global** - `~/.config/safesh/config.[ts|json]` (user preferences)
  * 3. **Project** - `.config/safesh/config.[ts|json]` (project settings)
  * 4. **Local** - `.config/safesh/config.local.[ts|json]` (machine-specific)
@@ -811,32 +683,22 @@ export async function loadConfig(
 
   let config = { ...DEFAULT_CONFIG };
 
-  // Load global config (JSON overrides TS)
+  // Load global config (~/.config/safesh/) - JSON overrides TS
   const globalConfig = await loadConfigWithJsonOverride(
     getGlobalConfigPath(),
     getGlobalConfigJsonPath(),
   );
   if (globalConfig) {
-    // If global config specifies a preset, start from that preset
-    if (globalConfig.preset) {
-      config = mergeConfigs(getPreset(globalConfig.preset), globalConfig);
-    } else {
-      config = mergeConfigs(config, globalConfig);
-    }
+    config = mergeConfigs(config, globalConfig);
   }
 
-  // Load project config (JSON overrides TS)
+  // Load project config (.config/safesh/) - JSON overrides TS
   const projectConfig = await loadConfigWithJsonOverride(
     getProjectConfigPath(cwd),
     getProjectConfigJsonPath(cwd),
   );
   if (projectConfig) {
-    // If project config specifies a preset, it takes precedence
-    if (projectConfig.preset) {
-      config = mergeConfigs(getPreset(projectConfig.preset), projectConfig);
-    } else {
-      config = mergeConfigs(config, projectConfig);
-    }
+    config = mergeConfigs(config, projectConfig);
   }
 
   // Load local config (JSON overrides TS)

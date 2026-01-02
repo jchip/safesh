@@ -857,14 +857,6 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             };
           }
 
-          // Background execution requires a shell
-          if (background && !shellId) {
-            return {
-              content: [{ type: "text", text: "shellId is required for background execution" }],
-              isError: true,
-            };
-          }
-
           // Merge session-level allowed commands into config
           const sessionCommands = shellManager.getSessionAllowedCommands();
           if (sessionCommands.length > 0) {
