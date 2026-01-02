@@ -39,6 +39,7 @@ import {
   killScript,
 } from "../runtime/scripts.ts";
 import { runTask, listTasks } from "../runner/tasks.ts";
+import { parseShellCommand } from "../shell/parser.ts";
 import {
   createRunToolDescription,
   createTaskToolDescription,
@@ -121,7 +122,8 @@ function applyRootsToConfig(
 
 // Tool schemas
 const RunSchema = z.object({
-  code: z.string().optional().describe("JavaScript/TypeScript code to execute (optional if file or retry_id provided)"),
+  code: z.string().optional().describe("JavaScript/TypeScript code to execute"),
+  shcmd: z.string().optional().describe("Shell command to execute (basic syntax: &&, ||, |, 2>&1, >, >>, &)"),
   file: z.string().optional().describe("Path to .ts file to execute (relative to cwd). File should import from 'safesh:stdlib'"),
   shellId: z.string().optional().describe("Shell ID to use"),
   background: z.boolean().optional().describe("Run in background (async), returns { scriptId, pid }"),
@@ -188,6 +190,7 @@ const TaskSchema = z.object({
   name: z.string().describe("Task name from config"),
   shellId: z.string().optional().describe("Shell ID for persistent state"),
 });
+
 
 /** Mutable config holder - allows updating config after roots are received */
 interface ConfigHolder {
@@ -530,9 +533,13 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             properties: {
               code: {
                 type: "string",
-                description: "JavaScript/TypeScript code to execute (optional if file or retry_id provided). " +
-                  "For complex scripts with template literals or special chars, prefer 'file' mode to avoid JSON escaping issues. " +
-                  "Example: await cat('file.txt').pipe(lines()).pipe(grep(/ERROR/)).collect()",
+                description: "JavaScript/TypeScript code to execute. " +
+                  "Example: await $.cat('file.txt').lines().grep(/ERROR/).collect()",
+              },
+              shcmd: {
+                type: "string",
+                description: "Shell command (transpiled to TS). Supports: &&, ||, |, 2>&1, >, >>, &. " +
+                  "Example: git status | head -5",
               },
               file: {
                 type: "string",
@@ -826,11 +833,26 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
               execTimeout,
               execConfig,
             );
+          } else if (parsed.shcmd) {
+            // Shell command - parse and transpile to TypeScript
+            try {
+              const parseResult = parseShellCommand(parsed.shcmd);
+              code = parseResult.code;
+              // background param overrides trailing &
+              if (background === undefined) {
+                background = parseResult.isBackground;
+              }
+            } catch (error) {
+              return {
+                content: [{ type: "text", text: `Shell parse error: ${error instanceof Error ? error.message : String(error)}` }],
+                isError: true,
+              };
+            }
           } else if (parsed.code) {
             code = parsed.code;
           } else {
             return {
-              content: [{ type: "text", text: "Either 'code', 'file', or 'retry_id' must be provided" }],
+              content: [{ type: "text", text: "Either 'code', 'shcmd', 'file', or 'retry_id' must be provided" }],
               isError: true,
             };
           }
