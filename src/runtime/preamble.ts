@@ -78,25 +78,26 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
   const shellEnv = shell?.env ?? {};
   const shellVars = shell?.vars ?? {};
 
-  const lines: string[] = [
+  // Use aliased imports to avoid TDZ conflicts when user code declares same-named variables
+  const preambleLines: string[] = [
     "// SafeShell auto-generated preamble",
     "",
     "// Import standard library",
-    `import * as fs from 'file://${stdlibPath}fs.ts';`,
-    `import * as text from 'file://${stdlibPath}text.ts';`,
+    `import * as __fs from 'file://${stdlibPath}fs.ts';`,
+    `import * as __text from 'file://${stdlibPath}text.ts';`,
     "",
-    "// Import streaming shell API",
-    `import { createStream, fromArray, empty } from 'file://${stdlibPath}stream.ts';`,
-    `import { filter, map, flatMap, take, head, tail, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
-    `import { stdout, stderr, tee } from 'file://${stdlibPath}io.ts';`,
-    `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
-    `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds } from 'file://${stdlibPath}command.ts';`,
+    "// Import streaming shell API (aliased to avoid TDZ conflicts with user code)",
+    `import { createStream as __createStream, fromArray as __fromArray, empty as __empty } from 'file://${stdlibPath}stream.ts';`,
+    `import { filter as __filter, map as __map, flatMap as __flatMap, take as __take, head as __head, tail as __tail, lines as __lines, grep as __grep } from 'file://${stdlibPath}transforms.ts';`,
+    `import { stdout as __stdout, stderr as __stderr, tee as __tee } from 'file://${stdlibPath}io.ts';`,
+    `import { cat as __cat, glob as __glob, src as __src, dest as __dest } from 'file://${stdlibPath}fs-streams.ts';`,
+    `import { cmd as __cmd, git as __git, docker as __docker, deno as __deno, str as __str, bytes as __bytes, toCmd as __toCmd, toCmdLines as __toCmdLines, initCmds as __initCmds } from 'file://${stdlibPath}command.ts';`,
     "",
-    "// Import shelljs-like commands",
-    `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
+    "// Import shelljs-like commands (aliased to avoid TDZ conflicts)",
+    `import { echo as __echo, cd as __cd, pwd as __pwd, pushd as __pushd, popd as __popd, dirs as __dirs, tempdir as __tempdir, env as __env, test as __test, which as __which, chmod as __chmod, ln as __ln, rm as __rm, cp as __cp, mv as __mv, mkdir as __mkdir, touch as __touch, ls as __ls, ShellString as __ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
     "",
     "// Import fluent shell API",
-    `import fluentShell, { FluentShell } from 'file://${stdlibPath}shell.ts';`,
+    `import __fluentShell, { FluentShell as __FluentShell } from 'file://${stdlibPath}shell.ts';`,
     "",
     "// Sync shell ENV to Deno.env so child processes inherit them",
     `for (const [k, v] of Object.entries(${JSON.stringify(shellEnv)})) { Deno.env.set(k, v); }`,
@@ -104,7 +105,7 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     "// Create $ namespace with all exports",
     `(globalThis as any).$ = {`,
     `  // Fluent file API`,
-    `  cat: fluentShell, FluentShell,`,
+    `  cat: __fluentShell, FluentShell: __FluentShell,`,
     `  // Shell context (direct access, uppercase)`,
     `  ID: ${JSON.stringify(shellId)},`,
     `  CWD: ${JSON.stringify(shellCwd)},`,
@@ -124,34 +125,36 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `  // Internal (Symbol-keyed)`,
     `  [Symbol.for('safesh.config')]: ${preambleConfig ? JSON.stringify(preambleConfig) : "undefined"},`,
     `  // Namespaced modules`,
-    `  fs, text,`,
+    `  fs: __fs, text: __text,`,
     `  // Command execution`,
-    `  cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds,`,
+    `  cmd: __cmd, git: __git, docker: __docker, deno: __deno, str: __str, bytes: __bytes, toCmd: __toCmd, toCmdLines: __toCmdLines, initCmds: __initCmds,`,
     `  // Streaming primitives`,
-    `  createStream, fromArray, empty,`,
+    `  createStream: __createStream, fromArray: __fromArray, empty: __empty,`,
     `  // Stream transforms`,
-    `  filter, map, flatMap, take, head, tail, lines, grep,`,
+    `  filter: __filter, map: __map, flatMap: __flatMap, take: __take, head: __head, tail: __tail, lines: __lines, grep: __grep,`,
     `  // I/O streams`,
-    `  stdout, stderr, tee,`,
+    `  stdout: __stdout, stderr: __stderr, tee: __tee,`,
     `  // File streaming (cat is fluent API above, not streaming)`,
-    `  glob, src, dest,`,
+    `  glob: __glob, src: __src, dest: __dest,`,
     `  // Glob utilities from fs module (needed by shell parser)`,
-    `  globPaths: fs.globPaths, globArray: fs.globArray,`,
+    `  globPaths: __fs.globPaths, globArray: __fs.globArray,`,
     `  // ShellJS commands`,
-    `  echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString,`,
+    `  echo: __echo, cd: __cd, pwd: __pwd, pushd: __pushd, popd: __popd, dirs: __dirs, tempdir: __tempdir, env: __env, test: __test, which: __which, chmod: __chmod, ln: __ln, rm: __rm, cp: __cp, mv: __mv, mkdir: __mkdir, touch: __touch, ls: __ls, ShellString: __ShellString,`,
+    `  // Path utilities from @std/path`,
+    `  path: __fs.path,`,
     `};`,
     "",
   ];
 
   // Count lines so far for line number mapping (before the async function line)
-  const preambleLineCount = lines.length + 1; // +1 for the function declaration line
+  const preambleLineCount = preambleLines.length + 1; // +1 for the function declaration line
 
-  lines.push(
+  preambleLines.push(
     "// User code wrapped in async function for error handling",
     "(async () => {",
   );
 
-  return { preamble: lines.join("\n"), preambleLineCount };
+  return { preamble: preambleLines.join("\n"), preambleLineCount };
 }
 
 /**
@@ -166,32 +169,33 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
   const shellEnv = shell?.env ?? {};
   const shellVars = shell?.vars ?? {};
 
-  const lines: string[] = [
+  // Use aliased imports to avoid TDZ conflicts when user code declares same-named variables
+  const preambleLines: string[] = [
     "// SafeShell auto-generated preamble for file execution",
     "",
     "// Import standard library",
-    `import * as fs from 'file://${stdlibPath}fs.ts';`,
-    `import * as text from 'file://${stdlibPath}text.ts';`,
+    `import * as __fs from 'file://${stdlibPath}fs.ts';`,
+    `import * as __text from 'file://${stdlibPath}text.ts';`,
     "",
-    "// Import streaming shell API",
-    `import { createStream, fromArray, empty } from 'file://${stdlibPath}stream.ts';`,
-    `import { filter, map, flatMap, take, head, tail, lines, grep } from 'file://${stdlibPath}transforms.ts';`,
-    `import { stdout, stderr, tee } from 'file://${stdlibPath}io.ts';`,
-    `import { cat, glob, src, dest } from 'file://${stdlibPath}fs-streams.ts';`,
-    `import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds } from 'file://${stdlibPath}command.ts';`,
+    "// Import streaming shell API (aliased to avoid TDZ conflicts with user code)",
+    `import { createStream as __createStream, fromArray as __fromArray, empty as __empty } from 'file://${stdlibPath}stream.ts';`,
+    `import { filter as __filter, map as __map, flatMap as __flatMap, take as __take, head as __head, tail as __tail, lines as __lines, grep as __grep } from 'file://${stdlibPath}transforms.ts';`,
+    `import { stdout as __stdout, stderr as __stderr, tee as __tee } from 'file://${stdlibPath}io.ts';`,
+    `import { cat as __cat, glob as __glob, src as __src, dest as __dest } from 'file://${stdlibPath}fs-streams.ts';`,
+    `import { cmd as __cmd, git as __git, docker as __docker, deno as __deno, str as __str, bytes as __bytes, toCmd as __toCmd, toCmdLines as __toCmdLines, initCmds as __initCmds } from 'file://${stdlibPath}command.ts';`,
     "",
-    "// Import shelljs-like commands",
-    `import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
+    "// Import shelljs-like commands (aliased to avoid TDZ conflicts)",
+    `import { echo as __echo, cd as __cd, pwd as __pwd, pushd as __pushd, popd as __popd, dirs as __dirs, tempdir as __tempdir, env as __env, test as __test, which as __which, chmod as __chmod, ln as __ln, rm as __rm, cp as __cp, mv as __mv, mkdir as __mkdir, touch as __touch, ls as __ls, ShellString as __ShellString } from 'file://${stdlibPath}shelljs/mod.ts';`,
     "",
     "// Import fluent shell API",
-    `import fluentShell, { FluentShell } from 'file://${stdlibPath}shell.ts';`,
+    `import __fluentShell, { FluentShell as __FluentShell } from 'file://${stdlibPath}shell.ts';`,
     "",
     "// Sync shell ENV to Deno.env so child processes inherit them",
     `for (const [k, v] of Object.entries(${JSON.stringify(shellEnv)})) { Deno.env.set(k, v); }`,
     "",
     "// Create $ namespace with all exports",
     `(globalThis as any).$ = {`,
-    `  cat: fluentShell, FluentShell,`,
+    `  cat: __fluentShell, FluentShell: __FluentShell,`,
     `  ID: ${JSON.stringify(shellId)},`,
     `  CWD: ${JSON.stringify(shellCwd)},`,
     `  ENV: new Proxy(${JSON.stringify(shellEnv)}, {`,
@@ -208,21 +212,22 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
     `  }),`,
     `  VARS: ${JSON.stringify(shellVars)},`,
     `  [Symbol.for('safesh.config')]: ${preambleConfig ? JSON.stringify(preambleConfig) : "undefined"},`,
-    `  fs, text,`,
-    `  cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds,`,
-    `  createStream, fromArray, empty,`,
-    `  filter, map, flatMap, take, head, tail, lines, grep,`,
-    `  stdout, stderr, tee,`,
-    `  glob, src, dest,`,
-    `  globPaths: fs.globPaths, globArray: fs.globArray,`,
-    `  echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString,`,
+    `  fs: __fs, text: __text,`,
+    `  cmd: __cmd, git: __git, docker: __docker, deno: __deno, str: __str, bytes: __bytes, toCmd: __toCmd, toCmdLines: __toCmdLines, initCmds: __initCmds,`,
+    `  createStream: __createStream, fromArray: __fromArray, empty: __empty,`,
+    `  filter: __filter, map: __map, flatMap: __flatMap, take: __take, head: __head, tail: __tail, lines: __lines, grep: __grep,`,
+    `  stdout: __stdout, stderr: __stderr, tee: __tee,`,
+    `  glob: __glob, src: __src, dest: __dest,`,
+    `  globPaths: __fs.globPaths, globArray: __fs.globArray,`,
+    `  echo: __echo, cd: __cd, pwd: __pwd, pushd: __pushd, popd: __popd, dirs: __dirs, tempdir: __tempdir, env: __env, test: __test, which: __which, chmod: __chmod, ln: __ln, rm: __rm, cp: __cp, mv: __mv, mkdir: __mkdir, touch: __touch, ls: __ls, ShellString: __ShellString,`,
+    `  path: __fs.path,`,
     `};`,
     "",
     "// Original file content below",
     "",
   ];
 
-  return lines.join("\n");
+  return preambleLines.join("\n");
 }
 
 /**
