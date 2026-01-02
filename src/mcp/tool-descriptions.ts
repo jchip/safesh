@@ -12,7 +12,7 @@
 export function createRunToolDescription(permSummary: string): string {
   return `Run JavaScript/TypeScript code in a sandboxed Deno runtime - MCPU usage: infoc
 
-Use shellId for persistent state. Set background: true for async (returns { scriptId, pid }).
+Optional shellId for persistent state. background: true runs async, returns { scriptId, pid, shellId }.
 ${permSummary ? `Permissions: ${permSummary}` : "No permissions configured."}
 
 IMPORTANT: Do NOT use shell pipes (|, >, etc). Use TypeScript streaming instead.

@@ -548,11 +548,11 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
               },
               shellId: {
                 type: "string",
-                description: "Shell ID for persistent state (env, cwd, vars). Required for background scripts.",
+                description: "Shell ID for persistent state (env, cwd, vars). Optional - auto-creates if not provided.",
               },
               background: {
                 type: "boolean",
-                description: "Run in background (default: false). Returns { scriptId, pid } instead of waiting for completion.",
+                description: "Run in background (default: false). Returns { scriptId, pid, shellId } immediately.",
               },
               timeout: {
                 type: "number",
@@ -570,7 +570,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
               userChoice: {
                 type: "number",
                 enum: [1, 2, 3],
-                description: "User's permission choice: 1=once (temp), 2=session (memory), 3=always (save to .claude/safesh.local.json).",
+                description: "User's permission choice: 1=once (temp), 2=session (memory), 3=always (save to .config/safesh/config.local.json).",
               },
             },
           },
