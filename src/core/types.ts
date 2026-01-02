@@ -11,8 +11,12 @@ import { ERROR_COMMAND_NOT_ALLOWED } from "./constants.ts";
 export interface PermissionsConfig {
   /** Paths allowed for reading (supports ${CWD}, ${HOME}, ${WORKSPACE}, /tmp) */
   read?: string[];
+  /** Paths denied for reading - takes precedence over read (e.g., ~/.ssh, ~/.gnupg) */
+  denyRead?: string[];
   /** Paths allowed for writing (supports ${CWD}, ${HOME}, ${WORKSPACE}) */
   write?: string[];
+  /** Paths denied for writing - takes precedence over write */
+  denyWrite?: string[];
   /** Allowed network hosts/domains */
   net?: string[] | boolean;
   /** Allowed external commands */
