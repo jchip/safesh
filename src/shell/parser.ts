@@ -645,7 +645,7 @@ export class TypeScriptGenerator {
       if (this.isGlob(arg)) {
         const pattern = arg.slice(1); // remove GLOB_MARKER
         const expanded = this.expandArg(pattern);
-        parts.push(`...(await $.glob(${expanded})).map(f => f.path)`);
+        parts.push(`...(await $.globPaths(${expanded}))`);
       } else {
         parts.push(this.expandArg(arg));
       }
