@@ -149,6 +149,7 @@ export async function validatePath(
   const expandedAllowed = expandPaths(allowedPaths, cwd, workspace);
 
   // Check if real path is within allowed directories
+  // Note: deny paths are enforced by Deno's --deny-read/--deny-write flags
   if (!isPathAllowed(realPath, allowedPaths, cwd, workspace)) {
     if (realPath !== absolutePath) {
       // Symlink resolved to a different location
@@ -202,7 +203,9 @@ export function getEffectivePermissions(
 
   return {
     read: [...new Set([...defaultRead, ...(perms.read ?? [])])],
+    denyRead: perms.denyRead ?? [],
     write: [...new Set([...defaultWrite, ...(perms.write ?? [])])],
+    denyWrite: perms.denyWrite ?? [],
     net: perms.net ?? [],
     run: perms.run ?? [],
     env: perms.env ?? [],

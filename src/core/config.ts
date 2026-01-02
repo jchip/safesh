@@ -140,10 +140,46 @@ const SAFE_COMMANDS = [
  * These are sensible defaults that get merged with user/project configs.
  * Config files can add more allowed commands or modify these settings.
  */
+/**
+ * Sensitive paths that should never be readable
+ */
+const SENSITIVE_READ_PATHS = [
+  "${HOME}/.ssh",
+  "${HOME}/.gnupg",
+  "${HOME}/.gpg",
+  "${HOME}/.aws/credentials",
+  "${HOME}/.config/gh",
+  "${HOME}/.netrc",
+  "${HOME}/.npmrc",
+  "${HOME}/.pypirc",
+  "${HOME}/.docker/config.json",
+  "${HOME}/.kube/config",
+] as const;
+
+/**
+ * Sensitive paths that should never be writable
+ */
+const SENSITIVE_WRITE_PATHS = [
+  "${HOME}/.ssh",
+  "${HOME}/.gnupg",
+  "${HOME}/.gpg",
+  "${HOME}/.aws",
+  "${HOME}/.config/gh",
+  "${HOME}/.netrc",
+  "${HOME}/.npmrc",
+  "${HOME}/.pypirc",
+  "${HOME}/.bashrc",
+  "${HOME}/.bash_profile",
+  "${HOME}/.zshrc",
+  "${HOME}/.profile",
+] as const;
+
 export const DEFAULT_CONFIG: SafeShellConfig = {
   permissions: {
-    read: ["${CWD}", "/tmp"],
+    read: ["${CWD}", "${HOME}", "/tmp"],
+    denyRead: [...SENSITIVE_READ_PATHS],
     write: ["${CWD}", "/tmp"],
+    denyWrite: [...SENSITIVE_WRITE_PATHS],
     net: [],
     run: [...SAFE_COMMANDS],
     env: ["HOME", "PATH", "TERM", "USER", "LANG"],
@@ -186,7 +222,9 @@ function mergePermissions(
 ): PermissionsConfig {
   return {
     read: [...new Set([...(base.read ?? []), ...(override.read ?? [])])],
+    denyRead: [...new Set([...(base.denyRead ?? []), ...(override.denyRead ?? [])])],
     write: [...new Set([...(base.write ?? []), ...(override.write ?? [])])],
+    denyWrite: [...new Set([...(base.denyWrite ?? []), ...(override.denyWrite ?? [])])],
     net: mergeNetPermissions(base.net, override.net),
     run: [...new Set([...(base.run ?? []), ...(override.run ?? [])])],
     env: [...new Set([...(base.env ?? []), ...(override.env ?? [])])],

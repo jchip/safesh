@@ -429,6 +429,17 @@ function buildReadPermission(paths: string[], cwd: string): string | null {
 }
 
 /**
+ * Build deny-read permission flag
+ */
+function buildDenyReadPermission(paths: string[], cwd: string): string | null {
+  if (paths.length) {
+    const expanded = paths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
+    return `--deny-read=${expanded}`;
+  }
+  return null;
+}
+
+/**
  * Build write permission flag
  */
 function buildWritePermission(paths: string[], cwd: string): string | null {
@@ -442,6 +453,17 @@ function buildWritePermission(paths: string[], cwd: string): string | null {
   if (writePaths.length) {
     const expanded = writePaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
     return `--allow-write=${expanded}`;
+  }
+  return null;
+}
+
+/**
+ * Build deny-write permission flag
+ */
+function buildDenyWritePermission(paths: string[], cwd: string): string | null {
+  if (paths.length) {
+    const expanded = paths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
+    return `--deny-write=${expanded}`;
   }
   return null;
 }
@@ -509,12 +531,19 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   const flags: string[] = [];
   const perms = getEffectivePermissions(config, cwd);
 
-  // Build each permission type
+  // Build allow permissions
   const readFlag = buildReadPermission(perms.read ?? [], cwd);
   if (readFlag) flags.push(readFlag);
 
   const writeFlag = buildWritePermission(perms.write ?? [], cwd);
   if (writeFlag) flags.push(writeFlag);
+
+  // Build deny permissions (take precedence over allow)
+  const denyReadFlag = buildDenyReadPermission(perms.denyRead ?? [], cwd);
+  if (denyReadFlag) flags.push(denyReadFlag);
+
+  const denyWriteFlag = buildDenyWritePermission(perms.denyWrite ?? [], cwd);
+  if (denyWriteFlag) flags.push(denyWriteFlag);
 
   const netFlag = buildNetPermission(perms.net);
   if (netFlag) flags.push(netFlag);
