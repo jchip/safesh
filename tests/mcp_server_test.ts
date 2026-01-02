@@ -474,3 +474,209 @@ Deno.test({
     assertStringIncludes(result.stdout, "Building...");
   },
 });
+
+// ============================================================================
+// SSH-173: updateShell CWD propagation test
+// ============================================================================
+
+Deno.test({
+  name: "SSH-173 - updateShell CWD propagates to subsequent script execution",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { executeCode } = await import("../src/runtime/executor.ts");
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+
+    // Create shell manager with /tmp as default
+    const shellManager = createShellManager("/tmp");
+
+    // Create a shell
+    const shell = shellManager.create({ cwd: "/tmp" });
+    assertEquals(shell.cwd, "/tmp");
+
+    // Run code that outputs the working directory
+    const result1 = await executeCode(
+      'console.log(Deno.cwd());',
+      testConfig,
+      { cwd: shell.cwd },
+      shell,
+    );
+    assertEquals(result1.success, true);
+    assertStringIncludes(result1.stdout.trim(), "/tmp");
+
+    // Update shell cwd to a different directory
+    const newCwd = Deno.cwd(); // Use current test directory
+    const updatedShell = shellManager.update(shell.id, { cwd: newCwd });
+    assertEquals(updatedShell?.cwd, newCwd);
+
+    // Verify the shell object was updated
+    const fetchedShell = shellManager.get(shell.id);
+    assertEquals(fetchedShell?.cwd, newCwd);
+
+    // Run code again - should now be in new cwd
+    const result2 = await executeCode(
+      'console.log(Deno.cwd());',
+      testConfig,
+      { cwd: fetchedShell!.cwd },
+      fetchedShell!,
+    );
+    assertEquals(result2.success, true);
+    assertStringIncludes(result2.stdout.trim(), newCwd);
+  },
+});
+
+Deno.test({
+  name: "SSH-173 - shell.cwd is correctly passed to executeCode options",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { executeCode } = await import("../src/runtime/executor.ts");
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+
+    // This test verifies that when we pass the shell object directly,
+    // the cwd is correctly used from shell.cwd
+
+    const testDir = Deno.cwd();
+    const shellManager = createShellManager(testDir);
+    const shell = shellManager.create({ cwd: testDir });
+
+    // Run without explicit cwd option - should use shell.cwd
+    const result = await executeCode(
+      'console.log(Deno.cwd());',
+      testConfig,
+      {}, // No cwd in options
+      shell,
+    );
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout.trim(), testDir);
+  },
+});
+
+Deno.test({
+  name: "SSH-173 - MCP server flow: getOrCreate returns shell with updated cwd",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { executeCode } = await import("../src/runtime/executor.ts");
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+
+    // Simulate exact MCP server flow:
+    // 1. run() with shellId creates shell
+    // 2. updateShell() changes cwd
+    // 3. run() with same shellId should use new cwd
+
+    const shellManager = createShellManager("/tmp");
+
+    // Step 1: First run() - getOrCreate creates shell
+    const { shell: shell1 } = shellManager.getOrCreate("test-sh", { cwd: "/tmp" });
+    assertEquals(shell1.cwd, "/tmp");
+
+    // Execute code - should be in /tmp
+    const result1 = await executeCode(
+      'console.log(Deno.cwd());',
+      testConfig,
+      { cwd: shell1.cwd },
+      shell1,
+    );
+    assertStringIncludes(result1.stdout.trim(), "/tmp");
+
+    // Step 2: updateShell() changes cwd
+    const newCwd = Deno.cwd();
+    shellManager.update("test-sh", { cwd: newCwd });
+
+    // Step 3: Second run() - getOrCreate should return same shell with NEW cwd
+    const { shell: shell2 } = shellManager.getOrCreate("test-sh", { cwd: "/tmp" });
+
+    // CRITICAL: shell2 should have the UPDATED cwd, not the fallback
+    assertEquals(shell2.cwd, newCwd, "getOrCreate should return shell with updated cwd");
+
+    // Execute code - should be in NEW directory
+    const result2 = await executeCode(
+      'console.log(Deno.cwd());',
+      testConfig,
+      { cwd: shell2.cwd },
+      shell2,
+    );
+    assertStringIncludes(result2.stdout.trim(), newCwd);
+  },
+});
+
+Deno.test({
+  name: "SSH-173 - $.CWD in preamble reflects updated shell cwd",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { executeCode } = await import("../src/runtime/executor.ts");
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+
+    // Test that $.CWD (preamble value) matches the updated shell cwd
+    const shellManager = createShellManager("/tmp");
+
+    // Create shell with /tmp
+    const { shell } = shellManager.getOrCreate("cwd-test", { cwd: "/tmp" });
+
+    // Check $.CWD before update
+    const result1 = await executeCode(
+      'console.log($.CWD);',
+      testConfig,
+      { cwd: shell.cwd },
+      shell,
+    );
+    assertStringIncludes(result1.stdout.trim(), "/tmp");
+
+    // Update cwd
+    const newCwd = Deno.cwd();
+    shellManager.update("cwd-test", { cwd: newCwd });
+
+    // Get shell again
+    const { shell: updatedShell } = shellManager.getOrCreate("cwd-test", {});
+
+    // Check $.CWD after update - should reflect new cwd
+    const result2 = await executeCode(
+      'console.log($.CWD);',
+      testConfig,
+      { cwd: updatedShell.cwd },
+      updatedShell,
+    );
+    assertStringIncludes(result2.stdout.trim(), newCwd, "$.CWD should reflect updated cwd");
+
+    // Also verify Deno.cwd() matches
+    const result3 = await executeCode(
+      'console.log(Deno.cwd());',
+      testConfig,
+      { cwd: updatedShell.cwd },
+      updatedShell,
+    );
+    assertStringIncludes(result3.stdout.trim(), newCwd, "Deno.cwd() should match updated cwd");
+  },
+});
+
+// ============================================================================
+// $.globPaths export test
+// ============================================================================
+
+Deno.test({
+  name: "$.globPaths is available in scripts",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { executeCode } = await import("../src/runtime/executor.ts");
+
+    // Test that $.globPaths is a function and can be called
+    const result = await executeCode(
+      `
+      console.log(typeof $.globPaths);
+      console.log(typeof $.globArray);
+      const paths = await $.globPaths("*.ts");
+      console.log("paths:", paths.length >= 0 ? "ok" : "error");
+      `,
+      testConfig,
+      { cwd: Deno.cwd() },
+    );
+
+    assertEquals(result.success, true, `Script failed: ${result.stderr}`);
+    assertStringIncludes(result.stdout, "function");
+    assertStringIncludes(result.stdout, "paths: ok");
+  },
+});
