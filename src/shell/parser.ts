@@ -10,14 +10,22 @@
  * - Output redirect: > file, >> file
  * - Background: &
  * - Quoted strings: 'single' and "double"
- * - Environment variables: $VAR, ${VAR}
+ * - Environment variables: $VAR, ${VAR} (expanded in unquoted and double-quoted contexts)
+ * - Tilde expansion: ~ expands to home directory
+ * - Glob patterns: `*.ts`, `**\/*.json` (expanded at runtime)
+ * - Input redirect: < file
  *
  * NOT supported:
  * - Bash programming: for, while, if, case, etc.
  * - Subshells: $(...)
  * - Here-docs: <<EOF
- * - Input redirect: < file
  */
+
+// Variable marker characters (Unicode private use area)
+export const VAR_START = "\u0001";
+export const VAR_END = "\u0002";
+export const TILDE_MARKER = "\u0003";
+export const GLOB_MARKER = "\u0004";
 
 // ============================================================================
 // Token Types
@@ -32,6 +40,7 @@ export type TokenType =
   | "BACKGROUND"     // &
   | "REDIRECT_OUT"   // >
   | "REDIRECT_APPEND"// >>
+  | "REDIRECT_IN"    // <
   | "STDERR_MERGE"   // 2>&1
   | "EOF";
 
@@ -73,7 +82,7 @@ export interface BackgroundCommand {
 }
 
 export interface Redirect {
-  type: ">" | ">>";
+  type: ">" | ">>" | "<";
   target: string;
 }
 
@@ -150,6 +159,10 @@ export class ShellTokenizer {
       this.position++;
       return { type: "REDIRECT_OUT", value: ">", position: start };
     }
+    if (char === "<") {
+      this.position++;
+      return { type: "REDIRECT_IN", value: "<", position: start };
+    }
     if (char === ";" || char === "\n") {
       this.position++;
       return { type: "SEMI", value: ";", position: start };
@@ -161,6 +174,7 @@ export class ShellTokenizer {
 
   private readWord(start: number): Token {
     let value = "";
+    let hasGlob = false;
 
     while (this.position < this.input.length) {
       const char = this.input[this.position];
@@ -198,11 +212,79 @@ export class ShellTokenizer {
         continue;
       }
 
+      // Handle tilde at start of word
+      if (char === "~" && value === "") {
+        value += TILDE_MARKER;
+        this.position++;
+        continue;
+      }
+
+      // Handle variable expansion: $VAR or ${VAR}
+      if (char === "$") {
+        value += this.readVariable();
+        continue;
+      }
+
+      // Track glob characters
+      if (char === "*" || char === "?") {
+        hasGlob = true;
+      }
+
       value += char;
       this.position++;
     }
 
+    // Mark as glob pattern if it contains glob chars
+    if (hasGlob) {
+      value = GLOB_MARKER + value;
+    }
+
     return { type: "WORD", value, position: start };
+  }
+
+  /**
+   * Read a variable reference: $VAR or ${VAR}
+   * Returns the variable wrapped in markers for later expansion
+   */
+  private readVariable(): string {
+    this.position++; // skip $
+
+    if (this.position >= this.input.length) {
+      return "$"; // trailing $
+    }
+
+    const char = this.input[this.position];
+
+    // ${VAR} form
+    if (char === "{") {
+      this.position++; // skip {
+      let varName = "";
+      while (this.position < this.input.length && this.input[this.position] !== "}") {
+        varName += this.input[this.position];
+        this.position++;
+      }
+      if (this.position < this.input.length) {
+        this.position++; // skip }
+      }
+      if (varName) {
+        return VAR_START + varName + VAR_END;
+      }
+      return "${}";
+    }
+
+    // $VAR form - valid var chars: [a-zA-Z_][a-zA-Z0-9_]*
+    if (/[a-zA-Z_]/.test(char!)) {
+      let varName = char!;
+      this.position++;
+      while (this.position < this.input.length && /[a-zA-Z0-9_]/.test(this.input[this.position]!)) {
+        varName += this.input[this.position];
+        this.position++;
+      }
+      return VAR_START + varName + VAR_END;
+    }
+
+    // Special vars like $?, $!, $$ - pass through for now
+    return "$" + char;
   }
 
   private readQuoted(quote: string): string {
@@ -231,6 +313,12 @@ export class ShellTokenizer {
           this.position++;
           continue;
         }
+      }
+
+      // Variable expansion in double quotes (not single quotes)
+      if (quote === '"' && char === "$") {
+        value += this.readVariable();
+        continue;
       }
 
       value += char;
@@ -335,8 +423,8 @@ export class ShellParser {
         }
         words.push(token.value);
         this.advance();
-      } else if (token.type === "REDIRECT_OUT" || token.type === "REDIRECT_APPEND") {
-        const type = token.value as ">" | ">>";
+      } else if (token.type === "REDIRECT_OUT" || token.type === "REDIRECT_APPEND" || token.type === "REDIRECT_IN") {
+        const type = token.value as ">" | ">>" | "<";
         this.advance();
         const target = this.current();
         if (target.type !== "WORD") {
@@ -464,25 +552,154 @@ export class TypeScriptGenerator {
       .replace(/\t/g, "\\t");
   }
 
+  /**
+   * Check if a string contains expansion markers (vars, tilde, glob)
+   */
+  private hasExpansion(s: string): boolean {
+    return s.includes(VAR_START) || s.includes(TILDE_MARKER) || s.includes(GLOB_MARKER);
+  }
+
+  /**
+   * Check if string is a glob pattern
+   */
+  private isGlob(s: string): boolean {
+    return s.startsWith(GLOB_MARKER);
+  }
+
+  /**
+   * Convert a string with markers to a JS expression.
+   * Returns either a string literal or a template expression.
+   */
+  private expandArg(s: string): string {
+    // Handle glob marker
+    if (s.startsWith(GLOB_MARKER)) {
+      s = s.slice(1); // remove glob marker, will handle expansion separately
+    }
+
+    // If no expansion needed, return quoted string
+    if (!s.includes(VAR_START) && !s.includes(TILDE_MARKER)) {
+      return `'${this.escapeString(s)}'`;
+    }
+
+    // Build template literal parts
+    const parts: string[] = [];
+    let i = 0;
+    let literal = "";
+
+    while (i < s.length) {
+      if (s[i] === TILDE_MARKER) {
+        // Tilde expansion
+        if (literal) {
+          parts.push(`'${this.escapeString(literal)}'`);
+          literal = "";
+        }
+        parts.push(`(Deno.env.get('HOME') ?? '')`);
+        i++;
+      } else if (s[i] === VAR_START) {
+        // Variable expansion
+        if (literal) {
+          parts.push(`'${this.escapeString(literal)}'`);
+          literal = "";
+        }
+        i++; // skip VAR_START
+        let varName = "";
+        while (i < s.length && s[i] !== VAR_END) {
+          varName += s[i];
+          i++;
+        }
+        i++; // skip VAR_END
+        parts.push(`($.ENV['${varName}'] ?? Deno.env.get('${varName}') ?? '')`);
+      } else {
+        literal += s[i];
+        i++;
+      }
+    }
+
+    if (literal) {
+      parts.push(`'${this.escapeString(literal)}'`);
+    }
+
+    if (parts.length === 1) {
+      return parts[0]!;
+    }
+    return parts.join(" + ");
+  }
+
+  /**
+   * Generate expanded args array expression
+   * Handles glob expansion at runtime
+   */
+  private generateArgsExpr(args: string[]): string {
+    const hasGlobs = args.some(a => this.isGlob(a));
+
+    if (!hasGlobs) {
+      // Simple case - no globs
+      const parts = args.map(a => this.expandArg(a));
+      return `[${parts.join(", ")}]`;
+    }
+
+    // Complex case - need to expand globs at runtime
+    // Generate code that expands globs and flattens
+    const parts: string[] = [];
+    for (const arg of args) {
+      if (this.isGlob(arg)) {
+        const pattern = arg.slice(1); // remove GLOB_MARKER
+        const expanded = this.expandArg(pattern);
+        parts.push(`...(await $.glob(${expanded})).map(f => f.path)`);
+      } else {
+        parts.push(this.expandArg(arg));
+      }
+    }
+    return `[${parts.join(", ")}]`;
+  }
+
+  /**
+   * Generate output redirect code for a result variable
+   */
+  private generateOutputRedirects(resultVar: string, redirects: Redirect[], lines: string[]): void {
+    for (const redirect of redirects) {
+      if (redirect.type === "<") continue; // skip input redirects
+      const target = this.expandArg(redirect.target);
+      if (redirect.type === ">") {
+        lines.push(`await Deno.writeTextFile(${target}, ${resultVar}.stdout);`);
+      } else if (redirect.type === ">>") {
+        lines.push(`await Deno.writeTextFile(${target}, ${resultVar}.stdout, { append: true });`);
+      }
+    }
+  }
+
   private generateSimple(cmd: SimpleCommand, lines: string[]): string {
     const resultVar = this.nextVar();
-    const argsStr = cmd.args.map(a => `'${this.escapeString(a)}'`).join(", ");
+
+    // Check if any args have expansion (vars, tilde, globs)
+    const hasExpansions = cmd.args.some(a => this.hasExpansion(a));
+    const hasGlobs = cmd.args.some(a => this.isGlob(a));
+
+    // Generate args expression - handles var/tilde/glob expansion
+    const argsExpr = this.generateArgsExpr(cmd.args);
+    // Simple comma-joined args for builtins that don't need glob expansion
+    const simpleArgsStr = cmd.args.map(a => this.expandArg(a)).join(", ");
+
+    // Check for input redirect
+    const inputRedirect = cmd.redirects.find(r => r.type === "<");
+    const outputRedirects = cmd.redirects.filter(r => r.type !== "<");
 
     // Handle builtins
     switch (cmd.command) {
       // Directory operations
       case "cd": {
-        const dir = cmd.args[0] ?? "~";
-        lines.push(`await $.cd('${this.escapeString(dir)}');`);
+        const dir = cmd.args[0] ? this.expandArg(cmd.args[0]) : `(Deno.env.get('HOME') ?? '~')`;
+        lines.push(`await $.cd(${dir});`);
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
       }
       case "pwd":
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String($.pwd()).trim(), stderr: '' };`);
+        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
       case "pushd": {
-        const dir = cmd.args[0] ?? "";
-        lines.push(`const _pd = $.pushd('${this.escapeString(dir)}');`);
+        const dir = cmd.args[0] ? this.expandArg(cmd.args[0]) : "''";
+        lines.push(`const _pd = $.pushd(${dir});`);
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(_pd).trim(), stderr: '' };`);
         return resultVar;
       }
@@ -493,12 +710,14 @@ export class TypeScriptGenerator {
       case "dirs":
         lines.push(`const _ds = $.dirs();`);
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: _ds.join('\\n'), stderr: '' };`);
+        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
 
       // Output
       case "echo":
-        lines.push(`const _echo = $.echo(${argsStr || "''"});`);
+        lines.push(`const _echo = $.echo(${simpleArgsStr || "''"});`);
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(_echo).trim(), stderr: '' };`);
+        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
 
       // Tests
@@ -510,59 +729,97 @@ export class TypeScriptGenerator {
         return resultVar;
       case "test":
       case "[":
-        lines.push(`const _test = $.test(${argsStr});`);
+        lines.push(`const _test = $.test(${simpleArgsStr});`);
         lines.push(`const ${resultVar} = { code: _test ? 0 : 1, success: _test, stdout: '', stderr: '' };`);
         return resultVar;
 
-      // File listing
+      // File listing - supports globs
       case "ls":
-        lines.push(`const _ls = $.ls(${argsStr || "'.'"});`);
+        if (hasGlobs) {
+          lines.push(`const _lsArgs = ${argsExpr};`);
+          lines.push(`const _ls = $.ls(..._lsArgs);`);
+        } else {
+          lines.push(`const _ls = $.ls(${simpleArgsStr || "'.'"});`);
+        }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: Array.isArray(_ls) ? _ls.join('\\n') : String(_ls), stderr: '' };`);
+        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
 
-      // File operations
+      // File operations - support globs and expansion
       case "mkdir":
-        lines.push(`await $.mkdir(${argsStr});`);
+        if (hasGlobs) {
+          lines.push(`const _mkdirArgs = ${argsExpr};`);
+          lines.push(`await $.mkdir(..._mkdirArgs);`);
+        } else {
+          lines.push(`await $.mkdir(${simpleArgsStr});`);
+        }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
       case "rm":
-        lines.push(`await $.rm(${argsStr});`);
+        if (hasGlobs) {
+          lines.push(`const _rmArgs = ${argsExpr};`);
+          lines.push(`await $.rm(..._rmArgs);`);
+        } else {
+          lines.push(`await $.rm(${simpleArgsStr});`);
+        }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
       case "cp":
-        lines.push(`await $.cp(${argsStr});`);
+        if (hasGlobs) {
+          lines.push(`const _cpArgs = ${argsExpr};`);
+          lines.push(`await $.cp(..._cpArgs);`);
+        } else {
+          lines.push(`await $.cp(${simpleArgsStr});`);
+        }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
       case "mv":
-        lines.push(`await $.mv(${argsStr});`);
+        if (hasGlobs) {
+          lines.push(`const _mvArgs = ${argsExpr};`);
+          lines.push(`await $.mv(..._mvArgs);`);
+        } else {
+          lines.push(`await $.mv(${simpleArgsStr});`);
+        }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
       case "touch":
-        lines.push(`await $.touch(${argsStr});`);
+        if (hasGlobs) {
+          lines.push(`const _touchArgs = ${argsExpr};`);
+          lines.push(`await $.touch(..._touchArgs);`);
+        } else {
+          lines.push(`await $.touch(${simpleArgsStr});`);
+        }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
       case "chmod":
-        lines.push(`await $.chmod(${argsStr});`);
+        if (hasGlobs) {
+          lines.push(`const _chmodArgs = ${argsExpr};`);
+          lines.push(`await $.chmod(..._chmodArgs);`);
+        } else {
+          lines.push(`await $.chmod(${simpleArgsStr});`);
+        }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
       case "ln":
-        lines.push(`await $.ln(${argsStr});`);
+        lines.push(`await $.ln(${simpleArgsStr});`);
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
       case "which":
-        lines.push(`const _which = await $.which(${argsStr});`);
+        lines.push(`const _which = await $.which(${simpleArgsStr});`);
         lines.push(`const ${resultVar} = { code: _which ? 0 : 1, success: !!_which, stdout: _which || '', stderr: '' };`);
+        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
 
       case "export":
-        // Handle export VAR=value
+        // Handle export VAR=value - expand values
         for (const arg of cmd.args) {
           const eqIdx = arg.indexOf("=");
           if (eqIdx > 0) {
             const varName = arg.slice(0, eqIdx);
             const varValue = arg.slice(eqIdx + 1);
-            lines.push(`$.ENV['${this.escapeString(varName)}'] = '${this.escapeString(varValue)}';`);
-            lines.push(`Deno.env.set('${this.escapeString(varName)}', '${this.escapeString(varValue)}');`);
+            const expandedValue = this.expandArg(varValue);
+            lines.push(`$.ENV['${this.escapeString(varName)}'] = ${expandedValue};`);
+            lines.push(`Deno.env.set('${this.escapeString(varName)}', ${expandedValue});`);
           }
         }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
@@ -572,37 +829,45 @@ export class TypeScriptGenerator {
     // External command - use $.cmd()
     const cmdStr = `'${this.escapeString(cmd.command)}'`;
 
-    // Build options if needed
+    // Build options
     const options: string[] = [];
     if (cmd.stderrMerge) {
       options.push("mergeStreams: true");
     }
     if (Object.keys(cmd.envVars).length > 0) {
       const envEntries = Object.entries(cmd.envVars)
-        .map(([k, v]) => `'${this.escapeString(k)}': '${this.escapeString(v)}'`)
+        .map(([k, v]) => `'${this.escapeString(k)}': ${this.expandArg(v)}`)
         .join(", ");
       options.push(`env: { ${envEntries} }`);
     }
-
-    let expr: string;
-    if (argsStr && options.length > 0) {
-      expr = `$.cmd(${cmdStr}, [${argsStr}], { ${options.join(", ")} })`;
-    } else if (argsStr) {
-      expr = `$.cmd(${cmdStr}, [${argsStr}])`;
-    } else if (options.length > 0) {
-      expr = `$.cmd(${cmdStr}, [], { ${options.join(", ")} })`;
-    } else {
-      expr = `$.cmd(${cmdStr})`;
+    // Handle input redirect - read file and pass as stdin
+    if (inputRedirect) {
+      const inputFile = this.expandArg(inputRedirect.target);
+      options.push(`stdin: await Deno.readTextFile(${inputFile})`);
     }
 
-    lines.push(`const ${resultVar} = await ${expr};`);
+    // Generate the command call
+    const optionsStr = options.length > 0 ? `, { ${options.join(", ")} }` : "";
 
-    // Handle file redirects
-    for (const redirect of cmd.redirects) {
+    if (hasGlobs || hasExpansions) {
+      // Need to evaluate args expression
+      lines.push(`const _args = ${argsExpr};`);
+      lines.push(`const ${resultVar} = await $.cmd(${cmdStr}, _args${optionsStr});`);
+    } else if (cmd.args.length > 0) {
+      lines.push(`const ${resultVar} = await $.cmd(${cmdStr}, ${argsExpr}${optionsStr});`);
+    } else if (options.length > 0) {
+      lines.push(`const ${resultVar} = await $.cmd(${cmdStr}, []${optionsStr});`);
+    } else {
+      lines.push(`const ${resultVar} = await $.cmd(${cmdStr});`);
+    }
+
+    // Handle output redirects
+    for (const redirect of outputRedirects) {
+      const target = this.expandArg(redirect.target);
       if (redirect.type === ">") {
-        lines.push(`await Deno.writeTextFile('${this.escapeString(redirect.target)}', ${resultVar}.stdout);`);
-      } else {
-        lines.push(`await Deno.writeTextFile('${this.escapeString(redirect.target)}', ${resultVar}.stdout, { append: true });`);
+        lines.push(`await Deno.writeTextFile(${target}, ${resultVar}.stdout);`);
+      } else if (redirect.type === ">>") {
+        lines.push(`await Deno.writeTextFile(${target}, ${resultVar}.stdout, { append: true });`);
       }
     }
 
@@ -613,31 +878,53 @@ export class TypeScriptGenerator {
     // Build pipeline expression
     const cmds = pipeline.commands;
 
-    // First command
+    // Check if first command has expansions
     const first = cmds[0]!;
+    const firstHasExpansion = first.args.some(a => this.hasExpansion(a));
+    const firstHasGlobs = first.args.some(a => this.isGlob(a));
     const firstCmdStr = `'${this.escapeString(first.command)}'`;
-    const firstArgsStr = first.args.map(a => `'${this.escapeString(a)}'`).join(", ");
 
-    // Build first command with options if stderr merge
+    // Check for input redirect on first command
+    const inputRedirect = first.redirects.find(r => r.type === "<");
+
     let expr: string;
+    const firstOptions: string[] = [];
     if (first.stderrMerge) {
-      expr = firstArgsStr
-        ? `$.cmd(${firstCmdStr}, [${firstArgsStr}], { mergeStreams: true })`
-        : `$.cmd(${firstCmdStr}, [], { mergeStreams: true })`;
+      firstOptions.push("mergeStreams: true");
+    }
+    if (inputRedirect) {
+      const inputFile = this.expandArg(inputRedirect.target);
+      firstOptions.push(`stdin: await Deno.readTextFile(${inputFile})`);
+    }
+    const firstOptStr = firstOptions.length > 0 ? `, { ${firstOptions.join(", ")} }` : "";
+
+    if (firstHasGlobs || firstHasExpansion) {
+      const argsExpr = this.generateArgsExpr(first.args);
+      lines.push(`const _pipeArgs0 = ${argsExpr};`);
+      expr = `$.cmd(${firstCmdStr}, _pipeArgs0${firstOptStr})`;
+    } else if (first.args.length > 0) {
+      const argsExpr = this.generateArgsExpr(first.args);
+      expr = `$.cmd(${firstCmdStr}, ${argsExpr}${firstOptStr})`;
+    } else if (firstOptions.length > 0) {
+      expr = `$.cmd(${firstCmdStr}, []${firstOptStr})`;
     } else {
-      expr = firstArgsStr
-        ? `$.cmd(${firstCmdStr}, [${firstArgsStr}])`
-        : `$.cmd(${firstCmdStr})`;
+      expr = `$.cmd(${firstCmdStr})`;
     }
 
     // Pipe to remaining commands
     for (let i = 1; i < cmds.length; i++) {
       const cmd = cmds[i]!;
       const cmdStr = `'${this.escapeString(cmd.command)}'`;
-      const argsStr = cmd.args.map(a => `'${this.escapeString(a)}'`).join(", ");
+      const hasExpansion = cmd.args.some(a => this.hasExpansion(a));
+      const hasGlobs = cmd.args.some(a => this.isGlob(a));
 
-      if (argsStr) {
-        expr += `.pipe(${cmdStr}, [${argsStr}])`;
+      if (hasGlobs || hasExpansion) {
+        const argsExpr = this.generateArgsExpr(cmd.args);
+        lines.push(`const _pipeArgs${i} = ${argsExpr};`);
+        expr += `.pipe(${cmdStr}, _pipeArgs${i})`;
+      } else if (cmd.args.length > 0) {
+        const argsExpr = this.generateArgsExpr(cmd.args);
+        expr += `.pipe(${cmdStr}, ${argsExpr})`;
       } else {
         expr += `.pipe(${cmdStr})`;
       }
@@ -646,13 +933,15 @@ export class TypeScriptGenerator {
     const resultVar = this.nextVar();
     lines.push(`const ${resultVar} = await ${expr};`);
 
-    // Handle redirects on last command
+    // Handle output redirects on last command
     const last = cmds[cmds.length - 1]!;
-    for (const redirect of last.redirects) {
+    const outputRedirects = last.redirects.filter(r => r.type !== "<");
+    for (const redirect of outputRedirects) {
+      const target = this.expandArg(redirect.target);
       if (redirect.type === ">") {
-        lines.push(`await Deno.writeTextFile('${this.escapeString(redirect.target)}', ${resultVar}.stdout);`);
-      } else {
-        lines.push(`await Deno.writeTextFile('${this.escapeString(redirect.target)}', ${resultVar}.stdout, { append: true });`);
+        lines.push(`await Deno.writeTextFile(${target}, ${resultVar}.stdout);`);
+      } else if (redirect.type === ">>") {
+        lines.push(`await Deno.writeTextFile(${target}, ${resultVar}.stdout, { append: true });`);
       }
     }
 
