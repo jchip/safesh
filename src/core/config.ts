@@ -62,7 +62,24 @@ export const STANDARD_PRESET: SafeShellConfig = {
     read: ["${CWD}", "/tmp"],
     write: ["${CWD}", "/tmp"],
     net: [],
-    run: ["lsof", "ps"],
+    run: [
+      // System info
+      "date", "whoami", "hostname", "uname", "id", "uptime",
+      // Process
+      "ps", "lsof", "sleep",
+      // Text processing
+      "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs",
+      // Path utilities
+      "basename", "dirname", "realpath", "readlink",
+      // File info
+      "file", "stat", "diff",
+      // Checksums
+      "md5", "md5sum", "shasum", "sha256sum",
+      // Encoding
+      "base64",
+      // Version control
+      "git",
+    ],
     env: ["HOME", "PATH", "TERM", "USER", "LANG"],
   },
   external: {},
