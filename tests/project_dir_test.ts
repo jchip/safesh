@@ -292,3 +292,19 @@ Deno.test("mergeConfigs - keeps base values when override is undefined", () => {
   assertEquals(merged.projectDir, "/base");
   assertEquals(merged.allowProjectCommands, true);
 });
+
+Deno.test("mergeConfigs - merges denoFlags with union strategy", () => {
+  const base: SafeShellConfig = {
+    denoFlags: ["--unsafely-ignore-certificate-errors=localhost"],
+  };
+
+  const override: SafeShellConfig = {
+    denoFlags: ["--v8-flags=--max-heap-size=4096", "--unsafely-ignore-certificate-errors=localhost"],
+  };
+
+  const merged = mergeConfigs(base, override);
+
+  assertEquals(merged.denoFlags?.length, 2);
+  assertEquals(merged.denoFlags?.includes("--unsafely-ignore-certificate-errors=localhost"), true);
+  assertEquals(merged.denoFlags?.includes("--v8-flags=--max-heap-size=4096"), true);
+});

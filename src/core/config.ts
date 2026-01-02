@@ -454,6 +454,7 @@ function mergeImportPolicy(
  * | `imports.blocked`     | union             | Arrays combined, deduplicated                      |
  * | `tasks`               | shallow merge     | Object.assign (later keys override)                |
  * | `timeout`             | override          | Later value replaces earlier                       |
+ * | `denoFlags`           | union             | Arrays combined, deduplicated                      |
  *
  * ## Examples
  *
@@ -499,6 +500,7 @@ export function mergeConfigs(
     imports: mergeImportPolicy(base.imports ?? {}, override.imports ?? {}),
     tasks: { ...base.tasks, ...override.tasks },
     timeout: override.timeout ?? base.timeout,
+    denoFlags: [...new Set([...(base.denoFlags ?? []), ...(override.denoFlags ?? [])])],
   };
 }
 

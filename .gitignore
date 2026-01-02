@@ -29,4 +29,4 @@ coverage/
 dist/
 
 # Local config (user's own)
-safesh.local.config.ts
+/.config/**/*.local.*
