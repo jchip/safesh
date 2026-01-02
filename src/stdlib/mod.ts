@@ -103,6 +103,7 @@ import { createStream, fromArray, empty } from "./stream.ts";
 import { filter, map, flatMap, take, head, tail, lines, grep } from "./transforms.ts";
 import { stdout, stderr, tee } from "./io.ts";
 import { cat, glob, src, dest } from "./fs-streams.ts";
+import { globPaths, globArray } from "./glob.ts";
 import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from "./shelljs/mod.ts";
 
 /**
@@ -123,9 +124,22 @@ export const $ = {
   // I/O streams
   stdout, stderr, tee,
   // File streaming (glob, src, dest - streaming cat is global only)
-  glob, src, dest,
+  glob, globPaths, globArray, src, dest,
   // ShellJS commands
   echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString,
+  // Deno file aliases
+  writeFile: Deno.writeFile,
+  writeFileSync: Deno.writeFileSync,
+  writeTextFile: Deno.writeTextFile,
+  writeTextFileSync: Deno.writeTextFileSync,
+  readFile: Deno.readFile,
+  readFileSync: Deno.readFileSync,
+  readTextFile: Deno.readTextFile,
+  readTextFileSync: Deno.readTextFileSync,
+  readDir: Deno.readDir,
+  readDirSync: Deno.readDirSync,
+  readLink: Deno.readLink,
+  readLinkSync: Deno.readLinkSync,
 };
 
 // Also set on globalThis for universal access

@@ -504,66 +504,25 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     };
   }
 
-  // Build permission summary for tool descriptions (uses initial config)
-  const perms = configHolder.config.permissions ?? {};
-  const permSummary = [
-    perms.read?.length ? `read: ${perms.read.slice(0, 3).join(", ")}${perms.read.length > 3 ? "..." : ""}` : null,
-    perms.write?.length ? `write: ${perms.write.slice(0, 3).join(", ")}${perms.write.length > 3 ? "..." : ""}` : null,
-    perms.net === true ? "net: all" : (Array.isArray(perms.net) && perms.net.length ? `net: ${perms.net.slice(0, 2).join(", ")}...` : null),
-    perms.run?.length ? `run: ${perms.run.slice(0, 3).join(", ")}${perms.run.length > 3 ? "..." : ""}` : null,
-  ].filter(Boolean).join("; ");
-
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
         {
           name: "run",
-          description: createRunToolDescription(permSummary),
+          description: createRunToolDescription(),
           inputSchema: {
             type: "object",
             properties: {
-              code: {
-                type: "string",
-                description: "JavaScript/TypeScript code to execute. " +
-                  "Example: await $.cat('file.txt').lines().grep(/ERROR/).collect()",
-              },
-              shcmd: {
-                type: "string",
-                description: "Shell command (transpiled to TS). Supports: &&, ||, |, 2>&1, >, >>, &. " +
-                  "NO heredocs (<<EOF), NO subshells ($()). Example: git status && echo done",
-              },
-              file: {
-                type: "string",
-                description: "Path to .ts file to execute (relative to cwd). Recommended for complex scripts. " +
-                  "File should import from 'safesh:stdlib': import { fs, cmd, git, _ } from 'safesh:stdlib'",
-              },
-              shellId: {
-                type: "string",
-                description: "Shell ID for persistent state (env, cwd, vars). Optional - auto-creates if not provided.",
-              },
-              background: {
-                type: "boolean",
-                description: "Run in background (default: false). Returns { scriptId, pid, shellId } immediately.",
-              },
-              timeout: {
-                type: "number",
-                description: "Timeout in milliseconds (default: 30000). Ignored for background scripts.",
-              },
-              env: {
-                type: "object",
-                additionalProperties: { type: "string" },
-                description: "Additional environment variables to set",
-              },
-              retry_id: {
-                type: "string",
-                description: "Retry ID from a previous COMMAND_NOT_ALLOWED error. Use with userChoice to retry.",
-              },
-              userChoice: {
-                type: "number",
-                enum: [1, 2, 3],
-                description: "User's permission choice: 1=once (temp), 2=session (memory), 3=always (save to .config/safesh/config.local.json).",
-              },
+              code: { type: "string" },
+              shcmd: { type: "string", description: "Shell cmd (&&, ||, |, >, >>). No heredocs/subshells" },
+              file: { type: "string", description: ".ts file path (import from 'safesh:stdlib')" },
+              shellId: { type: "string" },
+              background: { type: "boolean" },
+              timeout: { type: "number" },
+              env: { type: "object", additionalProperties: { type: "string" } },
+              retry_id: { type: "string", description: "From COMMANDS_BLOCKED error" },
+              userChoice: { type: "number", enum: [1, 2, 3], description: "1=once, 2=session, 3=always" },
             },
           },
         },
@@ -573,15 +532,8 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
           inputSchema: {
             type: "object",
             properties: {
-              cwd: {
-                type: "string",
-                description: "Initial working directory (defaults to project root)",
-              },
-              env: {
-                type: "object",
-                additionalProperties: { type: "string" },
-                description: "Initial environment variables",
-              },
+              cwd: { type: "string" },
+              env: { type: "object", additionalProperties: { type: "string" } },
             },
           },
         },
@@ -591,19 +543,9 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
           inputSchema: {
             type: "object",
             properties: {
-              shellId: {
-                type: "string",
-                description: "Shell ID to update",
-              },
-              cwd: {
-                type: "string",
-                description: "New working directory",
-              },
-              env: {
-                type: "object",
-                additionalProperties: { type: "string" },
-                description: "Environment variables to set/update (merged with existing)",
-              },
+              shellId: { type: "string" },
+              cwd: { type: "string" },
+              env: { type: "object", additionalProperties: { type: "string" } },
             },
             required: ["shellId"],
           },
@@ -611,54 +553,27 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         {
           name: "endShell",
           description: END_SHELL_DESCRIPTION,
-          inputSchema: {
-            type: "object",
-            properties: {
-              shellId: {
-                type: "string",
-                description: "Shell ID to end",
-              },
-            },
-            required: ["shellId"],
-          },
+          inputSchema: { type: "object", properties: { shellId: { type: "string" } }, required: ["shellId"] },
         },
         {
           name: "listShells",
           description: LIST_SHELLS_DESCRIPTION,
-          inputSchema: {
-            type: "object",
-            properties: {},
-          },
+          inputSchema: { type: "object", properties: {} },
         },
-        // Script management tools (SSH-90)
         {
           name: "listScripts",
           description: LIST_SCRIPTS_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
-              shellId: {
-                type: "string",
-                description: "Shell ID to list scripts from",
-              },
+              shellId: { type: "string" },
               filter: {
                 type: "object",
                 properties: {
-                  status: {
-                    type: "string",
-                    enum: ["running", "completed", "failed"],
-                    description: "Filter by script status",
-                  },
-                  background: {
-                    type: "boolean",
-                    description: "Filter by background/foreground scripts",
-                  },
-                  limit: {
-                    type: "number",
-                    description: "Maximum number of scripts to return",
-                  },
+                  status: { type: "string", enum: ["running", "completed", "failed"] },
+                  background: { type: "boolean" },
+                  limit: { type: "number" },
                 },
-                description: "Optional filter criteria",
               },
             },
             required: ["shellId"],
@@ -670,18 +585,9 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
           inputSchema: {
             type: "object",
             properties: {
-              shellId: {
-                type: "string",
-                description: "Shell ID containing the script",
-              },
-              scriptId: {
-                type: "string",
-                description: "Script ID to get output from",
-              },
-              since: {
-                type: "number",
-                description: "Byte offset to start reading from (for incremental reads)",
-              },
+              shellId: { type: "string" },
+              scriptId: { type: "string" },
+              since: { type: "number", description: "Byte offset for incremental reads" },
             },
             required: ["shellId", "scriptId"],
           },
@@ -692,18 +598,9 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
           inputSchema: {
             type: "object",
             properties: {
-              shellId: {
-                type: "string",
-                description: "Shell ID containing the script",
-              },
-              scriptId: {
-                type: "string",
-                description: "Script ID to kill",
-              },
-              signal: {
-                type: "string",
-                description: "Signal to send (SIGTERM, SIGKILL, etc.)",
-              },
+              shellId: { type: "string" },
+              scriptId: { type: "string" },
+              signal: { type: "string" },
             },
             required: ["shellId", "scriptId"],
           },
@@ -714,51 +611,27 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
           inputSchema: {
             type: "object",
             properties: {
-              shellId: {
-                type: "string",
-                description: "Shell ID containing the script",
-              },
-              scriptId: {
-                type: "string",
-                description: "Script ID to wait for",
-              },
-              timeout: {
-                type: "number",
-                description: "Maximum time to wait in milliseconds",
-              },
+              shellId: { type: "string" },
+              scriptId: { type: "string" },
+              timeout: { type: "number" },
             },
             required: ["shellId", "scriptId"],
           },
         },
-        // Job listing (SSH-91)
         {
           name: "listJobs",
           description: LIST_JOBS_DESCRIPTION,
           inputSchema: {
             type: "object",
             properties: {
-              shellId: {
-                type: "string",
-                description: "Shell ID to list jobs from",
-              },
+              shellId: { type: "string" },
               filter: {
                 type: "object",
                 properties: {
-                  scriptId: {
-                    type: "string",
-                    description: "Filter by parent script ID",
-                  },
-                  status: {
-                    type: "string",
-                    enum: ["running", "completed", "failed"],
-                    description: "Filter by job status",
-                  },
-                  limit: {
-                    type: "number",
-                    description: "Maximum number of jobs to return",
-                  },
+                  scriptId: { type: "string" },
+                  status: { type: "string", enum: ["running", "completed", "failed"] },
+                  limit: { type: "number" },
                 },
-                description: "Optional filter criteria",
               },
             },
             required: ["shellId"],

@@ -163,6 +163,44 @@ function extractStderrEvents(stderr: string): {
 /**
  * Process job events and register jobs in shell
  */
+
+/**
+ * Process a single job event and update shell state immediately
+ */
+function processJobEvent(shell: Shell, script: Script, event: JobEvent): void {
+  if (event.type === "start") {
+    // Create new job
+    const job: Job = {
+      id: event.id,
+      scriptId: script.id,
+      command: event.command ?? "unknown",
+      args: event.args ?? [],
+      pid: event.pid ?? 0,
+      status: "running",
+      exitCode: undefined,
+      stdout: "", 
+      stderr: "",
+      startedAt: new Date(event.startedAt ?? Date.now()),
+      completedAt: undefined,
+      duration: undefined,
+    };
+    
+    shell.jobs.set(job.id, job);
+    
+    if (!script.jobIds.includes(job.id)) {
+      script.jobIds.push(job.id);
+    }
+  } else if (event.type === "end") {
+    const job = shell.jobs.get(event.id);
+    if (job) {
+      job.status = event.exitCode === 0 ? "completed" : "failed";
+      job.exitCode = event.exitCode;
+      job.completedAt = event.completedAt ? new Date(event.completedAt) : new Date();
+      job.duration = event.duration;
+    }
+  }
+}
+
 function processJobEvents(shell: Shell, script: Script, events: JobEvent[]): void {
   // Group events by job ID
   const startEvents = new Map<string, JobEvent>();
@@ -241,6 +279,52 @@ function buildDenoArgs(options: DenoArgsOptions): string[] {
 }
 
 /** Options for spawning subprocess */
+
+/**
+ * Collect a readable stream into a string, scanning for lines in real-time
+ */
+async function collectAndScanStreamText(
+  stream: ReadableStream<Uint8Array>,
+  onLine?: (line: string) => void
+): Promise<string> {
+  if (!onLine) {
+    return collectStreamText(stream);
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        const chunk = decoder.decode(value, { stream: true });
+        text += chunk;
+        buffer += chunk;
+        
+        let idx;
+        while ((idx = buffer.indexOf("\n")) !== -1) {
+           const line = buffer.slice(0, idx);
+           onLine(line);
+           buffer = buffer.slice(idx + 1);
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  
+  // Process remaining buffer if it contains data
+  if (buffer.length > 0) {
+      onLine(buffer);
+  }
+
+  return text;
+}
+
 interface SpawnOptions {
   /** Deno command arguments */
   args: string[];
@@ -256,6 +340,8 @@ interface SpawnOptions {
   onTimeout?: () => void;
   /** Optional callback invoked on error (before throwing) */
   onError?: () => void;
+  /** Optional callback for stderr lines (real-time) */
+  onStderrLine?: (line: string) => void;
 }
 
 /** Raw output from subprocess */
@@ -274,7 +360,7 @@ interface SubprocessOutput {
  * Spawn Deno subprocess and collect output with timeout
  */
 async function spawnAndCollectOutput(options: SpawnOptions): Promise<SubprocessOutput> {
-  const { args, cwd, env, timeoutMs, onSpawn, onTimeout, onError } = options;
+  const { args, cwd, env, timeoutMs, onSpawn, onTimeout, onError, onStderrLine } = options;
 
   const command = new Deno.Command("deno", {
     args,
@@ -294,7 +380,7 @@ async function spawnAndCollectOutput(options: SpawnOptions): Promise<SubprocessO
       const [status, stdout, stderr] = await Promise.all([
         process.status,
         collectStreamText(process.stdout),
-        collectStreamText(process.stderr),
+        collectAndScanStreamText(process.stderr, onStderrLine),
       ]);
       return { status, stdout, stderr, pid: process.pid };
     })();
@@ -628,6 +714,14 @@ export async function executeCode(
       if (script) {
         script.pid = pid;
         shell!.scriptsByPid.set(pid, script.id);
+      }
+    },
+    onStderrLine: (line) => {
+      if (shell && script) {
+        const jobEvent = parseMarkerLine<JobEvent>(line, STDERR_MARKERS.job);
+        if (jobEvent) {
+          processJobEvent(shell, script, jobEvent);
+        }
       }
     },
     onTimeout: () => {
