@@ -653,6 +653,27 @@ export class TypeScriptGenerator {
     return `[${parts.join(", ")}]`;
   }
 
+  /** Supported ls flags for builtin $.ls() */
+  private static readonly SUPPORTED_LS_FLAGS = new Set(["a", "A", "d", "l", "R"]);
+
+  /**
+   * Check if ls args contain unsupported flags
+   * Returns true if any flag is not in the supported set
+   */
+  private hasUnsupportedLsFlags(args: string[]): boolean {
+    for (const arg of args) {
+      if (arg.startsWith("-") && !arg.startsWith("--")) {
+        // Check each flag character
+        for (const char of arg.slice(1)) {
+          if (!TypeScriptGenerator.SUPPORTED_LS_FLAGS.has(char)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   /**
    * Generate output redirect code for a result variable
    */
@@ -737,20 +758,27 @@ export class TypeScriptGenerator {
       case "test":
       case "[": {
         const testVar = this.nextVar();
-        lines.push(`const ${testVar} = $.test(${simpleArgsStr});`);
+        lines.push(`const ${testVar} = await $.test(${simpleArgsStr});`);
         lines.push(`const ${resultVar} = { code: ${testVar} ? 0 : 1, success: ${testVar}, stdout: '', stderr: '' };`);
         return resultVar;
       }
 
-      // File listing - supports globs
+      // File listing - supports globs, but only certain flags
+      // Supported flags: -a, -A, -d, -l, -R
+      // For unsupported flags (like -F, -h, -S, etc.), use external ls
       case "ls": {
+        const unsupportedLsFlags = this.hasUnsupportedLsFlags(cmd.args);
+        if (unsupportedLsFlags) {
+          // Use external ls command for unsupported flags
+          break; // Fall through to external command handling
+        }
         const lsVar = this.nextVar();
         if (hasGlobs) {
           const lsArgsVar = this.nextVar();
           lines.push(`const ${lsArgsVar} = ${argsExpr};`);
-          lines.push(`const ${lsVar} = $.ls(...${lsArgsVar});`);
+          lines.push(`const ${lsVar} = await $.ls(...${lsArgsVar});`);
         } else {
-          lines.push(`const ${lsVar} = $.ls(${simpleArgsStr || "'.'"});`);
+          lines.push(`const ${lsVar} = await $.ls(${simpleArgsStr || "'.'"});`);
         }
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: Array.isArray(${lsVar}) ? ${lsVar}.join('\\n') : String(${lsVar}), stderr: '' };`);
         this.generateOutputRedirects(resultVar, cmd.redirects, lines);
