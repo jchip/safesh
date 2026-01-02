@@ -741,10 +741,27 @@ export class TypeScriptGenerator {
 
       // Output
       case "echo": {
-        const echoVar = this.nextVar();
-        lines.push(`const ${echoVar} = $.echo(${simpleArgsStr || "''"});`);
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(${echoVar}).trim(), stderr: '' };`);
-        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
+        // $.echo() already prints to stdout
+        // For redirects, we build text manually and write to file (no printing)
+        if (cmd.redirects.length > 0) {
+          const textExpr = simpleArgsStr ? `[${simpleArgsStr}].join(' ')` : "''";
+          const textVar = this.nextVar();
+          lines.push(`const ${textVar} = ${textExpr};`);
+          // Write to file
+          for (const redirect of cmd.redirects) {
+            if (redirect.type === "<") continue;
+            const target = this.expandArg(redirect.target);
+            if (redirect.type === ">") {
+              lines.push(`await Deno.writeTextFile(${target}, ${textVar});`);
+            } else if (redirect.type === ">>") {
+              lines.push(`await Deno.writeTextFile(${target}, ${textVar}, { append: true });`);
+            }
+          }
+          lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+        } else {
+          lines.push(`$.echo(${simpleArgsStr || "''"});`);
+          lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+        }
         return resultVar;
       }
 
