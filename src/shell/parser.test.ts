@@ -385,8 +385,8 @@ Deno.test("integration - repeated builtins use unique variable names", () => {
   const uniqueVars = new Set(matches);
   assertEquals(matches.length, uniqueVars.size, "All variable declarations should be unique");
 
-  // Should have at least 6 unique variables (2 per echo: helper + result)
-  assertEquals(uniqueVars.size >= 6, true);
+  // Should have at least 3 unique variables (1 result per echo)
+  assertEquals(uniqueVars.size >= 3, true);
 });
 
 Deno.test("integration - repeated file ops use unique variable names", () => {
