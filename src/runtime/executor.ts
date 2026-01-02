@@ -215,17 +215,20 @@ interface DenoArgsOptions {
   configPath?: string;
   /** Script path to execute */
   scriptPath: string;
+  /** Additional Deno CLI flags */
+  denoFlags?: string[];
 }
 
 /**
  * Build Deno run command arguments
  */
 function buildDenoArgs(options: DenoArgsOptions): string[] {
-  const { permFlags, importMapPath, configPath, scriptPath } = options;
+  const { permFlags, importMapPath, configPath, scriptPath, denoFlags } = options;
   const args = [
     "run",
     "--no-prompt", // Never prompt for permissions
     `--import-map=${importMapPath}`,
+    ...(denoFlags ?? []),
     ...permFlags,
   ];
 
@@ -583,6 +586,7 @@ export async function executeCode(
     importMapPath,
     configPath: safeshConfig, // Use SafeShell's config for @std imports
     scriptPath,
+    denoFlags: config.denoFlags,
   });
 
   // Spawn and collect output with callbacks for script tracking
@@ -713,6 +717,7 @@ export async function executeFile(
     importMapPath,
     configPath,
     scriptPath: tempPath,
+    denoFlags: config.denoFlags,
   });
 
   // Spawn and collect output

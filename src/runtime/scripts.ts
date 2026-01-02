@@ -105,6 +105,7 @@ export async function launchCodeScript(
     "--no-prompt",
     `--import-map=${importMapPath}`,
     `--config=${safeshConfig}`,
+    ...(config.denoFlags ?? []),
     ...permFlags,
   ];
 

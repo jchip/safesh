@@ -116,6 +116,9 @@ export interface SafeShellConfig {
 
   /** Default timeout in milliseconds */
   timeout?: number;
+
+  /** Additional Deno CLI flags for script execution (e.g., --unsafely-ignore-certificate-errors=localhost) */
+  denoFlags?: string[];
 }
 
 /**
