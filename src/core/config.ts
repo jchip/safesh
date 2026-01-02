@@ -24,6 +24,35 @@ import { configError } from "./errors.ts";
 import { resolveWorkspace } from "./permissions.ts";
 
 // ============================================================================
+// Base Safe Commands (shared by STANDARD and PERMISSIVE presets)
+// ============================================================================
+
+/**
+ * Commands that are considered safe for general use.
+ * These are read-only utilities that don't modify system state.
+ */
+const SAFE_COMMANDS = [
+  // System info
+  "date", "whoami", "hostname", "uname", "id", "uptime", "cal",
+  // Process inspection
+  "ps", "lsof", "sleep",
+  // Text processing
+  "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs", "sed", "awk", "grep",
+  // Path utilities
+  "basename", "dirname", "realpath", "readlink",
+  // File info
+  "file", "stat", "diff",
+  // Checksums
+  "md5", "md5sum", "shasum", "sha256sum",
+  // Encoding
+  "base64",
+  // Version control
+  "git",
+  // Misc
+  "env", "printenv", "echo", "printf", "timeout", "time", "which",
+] as const;
+
+// ============================================================================
 // Security Presets
 // ============================================================================
 
@@ -62,24 +91,7 @@ export const STANDARD_PRESET: SafeShellConfig = {
     read: ["${CWD}", "/tmp"],
     write: ["${CWD}", "/tmp"],
     net: [],
-    run: [
-      // System info
-      "date", "whoami", "hostname", "uname", "id", "uptime",
-      // Process
-      "ps", "lsof", "sleep",
-      // Text processing
-      "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs", "sed", "awk", "grep",
-      // Path utilities
-      "basename", "dirname", "realpath", "readlink",
-      // File info
-      "file", "stat", "diff",
-      // Checksums
-      "md5", "md5sum", "shasum", "sha256sum",
-      // Encoding
-      "base64",
-      // Version control
-      "git",
-    ],
+    run: [...SAFE_COMMANDS],
     env: ["HOME", "PATH", "TERM", "USER", "LANG"],
   },
   external: {},
@@ -106,29 +118,24 @@ export const PERMISSIVE_PRESET: SafeShellConfig = {
     write: ["${CWD}", "/tmp"],
     net: true,
     run: [
+      // Include all safe commands
+      ...SAFE_COMMANDS,
       // Build tools (excluding deno/node which execute arbitrary code)
-      "git", "npm", "pnpm", "yarn", "fyn", "nvx", "xrun",
+      "npm", "pnpm", "yarn", "fyn", "nvx", "xrun",
       "docker", "make", "cargo",
-      // Process/system inspection (read-only)
-      "ps", "lsof", "netstat", "ss", "pgrep", "pidof", "fuser",
-      "top", "htop", "uptime", "uname", "hostname", "whoami", "id", "groups",
-      // File/directory inspection (read-only)
-      "ls", "file", "stat", "du", "df", "find", "locate", "tree",
-      "which", "whereis", "type", "realpath", "dirname", "basename",
-      // Text processing (read-only, excluding sed -i, xargs)
-      "cat", "head", "tail", "sort", "uniq", "wc", "grep", "cut",
-      "awk", "tr", "column", "comm", "join", "paste",
-      // Encoding/hashing (read-only)
-      "md5", "md5sum", "shasum", "sha256sum", "base64", "xxd", "od", "hexdump",
-      // Compression (read-only - zcat/bzcat/xzcat/zipinfo only)
+      // Additional process tools
+      "netstat", "ss", "pgrep", "pidof", "fuser", "top", "htop", "groups",
+      // File/directory inspection
+      "ls", "du", "df", "find", "locate", "tree", "whereis", "type",
+      // Additional text processing
+      "cat", "column", "comm", "join", "paste",
+      // Additional encoding
+      "xxd", "od", "hexdump",
+      // Compression (read-only)
       "zcat", "bzcat", "xzcat", "zipinfo",
-      // Network inspection
+      // Network tools
       "ping", "host", "dig", "nslookup", "traceroute", "ifconfig", "ip", "arp", "route",
       "curl", "wget",
-      // Date/time
-      "date", "cal",
-      // Misc (read-only, excluding tee which writes)
-      "env", "printenv", "echo", "printf", "timeout", "time",
     ],
     env: ["HOME", "PATH", "TERM", "USER", "LANG", "EDITOR", "SHELL"],
   },
