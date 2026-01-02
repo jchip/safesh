@@ -539,7 +539,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
               shcmd: {
                 type: "string",
                 description: "Shell command (transpiled to TS). Supports: &&, ||, |, 2>&1, >, >>, &. " +
-                  "Example: git status | head -5",
+                  "NO heredocs (<<EOF), NO subshells ($()). Example: git status && echo done",
               },
               file: {
                 type: "string",

@@ -39,18 +39,31 @@ export async function writeStdin(
   stream: WritableStream<Uint8Array>,
   data: string | Uint8Array | ReadableStream<Uint8Array>,
 ): Promise<void> {
-  if (data instanceof ReadableStream) {
-    // Pipe the readable stream to stdin
-    await data.pipeTo(stream);
-  } else {
-    const writer = stream.getWriter();
-    try {
-      const bytes =
-        typeof data === "string" ? new TextEncoder().encode(data) : data;
-      await writer.write(bytes);
-    } finally {
-      await writer.close();
+  try {
+    if (data instanceof ReadableStream) {
+      // Pipe the readable stream to stdin
+      await data.pipeTo(stream);
+    } else {
+      const writer = stream.getWriter();
+      try {
+        const bytes =
+          typeof data === "string" ? new TextEncoder().encode(data) : data;
+        await writer.write(bytes);
+      } finally {
+        await writer.close();
+      }
     }
+  } catch (e) {
+    // Ignore broken pipe errors - downstream closed early (e.g., head -5)
+    // This is normal behavior for pipelines
+    if (e instanceof Error && (
+      e.message.includes("stream is closed") ||
+      e.message.includes("Broken pipe") ||
+      e.message.includes("EPIPE")
+    )) {
+      return;
+    }
+    throw e;
   }
 }
 
