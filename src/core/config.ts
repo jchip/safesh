@@ -41,7 +41,7 @@ const SAFE_COMMANDS = [
   "sed", "awk", "grep", "egrep", "fgrep",
   "diff", "cmp", "comm", "paste", "join", "column",
   "fold", "fmt", "nl", "rev", "tac", "expand", "unexpand",
-  "strings", "tr",
+  "strings", "jq", "yq",
 
   // ============================================================================
   // File/Directory Inspection (read-only)
