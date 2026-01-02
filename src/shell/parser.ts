@@ -699,26 +699,33 @@ export class TypeScriptGenerator {
         return resultVar;
       case "pushd": {
         const dir = cmd.args[0] ? this.expandArg(cmd.args[0]) : "''";
-        lines.push(`const _pd = $.pushd(${dir});`);
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(_pd).trim(), stderr: '' };`);
+        const pdVar = this.nextVar();
+        lines.push(`const ${pdVar} = $.pushd(${dir});`);
+        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(${pdVar}).trim(), stderr: '' };`);
         return resultVar;
       }
-      case "popd":
-        lines.push(`const _pd = $.popd();`);
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(_pd).trim(), stderr: '' };`);
+      case "popd": {
+        const pdVar = this.nextVar();
+        lines.push(`const ${pdVar} = $.popd();`);
+        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(${pdVar}).trim(), stderr: '' };`);
         return resultVar;
-      case "dirs":
-        lines.push(`const _ds = $.dirs();`);
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: _ds.join('\\n'), stderr: '' };`);
+      }
+      case "dirs": {
+        const dsVar = this.nextVar();
+        lines.push(`const ${dsVar} = $.dirs();`);
+        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: ${dsVar}.join('\\n'), stderr: '' };`);
         this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
+      }
 
       // Output
-      case "echo":
-        lines.push(`const _echo = $.echo(${simpleArgsStr || "''"});`);
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(_echo).trim(), stderr: '' };`);
+      case "echo": {
+        const echoVar = this.nextVar();
+        lines.push(`const ${echoVar} = $.echo(${simpleArgsStr || "''"});`);
+        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: String(${echoVar}).trim(), stderr: '' };`);
         this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
+      }
 
       // Tests
       case "true":
@@ -728,28 +735,34 @@ export class TypeScriptGenerator {
         lines.push(`const ${resultVar} = { code: 1, success: false, stdout: '', stderr: '' };`);
         return resultVar;
       case "test":
-      case "[":
-        lines.push(`const _test = $.test(${simpleArgsStr});`);
-        lines.push(`const ${resultVar} = { code: _test ? 0 : 1, success: _test, stdout: '', stderr: '' };`);
+      case "[": {
+        const testVar = this.nextVar();
+        lines.push(`const ${testVar} = $.test(${simpleArgsStr});`);
+        lines.push(`const ${resultVar} = { code: ${testVar} ? 0 : 1, success: ${testVar}, stdout: '', stderr: '' };`);
         return resultVar;
+      }
 
       // File listing - supports globs
-      case "ls":
+      case "ls": {
+        const lsVar = this.nextVar();
         if (hasGlobs) {
-          lines.push(`const _lsArgs = ${argsExpr};`);
-          lines.push(`const _ls = $.ls(..._lsArgs);`);
+          const lsArgsVar = this.nextVar();
+          lines.push(`const ${lsArgsVar} = ${argsExpr};`);
+          lines.push(`const ${lsVar} = $.ls(...${lsArgsVar});`);
         } else {
-          lines.push(`const _ls = $.ls(${simpleArgsStr || "'.'"});`);
+          lines.push(`const ${lsVar} = $.ls(${simpleArgsStr || "'.'"});`);
         }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: Array.isArray(_ls) ? _ls.join('\\n') : String(_ls), stderr: '' };`);
+        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: Array.isArray(${lsVar}) ? ${lsVar}.join('\\n') : String(${lsVar}), stderr: '' };`);
         this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
+      }
 
       // File operations - support globs and expansion
       case "mkdir":
         if (hasGlobs) {
-          lines.push(`const _mkdirArgs = ${argsExpr};`);
-          lines.push(`await $.mkdir(..._mkdirArgs);`);
+          const argsVar = this.nextVar();
+          lines.push(`const ${argsVar} = ${argsExpr};`);
+          lines.push(`await $.mkdir(...${argsVar});`);
         } else {
           lines.push(`await $.mkdir(${simpleArgsStr});`);
         }
@@ -757,8 +770,9 @@ export class TypeScriptGenerator {
         return resultVar;
       case "rm":
         if (hasGlobs) {
-          lines.push(`const _rmArgs = ${argsExpr};`);
-          lines.push(`await $.rm(..._rmArgs);`);
+          const argsVar = this.nextVar();
+          lines.push(`const ${argsVar} = ${argsExpr};`);
+          lines.push(`await $.rm(...${argsVar});`);
         } else {
           lines.push(`await $.rm(${simpleArgsStr});`);
         }
@@ -766,8 +780,9 @@ export class TypeScriptGenerator {
         return resultVar;
       case "cp":
         if (hasGlobs) {
-          lines.push(`const _cpArgs = ${argsExpr};`);
-          lines.push(`await $.cp(..._cpArgs);`);
+          const argsVar = this.nextVar();
+          lines.push(`const ${argsVar} = ${argsExpr};`);
+          lines.push(`await $.cp(...${argsVar});`);
         } else {
           lines.push(`await $.cp(${simpleArgsStr});`);
         }
@@ -775,8 +790,9 @@ export class TypeScriptGenerator {
         return resultVar;
       case "mv":
         if (hasGlobs) {
-          lines.push(`const _mvArgs = ${argsExpr};`);
-          lines.push(`await $.mv(..._mvArgs);`);
+          const argsVar = this.nextVar();
+          lines.push(`const ${argsVar} = ${argsExpr};`);
+          lines.push(`await $.mv(...${argsVar});`);
         } else {
           lines.push(`await $.mv(${simpleArgsStr});`);
         }
@@ -784,8 +800,9 @@ export class TypeScriptGenerator {
         return resultVar;
       case "touch":
         if (hasGlobs) {
-          lines.push(`const _touchArgs = ${argsExpr};`);
-          lines.push(`await $.touch(..._touchArgs);`);
+          const argsVar = this.nextVar();
+          lines.push(`const ${argsVar} = ${argsExpr};`);
+          lines.push(`await $.touch(...${argsVar});`);
         } else {
           lines.push(`await $.touch(${simpleArgsStr});`);
         }
@@ -793,8 +810,9 @@ export class TypeScriptGenerator {
         return resultVar;
       case "chmod":
         if (hasGlobs) {
-          lines.push(`const _chmodArgs = ${argsExpr};`);
-          lines.push(`await $.chmod(..._chmodArgs);`);
+          const argsVar = this.nextVar();
+          lines.push(`const ${argsVar} = ${argsExpr};`);
+          lines.push(`await $.chmod(...${argsVar});`);
         } else {
           lines.push(`await $.chmod(${simpleArgsStr});`);
         }
@@ -804,11 +822,13 @@ export class TypeScriptGenerator {
         lines.push(`await $.ln(${simpleArgsStr});`);
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
-      case "which":
-        lines.push(`const _which = await $.which(${simpleArgsStr});`);
-        lines.push(`const ${resultVar} = { code: _which ? 0 : 1, success: !!_which, stdout: _which || '', stderr: '' };`);
+      case "which": {
+        const whichVar = this.nextVar();
+        lines.push(`const ${whichVar} = await $.which(${simpleArgsStr});`);
+        lines.push(`const ${resultVar} = { code: ${whichVar} ? 0 : 1, success: !!${whichVar}, stdout: ${whichVar} || '', stderr: '' };`);
         this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
+      }
 
       case "export":
         // Handle export VAR=value - expand values
