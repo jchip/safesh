@@ -1,68 +1,36 @@
 /**
- * Tests for config validation and security presets
+ * Tests for config validation
  */
 
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import {
-  getPreset,
-  PERMISSIVE_PRESET,
-  STANDARD_PRESET,
-  STRICT_PRESET,
+  DEFAULT_CONFIG,
   validateConfig,
 } from "../src/core/config.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 
 // ============================================================================
-// Preset Tests
+// Default Config Tests
 // ============================================================================
 
-Deno.test("getPreset - returns strict preset", () => {
-  const preset = getPreset("strict");
-  assertEquals(preset, STRICT_PRESET);
+Deno.test("DEFAULT_CONFIG - has safe defaults", () => {
+  assertEquals(DEFAULT_CONFIG.permissions?.read, ["${CWD}", "/tmp"]);
+  assertEquals(DEFAULT_CONFIG.permissions?.write, ["${CWD}", "/tmp"]);
+  assertEquals(DEFAULT_CONFIG.permissions?.net, []);
+  assertEquals(DEFAULT_CONFIG.imports?.blocked?.includes("npm:*"), true);
 });
 
-Deno.test("getPreset - returns standard preset", () => {
-  const preset = getPreset("standard");
-  assertEquals(preset, STANDARD_PRESET);
-});
-
-Deno.test("getPreset - returns permissive preset", () => {
-  const preset = getPreset("permissive");
-  assertEquals(preset, PERMISSIVE_PRESET);
-});
-
-Deno.test("strict preset - has minimal permissions", () => {
-  assertEquals(STRICT_PRESET.permissions?.write, ["/tmp"]);
-  assertEquals(STRICT_PRESET.permissions?.net, []);
-  assertEquals(STRICT_PRESET.permissions?.run, []);
-  assertEquals(STRICT_PRESET.imports?.blocked?.includes("npm:*"), true);
-  assertEquals(STRICT_PRESET.imports?.blocked?.includes("http:*"), true);
-  assertEquals(STRICT_PRESET.imports?.blocked?.includes("file:*"), true);
-});
-
-Deno.test("standard preset - has balanced permissions", () => {
-  assertEquals(STANDARD_PRESET.permissions?.read, ["${CWD}", "/tmp"]);
-  assertEquals(STANDARD_PRESET.permissions?.write, ["${CWD}", "/tmp"]);
-  assertEquals(STANDARD_PRESET.permissions?.net, []);
-  assertEquals(STANDARD_PRESET.imports?.blocked?.includes("npm:*"), true);
-});
-
-Deno.test("permissive preset - has broader permissions", () => {
-  assertEquals(PERMISSIVE_PRESET.permissions?.net, true);
-  assertExists(PERMISSIVE_PRESET.permissions?.run);
-  assertEquals(
-    PERMISSIVE_PRESET.permissions?.run?.includes("git"),
-    true,
-  );
-  assertEquals(PERMISSIVE_PRESET.external?.git?.allow, true);
+Deno.test("DEFAULT_CONFIG - passes validation with no errors", () => {
+  const result = validateConfig(DEFAULT_CONFIG);
+  assertEquals(result.errors.length, 0);
 });
 
 // ============================================================================
 // Validation Tests - Permissions
 // ============================================================================
 
-Deno.test("validateConfig - allows valid standard config", () => {
-  const result = validateConfig(STANDARD_PRESET);
+Deno.test("validateConfig - allows valid config", () => {
+  const result = validateConfig(DEFAULT_CONFIG);
   assertEquals(result.errors.length, 0);
 });
 
@@ -299,25 +267,4 @@ Deno.test("validateConfig - warns on write CWD + no import blocks", () => {
     result.warnings.some((w) => w.includes("write access to ${CWD}")),
     true,
   );
-});
-
-// ============================================================================
-// Integration Tests - Presets Pass Validation
-// ============================================================================
-
-Deno.test("strict preset passes validation with no errors", () => {
-  const result = validateConfig(STRICT_PRESET);
-  assertEquals(result.errors.length, 0);
-});
-
-Deno.test("standard preset passes validation with no errors", () => {
-  const result = validateConfig(STANDARD_PRESET);
-  assertEquals(result.errors.length, 0);
-});
-
-Deno.test("permissive preset may have warnings but no errors", () => {
-  const result = validateConfig(PERMISSIVE_PRESET);
-  assertEquals(result.errors.length, 0);
-  // Permissive preset should have some warnings (net: true, etc.)
-  assertEquals(result.warnings.length > 0, true);
 });

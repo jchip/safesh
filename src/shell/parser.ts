@@ -495,11 +495,16 @@ export class TypeScriptGenerator {
     return Array.from(commands);
   }
 
-  /** Builtins that don't need permission checks */
+  /** Builtins that don't need permission checks (implemented internally in shelljs) */
   private static readonly BUILTINS = new Set([
+    // Directory navigation
     "cd", "pwd", "pushd", "popd", "dirs",
-    "echo", "test", "[", "true", "false", "export",
-    "ls", "mkdir", "rm", "cp", "mv", "touch", "chmod", "ln", "which",
+    // Shell basics
+    "echo", "printf", "test", "[", "true", "false", "export", "env", "printenv",
+    // File operations (internal implementations)
+    "cat", "ls", "mkdir", "rm", "cp", "mv", "touch", "chmod", "ln", "which",
+    // Temp
+    "mktemp",
   ]);
 
   private collectCommandsRecursive(command: Command, commands: Set<string>): void {
