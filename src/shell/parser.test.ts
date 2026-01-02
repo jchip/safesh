@@ -396,3 +396,27 @@ Deno.test("integration - repeated file ops use unique variable names", () => {
   const uniqueVars = new Set(matches);
   assertEquals(matches.length, uniqueVars.size, "All variable declarations should be unique");
 });
+
+Deno.test("generator - ls with supported flags uses builtin", () => {
+  const { code } = parseShellCommand("ls -la");
+
+  // Should use $.ls() builtin
+  assertEquals(code.includes("$.ls('-la')"), true);
+  assertEquals(code.includes("$.cmd('ls'"), false);
+});
+
+Deno.test("generator - ls with unsupported flags uses external command", () => {
+  const { code } = parseShellCommand("ls -F");
+
+  // Should use $.cmd() external command
+  assertEquals(code.includes("$.cmd('ls'"), true);
+  assertEquals(code.includes("$.ls("), false);
+});
+
+Deno.test("generator - ls with mixed flags uses external if any unsupported", () => {
+  const { code } = parseShellCommand("ls -laF");
+
+  // -F is unsupported, so should use external command
+  assertEquals(code.includes("$.cmd('ls'"), true);
+  assertEquals(code.includes("$.ls("), false);
+});
