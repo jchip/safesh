@@ -145,11 +145,13 @@ async function checkPermission(
 export const CMD_NAME_SYMBOL = Symbol.for('safesh.cmdName');
 
 /**
- * Command callable - call with args to execute
+ * Command callable - call with args to get a Command object
  * Has [CMD_NAME_SYMBOL] property with the resolved command path
+ *
+ * Returns Command (thenable) - can await directly or use .stdout()/.pipe() for streaming
  */
 export interface CommandFn {
-  (...args: string[]): Promise<CommandResult>;
+  (...args: string[]): Command;
   [CMD_NAME_SYMBOL]?: string;
 }
 
@@ -224,7 +226,7 @@ export async function initCmds<T extends readonly string[]>(
 
     // All permissions passed - create callable command functions
     return resolvedPaths.map((resolvedPath) => {
-      const fn: CommandFn = (...args: string[]) => new Command(resolvedPath, args, options).exec();
+      const fn: CommandFn = (...args: string[]) => new Command(resolvedPath, args, options);
       fn[CMD_NAME_SYMBOL] = resolvedPath;
       return fn;
     }) as { [K in keyof T]: CommandFn };
@@ -232,7 +234,7 @@ export async function initCmds<T extends readonly string[]>(
     // No config available (file execution mode) - create callables without permission check
     // Permissions will be enforced by Deno sandbox at execution time
     return commands.map((path) => {
-      const fn: CommandFn = (...args: string[]) => new Command(path, args, options).exec();
+      const fn: CommandFn = (...args: string[]) => new Command(path, args, options);
       fn[CMD_NAME_SYMBOL] = path;
       return fn;
     }) as { [K in keyof T]: CommandFn };

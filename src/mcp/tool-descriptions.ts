@@ -22,12 +22,14 @@ Complete API list:
   - fs: await $.fs.read(pathStr), await $.fs.write(pathStr, content)
   - path: join, dirname, basename, extname, resolve, relative, normalize, isAbsolute, parse, format, toFileUrl, fromFileUrl
   - text: trim → S|S[], lines, head, tail, grep, replace, sort, uniq, count, cut, filter, map, diff, joinLines; (e.g.: $.text.trim(' h ') → 'h', .trim(' a \n b ') → ['a','b'])
-- initCmds(['cmd1', ...]) → Promise<CmdFn[]>
-  - e.g.: const [_curl] = await $.initCmds(['curl']); await _curl('-s', url);
-- Commands (.exec() → Promise<{code, stdout: S, stderr: S}>; .pipe(CmdFn,args) for chaining; .trans(transform) → FluentStream; .stdout()/stderr() → FluentStream<string>):
+- Command (.exec() → Promise<CmdResult>; .pipe(CmdFn,args) for chaining; .trans(transform) → FluentStream; .stdout()/stderr() → FluentStream<string>):
   - built-in aliases: git('status'), tmux('list-sessions'), docker('ps'), tmuxSubmit(pane,msg,client?) → Promise
   - data sources: str('data'), bytes(data)
     - e.g.: $.str('input').pipe(_grepCmdFn, ['pattern']).exec(); or .stdout().lines()
+  - use .stdout()/.pipe() for streaming or await/thenable (.exec optional)
+- CmdFn: (...args) → Command
+- initCmds(['cmd1', ...]) → Promise<CmdFn[]> (NOTE: use _ prefix to avoid conflicts)
+  - e.g.: const [_curl] = await $.initCmds(['curl']); await _curl('-s', url);
 - FluentStream<T> producers:
   - chainables: .filter/.map/.head/.tail/.lines()/.grep(); terminals (all Promise): .collect()/.first()/.count()/.forEach()
   - .pipe(CmdFn, args)
