@@ -128,10 +128,15 @@ export async function validatePath(
     realPath = absolutePath;
   }
 
-  // Check if allowProjectFiles permits this path
-  if (config.allowProjectFiles && config.projectDir) {
+  // projectDir gets full read access, and write access unless blockProjectDirWrite is true
+  if (config.projectDir) {
     if (isWithinProjectDir(realPath, config.projectDir)) {
-      return realPath;
+      // For write operations, check if writes are blocked
+      if (operation === "write" && config.blockProjectDirWrite) {
+        // Fall through to normal permission checking (projectDir not in write list)
+      } else {
+        return realPath;
+      }
     }
   }
 
@@ -141,7 +146,7 @@ export async function validatePath(
     ? (effectivePerms.write ?? [])
     : (effectivePerms.read ?? []);
 
-  if (allowedPaths.length === 0 && !(config.allowProjectFiles && config.projectDir)) {
+  if (allowedPaths.length === 0 && !config.projectDir) {
     throw pathViolation(requestedPath, [], absolutePath);
   }
 
@@ -194,11 +199,12 @@ export function getEffectivePermissions(
   const defaultRead = [cwd, "/tmp"];
   const defaultWrite = ["/tmp"];
 
-  // Include projectDir in read/write if allowProjectFiles is true
-  // projectDir is the immutable sandbox boundary (unlike cwd which can change via cd())
-  if (config.allowProjectFiles && config.projectDir) {
+  // projectDir gets full read access, and write access unless blockProjectDirWrite is true
+  if (config.projectDir) {
     defaultRead.push(config.projectDir);
-    defaultWrite.push(config.projectDir);
+    if (!config.blockProjectDirWrite) {
+      defaultWrite.push(config.projectDir);
+    }
   }
 
   return {

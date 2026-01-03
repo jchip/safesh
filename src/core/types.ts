@@ -89,21 +89,23 @@ export interface SafeShellConfig {
 
   /**
    * Project directory - base directory for the project.
-   * Set via MCP args. Used with allowProjectCommands/allowProjectFiles.
+   * Set via MCP args. Automatically gets full read/write permissions
+   * (unless blockProjectDirWrite is true).
    */
   projectDir?: string;
+
+  /**
+   * Block write access to projectDir.
+   * When true, projectDir only gets read permission, not write.
+   * Default: false (write allowed).
+   */
+  blockProjectDirWrite?: boolean;
 
   /**
    * Allow executing any command under projectDir without explicit permission.
    * Requires projectDir to be set.
    */
   allowProjectCommands?: boolean;
-
-  /**
-   * Allow read/write for files under projectDir without explicit permission.
-   * Requires projectDir to be set.
-   */
-  allowProjectFiles?: boolean;
 
   /** Deno permission configuration */
   permissions?: PermissionsConfig;

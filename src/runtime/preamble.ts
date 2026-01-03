@@ -109,6 +109,7 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `  // Shell context (direct access, uppercase)`,
     `  ID: ${JSON.stringify(shellId)},`,
     `  CWD: ${JSON.stringify(shellCwd)},`,
+    `  ProjectDir: ${JSON.stringify(preambleConfig?.projectDir ?? "")},`,
     `  ENV: new Proxy(${JSON.stringify(shellEnv)}, {`,
     `    set(target, prop, value) {`,
     `      target[prop] = value;`,
