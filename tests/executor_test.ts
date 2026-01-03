@@ -554,3 +554,49 @@ Deno.test("SSH-209: $.CWD updates after $.pushd()", async () => {
     try { await Deno.remove("/tmp/ssh209-pushd-test", { recursive: true }); } catch { /* ignore */ }
   }
 });
+
+// ============================================================================
+// SSH-210: $.path utilities
+// ============================================================================
+
+Deno.test("SSH-210: $.path.join() works", async () => {
+  const code = `
+    const result = $.path.join('/foo', 'bar', 'baz.txt');
+    console.log(result);
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "/foo/bar/baz.txt");
+});
+
+Deno.test("SSH-210: $.path.dirname() and $.path.basename() work", async () => {
+  const code = `
+    const dir = $.path.dirname('/foo/bar/baz.txt');
+    const base = $.path.basename('/foo/bar/baz.txt');
+    const ext = $.path.extname('/foo/bar/baz.txt');
+    console.log('dir:', dir);
+    console.log('base:', base);
+    console.log('ext:', ext);
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "dir: /foo/bar");
+  assertStringIncludes(result.stdout, "base: baz.txt");
+  assertStringIncludes(result.stdout, "ext: .txt");
+});
+
+Deno.test("SSH-210: $.path.resolve() works", async () => {
+  const code = `
+    const result = $.path.resolve('/foo', './bar');
+    console.log(result);
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "/foo/bar");
+});
