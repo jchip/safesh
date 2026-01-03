@@ -242,7 +242,7 @@ await rm({ recursive: true, force: true }, "some-dir");
 
 **Security Note**:
 These commands use Deno's sandboxed filesystem APIs. Write permissions are restricted to:
-- `projectDir` (if `allowProjectFiles: true`) - immutable sandbox boundary
+- `projectDir` - immutable sandbox boundary (automatically gets full read/write)
 - `/tmp` - always allowed for scratch operations
 
 IMPORTANT: `cd()` changes the working directory but does NOT expand the sandbox.

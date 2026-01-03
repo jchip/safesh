@@ -209,7 +209,6 @@ export const DEFAULT_CONFIG: SafeShellConfig = {
   },
   tasks: {},
   timeout: DEFAULT_TIMEOUT_MS,
-  allowProjectFiles: true,
 };
 
 // ============================================================================
@@ -386,9 +385,9 @@ function mergeImportPolicy(
  * | Field                 | Strategy          | Notes                                              |
  * |-----------------------|-------------------|---------------------------------------------------|
  * | `workspace`           | override          | Later value replaces earlier                       |
- * | `projectDir`          | override          | Later value replaces earlier                       |
+ * | `projectDir`          | override          | Later value replaces earlier (auto full r/w access)|
+ * | `blockProjectDirWrite`| override          | Later value replaces earlier                       |
  * | `allowProjectCommands`| override          | Later value replaces earlier                       |
- * | `allowProjectFiles`   | override          | Later value replaces earlier                       |
  * | `permissions.read`    | union             | Arrays combined, deduplicated                      |
  * | `permissions.write`   | union             | Arrays combined, deduplicated                      |
  * | `permissions.run`     | union             | Arrays combined, deduplicated                      |
@@ -434,8 +433,8 @@ export function mergeConfigs(
   return {
     workspace: override.workspace ?? base.workspace,
     projectDir: override.projectDir ?? base.projectDir,
+    blockProjectDirWrite: override.blockProjectDirWrite ?? base.blockProjectDirWrite,
     allowProjectCommands: override.allowProjectCommands ?? base.allowProjectCommands,
-    allowProjectFiles: override.allowProjectFiles ?? base.allowProjectFiles,
     permissions: mergePermissions(
       base.permissions ?? {},
       override.permissions ?? {},
@@ -807,14 +806,12 @@ export async function loadConfig(
  * MCP initialization args that can override config
  */
 export interface McpInitArgs {
-  /** Project directory (base for relative paths and auto-allow) */
+  /** Project directory (base for relative paths, auto full read/write) */
   projectDir?: string;
   /** Current working directory (takes precedence over projectDir for cwd) */
   cwd?: string;
   /** Allow any command under projectDir */
   allowProjectCommands?: boolean;
-  /** Allow read/write under projectDir */
-  allowProjectFiles?: boolean;
 }
 
 /**
@@ -838,10 +835,6 @@ export async function loadConfigWithArgs(
 
     if (mcpArgs.allowProjectCommands !== undefined) {
       overrides.allowProjectCommands = mcpArgs.allowProjectCommands;
-    }
-
-    if (mcpArgs.allowProjectFiles !== undefined) {
-      overrides.allowProjectFiles = mcpArgs.allowProjectFiles;
     }
 
     if (Object.keys(overrides).length > 0) {

@@ -1,5 +1,6 @@
 /**
- * Tests for projectDir and allowProjectCommands/allowProjectFiles functionality (SSH-112)
+ * Tests for projectDir and allowProjectCommands functionality (SSH-112)
+ * Note: projectDir automatically gets full read/write access (no flag needed)
  */
 
 import { assertEquals } from "@std/assert";
@@ -73,11 +74,11 @@ Deno.test("isCommandWithinProjectDir - returns false for command outside project
 });
 
 // ============================================================================
-// allowProjectFiles Tests
+// projectDir auto-access Tests (projectDir always gets full read/write)
 // ============================================================================
 
 Deno.test({
-  name: "validatePath - allows paths within projectDir when allowProjectFiles=true",
+  name: "validatePath - allows paths within projectDir automatically",
   async fn() {
     const realTmp = await Deno.realPath("/tmp");
     const testDir = `${realTmp}/safesh-project-test`;
@@ -90,7 +91,6 @@ Deno.test({
 
       const config: SafeShellConfig = {
         projectDir,
-        allowProjectFiles: true,
         permissions: {
           read: [], // No explicit read permissions
           write: [], // No explicit write permissions
@@ -115,7 +115,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "validatePath - rejects paths outside projectDir even with allowProjectFiles=true",
+  name: "validatePath - rejects paths outside projectDir",
   async fn() {
     const realTmp = await Deno.realPath("/tmp");
     const projectDir = `${realTmp}/safesh-project-test`;
@@ -126,7 +126,6 @@ Deno.test({
 
       const config: SafeShellConfig = {
         projectDir,
-        allowProjectFiles: true,
         permissions: {
           read: [],
           write: [],
@@ -226,14 +225,12 @@ Deno.test("loadConfigWithArgs - applies projectDir from mcpArgs", async () => {
   const mcpArgs: McpInitArgs = {
     projectDir: "/test/project",
     allowProjectCommands: true,
-    allowProjectFiles: true,
   };
 
   const { config, effectiveCwd } = await loadConfigWithArgs("/tmp", mcpArgs);
 
   assertEquals(config.projectDir, "/test/project");
   assertEquals(config.allowProjectCommands, true);
-  assertEquals(config.allowProjectFiles, true);
   assertEquals(effectiveCwd, "/test/project"); // Uses projectDir as cwd when not specified
 });
 
@@ -267,14 +264,12 @@ Deno.test("mergeConfigs - merges projectDir settings", () => {
   const override: SafeShellConfig = {
     projectDir: "/override",
     allowProjectCommands: true,
-    allowProjectFiles: true,
   };
 
   const merged = mergeConfigs(base, override);
 
   assertEquals(merged.projectDir, "/override");
   assertEquals(merged.allowProjectCommands, true);
-  assertEquals(merged.allowProjectFiles, true);
 });
 
 Deno.test("mergeConfigs - keeps base values when override is undefined", () => {
@@ -307,4 +302,157 @@ Deno.test("mergeConfigs - merges denoFlags with union strategy", () => {
   assertEquals(merged.denoFlags?.length, 2);
   assertEquals(merged.denoFlags?.includes("--unsafely-ignore-certificate-errors=localhost"), true);
   assertEquals(merged.denoFlags?.includes("--v8-flags=--max-heap-size=4096"), true);
+});
+
+// ============================================================================
+// blockProjectDirWrite Tests
+// ============================================================================
+
+Deno.test({
+  name: "validatePath - allows read but blocks write when blockProjectDirWrite=true",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const testDir = `${realTmp}/safesh-blockwrite-test`;
+    const projectDir = testDir;
+    const filePath = `${testDir}/src/file.ts`;
+
+    try {
+      await Deno.mkdir(`${testDir}/src`, { recursive: true });
+      await Deno.writeTextFile(filePath, "test content");
+
+      const config: SafeShellConfig = {
+        projectDir,
+        blockProjectDirWrite: true,
+        permissions: {
+          read: [],
+          write: [], // No explicit write permissions
+        },
+      };
+
+      // Read should work (projectDir still gets read access)
+      const readResult = await validatePath(filePath, config, "/", "read");
+      assertEquals(readResult, filePath);
+
+      // Write should be rejected (blockProjectDirWrite=true)
+      let rejected = false;
+      try {
+        await validatePath(filePath, config, "/", "write");
+      } catch {
+        rejected = true;
+      }
+      assertEquals(rejected, true);
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "validatePath - allows both read and write when blockProjectDirWrite=false",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const testDir = `${realTmp}/safesh-allowwrite-test`;
+    const projectDir = testDir;
+    const filePath = `${testDir}/src/file.ts`;
+
+    try {
+      await Deno.mkdir(`${testDir}/src`, { recursive: true });
+      await Deno.writeTextFile(filePath, "test content");
+
+      const config: SafeShellConfig = {
+        projectDir,
+        blockProjectDirWrite: false, // Explicitly false
+        permissions: {
+          read: [],
+          write: [],
+        },
+      };
+
+      // Read should work
+      const readResult = await validatePath(filePath, config, "/", "read");
+      assertEquals(readResult, filePath);
+
+      // Write should also work
+      const writeResult = await validatePath(filePath, config, "/", "write");
+      assertEquals(writeResult, filePath);
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "validatePath - allows both read and write when blockProjectDirWrite is undefined (default)",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const testDir = `${realTmp}/safesh-defaultwrite-test`;
+    const projectDir = testDir;
+    const filePath = `${testDir}/src/file.ts`;
+
+    try {
+      await Deno.mkdir(`${testDir}/src`, { recursive: true });
+      await Deno.writeTextFile(filePath, "test content");
+
+      const config: SafeShellConfig = {
+        projectDir,
+        // blockProjectDirWrite not set - defaults to allowing writes
+        permissions: {
+          read: [],
+          write: [],
+        },
+      };
+
+      // Read should work
+      const readResult = await validatePath(filePath, config, "/", "read");
+      assertEquals(readResult, filePath);
+
+      // Write should also work (default behavior)
+      const writeResult = await validatePath(filePath, config, "/", "write");
+      assertEquals(writeResult, filePath);
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test("mergeConfigs - merges blockProjectDirWrite with override strategy", () => {
+  const base: SafeShellConfig = {
+    projectDir: "/base",
+    blockProjectDirWrite: false,
+  };
+
+  const override: SafeShellConfig = {
+    blockProjectDirWrite: true,
+  };
+
+  const merged = mergeConfigs(base, override);
+
+  assertEquals(merged.blockProjectDirWrite, true);
+});
+
+Deno.test("mergeConfigs - keeps base blockProjectDirWrite when override is undefined", () => {
+  const base: SafeShellConfig = {
+    projectDir: "/base",
+    blockProjectDirWrite: true,
+  };
+
+  const override: SafeShellConfig = {
+    // blockProjectDirWrite not set
+  };
+
+  const merged = mergeConfigs(base, override);
+
+  assertEquals(merged.blockProjectDirWrite, true);
 });
