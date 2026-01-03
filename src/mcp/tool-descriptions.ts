@@ -17,13 +17,16 @@ Commands (return {code, stdout, stderr}):
   - general: $.cmd('ls -la')
   - external: const [curl] = await $.initCmds(['curl']); await curl('-s', url);
 
-Fluent streams (chainable .filter/.map/.head/.tail, terminal .collect()/.first()/.count()/.forEach()):
-  - $.cat('f') → FluentShell (string stream) - has .lines()/.grep()
-  - $.glob('*.txt') → FluentStream<File> - files with path/base/contents
-  - $.src('*.ts', '*.js') → FluentStream<File> - multiple patterns
-  Note: transform functions (filter, map, head, tail, lines, grep) available as:
-    - methods on fluent streams: stream.filter(...)
-    - functions for .pipe(): stream.pipe($.filter(...))
+Fluent streams - methods that return chainable streams:
+  String streams (FluentShell):
+    - $.cat('file.txt') → has .lines()/.grep() plus .filter/.map/.head/.tail
+  File streams (FluentStream<File>):
+    - $.glob('*.txt') → files with {path, base, contents}
+    - $.src('*.ts', '*.js') → multiple patterns
+  All fluent streams have:
+    - chainable: .filter/.map/.head/.tail (FluentShell also has .lines/.grep)
+    - terminal: .collect()/.first()/.count()/.forEach()
+  Note: transform functions (filter, map, etc.) also available as $.filter(...) for .pipe()
 
 State (persists with shellId): ID, CWD; ENV, VARS (plain objs)
 
