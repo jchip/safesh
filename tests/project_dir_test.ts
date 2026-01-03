@@ -512,6 +512,25 @@ Deno.test("getEffectivePermissions - projectDir in write when blockProjectDirWri
   assertEquals(perms.denyWrite?.includes("/project") ?? false, false);
 });
 
+Deno.test("getEffectivePermissions - home directory has read but not write access", () => {
+  const home = Deno.env.get("HOME");
+  if (!home) {
+    console.log("Skipping: HOME not set");
+    return;
+  }
+
+  const config: SafeShellConfig = {
+    permissions: {},
+  };
+
+  const perms = getEffectivePermissions(config, "/tmp");
+
+  // HOME should be in read permissions
+  assertEquals(perms.read?.includes(home), true);
+  // HOME should NOT be in write permissions
+  assertEquals(perms.write?.includes(home) ?? false, false);
+});
+
 // ============================================================================
 // Executor Integration Tests - projectDir read/write permissions
 // ============================================================================
@@ -762,6 +781,97 @@ Deno.test({
     } finally {
       try {
         await Deno.remove(projectDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+// ============================================================================
+// Home directory read/write permission tests
+// ============================================================================
+
+Deno.test({
+  name: "executor - can read files in home directory",
+  async fn() {
+    const home = Deno.env.get("HOME");
+    if (!home) {
+      console.log("Skipping: HOME not set");
+      return;
+    }
+
+    // Create a test file in a temp subdirectory of home
+    const testDir = `${home}/.safesh-test-temp`;
+    const testFile = `${testDir}/readable.txt`;
+    const testContent = "home read test content";
+
+    try {
+      await Deno.mkdir(testDir, { recursive: true });
+      await Deno.writeTextFile(testFile, testContent);
+
+      const config: SafeShellConfig = {
+        permissions: {
+          read: [], // No explicit read - home should be in defaults
+          write: [],
+        },
+      };
+
+      const code = `
+        const content = await Deno.readTextFile("${testFile}");
+        console.log(content);
+      `;
+
+      const result = await executeCode(code, config);
+
+      assertEquals(result.success, true);
+      assertStringIncludes(result.stdout, testContent);
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "executor - cannot write files in home directory by default",
+  async fn() {
+    const home = Deno.env.get("HOME");
+    if (!home) {
+      console.log("Skipping: HOME not set");
+      return;
+    }
+
+    // Use a test subdirectory of home
+    const testDir = `${home}/.safesh-test-temp`;
+    const testFile = `${testDir}/should-not-write.txt`;
+
+    try {
+      await Deno.mkdir(testDir, { recursive: true });
+
+      const config: SafeShellConfig = {
+        permissions: {
+          read: [],
+          write: [], // No explicit write - home should NOT be writable
+        },
+      };
+
+      const code = `
+        await Deno.writeTextFile("${testFile}", "should not be written");
+        console.log("written");
+      `;
+
+      const result = await executeCode(code, config);
+
+      // Should fail - home is not in default write permissions
+      assertEquals(result.success, false);
+      assertMatch(result.stderr, /Requires write access|permission|denied|not permitted/i);
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
       } catch {
         // Ignore cleanup errors
       }
