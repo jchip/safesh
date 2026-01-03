@@ -600,3 +600,33 @@ Deno.test("SSH-210: $.path.resolve() works", async () => {
   assertEquals(result.success, true);
   assertStringIncludes(result.stdout, "/foo/bar");
 });
+
+// ============================================================================
+// SSH-211: $.path works with ShellString from $.pwd()
+// ============================================================================
+
+Deno.test("SSH-211: $.path.join() accepts $.pwd() ShellString", async () => {
+  const code = `
+    const cwd = $.pwd();
+    const result = $.path.join(cwd, 'subdir', 'file.txt');
+    console.log('success:', result.endsWith('subdir/file.txt'));
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "success: true");
+});
+
+Deno.test("SSH-211: $.path.dirname() accepts ShellString", async () => {
+  const code = `
+    const cwd = $.pwd();
+    const parent = $.path.dirname(cwd);
+    console.log('is-string:', typeof parent === 'string');
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "is-string: true");
+});
