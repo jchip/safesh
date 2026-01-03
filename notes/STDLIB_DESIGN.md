@@ -16,11 +16,13 @@ This document formalizes the design contracts for SafeShell's standard library, 
 **Rule**: All stdlib functions MUST return values. No function should print to stdout/stderr directly.
 
 **Rationale**:
+
 - Composability: Results can be chained and transformed
 - Testability: Output can be captured and verified
 - AI-friendliness: Structured data is easier to process than text
 
 **Examples**:
+
 ```typescript
 // ✅ GOOD: Returns result
 const matches = grep(/pattern/, content);
@@ -29,7 +31,7 @@ console.log(matches.length);
 // ❌ BAD: Prints directly
 function grepAndPrint(pattern, content) {
   const matches = grep(pattern, content);
-  console.log(matches);  // Don't do this in stdlib
+  console.log(matches); // Don't do this in stdlib
 }
 ```
 
@@ -38,11 +40,13 @@ function grepAndPrint(pattern, content) {
 **Rule**: All errors MUST be `SafeShellError` instances with actionable suggestions.
 
 **Rationale**:
+
 - Helps AI assistants understand what went wrong
 - Provides clear recovery paths
 - Maintains security context
 
 **Pattern**:
+
 ```typescript
 import { pathViolation, executionError } from "../core/errors.ts";
 
@@ -62,11 +66,13 @@ if (!isPathAllowed(path, allowed)) {
 **Rule**: All functions MUST have explicit TypeScript types. No `any`.
 
 **Rationale**:
+
 - Catches errors at compile time
 - Enables IDE autocomplete
 - Documents API contracts
 
 **Pattern**:
+
 ```typescript
 // ✅ GOOD: Explicit types
 export async function readJson<T = unknown>(
@@ -80,30 +86,34 @@ export async function readJson(path, options) { ... }
 
 ## Namespace Organization
 
-### fs.* - File System Operations
+### fs.\* - File System Operations
 
 **Purpose**: File and directory operations with sandbox validation
 
 **Naming Convention**:
+
 - Verb-based: `read()`, `write()`, `copy()`, `move()`, `remove()`
 - Noun-based for info: `stat()`, `exists()`
 - Specialized readers: `readJson()`, `readBytes()`
 
 **Standard Signature**:
+
 ```typescript
 function operation(
   path: string,
   ...specificArgs,
-  options: SandboxOptions = {},
-): Promise<Result>
+  options: SandboxOptions = {}
+): Promise<Result>;
 ```
 
 **Required Validation**:
+
 - All paths MUST be validated against sandbox
 - Use `validatePath()` from `../core/permissions.ts`
 - Throw `pathViolation()` on sandbox violations
 
 **Current Functions**:
+
 - `read(path, options)` - Read file as string
 - `readBytes(path, options)` - Read file as bytes
 - `readJson<T>(path, options)` - Read and parse JSON
@@ -122,16 +132,18 @@ function operation(
 - `find(path, predicate, options)` - Find files matching condition
 
 **Return Types**:
+
 - Simple operations: `Promise<void>`
 - Data operations: `Promise<T>` (string, Uint8Array, T, etc.)
 - Info operations: `Promise<Deno.FileInfo>`
 - List operations: `Promise<Entry[]>` or `AsyncGenerator<Entry>`
 
-### text.* - Text Processing
+### text.\* - Text Processing
 
 **Purpose**: Text manipulation and analysis (grep, sed, diff, etc.)
 
 **Naming Convention**:
+
 - Unix command names where appropriate: `grep()`, `head()`, `tail()`, `wc()`
 - Descriptive for new functions: `replace()`, `split()`, `diff()`
 
@@ -140,17 +152,18 @@ Many text functions support both string input and file input:
 
 ```typescript
 // String mode - no sandbox needed
-export function grep(pattern: RegExp, input: string, options?): Match[]
+export function grep(pattern: RegExp, input: string, options?): Match[];
 
 // File mode - requires sandbox
 export async function grepFiles(
   pattern: RegExp,
   glob: string,
   options: GrepOptions
-): Promise<Match[]>
+): Promise<Match[]>;
 ```
 
 **Current Functions**:
+
 - `grep(pattern, input, options)` - Search in string
 - `grepFiles(pattern, glob, options)` - Search in files
 - `head(input, n)` - First N lines
@@ -166,30 +179,34 @@ export async function grepFiles(
 - `diff(left, right)` - Diff two texts
 
 **Return Types**:
+
 - Match operations: `Match[]` with `{ line, content, match, groups? }`
 - Transform operations: `string`
 - Count operations: `CountResult` with `{ lines, words, chars }`
 - Diff operations: `DiffLine[]` with `{ type: 'add'|'remove'|'same', content }`
 
-### glob.* - Pattern Matching
+### glob.\* - Pattern Matching
 
 **Purpose**: File pattern matching with glob syntax
 
 **Naming Convention**:
+
 - Main function: `glob()` - returns async generator
 - Variants: `globArray()`, `globPaths()` - convenience wrappers
 - Helpers: `hasMatch()`, `countMatches()`, `findFirst()`
 
 **Standard Signature**:
+
 ```typescript
 function glob(
   pattern: string,
   options: GlobOptions = {},
-  config?: SafeShellConfig,
-): AsyncGenerator<GlobEntry>
+  config?: SafeShellConfig
+): AsyncGenerator<GlobEntry>;
 ```
 
 **Current Functions**:
+
 - `glob(pattern, options, config)` - Async generator of matches
 - `globArray(pattern, options, config)` - Array of entries
 - `globPaths(pattern, options, config)` - Array of paths only
@@ -198,20 +215,23 @@ function glob(
 - `findFirst(pattern, options, config)` - First match or undefined
 
 **Return Types**:
+
 - `glob()`: `AsyncGenerator<GlobEntry>` where `GlobEntry` is `{ path, name, isFile, isDirectory, isSymlink }`
 - Convenience: `Promise<Entry[]>` or `Promise<string[]>`
 - Checks: `Promise<boolean>` or `Promise<number>`
 
-### shelljs.* - ShellJS-Compatible Commands
+### shelljs.\* - ShellJS-Compatible Commands
 
 **Purpose**: Unix command implementations that respect Deno's sandbox permissions
 
 **Design Rationale**:
+
 - External system commands like `rm`, `cp`, `mv` run outside Deno's sandbox
 - These TypeScript implementations use Deno's sandboxed filesystem APIs
 - Provides familiar shelljs-style API for file operations
 
 **Current Commands**:
+
 - `rm(options?, ...paths)` - Remove files/directories (-r, -f)
 - `cp(options?, ...sources, dest)` - Copy files/directories (-r, -n, -u)
 - `mv(options?, ...sources, dest)` - Move/rename files (-f, -n)
@@ -227,6 +247,7 @@ function glob(
 - `cd(path)` / `pwd()` - Directory navigation
 
 **Standard Signature**:
+
 ```typescript
 // Options as first string arg (-rf, -p, etc.)
 await rm("-rf", "some-dir");
@@ -237,11 +258,13 @@ await rm({ recursive: true, force: true }, "some-dir");
 ```
 
 **Return Types**:
+
 - Most commands: `ShellString` with `.toString()`, `.stdout`, `.stderr`, `.code`
 - ls: `ShellArray<string>` with array methods
 
 **Security Note**:
 These commands use Deno's sandboxed filesystem APIs. Write permissions are restricted to:
+
 - `projectDir` - immutable sandbox boundary (automatically gets full read/write)
 - `/tmp` - always allowed for scratch operations
 
@@ -249,40 +272,40 @@ IMPORTANT: `cd()` changes the working directory but does NOT expand the sandbox.
 Deno's `--allow-write` flags are set at subprocess spawn time and cannot be changed.
 This prevents using `cd()` to escape the sandbox for destructive operations like `rm`.
 
-### $.* - Fluent Shell API
+### $.\* - Fluent Shell API
 
 **Purpose**: Chainable, ergonomic API for common shell-like workflows
 
 **Status**: Planned (SSH-41)
 
 **Design Goals**:
+
 1. Fluent chaining: `$('file.txt').grep(/pattern/).take(10).print()`
 2. Lazy evaluation: Operations build a pipeline, execute on terminal operation
 3. External shortcuts: `$.git()`, `$.docker()` with proper validation
 4. Type-safe: Each method returns typed Shell instance
 
 **Proposed API**:
+
 ```typescript
 // File operations
-$('input.txt')
-  .grep(/ERROR/)
-  .take(10)
-  .save('errors.txt');
+$("input.txt").grep(/ERROR/).take(10).save("errors.txt");
 
 // External commands
-await $.git('status');
-await $.docker('ps');
+await $.git("status");
+await $.docker("ps");
 
 // Chaining transformations
-$('log.txt')
+$("log.txt")
   .lines()
-  .filter(line => line.includes('ERROR'))
-  .map(line => line.toUpperCase())
+  .filter((line) => line.includes("ERROR"))
+  .map((line) => line.toUpperCase())
   .unique()
   .print();
 ```
 
 **Implementation Rules**:
+
 1. MUST validate all operations against sandbox
 2. MUST use existing fs/text/glob functions internally
 3. SHOULD delay execution until terminal operation (`.save()`, `.print()`, `.toArray()`)
@@ -336,14 +359,16 @@ export interface GlobOptions extends SandboxOptions {
 ### Error Message Quality
 
 **Components of a good error**:
+
 1. **Error Code**: Specific code (e.g., `PATH_VIOLATION`)
 2. **Message**: What went wrong in user terms
 3. **Details**: Structured data about the error
 4. **Suggestion**: How to fix it
 
 **Example**:
+
 ```typescript
-throw pathViolation('/etc/passwd', ['/tmp/sandbox'], '/etc/passwd');
+throw pathViolation("/etc/passwd", ["/tmp/sandbox"], "/etc/passwd");
 // Error [PATH_VIOLATION]: Path '/etc/passwd' is outside allowed directories
 //
 // Suggestion: Allowed directories: /tmp/sandbox
@@ -356,7 +381,7 @@ throw pathViolation('/etc/passwd', ['/tmp/sandbox'], '/etc/passwd');
 
 Every exported function MUST have:
 
-```typescript
+````typescript
 /**
  * Brief one-line description
  *
@@ -376,11 +401,11 @@ Every exported function MUST have:
  */
 export async function read(
   path: string,
-  options: SandboxOptions = {},
+  options: SandboxOptions = {}
 ): Promise<string> {
   // ...
 }
-```
+````
 
 ### Module Documentation
 
@@ -402,26 +427,32 @@ Every module file MUST have:
 ### When to Use Async
 
 **Use `async`** for:
+
 - File I/O operations
 - Network operations
 - External command execution
 - Operations that need sandbox validation (often async)
 
 **Don't use `async`** for:
+
 - Pure transformations (text manipulation on strings)
 - Synchronous operations (path parsing, string formatting)
 - Constructors and factory functions
 
 **Example**:
+
 ```typescript
 // ✅ Async - reads file
-export async function read(path: string): Promise<string>
+export async function read(path: string): Promise<string>;
 
 // ✅ Sync - transforms string
-export function grep(pattern: RegExp, input: string): Match[]
+export function grep(pattern: RegExp, input: string): Match[];
 
 // ✅ Async - searches files
-export async function grepFiles(pattern: RegExp, glob: string): Promise<Match[]>
+export async function grepFiles(
+  pattern: RegExp,
+  glob: string
+): Promise<Match[]>;
 ```
 
 ### Generator Patterns
@@ -432,7 +463,7 @@ Use **async generators** for streaming large results:
 // ✅ Generator for potentially large results
 export async function* walk(
   path: string,
-  options?: WalkOptions,
+  options?: WalkOptions
 ): AsyncGenerator<WalkEntry> {
   for await (const entry of stdWalk(path, options)) {
     yield entry;
@@ -442,7 +473,7 @@ export async function* walk(
 // Also provide convenience array wrapper
 export async function walkArray(
   path: string,
-  options?: WalkOptions,
+  options?: WalkOptions
 ): Promise<WalkEntry[]> {
   const results: WalkEntry[] = [];
   for await (const entry of walk(path, options)) {
@@ -498,7 +529,7 @@ Deno.test("read - respects sandbox boundaries", async () => {
   await assertRejects(
     () => read("/etc/passwd", { config }),
     SafeShellError,
-    "PATH_VIOLATION",
+    "PATH_VIOLATION"
   );
 });
 ```
@@ -507,17 +538,19 @@ Deno.test("read - respects sandbox boundaries", async () => {
 
 ### Planned Additions
 
-1. **streams.*** (SSH-4): Gulp-like streaming
+1. **streams.\*** (SSH-4): Gulp-like streaming
+
    - `src(glob)` - Create ReadableStream from files
    - `dest(path)` - Create WritableStream to destination
    - `transform(fn)` - Transform stream data
 
-2. **runner.*** (SSH-5): Task execution
+2. **runner.\*** (SSH-5): Task execution
+
    - `task(name)` - Run defined task
    - `series(...tasks)` - Sequential execution
    - `parallel(...tasks)` - Concurrent execution
 
-3. **process.*** (SSH-31): Process management
+3. **process.\*** (SSH-31): Process management
    - `spawn(cmd, args)` - Spawn subprocess
    - `ps()` - List processes
    - `kill(pid)` - Terminate process

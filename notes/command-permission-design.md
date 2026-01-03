@@ -39,6 +39,7 @@ Where `allowed_check(x)` = check if `x` is in the allowed commands list.
 ## Workflow
 
 1. **initCmds() phase**
+
    - Client declares all external commands needed
    - Check permission for each command
    - Collect list of unallowed commands
@@ -46,6 +47,7 @@ Where `allowed_check(x)` = check if `x` is in the allowed commands list.
    - This allows user to grant permissions for all at once
 
 2. **Execution phase**
+
    - Once `initCmds()` passes, proceed with execution
    - All declared external commands will work
    - FS access still limited by Deno sandbox
@@ -61,7 +63,7 @@ Where `allowed_check(x)` = check if `x` is in the allowed commands list.
 const [curl, cargo, myScript] = await initCmds([
   "curl",
   "cargo",
-  "./scripts/build.sh",  // project-local
+  "./scripts/build.sh", // project-local
 ]);
 
 // If initCmds() succeeds, these will work
@@ -90,6 +92,7 @@ When commands are not allowed, `initCmds()` throws and the MCP server returns:
 ```
 
 **Retry workflow:**
+
 1. Present error and options to user (1=once, 2=session, 3=always, 4=deny)
 2. On user choice 1-3, retry with: `run({ retry_id: "rt1", userChoice: N })`
 3. Server applies userChoice to ALL blocked commands

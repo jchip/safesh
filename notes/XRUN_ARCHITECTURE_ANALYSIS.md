@@ -26,9 +26,11 @@ xarc-run/
 ## Core Components
 
 ### 1. XRun (xrun.js)
+
 **Extends:** `EventEmitter`
 
 **Dependencies:**
+
 - ❌ `chalk` → Replace with `ansi-colors`
 - ❌ `jaro-winkler` → Keep (fuzzy task name matching)
 - ✅ `events` → Keep (standard Node.js)
@@ -36,6 +38,7 @@ xarc-run/
 - ❌ `xsh` → Modernize
 
 **Key Responsibilities:**
+
 - Task loading (`load()`)
 - Task execution orchestration (`run()`, `asyncRun()`)
 - Event emission (spawn-async, done-async, execute, done-item, run, not-found)
@@ -43,6 +46,7 @@ xarc-run/
 - Error handling and stopOnError modes
 
 **API Surface:**
+
 ```javascript
 class XRun extends EventEmitter {
   constructor(namespace, tasks)
@@ -55,13 +59,16 @@ class XRun extends EventEmitter {
 ```
 
 ### 2. XQtor (xqtor.js) - **THE CORE ENGINE**
+
 **Dependencies:**
+
 - ❌ `insync` → **CRITICAL** - Replace with native async/await
 - ❌ `xsh` → Modernize for dual runtime
 - ❌ `unwrap-npm-cmd` → Modernize or remove
 - ❌ `nix-clap` → Modernize
 
 **Key Responsibilities:**
+
 - Stack-based task execution
 - Handles all task types:
   - String (task name lookup)
@@ -76,6 +83,7 @@ class XRun extends EventEmitter {
 - Error propagation
 
 **Execution Model:**
+
 ```javascript
 // Stack-based execution
 xqItems = [task1, mark, task2, mark, ...]
@@ -96,24 +104,36 @@ execute() {
 ```
 
 **insync Usage:**
+
 ```javascript
 // Parallel execution
-Insync.parallel(items, (item, cb) => {
-  // Execute item
-}, callback);
+Insync.parallel(
+  items,
+  (item, cb) => {
+    // Execute item
+  },
+  callback
+);
 
 // Serial execution
-Insync.each(items, (item, cb) => {
-  // Execute item
-}, callback);
+Insync.each(
+  items,
+  (item, cb) => {
+    // Execute item
+  },
+  callback
+);
 ```
 
 **Replacement Strategy:**
+
 ```typescript
 // Parallel → Promise.all()
-await Promise.all(items.map(async (item) => {
-  await executeItem(item);
-}));
+await Promise.all(
+  items.map(async (item) => {
+    await executeItem(item);
+  })
+);
 
 // Serial → for...of
 for (const item of items) {
@@ -122,24 +142,30 @@ for (const item of items) {
 ```
 
 ### 3. XTasks (xtasks.js)
+
 **No problematic dependencies**
 
 **Responsibilities:**
+
 - Task storage by namespace
 - Task lookup with namespace priority
 - Task name fuzzy matching (jaro-winkler)
 
 ### 4. XQTree (xqtree.js)
+
 **No dependencies**
 
 **Responsibilities:**
+
 - Track task execution tree
 - Store XQItem instances by ID
 
 ### 5. XQItem (xqitem.js)
+
 **No dependencies**
 
 **Responsibilities:**
+
 - Wrapper for queue items
 - Stores task value, name, ID, status
 
@@ -148,20 +174,27 @@ for (const item of items) {
 ### Critical (Breaks core functionality)
 
 #### 1. **insync → Native async/await**
+
 **Usage locations:**
+
 - `xqtor.js` - Parallel/serial execution
 - ~30 occurrences
 
 **Replacement:**
+
 ```typescript
 // Before
-Insync.parallel(items, (item, cb) => {
-  executor(item, cb);
-}, done);
+Insync.parallel(
+  items,
+  (item, cb) => {
+    executor(item, cb);
+  },
+  done
+);
 
 // After
 try {
-  await Promise.all(items.map(item => executor(item)));
+  await Promise.all(items.map((item) => executor(item)));
   done(null);
 } catch (err) {
   done(err);
@@ -171,20 +204,24 @@ try {
 **Effort:** 4-6 hours (careful refactoring needed)
 
 #### 2. **xsh → Modern shell execution**
+
 **Usage:**
+
 - `xqtor.js` - Shell command execution
 
 **Current xsh API:**
+
 ```javascript
 const exec = require("xsh").exec;
 await exec(cmd, options);
 ```
 
 **Modernization:**
+
 ```typescript
 // runtime/shell.ts
 export async function exec(cmd: string, options: ExecOptions) {
-  if (typeof Deno !== 'undefined') {
+  if (typeof Deno !== "undefined") {
     const process = new Deno.Command(cmd, {
       args: parseShellArgs(cmd),
       stdout: "piped",
@@ -198,7 +235,7 @@ export async function exec(cmd: string, options: ExecOptions) {
       code,
     };
   } else {
-    const { spawn } = await import('node:child_process');
+    const { spawn } = await import("node:child_process");
     // Node.js implementation
   }
 }
@@ -209,34 +246,40 @@ export async function exec(cmd: string, options: ExecOptions) {
 ### High Priority
 
 #### 3. **chalk → ansi-colors**
+
 **Usage:**
+
 - `xrun.js` - ~10 occurrences
 - `reporters/` - Output formatting
 
 **Replacement:**
+
 ```javascript
 // Before
-const chalk = require('chalk');
-console.log(chalk.green('Success'));
+const chalk = require("chalk");
+console.log(chalk.green("Success"));
 
 // After
-const c = require('ansi-colors');
-console.log(c.green('Success'));
+const c = require("ansi-colors");
+console.log(c.green("Success"));
 ```
 
 **Effort:** 1-2 hours (mostly find/replace)
 
 #### 4. **unwrap-npm-cmd → Modernize**
+
 **Purpose:** Unwrap npm bin scripts
 **Usage:** `xqtor.js` - When executing shell commands
 
 **Decision:** Keep or inline (it's tiny - 20 LOC)
 
 #### 5. **nix-clap → Modernize**
+
 **Purpose:** CLI argument parsing
 **Usage:** `cli-context.js`, CLI entry points
 
 **Options:**
+
 - Port to TypeScript
 - Replace with simpler parser
 - Use `node:util.parseArgs()` (Node 18.3+)
@@ -246,19 +289,22 @@ console.log(c.green('Success'));
 ### Medium Priority
 
 #### 6. **optional-require → Dynamic import**
+
 **Usage:**
+
 - Loading optional plugins/reporters
 
 **Replacement:**
+
 ```typescript
 // Before
-const optionalRequire = require('optional-require')(require);
-const plugin = optionalRequire('plugin') || {};
+const optionalRequire = require("optional-require")(require);
+const plugin = optionalRequire("plugin") || {};
 
 // After
 let plugin = {};
 try {
-  plugin = await import('plugin');
+  plugin = await import("plugin");
 } catch {
   // Optional
 }
@@ -269,11 +315,14 @@ try {
 ### Low Priority
 
 #### 7. **child_process → Abstract for Deno**
+
 **Usage:**
+
 - `xrun.js` - `exec()` for shell expansion
 - Child process killing
 
 **Abstraction:**
+
 ```typescript
 // runtime/process.ts
 export async function spawn(...) {
@@ -289,6 +338,7 @@ export async function spawn(...) {
 **Effort:** 2-3 hours
 
 #### 8. Other utilities
+
 - `jaro-winkler` - Keep (fuzzy matching)
 - `lodash.foreach` - Remove (use for...of)
 - `path-is-inside` - Replace with native path operations
@@ -296,12 +346,14 @@ export async function spawn(...) {
 ## Modernization Strategy
 
 ### Phase 1: Setup & Scaffolding (Day 1)
+
 1. Create new repository structure
 2. Set up TypeScript config (target: ES2022)
 3. Set up dual package (npm + JSR)
 4. Configure build system
 
 ### Phase 2: Core Port (Days 2-4)
+
 1. Port type definitions (xrun.d.ts → pure TS)
 2. Port XRun class (replace chalk)
 3. Port XQtor (replace insync - MOST CRITICAL)
@@ -309,24 +361,28 @@ export async function spawn(...) {
 5. Port utilities
 
 ### Phase 3: Runtime Abstraction (Days 5-6)
+
 1. Create runtime detection
 2. Modernize xsh for dual runtime
 3. Abstract child_process
 4. Test on both Node and Deno
 
 ### Phase 4: CLI & Utilities (Day 7)
+
 1. Modernize nix-clap or replace
 2. Port CLI entry points
 3. Port reporters
 4. Replace remaining dependencies
 
 ### Phase 5: Testing (Days 8-9)
+
 1. Port existing tests
 2. Add Deno-specific tests
 3. Integration testing
 4. Ensure parity with original
 
 ### Phase 6: Polish & Publish (Day 10)
+
 1. Documentation
 2. Examples
 3. Publish to npm and JSR
@@ -334,9 +390,11 @@ export async function spawn(...) {
 ## Critical Success Factors
 
 ### 1. insync Replacement
+
 **Most complex dependency** - Used extensively for async control flow
 
 **Test coverage needed:**
+
 - Parallel execution
 - Serial execution
 - Error handling in parallel
@@ -344,16 +402,20 @@ export async function spawn(...) {
 - Nested serial/parallel
 
 ### 2. xsh Modernization
+
 **Second most complex** - Shell execution is core functionality
 
 **Requirements:**
+
 - Work on Node.js and Deno
 - Stream handling
 - Exit code handling
 - Error reporting
 
 ### 3. Type Safety
+
 Convert entire codebase to TypeScript with strict mode:
+
 - No `any` types
 - Proper interfaces for all APIs
 - Full type coverage
@@ -363,22 +425,30 @@ Convert entire codebase to TypeScript with strict mode:
 **Goal:** 100% backward compatible API
 
 **XRun Public API (must preserve):**
+
 ```typescript
 interface XRun {
-  load(namespace: string | object, tasks?: object, priority?: number): XRun
-  run(taskNames: string | string[], stopOnError?: boolean | string): Promise<any>
-  asyncRun(task: any, ...args: any[]): Promise<any>
+  load(namespace: string | object, tasks?: object, priority?: number): XRun;
+  run(
+    taskNames: string | string[],
+    stopOnError?: boolean | string
+  ): Promise<any>;
+  asyncRun(task: any, ...args: any[]): Promise<any>;
 
   // Events
-  on(event: 'spawn-async' | 'done-async' | 'execute' | 'done-item' | 'run', handler: Function): this
+  on(
+    event: "spawn-async" | "done-async" | "execute" | "done-item" | "run",
+    handler: Function
+  ): this;
 
   // Properties
-  stopOnError: boolean | 'soft' | 'full' | ''
-  failed: Error | null
+  stopOnError: boolean | "soft" | "full" | "";
+  failed: Error | null;
 }
 ```
 
 **Static helpers (preserve):**
+
 ```typescript
 XRun.concurrent(...tasks): any[]
 XRun.serial(...tasks): any[]
@@ -387,17 +457,20 @@ XRun.serial(...tasks): any[]
 ## Risk Assessment
 
 ### Low Risk
+
 - ✅ Type definitions port
 - ✅ XTasks, XQTree, XQItem port
 - ✅ chalk → ansi-colors replacement
 - ✅ optional-require removal
 
 ### Medium Risk
+
 - ⚠️ nix-clap modernization
 - ⚠️ child_process abstraction
 - ⚠️ CLI port
 
 ### High Risk
+
 - 🔴 insync replacement (core execution)
 - 🔴 xsh modernization (shell execution)
 - 🔴 Deno compatibility throughout
@@ -407,6 +480,7 @@ XRun.serial(...tasks): any[]
 **Total:** ~80 hours (2 weeks full-time)
 
 **Breakdown:**
+
 - Setup & scaffolding: 8h
 - Core port (insync replacement): 24h
 - xsh modernization: 16h

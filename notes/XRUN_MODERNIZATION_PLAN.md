@@ -5,6 +5,7 @@ A comprehensive plan to port @xarc/run to a modern TypeScript package with nativ
 ## Project Overview
 
 **Goal:** Create a modern, TypeScript-native task runner that preserves all xrun functionality while:
+
 - Native Deno compatibility (no shims)
 - Modern dependencies (remove legacy packages)
 - Clean TypeScript throughout
@@ -16,21 +17,21 @@ A comprehensive plan to port @xarc/run to a modern TypeScript package with nativ
 
 ### Direct Dependencies (13 total)
 
-| Current Package | Version | Replacement Strategy | Priority |
-|----------------|---------|---------------------|----------|
-| `chalk` | ^4.1.2 | → `ansi-colors` ^4.1.3 | HIGH |
-| `insync` | ^2.1.1 | → Rewrite with native async/await | HIGH |
-| `optional-require` | ^2.1.0 | → Remove (use dynamic import) | HIGH |
-| `chalker` | ^1.2.0 | → Remove (thin wrapper over chalk) | MEDIUM |
-| `xsh` | ^0.4.5 | → Modernize for Deno compatibility | HIGH |
-| `nix-clap` | ^2.4.0 | → Evaluate/modernize CLI parsing | MEDIUM |
-| `require-at` | ^1.0.6 | → Remove (use import.meta.resolve) | MEDIUM |
-| `jaro-winkler` | ^0.2.8 | → Keep or find lighter alternative | LOW |
-| `lodash.foreach` | ^4.5.0 | → Remove (native for...of) | LOW |
-| `path-is-inside` | ^1.0.2 | → Native path operations | LOW |
-| `read-pkg-up` | ^7.0.1 | → Rewrite for Deno compatibility | MEDIUM |
-| `string-array` | ^1.0.1 | → Evaluate necessity | LOW |
-| `unwrap-npm-cmd` | ^1.1.2 | → Modernize or remove | LOW |
+| Current Package    | Version | Replacement Strategy               | Priority |
+| ------------------ | ------- | ---------------------------------- | -------- |
+| `chalk`            | ^4.1.2  | → `ansi-colors` ^4.1.3             | HIGH     |
+| `insync`           | ^2.1.1  | → Rewrite with native async/await  | HIGH     |
+| `optional-require` | ^2.1.0  | → Remove (use dynamic import)      | HIGH     |
+| `chalker`          | ^1.2.0  | → Remove (thin wrapper over chalk) | MEDIUM   |
+| `xsh`              | ^0.4.5  | → Modernize for Deno compatibility | HIGH     |
+| `nix-clap`         | ^2.4.0  | → Evaluate/modernize CLI parsing   | MEDIUM   |
+| `require-at`       | ^1.0.6  | → Remove (use import.meta.resolve) | MEDIUM   |
+| `jaro-winkler`     | ^0.2.8  | → Keep or find lighter alternative | LOW      |
+| `lodash.foreach`   | ^4.5.0  | → Remove (native for...of)         | LOW      |
+| `path-is-inside`   | ^1.0.2  | → Native path operations           | LOW      |
+| `read-pkg-up`      | ^7.0.1  | → Rewrite for Deno compatibility   | MEDIUM   |
+| `string-array`     | ^1.0.1  | → Evaluate necessity               | LOW      |
+| `unwrap-npm-cmd`   | ^1.1.2  | → Modernize or remove              | LOW      |
 
 ## Architecture Analysis
 
@@ -55,12 +56,12 @@ A comprehensive plan to port @xarc/run to a modern TypeScript package with nativ
 
 ```typescript
 // Before (chalk)
-import chalk from 'chalk';
-console.log(chalk.green('Success'));
+import chalk from "chalk";
+console.log(chalk.green("Success"));
 
 // After (ansi-colors)
-import c from 'ansi-colors';
-console.log(c.green('Success'));
+import c from "ansi-colors";
+console.log(c.green("Success"));
 ```
 
 **Impact:** Low - API is nearly identical
@@ -68,11 +69,13 @@ console.log(c.green('Success'));
 #### 2. **insync → Native async/await**
 
 `insync` provides:
+
 - `each()` - async iteration
 - `filter()` - async filtering
 - `map()` - async mapping
 
 **Replacement:**
+
 ```typescript
 // Before (insync)
 import { each } from 'insync';
@@ -93,13 +96,13 @@ await Promise.all(items.map(async (item) => { ... }));
 
 ```typescript
 // Before
-const optionalRequire = require('optional-require')(require);
-const plugin = optionalRequire('some-plugin') || {};
+const optionalRequire = require("optional-require")(require);
+const plugin = optionalRequire("some-plugin") || {};
 
 // After
 let plugin = {};
 try {
-  plugin = await import('some-plugin');
+  plugin = await import("some-plugin");
 } catch {
   // Optional dependency not found
 }
@@ -110,6 +113,7 @@ try {
 #### 4. **xsh → Modern Shell Execution**
 
 xsh provides shell command execution. Need to:
+
 - Make it work with both Node.js and Deno
 - Use native APIs (child_process / Deno.Command)
 - Preserve streaming/output handling
@@ -117,7 +121,7 @@ xsh provides shell command execution. Need to:
 ```typescript
 // Dual runtime support
 export async function exec(cmd: string, options: ExecOptions) {
-  if (typeof Deno !== 'undefined') {
+  if (typeof Deno !== "undefined") {
     // Deno implementation
     const process = new Deno.Command(cmd, {
       args: options.args,
@@ -127,7 +131,7 @@ export async function exec(cmd: string, options: ExecOptions) {
     return await process.output();
   } else {
     // Node.js implementation
-    const { spawn } = await import('node:child_process');
+    const { spawn } = await import("node:child_process");
     // ...
   }
 }
@@ -147,6 +151,7 @@ export async function exec(cmd: string, options: ExecOptions) {
 ### Phase 1: Project Setup (Day 1)
 
 **Tasks:**
+
 1. Create new repository structure
 2. Set up TypeScript configuration
    - Target: ES2022
@@ -161,6 +166,7 @@ export async function exec(cmd: string, options: ExecOptions) {
 ### Phase 2: Core Library Port (Days 2-5)
 
 **Priority Order:**
+
 1. Port type definitions (`xrun.d.ts` → pure TypeScript)
 2. Port XRun main class
 3. Port task executor (xqtor)
@@ -176,6 +182,7 @@ export async function exec(cmd: string, options: ExecOptions) {
 ### Phase 3: Shell & Runtime (Days 6-8)
 
 **Tasks:**
+
 1. Modernize xsh for dual runtime
 2. Abstract runtime differences (Node vs Deno)
 3. Implement command execution for both platforms
@@ -187,6 +194,7 @@ export async function exec(cmd: string, options: ExecOptions) {
 ### Phase 4: CLI & Utilities (Days 9-10)
 
 **Tasks:**
+
 1. Port/modernize CLI argument parsing (nix-clap)
 2. Port reporter system
 3. Port utility functions
@@ -197,6 +205,7 @@ export async function exec(cmd: string, options: ExecOptions) {
 ### Phase 5: Testing & Validation (Days 11-13)
 
 **Tasks:**
+
 1. Port existing xrun tests
 2. Add Deno-specific tests
 3. Add dual-runtime integration tests
@@ -208,6 +217,7 @@ export async function exec(cmd: string, options: ExecOptions) {
 ### Phase 6: Publishing (Day 14)
 
 **Tasks:**
+
 1. Write documentation
 2. Create examples
 3. Publish to npm
@@ -261,12 +271,12 @@ xrun-modern/
 
 ```typescript
 // runtime/detect.ts
-export const runtime = typeof Deno !== 'undefined' ? 'deno' : 'node';
+export const runtime = typeof Deno !== "undefined" ? "deno" : "node";
 
 // Use throughout codebase
-import { runtime } from './runtime/detect.ts';
+import { runtime } from "./runtime/detect.ts";
 
-if (runtime === 'deno') {
+if (runtime === "deno") {
   // Deno-specific code
 } else {
   // Node.js-specific code
@@ -276,6 +286,7 @@ if (runtime === 'deno') {
 ### 2. Dual Package Publishing
 
 **package.json** (npm):
+
 ```json
 {
   "name": "xrun-modern",
@@ -290,6 +301,7 @@ if (runtime === 'deno') {
 ```
 
 **deno.json** (Deno/JSR):
+
 ```json
 {
   "name": "@scope/xrun-modern",
@@ -301,6 +313,7 @@ if (runtime === 'deno') {
 ### 3. Dependency Strategy
 
 **Zero Native Dependencies:**
+
 - No chalk, no insync, no lodash
 - Only `ansi-colors` for terminal colors
 - Everything else: native APIs or small inline implementations
@@ -325,6 +338,7 @@ if (runtime === 'deno') {
 ## Critical Challenges
 
 ### 1. **xsh Shell Execution**
+
 - Most complex dependency
 - Needs careful porting for both runtimes
 - Critical for core functionality
@@ -332,17 +346,20 @@ if (runtime === 'deno') {
 **Mitigation:** Port incrementally, test extensively
 
 ### 2. **Event System**
+
 - xrun uses Node.js EventEmitter
 - Deno has native EventTarget
 
 **Solution:** Use Node.js EventEmitter for both (via npm:events on Deno)
 
 ### 3. **File System Operations**
+
 - Different APIs: `fs` vs `Deno.readFile`
 
 **Solution:** Runtime abstraction layer
 
 ### 4. **Module Resolution**
+
 - Different import patterns
 
 **Solution:** Consistent ESM, use import maps for Deno
@@ -376,6 +393,7 @@ if (runtime === 'deno') {
 ---
 
 **Questions to Resolve:**
+
 - Package name?
 - Publish under personal scope or org?
 - License (same as xrun: Apache-2.0)?

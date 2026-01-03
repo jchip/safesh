@@ -11,12 +11,14 @@ Redesign session management to work like a shell environment with automatic job 
 ## Current State
 
 **Problems:**
+
 - `exec` and `bg` are separate tools (should be unified)
 - Jobs tracked separately from sessions
 - No command history in sessions
 - Background jobs use different workflow than foreground
 
 **Current Tools:**
+
 - `exec` - Execute code synchronously
 - `bg` - Execute in background
 - `jobs` - List background jobs
@@ -33,19 +35,19 @@ A session is like a shell environment where every command execution is automatic
 
 ```typescript
 interface Job {
-  id: string;                // "job-{sessionId}-{seq}" (globally unique)
-  code: string;              // Code that was executed
-  pid: number;               // Process ID (always present for spawned processes)
-  status: 'running' | 'completed' | 'failed';
+  id: string; // "job-{sessionId}-{seq}" (globally unique)
+  code: string; // Code that was executed
+  pid: number; // Process ID (always present for spawned processes)
+  status: "running" | "completed" | "failed";
   exitCode?: number;
-  stdout: string;            // Capped at 1MB, truncated from start if exceeded
-  stderr: string;            // Capped at 1MB, truncated from start if exceeded
-  stdoutTruncated: boolean;  // True if stdout exceeded 1MB
-  stderrTruncated: boolean;  // True if stderr exceeded 1MB
+  stdout: string; // Capped at 1MB, truncated from start if exceeded
+  stderr: string; // Capped at 1MB, truncated from start if exceeded
+  stdoutTruncated: boolean; // True if stdout exceeded 1MB
+  stderrTruncated: boolean; // True if stderr exceeded 1MB
   startedAt: Date;
   completedAt?: Date;
-  duration?: number;         // milliseconds
-  background: boolean;       // Foreground or background execution
+  duration?: number; // milliseconds
+  background: boolean; // Foreground or background execution
   process?: Deno.ChildProcess; // Internal: cleared after completion
 }
 
@@ -55,12 +57,12 @@ interface Session {
   env: Record<string, string>;
   vars: Record<string, unknown>;
   createdAt: Date;
-  lastActivityAt: Date;      // Updated on each exec
+  lastActivityAt: Date; // Updated on each exec
 
   // Job tracking
-  jobs: Map<string, Job>;         // job-id -> Job (primary index)
+  jobs: Map<string, Job>; // job-id -> Job (primary index)
   jobsByPid: Map<number, string>; // PID -> job-id (alternative lookup)
-  jobSequence: number;            // Auto-increment counter
+  jobSequence: number; // Auto-increment counter
 }
 ```
 
@@ -71,6 +73,7 @@ interface Session {
 - **Session count limit**: 10 active sessions (LRU eviction when exceeded)
 
 When output exceeds 1MB:
+
 1. Truncate from the start (keep most recent output)
 2. Set `stdoutTruncated`/`stderrTruncated` flags
 3. Log truncation event
@@ -102,16 +105,17 @@ exec({
 ```
 
 **External Commands:** Must be invoked through `cmd()` function in code:
+
 ```typescript
 // Execute external command
-exec({ code: "await cmd('ls', ['-la']).exec()", sessionId: "..." })
+exec({ code: "await cmd('ls', ['-la']).exec()", sessionId: "..." });
 
 // Background external command
 exec({
   code: "await cmd('npm', ['run', 'build']).exec()",
   sessionId: "...",
-  background: true
-})
+  background: true,
+});
 ```
 
 #### 2. `listJobs` Tool
@@ -187,13 +191,13 @@ Commands executed via streaming shell API (git, cmd, etc.) are also tracked when
 if (globalThis.$session) {
   const job: Job = {
     id: `job-${$session.id}-${$session.jobSequence++}`,
-    code: `${this.cmd} ${this.args.join(' ')}`,
-    pid: 0,  // Set after spawn
-    status: 'running',
+    code: `${this.cmd} ${this.args.join(" ")}`,
+    pid: 0, // Set after spawn
+    status: "running",
     startedAt: new Date(),
     background: false,
-    stdout: '',
-    stderr: '',
+    stdout: "",
+    stderr: "",
     stdoutTruncated: false,
     stderrTruncated: false,
   };
@@ -205,7 +209,7 @@ if (globalThis.$session) {
     job.pid = process.pid;
 
     const result = await this.execSeparate();
-    job.status = result.success ? 'completed' : 'failed';
+    job.status = result.success ? "completed" : "failed";
     job.exitCode = result.code;
     job.stdout = truncateOutput(result.stdout, 1024 * 1024);
     job.stderr = truncateOutput(result.stderr, 1024 * 1024);
@@ -215,7 +219,7 @@ if (globalThis.$session) {
     job.duration = job.completedAt.getTime() - job.startedAt.getTime();
     return result;
   } catch (error) {
-    job.status = 'failed';
+    job.status = "failed";
     job.completedAt = new Date();
     throw error;
   }
@@ -225,20 +229,24 @@ if (globalThis.$session) {
 ### Session Lifecycle
 
 **Creation:**
+
 - Explicit: `startSession` creates managed session
 - Implicit: `exec` without sessionId creates temporary session (not tracked)
 
 **Tracking:**
+
 - Only explicit sessions tracked in SessionManager
 - Temporary sessions discarded after execution
 - Jobs only accumulated in explicit sessions
 
 **Cleanup:**
+
 - Manual: `endSession` removes session and all its jobs
 - Automatic LRU: When session count > 10, remove least recently active session
 - Memory pressure: When session exceeds 50MB, trim oldest completed jobs
 
 **Activity Tracking:**
+
 - `lastActivityAt` updated on every `exec` call
 - Used for LRU eviction decisions
 
@@ -254,15 +262,16 @@ const { jobId } = await exec({ code: "...", background: true, sessionId });
 let result;
 while (true) {
   const output = await getJobOutput({ sessionId, jobId });
-  if (output.status !== 'running') {
+  if (output.status !== "running") {
     result = output;
     break;
   }
-  await sleep(1000);  // Poll every second
+  await sleep(1000); // Poll every second
 }
 ```
 
 Alternative: Use `waitJob` which blocks until completion:
+
 ```typescript
 const result = await waitJob({ sessionId, jobId, timeout: 60000 });
 ```
@@ -270,23 +279,27 @@ const result = await waitJob({ sessionId, jobId, timeout: 60000 });
 ## Implementation Plan
 
 ### Phase 1: Core Infrastructure
+
 1. Update Session type with new fields (lastActivityAt, memory tracking)
 2. Update Job type (pid required, truncation flags, process cleanup)
 3. Update SessionManager with LRU eviction and memory limits
 4. Implement automatic job creation in executor
 
 ### Phase 2: Tool Updates
+
 1. Add `background` parameter to `exec` tool
 2. Rename/implement `listJobs` tool
 3. Implement `getJobOutput`, `killJob`, `waitJob` tools
 4. Remove obsolete tools (bg, jobs, fg, jobOutput, kill)
 
 ### Phase 3: Command Tracking
+
 1. Make Command class session-aware via globalThis.$session
 2. Auto-track commands in $session.jobs
 3. Implement output truncation in Command class
 
 ### Phase 4: Documentation
+
 1. Update tool descriptions
 2. Add examples for new patterns
 3. Document polling pattern for background jobs
@@ -310,10 +323,10 @@ Critical: Clear `job.process` after completion to allow GC:
 ```typescript
 // In background collector
 job.process!.status.then((status) => {
-  job.status = status.code === 0 ? 'completed' : 'failed';
+  job.status = status.code === 0 ? "completed" : "failed";
   job.exitCode = status.code;
   job.completedAt = new Date();
-  job.process = undefined;  // Allow GC
+  job.process = undefined; // Allow GC
 });
 ```
 
@@ -342,16 +355,16 @@ function estimateSessionMemory(session: Session): number {
 
 ## Design Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Job ID format | `job-{sessionId}-{seq}` | Globally unique, human readable |
-| PID field | Required | Every spawned process has a PID |
-| Output limit | 1MB per stream | Balance between history and memory |
-| Session limit | 10 sessions | Prevent unbounded growth |
-| Session memory | 50MB max | Reasonable for job history |
-| Cleanup strategy | LRU by lastActivityAt | Fair, predictable eviction |
-| External commands | Via `cmd()` only | Consistent API, proper tracking |
-| Background polling | Agent responsibility | No callback mechanism available |
+| Decision           | Choice                  | Rationale                          |
+| ------------------ | ----------------------- | ---------------------------------- |
+| Job ID format      | `job-{sessionId}-{seq}` | Globally unique, human readable    |
+| PID field          | Required                | Every spawned process has a PID    |
+| Output limit       | 1MB per stream          | Balance between history and memory |
+| Session limit      | 10 sessions             | Prevent unbounded growth           |
+| Session memory     | 50MB max                | Reasonable for job history         |
+| Cleanup strategy   | LRU by lastActivityAt   | Fair, predictable eviction         |
+| External commands  | Via `cmd()` only        | Consistent API, proper tracking    |
+| Background polling | Agent responsibility    | No callback mechanism available    |
 
 ## References
 

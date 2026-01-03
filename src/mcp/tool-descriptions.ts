@@ -8,31 +8,42 @@
 export function createRunToolDescription(_permSummary?: string): string {
   return `Execute JS/TS in sandboxed Deno - MCPU usage: infoc
 
-$ top-level object categories:
+Execution modes (use ONE):
+- code: code string
+- file: file content as code string
+- module: import as .ts module
+- shcmd: basic shell command → code string (&&, ||, ;, |, >, >>, <, 2>&1, &, globs)
 
-Shell-like utils: cd, pwd, ls, mkdir, touch, rm, cp, mv, chmod, ln, which, test, tempdir, pushd, popd, dirs, echo
-File system: await $.fs.read(path), await $.fs.write(path, content) - async file I/O
-Commands (return {code, stdout, stderr}):
-  - built-in aliases: $.git('status'), $.tmux('list-sessions'), $.docker('ps')
-  - general: $.cmd('ls -la')
+All APIs under global object '$' (e.g., $.mkdir() - will skip $. below for brevity):
+NOTE: Only use APIs listed here. DO NOT guess or make up new methods.
+
+Complete API list:
+- Util Objs:
+  - fs: await $.fs.read(pathStr), await $.fs.write(pathStr, content) - async file I/O
+  - path: join, dirname, basename, resolve, etc.
+  - text: trim → S|S[], lines, head, tail; (e.g.: $.text.trim(' h ') → 'h', .trim(' a \n b ') → ['a','b'])
+- Commands (methods: .exec() → {code, stdout: S, stderr: S}; .stdout/stderr() → FluentStream<string> ):
+  - built-in aliases: git('status'), tmux('list-sessions'), docker('ps'), tmuxSubmit(pane,msg,client)
   - external: const [curl] = await $.initCmds(['curl']); await curl('-s', url);
-
-Fluent streams - $ methods that return chainable streams:
-  String streams (FluentShell): cat
-    - $.cat('file.txt') → has .lines()/.grep() plus .filter/.map/.head/.tail
-  File streams (FluentStream<File>): glob, src
-    - $.glob('*.txt') → files with {path, base, contents}
-    - $.src('*.ts', '*.js') → multiple patterns
-  All fluent streams have:
-    - chainable: .filter/.map/.head/.tail (FluentShell also has .lines/.grep)
-    - terminal: .collect()/.first()/.count()/.forEach()
-  Note: transform functions (filter, map, etc.) also available as $.filter(...) for .pipe()
-
-State (persists with shellId): ID, CWD; ENV, VARS (plain objs)
-
-Examples:
-- $.cat('app.log').lines().grep(/ERROR/).head(10).collect()
-- $.glob('*.txt').filter(f => f.path.includes('test')).map(f => f.path).collect()
+  - general: $.cmd('echo', ['hello']) - cmd name, then args array
+  - data sources: str('data'), bytes(data) - data for piping TO other commands
+    - e.g.: $.str('input').pipe(CMD, ['pattern']).exec()
+    - transforms: $.str('data').stdout().pipe($.lines()).collect()
+- glob, src, createStream, fromArray, empty → FluentStream<T> (chainables: .filter/.map/.head/.tail/lines/.grep; terminal: .collect()/.first()/.count()/.forEach())
+  - $.glob('*.txt') → File as T (object with PROPS (NOT methods) {path, base, contents})
+  - $.src('*.ts', '*.js') → multiple patterns
+  - e.g.: $.glob('*.txt').filter(f => f.path.includes('test')).map(f => f.path).collect()
+- cat → FluentShell (specialized FluentStream<string>)
+  - e.g.: $.cat('app.log').lines().grep(/ERROR/).head(10).collect()
+- globPaths → string[]; globArray → GlobEntry[]; (Direct arrays (await, no .collect())):
+- Direct $. transform functions (e.g.: $.filter(...))
+  - filter, map, flatMap, take, head, tail, lines, grep
+  - toCmd(CMD, ['args']) - pipe stream content through external command
+  - toCmdLines(CMD, ['args']) - same but yields output lines 
+- I/O: stdout, stderr, tee
+- Shell-like: echo, cd, pwd, pushd, popd, dirs, tempdir, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls
+- Timing: sleep, delay
+- State (persists with shellId): ID, ProjectDir, CWD; ENV, VARS (plain objs)
 
 Path expansion:
 - shcmd: ~, $VAR, \${VAR}, \${HOME}, \${CWD}

@@ -10,11 +10,17 @@ The main tool is `run` - never guess names like `execute`, `eval`, etc.
 
 **USE native Write/Edit for:** Creating docs, writing code, simple file ops - safesh is NOT a writing tool
 
-**Global namespace:** `$` - all APIs (e.g., `$.git`, `$.fs`, `$.cat`). Shell state: `$.ID`, `$.CWD`, `$.ENV`, `$.VARS`.
+### Top-level API object `$`
+
+All shell utilities and APIs are accessed through the `$` object (e.g., `$.mkdir()`, `$.cd()`, `$.ls()`).
+
+**Common APIs:** `$.git`, `$.fs`, `$.cat`, `$.mkdir`, `$.cp`, `$.mv`, `$.rm`, `$.touch`, `$.cd`, `$.pwd`, `$.ls`
+
+**Shell state:** `$.ID`, `$.CWD`, `$.ENV`, `$.VARS`
 
 ## ⚠️ APIs That DO NOT EXIST - Never Guess
 
-- ❌ `$('ls -la')` or `$\`cmd\`` → `$` is NOT a function. Use `shcmd` param or `$.cmd()`
+- ❌ `$('ls -la')` or `$\`cmd\``→`$` is NOT a function. Use `shcmd` param or `$.cmd()`
 - ❌ `$.fs.writeTextFile` → ✅ `$.fs.write()` or `Deno.writeTextFile()`
 - ❌ `$.fs.readTextFile` → ✅ `$.fs.read()` or `Deno.readTextFile()`
 - ❌ `$.writeTextFile` → ✅ `$.fs.write()`
@@ -40,14 +46,14 @@ The main tool is `run` - never guess names like `execute`, `eval`, etc.
 
 ```typescript
 // Built-in: git, tmux
-const { stdout } = await $.git('status');
+const { stdout } = await $.git("status");
 
 // External commands: MUST register first with initCmds
-const [_curl] = await $.initCmds(['curl']);
-await _curl('-s', 'https://example.com');
+const [_curl] = await $.initCmds(["curl"]);
+await _curl("-s", "https://example.com");
 
 // Streaming
-$.cat('f.txt').lines().grep(/ERR/).head(10).collect()
+$.cat("f.txt").lines().grep(/ERR/).head(10).collect();
 ```
 
 ## CRITICAL: SafeShell vs Bash
@@ -59,6 +65,7 @@ $.cat('f.txt').lines().grep(/ERR/).head(10).collect()
 ## Permission Workflow
 
 When `COMMANDS_BLOCKED` returned:
+
 1. Present options: (1) Allow once, (2) Allow session, (3) Always, (4) Deny
 2. Retry with: `{ retry_id: "...", userChoice: N }`
 3. If Deny (4), stop and report error

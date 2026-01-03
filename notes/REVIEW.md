@@ -3,6 +3,7 @@
 ## Executive Summary
 
 The current design has solid foundations but **critical gaps** in:
+
 1. Code execution model (how exactly does `exec()` work?)
 2. Path argument validation for external commands
 3. Session/state management
@@ -21,20 +22,22 @@ The design says AI can `exec({ code: "..." })` but doesn't specify HOW the code 
 
 ```typescript
 // What happens internally?
-exec({ code: `
+exec({
+  code: `
   const data = await Deno.readTextFile("file.txt");
   console.log(data);
-`})
+`,
+});
 ```
 
 **Options and trade-offs:**
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| `deno eval` | Simple, imports work | New process per call, slow |
-| Temp file + `deno run` | Full script support | File I/O overhead, cleanup |
-| Worker thread | Fast, reusable | Limited isolation |
-| Deno subhost/isolate | Best isolation | Complex, may not exist |
+| Approach               | Pros                 | Cons                       |
+| ---------------------- | -------------------- | -------------------------- |
+| `deno eval`            | Simple, imports work | New process per call, slow |
+| Temp file + `deno run` | Full script support  | File I/O overhead, cleanup |
+| Worker thread          | Fast, reusable       | Limited isolation          |
+| Deno subhost/isolate   | Best isolation       | Complex, may not exist     |
 
 ### Recommendation
 
@@ -74,6 +77,7 @@ async function exec(code: string, options: ExecOptions) {
 ### Missing: Imports Resolution
 
 How does this work?
+
 ```typescript
 import { grep } from "safesh/stdlib";
 ```
@@ -153,7 +157,11 @@ external: {
 ### Implementation
 
 ```typescript
-function validatePathArgs(command: string, args: string[], config: Config): void {
+function validatePathArgs(
+  command: string,
+  args: string[],
+  config: Config
+): void {
   const cmdConfig = config.external[command];
 
   for (let i = 0; i < args.length; i++) {
@@ -174,10 +182,12 @@ function validatePathArgs(command: string, args: string[], config: Config): void
 }
 
 function looksLikePath(arg: string): boolean {
-  return arg.startsWith("/") ||
-         arg.startsWith("./") ||
-         arg.startsWith("../") ||
-         arg.includes("/");
+  return (
+    arg.startsWith("/") ||
+    arg.startsWith("./") ||
+    arg.startsWith("../") ||
+    arg.includes("/")
+  );
 }
 ```
 
@@ -201,7 +211,10 @@ exec({ code: `await Deno.readTextFile("./config/users.txt")` })
 **Always resolve to real path before permission check:**
 
 ```typescript
-async function validatePath(requestedPath: string, config: Config): Promise<string> {
+async function validatePath(
+  requestedPath: string,
+  config: Config
+): Promise<string> {
   const absolute = path.resolve(config.cwd, requestedPath);
 
   // Get real path (follows symlinks)
@@ -292,12 +305,14 @@ $session.env.API_URL = "https://...";
 Long-running commands need streaming output:
 
 ```typescript
-exec({ code: `
+exec({
+  code: `
   for (let i = 0; i < 100; i++) {
     console.log(\`Processing \${i}...\`);
     await sleep(1000);
   }
-`})
+`,
+});
 // Currently: Wait 100 seconds, then get all output
 // Needed: Stream output as it happens
 ```
@@ -343,7 +358,7 @@ Dev workflows need long-running processes:
 
 ```typescript
 // Start dev server
-task({ name: "dev" })  // Runs forever
+task({ name: "dev" }); // Runs forever
 
 // How to:
 // - Run in background?
@@ -395,10 +410,12 @@ fg(jobId: string): AsyncGenerator<OutputChunk>
 ### Current Design Issues
 
 1. **Function naming inconsistency**
+
    - `grep` vs `find` vs `replace`
    - Some shell-like, some not
 
 2. **Return types unclear**
+
    - Does `grep` return matches or write to stdout?
    - Does `replace` modify in place or return new content?
 
@@ -469,9 +486,9 @@ Config is TypeScript - what if it's malicious or broken?
 // safesh.config.ts
 export default {
   permissions: {
-    read: ["/"],  // Oops, allow reading everything
-    run: ["*"],   // Oops, allow running anything
-  }
+    read: ["/"], // Oops, allow reading everything
+    run: ["*"], // Oops, allow running anything
+  },
 };
 ```
 
@@ -498,8 +515,10 @@ function validateConfig(config: Config): ConfigValidation {
   }
 
   // Check for conflicting settings
-  if (config.external?.git?.denyFlags?.includes("--force") &&
-      config.external?.git?.requireFlags?.includes("--force")) {
+  if (
+    config.external?.git?.denyFlags?.includes("--force") &&
+    config.external?.git?.requireFlags?.includes("--force")
+  ) {
     result.errors.push("git: --force is both denied and required");
   }
 
@@ -553,10 +572,12 @@ export default defineConfig({
 ### Problem
 
 ```typescript
-exec({ code: `
+exec({
+  code: `
   import { malware } from "npm:malicious-package";
   malware.stealSecrets();
-`})
+`,
+});
 ```
 
 JSR/npm imports can execute arbitrary code.
@@ -580,17 +601,17 @@ interface ImportPolicy {
 // Default policy
 const defaultImportPolicy: ImportPolicy = {
   trusted: [
-    "jsr:@std/*",      // Deno standard library
-    "safesh:*",        // SafeShell stdlib
+    "jsr:@std/*", // Deno standard library
+    "safesh:*", // SafeShell stdlib
   ],
   allowed: [
     // User can add to this list
   ],
   blocked: [
-    "npm:*",           // Block npm by default (use JSR)
-    "http:*",          // Block HTTP imports
-    "https:*",         // Block HTTPS imports (use JSR)
-  ]
+    "npm:*", // Block npm by default (use JSR)
+    "http:*", // Block HTTP imports
+    "https:*", // Block HTTPS imports (use JSR)
+  ],
 };
 ```
 
@@ -604,7 +625,7 @@ function buildImportMap(policy: ImportPolicy): ImportMap {
       "safesh:stdlib": "file:///path/to/stdlib.ts",
       // Block disallowed by mapping to error module
       "npm:": "file:///path/to/blocked-import.ts",
-    }
+    },
   };
 }
 ```
@@ -648,9 +669,9 @@ await $.git("commit", "-m", "Update");
 // Pipeline style
 await $("logs/*.log")
   .lines()
-  .filter(l => l.includes("ERROR"))
+  .filter((l) => l.includes("ERROR"))
   .take(10)
-  .map(l => l.split(" ").slice(0, 3).join(" "))
+  .map((l) => l.split(" ").slice(0, 3).join(" "))
   .print();
 ```
 
@@ -705,6 +726,7 @@ $.docker = (...args) => runExternal("docker", args);
 ### Current Gap
 
 Design doesn't address:
+
 - How MCP server starts
 - How it discovers project config
 - How permissions are initialized
@@ -749,27 +771,27 @@ Design doesn't address:
 
 ### Critical (Must Fix)
 
-| Issue | Current State | Required Change |
-|-------|---------------|-----------------|
-| Execution model | Undefined | Define temp file + deno run approach |
-| Path arg validation | Missing | Add path argument sandbox checking |
-| Symlink attacks | Unaddressed | Resolve real paths before validation |
+| Issue               | Current State | Required Change                      |
+| ------------------- | ------------- | ------------------------------------ |
+| Execution model     | Undefined     | Define temp file + deno run approach |
+| Path arg validation | Missing       | Add path argument sandbox checking   |
+| Symlink attacks     | Unaddressed   | Resolve real paths before validation |
 
 ### High Priority
 
-| Issue | Current State | Required Change |
-|-------|---------------|-----------------|
-| Session/state | Stateless | Add session management |
+| Issue            | Current State | Required Change         |
+| ---------------- | ------------- | ----------------------- |
+| Session/state    | Stateless     | Add session management  |
 | Output streaming | Not addressed | Implement MCP streaming |
-| Background jobs | Not addressed | Add job control |
+| Background jobs  | Not addressed | Add job control         |
 
 ### Medium Priority
 
-| Issue | Current State | Required Change |
-|-------|---------------|-----------------|
-| Stdlib design | Informal | Formalize namespaces and contracts |
-| Config validation | None | Add validation and presets |
-| Import security | Vague | Define concrete import policy |
+| Issue             | Current State | Required Change                    |
+| ----------------- | ------------- | ---------------------------------- |
+| Stdlib design     | Informal      | Formalize namespaces and contracts |
+| Config validation | None          | Add validation and presets         |
+| Import security   | Vague         | Define concrete import policy      |
 
 ### New Issues to Create
 

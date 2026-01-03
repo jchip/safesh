@@ -6,11 +6,11 @@ Add comprehensive support for configuring workspace, project, and working direct
 
 ## Key Concepts
 
-| Directory | Purpose | Example |
-|-----------|---------|---------|
-| `workspaceDir` | Parent directory containing all projects | `~/dev` |
-| `projectDir` | Current project directory | `~/dev/safesh` |
-| `cwd` | Current working directory within project | `~/dev/safesh/src` |
+| Directory      | Purpose                                  | Example            |
+| -------------- | ---------------------------------------- | ------------------ |
+| `workspaceDir` | Parent directory containing all projects | `~/dev`            |
+| `projectDir`   | Current project directory                | `~/dev/safesh`     |
+| `cwd`          | Current working directory within project | `~/dev/safesh/src` |
 
 ## Requirements
 
@@ -21,11 +21,11 @@ Add comprehensive support for configuring workspace, project, and working direct
 
 ## Design Decision: Mutability
 
-| Setting | Mutability | Rationale |
-|---------|------------|-----------|
-| `workspaceDir` | **Fixed per connection** | Defines security boundary |
-| `projectDir` | **Fixed per connection** | Defines security boundary |
-| `cwd` | **Mutable anytime** | Just path resolution context, no security implication |
+| Setting        | Mutability               | Rationale                                             |
+| -------------- | ------------------------ | ----------------------------------------------------- |
+| `workspaceDir` | **Fixed per connection** | Defines security boundary                             |
+| `projectDir`   | **Fixed per connection** | Defines security boundary                             |
+| `cwd`          | **Mutable anytime**      | Just path resolution context, no security implication |
 
 To change workspaceDir or projectDir, client must reconnect.
 
@@ -36,14 +36,21 @@ To change workspaceDir or projectDir, client must reconnect.
 Every tool (run, etc.) accepts projectDir/cwd/workspaceDir as parameters.
 
 ```typescript
-run({ code: "...", projectDir: "/path", cwd: "/path", workspaceDir: "/workspace" })
+run({
+  code: "...",
+  projectDir: "/path",
+  cwd: "/path",
+  workspaceDir: "/workspace",
+});
 ```
 
 **Pros:**
+
 - Stateless - each call is self-contained
 - Maximum flexibility - can change context per-call
 
 **Cons:**
+
 - Verbose - every call repeats the same paths
 - Inconsistency risk - different calls might use different values
 - Client burden - MCP client must track and pass these every time
@@ -54,17 +61,19 @@ run({ code: "...", projectDir: "/path", cwd: "/path", workspaceDir: "/workspace"
 New `configure` tool sets session state once.
 
 ```typescript
-configure({ workspaceDir: "~/dev", projectDir: "~/dev/safesh", cwd: "./src" })
-run({ code: "..." })  // uses configured paths
+configure({ workspaceDir: "~/dev", projectDir: "~/dev/safesh", cwd: "./src" });
+run({ code: "..." }); // uses configured paths
 ```
 
 **Pros:**
+
 - Set once, applies to all subsequent calls
 - Cleaner tool API - `run` stays simple
 - Natural fit for "working in a project" workflow
 - Enforces "fixed per connection" for workspaceDir/projectDir
 
 **Cons:**
+
 - Stateful - need to manage session state
 - Client must call configure before other operations (or have good defaults)
 - Extra round-trip before first operation
@@ -75,18 +84,20 @@ First `run` call with projectDir/workspaceDir sets them; subsequent calls inheri
 
 ```typescript
 // First call - sets workspaceDir/projectDir (locked after this)
-run({ code: "...", projectDir: "/path", workspaceDir: "/workspace" })
+run({ code: "...", projectDir: "/path", workspaceDir: "/workspace" });
 
 // Subsequent calls - inherit, only cwd can change
-run({ code: "...", cwd: "./tests" })
+run({ code: "...", cwd: "./tests" });
 ```
 
 **Pros:**
+
 - No extra configure call needed
 - Natural flow - just start using
 - Still enforces "fixed per connection" after first set
 
 **Cons:**
+
 - Implicit behavior - less obvious when lock happens
 - First call is "special"
 
@@ -99,10 +110,12 @@ safesh --workspace-dir=~/dev --project-dir=~/dev/safesh --cwd=./src
 ```
 
 **Pros:**
+
 - Simple - no new tools needed
 - Clear lifecycle - set at start, done
 
 **Cons:**
+
 - No dynamic configuration
 - Client can't set these - only whoever starts the server
 - Less flexible for IDE/tool integration where client knows the context
@@ -112,25 +125,30 @@ safesh --workspace-dir=~/dev --project-dir=~/dev/safesh --cwd=./src
 MCP client sends configuration as part of connection handshake or initialization.
 
 **Pros:**
+
 - Natural fit for MCP lifecycle
 - Client-driven configuration
 
 **Cons:**
+
 - May require MCP protocol understanding
 - Less explicit
 
 ## Open Questions
 
 1. **Who knows the context?** Server (launched with context) or client (IDE, Claude Code)?
+
    - If server knows: CLI args work well
    - If client knows: Need init tool or per-tool args
 
 2. **What happens if configure not called?**
+
    - Error on first run?
    - Use defaults (CWD at server start)?
    - Auto-detect from first file access?
 
 3. **Should cwd changes be explicit tool or implicit?**
+
    - Explicit: `configure({ cwd: "./new" })` or `run({ cwd: "./new" })`
    - Implicit: `cd("./new")` in user code affects subsequent runs
 
