@@ -695,3 +695,35 @@ Deno.test("SSH-212: FluentStream.grep() filters by pattern", async () => {
   assertEquals(result.success, true);
   assertStringIncludes(result.stdout, "count: 2");
 });
+
+// ============================================================================
+// SSH-213: $.text.trim() returns string for single-line input
+// ============================================================================
+
+Deno.test("SSH-213: $.text.trim() returns string for single-line input", async () => {
+  const code = `
+    const trimmed = $.text.trim('  hello  ');
+    console.log('type:', typeof trimmed);
+    console.log('value:', trimmed);
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "type: string");
+  assertStringIncludes(result.stdout, "value: hello");
+});
+
+Deno.test("SSH-213: $.text.trim() returns array for multi-line input", async () => {
+  const code = `
+    const trimmed = $.text.trim('  a  \\n  b  ');
+    console.log('isArray:', Array.isArray(trimmed));
+    console.log('length:', trimmed.length);
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "isArray: true");
+  assertStringIncludes(result.stdout, "length: 2");
+});

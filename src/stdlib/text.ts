@@ -666,19 +666,27 @@ export async function diffFiles(
 }
 
 /**
- * Trim whitespace from lines
+ * Trim whitespace from text or lines
+ *
+ * When input is a string without newlines, returns a trimmed string.
+ * When input is a multi-line string or array, returns array of trimmed lines.
  *
  * @param input - Text or array of lines
  * @param mode - Trim mode
- * @returns Trimmed lines
+ * @returns Trimmed string or array of trimmed lines
+ *
+ * @example
+ * ```ts
+ * trim('  hello  ');           // 'hello'
+ * trim('  a  \n  b  ');        // ['a', 'b']
+ * trim(['  a  ', '  b  ']);    // ['a', 'b']
+ * ```
  */
 export function trim(
   input: string | string[],
   mode: "both" | "left" | "right" = "both",
-): string[] {
-  const lineArray = Array.isArray(input) ? input : input.split("\n");
-
-  return lineArray.map((line) => {
+): string | string[] {
+  const trimFn = (line: string) => {
     switch (mode) {
       case "left":
         return line.trimStart();
@@ -687,7 +695,16 @@ export function trim(
       default:
         return line.trim();
     }
-  });
+  };
+
+  // For single-line strings, return a string
+  if (typeof input === "string" && !input.includes("\n")) {
+    return trimFn(input);
+  }
+
+  // For arrays or multi-line strings, return array
+  const lineArray = Array.isArray(input) ? input : input.split("\n");
+  return lineArray.map(trimFn);
 }
 
 /**
