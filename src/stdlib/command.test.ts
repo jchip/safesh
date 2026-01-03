@@ -3,9 +3,32 @@
  */
 
 import { assertEquals, assert } from "@std/assert";
-import { cmd, git, str, bytes, toCmd, toCmdLines, type StreamChunk } from "./command.ts";
+import { cmd, git, str, bytes, toCmd, toCmdLines, initCmds, type StreamChunk, type CommandFn } from "./command.ts";
 import { lines } from "./transforms.ts";
 import { createStream } from "./stream.ts";
+import { FluentStream } from "./fluent-stream.ts";
+
+// Test commands - initialized once and reused
+let _cat!: CommandFn;
+let _grep!: CommandFn;
+let _sort!: CommandFn;
+let _head!: CommandFn;
+let _wc!: CommandFn;
+let _sh!: CommandFn;
+let _initialized = false;
+
+// Initialize test commands
+async function initTestCmds() {
+  if (_initialized) return;
+  const cmds = await initCmds(["cat", "grep", "sort", "head", "wc", "sh"]);
+  _cat = cmds[0]!;
+  _grep = cmds[1]!;
+  _sort = cmds[2]!;
+  _head = cmds[3]!;
+  _wc = cmds[4]!;
+  _sh = cmds[5]!;
+  _initialized = true;
+}
 
 Deno.test("cmd() - executes simple command", async () => {
   const result = await cmd("echo", ["hello"]).exec();
@@ -123,7 +146,7 @@ Deno.test("cmd() - stream() with mergeStreams", async () => {
 Deno.test("cmd() - stdout() returns Stream", async () => {
   const lines_output = await cmd("echo", ["line1\nline2\nline3"])
     .stdout()
-    .pipe(lines())
+    .trans(lines())
     .collect();
 
   assertEquals(lines_output.length, 3);
@@ -138,7 +161,7 @@ Deno.test("cmd() - stderr() returns Stream", async () => {
     "echo err1 >&2 && echo err2 >&2",
   ])
     .stderr()
-    .pipe(lines())
+    .trans(lines())
     .collect();
 
   assertEquals(stderr_output.length >= 1, true);
@@ -250,12 +273,8 @@ Deno.test("git() - with options first", async () => {
 Deno.test("integration - command stdout piped through transforms", async () => {
   const result = await cmd("echo", ["apple\nbanana\ncherry"])
     .stdout()
-    .pipe(lines())
-    .pipe(async function* (stream) {
-      for await (const line of stream) {
-        yield line.toUpperCase();
-      }
-    })
+    .trans(lines())
+    .map((line) => line.toUpperCase())
     .collect();
 
   assertEquals(result, ["APPLE", "BANANA", "CHERRY"]);
@@ -264,14 +283,8 @@ Deno.test("integration - command stdout piped through transforms", async () => {
 Deno.test("integration - filter command output", async () => {
   const result = await cmd("echo", ["line1\nerror: bad\nline2\nerror: fail"])
     .stdout()
-    .pipe(lines())
-    .pipe(async function* (stream) {
-      for await (const line of stream) {
-        if (line.includes("error")) {
-          yield line;
-        }
-      }
-    })
+    .trans(lines())
+    .filter((line) => line.includes("error"))
     .collect();
 
   assertEquals(result.length, 2);
@@ -295,11 +308,11 @@ Deno.test("integration - process both stdout and stderr", async () => {
   ]);
 
   // Process streams
-  await cmd1.stdout().pipe(lines()).forEach((line) => {
+  await cmd1.stdout().trans(lines()).forEach((line) => {
     stdoutLines.push(line);
   });
 
-  await cmd2.stderr().pipe(lines()).forEach((line) => {
+  await cmd2.stderr().trans(lines()).forEach((line) => {
     stderrLines.push(line);
   });
 
@@ -382,7 +395,7 @@ Deno.test("cmd() - stdin piped through sort (practical example)", async () => {
     stdin: "z\na\nm\n",
   })
     .stdout()
-    .pipe(lines())
+    .trans(lines())
     .collect();
 
   assertEquals(result, ["a", "m", "z"]);
@@ -403,15 +416,17 @@ Deno.test("cmd() - stdin with large data (no deadlock)", async () => {
 // ==================== pipe() tests ====================
 
 Deno.test("cmd().pipe() - simple two-command pipe", async () => {
-  const result = await cmd("echo", ["hello world"]).pipe("cat").exec();
+  await initTestCmds();
+  const result = await cmd("echo", ["hello world"]).pipe(_cat).exec();
 
   assertEquals(result.stdout.trim(), "hello world");
   assertEquals(result.success, true);
 });
 
 Deno.test("cmd().pipe() - pipe with filtering (grep)", async () => {
+  await initTestCmds();
   const result = await cmd("echo", ["line1\nline2\nline3"])
-    .pipe("grep", ["line2"])
+    .pipe(_grep, ["line2"])
     .exec();
 
   assertEquals(result.stdout.trim(), "line2");
@@ -419,9 +434,10 @@ Deno.test("cmd().pipe() - pipe with filtering (grep)", async () => {
 });
 
 Deno.test("cmd().pipe() - multi-stage pipeline", async () => {
+  await initTestCmds();
   const result = await cmd("echo", ["cherry\napple\nbanana"])
-    .pipe("sort")
-    .pipe("head", ["-n", "2"])
+    .pipe(_sort)
+    .pipe(_head, ["-n", "2"])
     .exec();
 
   assertEquals(result.stdout, "apple\nbanana\n");
@@ -429,10 +445,11 @@ Deno.test("cmd().pipe() - multi-stage pipeline", async () => {
 });
 
 Deno.test("cmd().pipe() - pipeline with transform", async () => {
+  await initTestCmds();
   // Echo -> grep -> count lines
   const result = await cmd("echo", ["a\nb\nc\nd\ne"])
-    .pipe("grep", ["[aeiou]"]) // Filter vowels
-    .pipe("wc", ["-l"])
+    .pipe(_grep, ["[aeiou]"]) // Filter vowels
+    .pipe(_wc, ["-l"])
     .exec();
 
   // Should have 2 vowels: a, e
@@ -441,19 +458,21 @@ Deno.test("cmd().pipe() - pipeline with transform", async () => {
 });
 
 Deno.test("cmd().pipe() - with stdout() stream", async () => {
+  await initTestCmds();
   const result = await cmd("echo", ["apple\nbanana\ncherry"])
-    .pipe("sort", ["-r"]) // reverse sort
+    .pipe(_sort, ["-r"]) // reverse sort
     .stdout()
-    .pipe(lines())
+    .trans(lines())
     .collect();
 
   assertEquals(result, ["cherry", "banana", "apple"]);
 });
 
 Deno.test("cmd().pipe() - upstream failure throws error", async () => {
+  await initTestCmds();
   // Use a command that will fail
   try {
-    await cmd("sh", ["-c", "exit 1"]).pipe("cat").exec();
+    await cmd("sh", ["-c", "exit 1"]).pipe(_cat).exec();
     assert(false, "Should have thrown");
   } catch (error) {
     assert(error instanceof Error);
@@ -481,30 +500,33 @@ line 3`).exec();
 });
 
 Deno.test("str() - piped to sort (heredoc equivalent)", async () => {
+  await initTestCmds();
   const result = await str(`cherry
 apple
-banana`).pipe("sort").exec();
+banana`).pipe(_sort).exec();
 
   assertEquals(result.stdout, "apple\nbanana\ncherry\n");
   assertEquals(result.success, true);
 });
 
 Deno.test("str() - with variable interpolation", async () => {
+  await initTestCmds();
   const name = "world";
-  const result = await str(`Hello ${name}!`).pipe("cat").exec();
+  const result = await str(`Hello ${name}!`).pipe(_cat).exec();
 
   assertEquals(result.stdout, "Hello world!");
   assertEquals(result.success, true);
 });
 
 Deno.test("str() - multi-stage pipeline", async () => {
+  await initTestCmds();
   const result = await str(`a
 b
 c
 d
 e`)
-    .pipe("grep", ["[aeiou]"])
-    .pipe("wc", ["-l"])
+    .pipe(_grep, ["[aeiou]"])
+    .pipe(_wc, ["-l"])
     .exec();
 
   const count = parseInt(result.stdout.trim(), 10);
@@ -512,12 +534,13 @@ e`)
 });
 
 Deno.test("str() - with stdout() stream", async () => {
+  await initTestCmds();
   const result = await str(`line1
 line2
 line3`)
-    .pipe("sort", ["-r"])
+    .pipe(_sort, ["-r"])
     .stdout()
-    .pipe(lines())
+    .trans(lines())
     .collect();
 
   assertEquals(result, ["line3", "line2", "line1"]);
@@ -532,82 +555,89 @@ Deno.test("bytes() - binary data passthrough", async () => {
 });
 
 Deno.test("bytes() - piped to command", async () => {
+  await initTestCmds();
   const raw = new TextEncoder().encode("hello\nworld\n");
-  const result = await bytes(raw).pipe("wc", ["-l"]).exec();
+  const result = await bytes(raw).pipe(_wc, ["-l"]).exec();
 
   const count = parseInt(result.stdout.trim(), 10);
   assertEquals(count, 2);
 });
 
 // ==================== toCmd() and toCmdLines() tests ====================
+// Note: toCmd/toCmdLines are low-level transforms. FluentStream.pipe() uses toCmdLines internally.
 
-Deno.test("toCmd() - pipes stream to command", async () => {
-  const stream = createStream(
+Deno.test("FluentStream.pipe() - pipes stream to command", async () => {
+  await initTestCmds();
+  const stream = new FluentStream(createStream(
     (async function* () {
       yield "cherry";
       yield "apple";
       yield "banana";
     })(),
-  );
+  ));
 
-  const result = await stream.pipe(toCmd("sort")).first();
+  const result = await stream.pipe(_sort).first();
 
-  assertEquals(result, "apple\nbanana\ncherry\n");
+  assertEquals(result, "apple");
 });
 
-Deno.test("toCmd() - with command arguments", async () => {
-  const stream = createStream(
+Deno.test("FluentStream.pipe() - with command arguments", async () => {
+  await initTestCmds();
+  const stream = new FluentStream(createStream(
     (async function* () {
       yield "cherry";
       yield "apple";
       yield "banana";
     })(),
-  );
+  ));
 
-  const result = await stream.pipe(toCmd("sort", ["-r"])).first();
+  const result = await stream.pipe(_sort, ["-r"]).first();
 
-  assertEquals(result, "cherry\nbanana\napple\n");
+  assertEquals(result, "cherry");
 });
 
-Deno.test("toCmdLines() - pipes stream and yields lines", async () => {
-  const stream = createStream(
+Deno.test("FluentStream.pipe() - collects all lines", async () => {
+  await initTestCmds();
+  const stream = new FluentStream(createStream(
     (async function* () {
       yield "cherry";
       yield "apple";
       yield "banana";
     })(),
-  );
+  ));
 
-  const result = await stream.pipe(toCmdLines("sort")).collect();
+  const result = await stream.pipe(_sort).collect();
 
   assertEquals(result, ["apple", "banana", "cherry"]);
 });
 
-Deno.test("toCmdLines() - with reverse sort", async () => {
-  const stream = createStream(
+Deno.test("FluentStream.pipe() - with reverse sort", async () => {
+  await initTestCmds();
+  const stream = new FluentStream(createStream(
     (async function* () {
       yield "a";
       yield "c";
       yield "b";
     })(),
-  );
+  ));
 
-  const result = await stream.pipe(toCmdLines("sort", ["-r"])).collect();
+  const result = await stream.pipe(_sort, ["-r"]).collect();
 
   assertEquals(result, ["c", "b", "a"]);
 });
 
-Deno.test("toCmd() - chained with other transforms", async () => {
+Deno.test("Command.trans() and FluentStream.pipe() - chained", async () => {
+  await initTestCmds();
   const result = await cmd("echo", ["cherry\napple\nbanana"])
-    .stdout()
-    .pipe(lines())
-    .pipe(toCmd("sort"))
+    .trans(lines())
+    .pipe(_sort)
     .first();
 
-  assertEquals(result, "apple\nbanana\ncherry\n");
+  assertEquals(result, "apple");
 });
 
 Deno.test("toCmd() - failure throws error", async () => {
+  await initTestCmds();
   const stream = createStream(
     (async function* () {
       yield "test";
@@ -615,10 +645,10 @@ Deno.test("toCmd() - failure throws error", async () => {
   );
 
   try {
-    await stream.pipe(toCmd("sh", ["-c", "exit 1"])).first();
+    await new FluentStream(stream).pipe(_sh, ["-c", "exit 1"]).first();
     assert(false, "Should have thrown");
   } catch (error) {
     assert(error instanceof Error);
-    assert(error.message.includes("toCmd failed"));
+    assert(error.message.includes("toCmdLines failed"));
   }
 });

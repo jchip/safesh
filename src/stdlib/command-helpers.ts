@@ -162,19 +162,21 @@ export async function tmuxSubmit(
  *
  * @example
  * ```ts
+ * const [sort, cat, grep, wc] = await initCmds(["sort", "cat", "grep", "wc"]);
+ *
  * // Heredoc-style: sort lines
  * const result = await str(`cherry
  * apple
- * banana`).pipe("sort").exec();
+ * banana`).pipe(sort).exec();
  *
  * // With variable interpolation
  * const name = "world";
- * const result = await str(`Hello ${name}`).pipe("cat").exec();
+ * const result = await str(`Hello ${name}`).pipe(cat).exec();
  *
  * // Multi-stage pipeline
  * const result = await str(`line1
  * line2
- * line3`).pipe("grep", ["line2"]).pipe("wc", ["-l"]).exec();
+ * line3`).pipe(grep, ["line2"]).pipe(wc, ["-l"]).exec();
  * ```
  */
 export function str(content: string): Command {
