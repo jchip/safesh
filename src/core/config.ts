@@ -191,7 +191,7 @@ export const DEFAULT_CONFIG: SafeShellConfig = {
   permissions: {
     read: ["${CWD}", "${HOME}", "/tmp"],
     denyRead: [...SENSITIVE_READ_PATHS],
-    write: ["${CWD}", "/tmp", "/dev/null"],
+    write: ["/tmp", "/dev/null"],
     denyWrite: [...SENSITIVE_WRITE_PATHS],
     net: [],
     run: [...SAFE_COMMANDS],
@@ -209,6 +209,7 @@ export const DEFAULT_CONFIG: SafeShellConfig = {
   },
   tasks: {},
   timeout: DEFAULT_TIMEOUT_MS,
+  allowProjectFiles: true,
 };
 
 // ============================================================================
