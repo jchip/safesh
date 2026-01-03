@@ -6,7 +6,7 @@
 
 import { resolve, dirname } from "@std/path";
 import { ShellString } from "./types.ts";
-import { parseOptions, expand } from "./common.ts";
+import { parseOptions, expandTilde } from "./common.ts";
 import type { SandboxOptions } from "../fs.ts";
 
 /**
@@ -48,8 +48,9 @@ export async function ln(
   const symbolic = options.symbolic !== false;
 
   try {
-    const resolvedSource = resolve(source);
-    const resolvedDest = resolve(dest);
+    // Expand tilde in paths
+    const resolvedSource = resolve(expandTilde(source));
+    const resolvedDest = resolve(expandTilde(dest));
 
     // Check if source exists (for hard links, must exist)
     if (!symbolic) {

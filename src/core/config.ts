@@ -878,6 +878,14 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
   const result: ConfigValidation = { errors: [], warnings: [] };
   const perms = config.permissions ?? {};
 
+  // ========== Project Directory Validation ==========
+
+  if (!config.projectDir) {
+    result.warnings.push(
+      "projectDir: not set - file permissions will be limited to /tmp and explicit paths",
+    );
+  }
+
   // ========== Permission Validation ==========
 
   // Check for overly permissive read

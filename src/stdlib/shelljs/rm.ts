@@ -7,7 +7,7 @@
  */
 
 import { ShellString } from "./types.ts";
-import { parseOptions, flattenArgs } from "./common.ts";
+import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
 
 /** Options for rm command */
@@ -82,17 +82,18 @@ export async function rm(
   const errors: string[] = [];
 
   for (const path of allPaths) {
+    const expandedPath = expandTilde(path);
     try {
-      const stat = await Deno.lstat(path);
+      const stat = await Deno.lstat(expandedPath);
 
       if (stat.isDirectory) {
         if (options.recursive) {
-          await Deno.remove(path, { recursive: true });
+          await Deno.remove(expandedPath, { recursive: true });
         } else {
           errors.push(`rm: ${path}: is a directory`);
         }
       } else {
-        await Deno.remove(path);
+        await Deno.remove(expandedPath);
       }
     } catch (error) {
       if (error instanceof Deno.errors.NotFound) {

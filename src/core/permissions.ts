@@ -65,13 +65,21 @@ export function isCommandWithinProjectDir(
 }
 
 /**
- * Expand path variables like ${CWD}, ${HOME}, ${WORKSPACE}
+ * Expand path variables like ${CWD}, ${HOME}, ${WORKSPACE} and tilde (~)
  */
 export function expandPath(path: string, cwd: string, workspace?: string): string {
   const home = Deno.env.get("HOME") ?? "";
   const workspaceResolved = workspace ?? "";
 
-  return path
+  // Expand tilde first
+  let expanded = path;
+  if (expanded === "~") {
+    expanded = home;
+  } else if (expanded.startsWith("~/")) {
+    expanded = home + expanded.slice(1);
+  }
+
+  return expanded
     .replace(/\$\{CWD\}/g, cwd)
     .replace(/\$\{HOME\}/g, home)
     .replace(/\$\{WORKSPACE\}/g, workspaceResolved)
@@ -117,7 +125,9 @@ export async function validatePath(
   cwd: string,
   operation: "read" | "write" = "read",
 ): Promise<string> {
-  const absolutePath = resolve(cwd, requestedPath);
+  // Expand tilde and path variables before resolving
+  const expandedPath = expandPath(requestedPath, cwd, config.workspace);
+  const absolutePath = resolve(cwd, expandedPath);
 
   // Resolve symlinks to get real path
   let realPath: string;

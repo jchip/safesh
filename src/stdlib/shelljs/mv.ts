@@ -8,7 +8,7 @@
 
 import { join, basename, dirname } from "@std/path";
 import { ShellString } from "./types.ts";
-import { parseOptions, flattenArgs } from "./common.ts";
+import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
 
 /** Options for mv command */
@@ -75,8 +75,10 @@ export async function mv(
     return new ShellString("", "mv: missing destination", 1);
   }
 
-  const dest = allArgs[allArgs.length - 1]!;
-  const sources = allArgs.slice(0, -1);
+  // Expand tilde in all paths
+  const expandedArgs = allArgs.map(expandTilde);
+  const dest = expandedArgs[expandedArgs.length - 1]!;
+  const sources = expandedArgs.slice(0, -1);
   const errors: string[] = [];
 
   // Check if dest is a directory
