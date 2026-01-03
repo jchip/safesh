@@ -21,6 +21,19 @@ import type {
 } from "./types.ts";
 import { configError } from "./errors.ts";
 import { resolveWorkspace } from "./permissions.ts";
+import { DEFAULT_TIMEOUT_MS } from "./defaults.ts";
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Merge two optional arrays using union (deduplication) strategy.
+ * Returns a new array containing unique elements from both inputs.
+ */
+function unionArrays<T>(a: T[] | undefined, b: T[] | undefined): T[] {
+  return [...new Set([...(a ?? []), ...(b ?? [])])];
+}
 
 // ============================================================================
 // Default Safe Commands
@@ -195,7 +208,7 @@ export const DEFAULT_CONFIG: SafeShellConfig = {
     blocked: ["npm:*", "http:*", "https:*"],
   },
   tasks: {},
-  timeout: 30000,
+  timeout: DEFAULT_TIMEOUT_MS,
 };
 
 // ============================================================================
@@ -221,13 +234,13 @@ function mergePermissions(
   override: PermissionsConfig,
 ): PermissionsConfig {
   return {
-    read: [...new Set([...(base.read ?? []), ...(override.read ?? [])])],
-    denyRead: [...new Set([...(base.denyRead ?? []), ...(override.denyRead ?? [])])],
-    write: [...new Set([...(base.write ?? []), ...(override.write ?? [])])],
-    denyWrite: [...new Set([...(base.denyWrite ?? []), ...(override.denyWrite ?? [])])],
+    read: unionArrays(base.read, override.read),
+    denyRead: unionArrays(base.denyRead, override.denyRead),
+    write: unionArrays(base.write, override.write),
+    denyWrite: unionArrays(base.denyWrite, override.denyWrite),
     net: mergeNetPermissions(base.net, override.net),
-    run: [...new Set([...(base.run ?? []), ...(override.run ?? [])])],
-    env: [...new Set([...(base.env ?? []), ...(override.env ?? [])])],
+    run: unionArrays(base.run, override.run),
+    env: unionArrays(base.env, override.env),
   };
 }
 
@@ -321,8 +334,8 @@ function mergeEnvConfig(
   override: EnvConfig,
 ): EnvConfig {
   return {
-    allow: [...new Set([...(base.allow ?? []), ...(override.allow ?? [])])],
-    mask: [...new Set([...(base.mask ?? []), ...(override.mask ?? [])])],
+    allow: unionArrays(base.allow, override.allow),
+    mask: unionArrays(base.mask, override.mask),
   };
 }
 
@@ -346,9 +359,9 @@ function mergeImportPolicy(
   override: ImportPolicy,
 ): ImportPolicy {
   return {
-    trusted: [...new Set([...(base.trusted ?? []), ...(override.trusted ?? [])])],
-    allowed: [...new Set([...(base.allowed ?? []), ...(override.allowed ?? [])])],
-    blocked: [...new Set([...(base.blocked ?? []), ...(override.blocked ?? [])])],
+    trusted: unionArrays(base.trusted, override.trusted),
+    allowed: unionArrays(base.allowed, override.allowed),
+    blocked: unionArrays(base.blocked, override.blocked),
   };
 }
 
@@ -434,7 +447,7 @@ export function mergeConfigs(
     imports: mergeImportPolicy(base.imports ?? {}, override.imports ?? {}),
     tasks: { ...base.tasks, ...override.tasks },
     timeout: override.timeout ?? base.timeout,
-    denoFlags: [...new Set([...(base.denoFlags ?? []), ...(override.denoFlags ?? [])])],
+    denoFlags: unionArrays(base.denoFlags, override.denoFlags),
   };
 }
 

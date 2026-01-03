@@ -189,6 +189,55 @@ Deno.test("async iteration - works with for-await-of", async () => {
   assertEquals(items, ["a", "b", "c"]);
 });
 
+// ============== Pipe Method Tests ==============
+
+Deno.test("pipe() - applies transform function", async () => {
+  // Create a simple transform that adds prefix
+  const addPrefix = async function* (stream: AsyncIterable<string>) {
+    for await (const item of stream) {
+      yield `prefix:${item}`;
+    }
+  };
+
+  const result = await $.from(["a", "b", "c"]).pipe(addPrefix).collect();
+  assertEquals(result, ["prefix:a", "prefix:b", "prefix:c"]);
+});
+
+Deno.test("pipe() - chains multiple transforms", async () => {
+  // Two transforms: one filters, one uppercases
+  const filterLong = async function* (stream: AsyncIterable<string>) {
+    for await (const item of stream) {
+      if (item.length > 2) yield item;
+    }
+  };
+  const uppercase = async function* (stream: AsyncIterable<string>) {
+    for await (const item of stream) {
+      yield item.toUpperCase();
+    }
+  };
+
+  const result = await $.from(["a", "bb", "ccc", "dddd"])
+    .pipe(filterLong)
+    .pipe(uppercase)
+    .collect();
+  assertEquals(result, ["CCC", "DDDD"]);
+});
+
+Deno.test("pipe() - mixes with fluent methods", async () => {
+  const addSuffix = async function* (stream: AsyncIterable<string>) {
+    for await (const item of stream) {
+      yield `${item}!`;
+    }
+  };
+
+  const result = await $.from(["error: fail", "info: ok", "error: timeout"])
+    .grep(/error/)
+    .pipe(addSuffix)
+    .map((line) => line.toUpperCase())
+    .collect();
+  assertEquals(result, ["ERROR: FAIL!", "ERROR: TIMEOUT!"]);
+});
+
 // ============== Chaining Integration Tests ==============
 
 Deno.test("chaining - multiple transforms", async () => {
