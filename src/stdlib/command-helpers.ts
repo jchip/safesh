@@ -125,6 +125,33 @@ export const tmux: OverloadedCommandFn = function (...args: unknown[]): Command 
 } as OverloadedCommandFn;
 
 /**
+ * Submit text to a tmux pane, handling CLI paste mode detection.
+ *
+ * CLIs like claude-code detect paste mode, so Enter must be sent separately.
+ * This helper sends the text, waits, then sends Enter.
+ *
+ * @param target - Target pane (e.g., "mywindow", "session:window.pane")
+ * @param text - Text to send (can be multi-line)
+ * @param targetClient - Optional target client for send-keys -c
+ */
+export async function tmuxSubmit(
+  target: string,
+  text: string,
+  targetClient?: string,
+): Promise<CommandResult> {
+  const baseArgs = ["-t", target];
+  if (targetClient) {
+    baseArgs.push("-c", targetClient);
+  }
+
+  // Send text (without Enter)
+  await tmux("send-keys", ...baseArgs, text);
+
+  // Send Enter separately (seen as normal keypress, not part of paste)
+  return tmux("send-keys", ...baseArgs, "C-m");
+}
+
+/**
  * Create a data source for piping text to commands (heredoc equivalent)
  *
  * Returns a Command-like object that can be piped to other commands.
