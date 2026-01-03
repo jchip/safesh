@@ -70,7 +70,7 @@ export const docker: OverloadedCommandFn = createCommandFactory("docker");
 
 /** Commands that need a delay after execution to avoid race conditions */
 const TMUX_DELAY_COMMANDS = ["send-keys", "send"];
-const TMUX_DELAY_MS = 10;
+const TMUX_DELAY_MS = 100;
 
 /**
  * Create a tmux command with auto-delay for send-keys
