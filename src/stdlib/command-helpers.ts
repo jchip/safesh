@@ -65,41 +65,8 @@ export const git: OverloadedCommandFn = createCommandFactory("git");
 
 /**
  * Create a docker command
- *
- * Convenience function for docker commands with optional options.
- *
- * @example
- * ```ts
- * // Simple docker command
- * const result = await docker("ps").exec();
- *
- * // With arguments
- * const result = await docker("run", "-it", "alpine").exec();
- *
- * // With options
- * const result = await docker({ cwd: "/project" }, "compose", "up").exec();
- * ```
  */
 export const docker: OverloadedCommandFn = createCommandFactory("docker");
-
-/**
- * Create a deno command
- *
- * Convenience function for deno commands with optional options.
- *
- * @example
- * ```ts
- * // Simple deno command
- * const result = await deno("--version").exec();
- *
- * // Run a script
- * const result = await deno("run", "script.ts").exec();
- *
- * // With options
- * const result = await deno({ cwd: "/project" }, "task", "build").exec();
- * ```
- */
-export const deno: OverloadedCommandFn = createCommandFactory("deno");
 
 /** Commands that need a delay after execution to avoid race conditions */
 const TMUX_DELAY_COMMANDS = ["send-keys", "send"];
