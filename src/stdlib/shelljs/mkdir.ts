@@ -7,7 +7,7 @@
  */
 
 import { ShellString } from "./types.ts";
-import { parseOptions, flattenArgs } from "./common.ts";
+import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
 
 /** Options for mkdir command */
@@ -71,8 +71,9 @@ export async function mkdir(
   const errors: string[] = [];
 
   for (const path of allPaths) {
+    const expandedPath = expandTilde(path);
     try {
-      await Deno.mkdir(path, { recursive: options.parents });
+      await Deno.mkdir(expandedPath, { recursive: options.parents });
     } catch (error) {
       if (error instanceof Deno.errors.AlreadyExists) {
         if (!options.parents) {

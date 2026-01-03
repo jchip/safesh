@@ -119,6 +119,41 @@ function parseMarkerLine<T>(line: string, marker: string): T | null {
 }
 
 /**
+ * Enhance Deno permission errors with CWD context and allowed paths.
+ * Transforms: 'Requires write access to ".temp/foo"'
+ * Into: 'Requires write access to ".temp/foo"\nCWD: /full/path\nAllowed write paths: /foo, /bar'
+ */
+function enhancePermissionErrors(stderr: string, cwd: string, config: SafeShellConfig): string {
+  // Match Deno permission error patterns
+  const pattern = /Requires (read|write) access to "([^"]+)"/g;
+  const perms = getEffectivePermissions(config, cwd);
+  let hasMatch = false;
+  let firstAccessType: string | null = null;
+
+  const enhanced = stderr.replace(pattern, (match, accessType) => {
+    hasMatch = true;
+    if (!firstAccessType) firstAccessType = accessType;
+    return match;
+  });
+
+  // If we found permission errors, append context info
+  if (hasMatch && firstAccessType) {
+    const allowedPaths = firstAccessType === "write" ? perms.write : perms.read;
+    const expandedPaths = allowedPaths?.map(p => expandPath(p, cwd)) ?? [];
+    const lines = [
+      enhanced.trim(),
+      `CWD: ${cwd}`,
+    ];
+    if (expandedPaths.length > 0) {
+      lines.push(`Allowed ${firstAccessType} paths: ${expandedPaths.join(", ")}`);
+    }
+    return lines.join("\n");
+  }
+
+  return stderr;
+}
+
+/**
  * Extract job events and command errors from stderr and return cleaned output
  */
 function extractStderrEvents(stderr: string): {
@@ -725,10 +760,13 @@ export async function executeCode(
   syncShellState(shell, extractedState);
 
   // Extract job events and command errors from stderr
-  const { cleanStderr: stderr, jobEvents, cmdErrors, initErrors } = extractStderrEvents(rawStderr);
+  const { cleanStderr, jobEvents, cmdErrors, initErrors } = extractStderrEvents(rawStderr);
   if (shell && script && jobEvents.length > 0) {
     processJobEvents(shell, script, jobEvents);
   }
+
+  // Enhance permission errors with full path context
+  const stderr = enhancePermissionErrors(cleanStderr, cwd, config);
 
   // Extract blocked command info
   const { blockedCommand, blockedCommands, notFoundCommands } = extractBlockedCommands(cmdErrors, initErrors);
@@ -832,7 +870,7 @@ export async function executeFile(
   });
 
   // Spawn and collect output
-  const { status, stdout: rawStdout, stderr } = await spawnAndCollectOutput({
+  const { status, stdout: rawStdout, stderr: rawStderr } = await spawnAndCollectOutput({
     args,
     cwd,
     env: buildEnv(config, shell),
@@ -842,6 +880,9 @@ export async function executeFile(
   // Extract shell state from stdout and sync back
   const { cleanOutput: stdout, ...extractedState } = extractShellState(rawStdout);
   syncShellState(shell, extractedState);
+
+  // Enhance permission errors with full path context
+  const stderr = enhancePermissionErrors(rawStderr, cwd, config);
 
   return {
     stdout,

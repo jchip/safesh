@@ -7,7 +7,7 @@
  */
 
 import { join, basename } from "@std/path";
-import { parseOptions, flattenArgs, isGlob, expand } from "./common.ts";
+import { parseOptions, flattenArgs, isGlob, expand, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
 
 /** Options for ls command */
@@ -142,8 +142,8 @@ export async function ls(
   const entries: LsEntry[] = [];
 
   async function listPath(path: string, prefix = ""): Promise<void> {
-    // Expand globs
-    const expandedPaths = isGlob(path) ? await expand([path]) : [path];
+    // Expand globs (which handles tilde) or just tilde for non-globs
+    const expandedPaths = isGlob(path) ? await expand([path]) : [expandTilde(path)];
 
     for (const expandedPath of expandedPaths) {
       try {

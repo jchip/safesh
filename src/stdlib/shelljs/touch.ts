@@ -7,7 +7,7 @@
  */
 
 import { ShellString } from "./types.ts";
-import { parseOptions, flattenArgs } from "./common.ts";
+import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
 
 /** Options for touch command */
@@ -81,6 +81,8 @@ export async function touch(
     return new ShellString("", "touch: missing operand", 1);
   }
 
+  // Expand tilde in all paths
+  const expandedPaths = allPaths.map(expandTilde);
   const errors: string[] = [];
 
   // Get reference time if specified
@@ -88,7 +90,7 @@ export async function touch(
   let refMtime: Date | undefined;
   if (options.reference) {
     try {
-      const refStat = await Deno.stat(options.reference);
+      const refStat = await Deno.stat(expandTilde(options.reference));
       refAtime = refStat.atime ?? undefined;
       refMtime = refStat.mtime ?? undefined;
     } catch {
@@ -98,7 +100,7 @@ export async function touch(
 
   const now = options.date ?? new Date();
 
-  for (const path of allPaths) {
+  for (const path of expandedPaths) {
     try {
       // Check if file exists
       let exists = true;
