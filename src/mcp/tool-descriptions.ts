@@ -12,7 +12,7 @@ $ top-level object:
 - fs.read/write, git, tmux, docker, cmd, cat, glob, globArray, lines, grep, filter, map, head, tail
 - shell-like utils: cat, cd, pwd, ls, mkdir, touch, rm, cp, mv, chmod, ln, which, test, env, tempdir, pushd, popd, dirs, echo
 - stream utils (need .collect() which returns array): cat, from, text, glob; chains: .lines, .grep, .filter, .map, .head, .tail
-- state (persists): ID, CWD; ENV, VARS (plain objs)
+- state (persists with shellId): ID, CWD; ENV, VARS (plain objs)
 
 Path expansion:
 - shcmd: expands ~, $VAR, \${VAR}, \${HOME}, \${CWD}
