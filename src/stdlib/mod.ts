@@ -110,8 +110,10 @@ import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln,
 /**
  * Unified namespace for all SafeShell exports
  * Works in both code and file execution modes
+ *
+ * Also callable as shorthand: $('git', 'status') or $('whoami')
  */
-export const $ = {
+const _$props = {
   // Fluent file API ($.cat('file').lines().grep(/pattern/).collect())
   cat: fluentShell, FluentShell,
   // Namespaced modules
@@ -142,6 +144,21 @@ export const $ = {
   readLink: Deno.readLink,
   readLinkSync: Deno.readLinkSync,
 };
+
+// Known built-in commands that have dedicated wrappers
+const _$builtins: Record<string, typeof git> = { git, docker, deno };
+
+// Make $ callable: $('git', 'status') or $('whoami')
+function _$fn(command: string, ...args: string[]) {
+  const builtin = _$builtins[command];
+  if (builtin) {
+    return builtin(...args);
+  }
+  return cmd(command, args);
+}
+
+// Merge function with properties
+export const $ = Object.assign(_$fn, _$props);
 
 // Also set on globalThis for universal access
 (globalThis as Record<string, unknown>).$ = $;
