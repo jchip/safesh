@@ -8,8 +8,10 @@
  */
 
 import { createStream, type Stream } from "./stream.ts";
+import { FluentStream } from "./fluent-stream.ts";
 import { writeStdin } from "./io.ts";
 import { collectStreamBytes } from "../core/utils.ts";
+import { CMD_NAME_SYMBOL, type CommandFn } from "./command-init.ts";
 import {
   JOB_MARKER,
   CMD_ERROR_MARKER,
@@ -255,15 +257,19 @@ export class Command implements PromiseLike<CommandResult> {
    * Creates a pipeline where this command's stdout becomes the next
    * command's stdin. Can be chained for multi-stage pipelines.
    *
-   * @param command - Command name to pipe to
+   * @param command - Command name (string) or CommandFn from initCmds()
    * @param args - Arguments for the target command
    * @param options - Options for the target command
    * @returns New Command instance configured with this command as upstream
    *
    * @example
    * ```ts
-   * // Simple pipe
+   * // Simple pipe with string
    * await cmd("cat", ["file.txt"]).pipe("grep", ["pattern"]).exec();
+   *
+   * // With CommandFn from initCmds
+   * const [grep] = await initCmds(["grep"]);
+   * await str("hello\nworld").pipe(grep, ["hello"]).exec();
    *
    * // Multi-stage pipeline
    * await cmd("cat", ["file.txt"])
@@ -273,8 +279,20 @@ export class Command implements PromiseLike<CommandResult> {
    *   .exec();
    * ```
    */
-  pipe(command: string, args: string[] = [], options?: CommandOptions): Command {
-    const next = new Command(command, args, options ?? {});
+  pipe(command: string | CommandFn, args: string[] = [], options?: CommandOptions): Command {
+    // Extract command name from CommandFn if needed
+    let cmdName: string;
+    if (typeof command === "function") {
+      const name = command[CMD_NAME_SYMBOL];
+      if (!name) {
+        throw new Error("pipe() received a function without a command name. Use a string command name or a function from initCmds().");
+      }
+      cmdName = name;
+    } else {
+      cmdName = command;
+    }
+
+    const next = new Command(cmdName, args, options ?? {});
     next.upstream = this;
     return next;
   }
@@ -512,17 +530,17 @@ export class Command implements PromiseLike<CommandResult> {
    *   .forEach(() => {});
    * ```
    */
-  stdout(): Stream<string> {
-    return this.streamOne("stdout");
+  stdout(): FluentStream<string> {
+    return new FluentStream(this.streamOne("stdout"));
   }
 
   /**
-   * Get stderr as a Stream
+   * Get stderr as a FluentStream
    *
    * Spawns the process and streams only stderr data.
    * Each call to stderr() spawns a new process.
    *
-   * @returns Stream of stderr chunks
+   * @returns FluentStream of stderr chunks
    *
    * @example
    * ```ts
@@ -534,8 +552,8 @@ export class Command implements PromiseLike<CommandResult> {
    *   .forEach(() => {});
    * ```
    */
-  stderr(): Stream<string> {
-    return this.streamOne("stderr");
+  stderr(): FluentStream<string> {
+    return new FluentStream(this.streamOne("stderr"));
   }
 
 

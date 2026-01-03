@@ -141,10 +141,17 @@ async function checkPermission(
   return { allowed: false, error: ERROR_COMMAND_NOT_FOUND, command };
 }
 
+/** Symbol for storing command name on CommandFn */
+export const CMD_NAME_SYMBOL = Symbol.for('safesh.cmdName');
+
 /**
  * Command callable - call with args to execute
+ * Has [CMD_NAME_SYMBOL] property with the resolved command path
  */
-export type CommandFn = (...args: string[]) => Promise<CommandResult>;
+export interface CommandFn {
+  (...args: string[]): Promise<CommandResult>;
+  [CMD_NAME_SYMBOL]?: string;
+}
 
 /**
  * Initialize commands for convenient access
@@ -217,13 +224,17 @@ export async function initCmds<T extends readonly string[]>(
 
     // All permissions passed - create callable command functions
     return resolvedPaths.map((resolvedPath) => {
-      return (...args: string[]) => new Command(resolvedPath, args, options).exec();
+      const fn: CommandFn = (...args: string[]) => new Command(resolvedPath, args, options).exec();
+      fn[CMD_NAME_SYMBOL] = resolvedPath;
+      return fn;
     }) as { [K in keyof T]: CommandFn };
   } else {
     // No config available (file execution mode) - create callables without permission check
     // Permissions will be enforced by Deno sandbox at execution time
     return commands.map((path) => {
-      return (...args: string[]) => new Command(path, args, options).exec();
+      const fn: CommandFn = (...args: string[]) => new Command(path, args, options).exec();
+      fn[CMD_NAME_SYMBOL] = path;
+      return fn;
     }) as { [K in keyof T]: CommandFn };
   }
 }

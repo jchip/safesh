@@ -145,6 +145,45 @@ export class FluentStream<T> implements AsyncIterable<T> {
   }
 
   /**
+   * Filter string items by a regex pattern (grep-like)
+   *
+   * Only works on FluentStream<string>. Returns lines matching the pattern.
+   *
+   * @param pattern - RegExp or string pattern to match
+   * @returns FluentStream for chaining
+   *
+   * @example
+   * ```ts
+   * stream.grep(/ERROR/).collect();
+   * stream.grep('warning').collect();
+   * ```
+   */
+  grep(pattern: RegExp | string): FluentStream<string> {
+    // Type assertion since grep only works on strings
+    return new FluentStream(
+      (this._stream as unknown as Stream<string>).pipe(transforms.grep(pattern))
+    ) as unknown as FluentStream<string>;
+  }
+
+  /**
+   * Split string stream into lines
+   *
+   * Only works on FluentStream<string>. Splits on newlines.
+   *
+   * @returns FluentStream of individual lines
+   *
+   * @example
+   * ```ts
+   * stream.lines().collect();
+   * ```
+   */
+  lines(): FluentStream<string> {
+    return new FluentStream(
+      (this._stream as unknown as Stream<string>).pipe(transforms.lines())
+    ) as unknown as FluentStream<string>;
+  }
+
+  /**
    * Apply a custom transform function to the stream
    *
    * This allows using any stream transform with FluentStream,

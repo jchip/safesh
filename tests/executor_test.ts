@@ -630,3 +630,68 @@ Deno.test("SSH-211: $.path.dirname() accepts ShellString", async () => {
   assertEquals(result.success, true);
   assertStringIncludes(result.stdout, "is-string: true");
 });
+
+// ============================================================================
+// SSH-212: $.str().pipe() with CommandFn and stream composition
+// ============================================================================
+
+Deno.test("SSH-212: $.str().pipe() accepts CommandFn from initCmds", async () => {
+  const config: SafeShellConfig = {
+    ...testConfig,
+    permissions: {
+      ...testConfig.permissions,
+      run: ["grep", "cat"],
+    },
+  };
+
+  const code = `
+    const [grep] = await $.initCmds(['grep']);
+    const result = await $.str('foo\\nbar\\nbaz\\nfoo bar').pipe(grep, ['foo']).exec();
+    console.log('stdout:', result.stdout.trim());
+  `;
+
+  const result = await executeCode(code, config);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "foo");
+  assertStringIncludes(result.stdout, "foo bar");
+});
+
+Deno.test("SSH-212: $.str().stdout().lines().grep() chain works", async () => {
+  const config: SafeShellConfig = {
+    ...testConfig,
+    permissions: {
+      ...testConfig.permissions,
+      run: ["cat"],
+    },
+  };
+
+  const code = `
+    const lines = await $.str('ERROR: fail\\nINFO: ok\\nERROR: bad\\nWARN: alert')
+      .stdout()
+      .lines()
+      .grep(/ERROR/)
+      .collect();
+    console.log('count:', lines.length);
+    console.log('lines:', JSON.stringify(lines));
+  `;
+
+  const result = await executeCode(code, config);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "count: 2");
+});
+
+Deno.test("SSH-212: FluentStream.grep() filters by pattern", async () => {
+  const code = `
+    const lines = await $.fromArray(['ERROR: one', 'INFO: two', 'ERROR: three'])
+      .grep(/ERROR/)
+      .collect();
+    console.log('count:', lines.length);
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "count: 2");
+});
