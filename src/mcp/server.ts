@@ -116,6 +116,7 @@ interface ToolContext {
   configHolder: ConfigHolder;
   registry: CommandRegistry;
   updateRegistry: (newRegistry: CommandRegistry) => void;
+  rootsPromise: Promise<void>;
   handleRetryWorkflow: (retryId: string, userChoice: number | undefined) => Promise<RetryResult | RetryError>;
   handleFileExecution: (
     file: string,
@@ -293,7 +294,11 @@ const KillJobSchema = z.object({
  * Handle 'run' tool - execute code, shell commands, or files
  */
 async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  // Wait for roots to be fetched before executing
+  await ctx.rootsPromise;
+
   const parsed = RunSchema.parse(args);
+  console.error(`[run] projectDir: ${ctx.configHolder.config.projectDir ?? "(none)"}, cwd: ${ctx.configHolder.cwd}`);
 
   // Determine execution context (code, config, shellId, etc.)
   let code: string;
@@ -642,6 +647,19 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     rootsReceived: false,
   };
 
+  // Promise that resolves when roots are fetched (or times out)
+  let rootsResolve: () => void;
+  const rootsPromise = new Promise<void>((resolve) => {
+    rootsResolve = resolve;
+  });
+
+  // Timeout for roots fetching (3 seconds)
+  const ROOTS_TIMEOUT_MS = 3000;
+  const rootsTimeout = setTimeout(() => {
+    console.error("  Roots fetch timeout - proceeding without roots");
+    rootsResolve();
+  }, ROOTS_TIMEOUT_MS);
+
   // Getter for current config (used by tool handlers)
   const getConfig = () => configHolder.config;
   const getCwd = () => configHolder.cwd;
@@ -672,6 +690,8 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     const clientCaps = server.getClientCapabilities();
     if (!clientCaps?.roots) {
       console.error("  Client does not support roots capability");
+      clearTimeout(rootsTimeout);
+      rootsResolve();
       return;
     }
 
@@ -695,13 +715,20 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         if (projectDir) {
           configHolder.cwd = projectDir;
           console.error(`  projectDir set to: ${projectDir}`);
+          console.error(`  config.projectDir is now: ${configHolder.config.projectDir}`);
         }
 
         // Recreate registry with updated config
         registry = createRegistry(configHolder.config, configHolder.cwd);
       }
+
+      // Resolve the roots promise now that we've processed them
+      clearTimeout(rootsTimeout);
+      rootsResolve();
     } catch (error) {
       console.error(`  Failed to get roots: ${error instanceof Error ? error.message : error}`);
+      clearTimeout(rootsTimeout);
+      rootsResolve();
     }
   }
 
@@ -1057,6 +1084,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     configHolder,
     registry,
     updateRegistry: (newRegistry: CommandRegistry) => { registry = newRegistry; },
+    rootsPromise,
     handleRetryWorkflow,
     handleFileExecution,
     formatBlockedCommandResponse,
@@ -1158,8 +1186,6 @@ function parseMcpArgs(args: string[]): McpInitArgs {
       i++;
     } else if (arg === "--allow-project-commands") {
       result.allowProjectCommands = true;
-    } else if (arg === "--allow-project-files") {
-      result.allowProjectFiles = true;
     } else if (arg?.startsWith("--project-dir=")) {
       result.projectDir = arg.slice("--project-dir=".length);
     } else if (arg?.startsWith("--cwd=")) {
@@ -1190,14 +1216,10 @@ async function main() {
 
   // Log startup (to stderr to not interfere with MCP protocol)
   console.error("SafeShell MCP Server started");
-  if (config.projectDir) {
-    console.error(`  projectDir: ${config.projectDir}`);
-  }
+  console.error(`  initial cwd: ${effectiveCwd}`);
+  console.error(`  initial projectDir: ${config.projectDir ?? "(none)"}`);
   if (config.allowProjectCommands) {
     console.error("  allowProjectCommands: true");
-  }
-  if (config.allowProjectFiles) {
-    console.error("  allowProjectFiles: true");
   }
 
   // Handle graceful shutdown - flush persistence
