@@ -12,7 +12,9 @@ $ top-level object categories:
 
 Shell-like utils: cd, pwd, ls, mkdir, touch, rm, cp, mv, chmod, ln, which, test, tempdir, pushd, popd, dirs, echo
 File system: await $.fs.read(path), await $.fs.write(path, content) - async file I/O
-Commands (return {code, stdout, stderr}): $.git(), $.tmux(), $.docker(), $.cmd()
+Commands (return {code, stdout, stderr}):
+  - built-in aliases: $.git('status'), $.tmux('list-sessions'), $.docker('ps')
+  - general: $.cmd('ls -la')
   - external: const [curl] = await $.initCmds(['curl']); await curl('-s', url);
 
 Fluent streams (chainable .filter/.map/.head/.tail, terminal .collect()/.first()/.count()/.forEach()):
