@@ -99,7 +99,7 @@ export type { GrepMatch, GrepOptions, CountResult, DiffLine } from "./text.ts";
 // Import remaining exports for _$ namespace
 import { default as fluentShell } from "./shell.ts";
 import { FluentShell } from "./shell.ts";
-import { cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds } from "./command.ts";
+import { cmd, git, docker, deno, tmux, str, bytes, toCmd, toCmdLines, initCmds } from "./command.ts";
 import { createStream, fromArray, empty } from "./stream.ts";
 import { filter, map, flatMap, take, head, tail, lines, grep } from "./transforms.ts";
 import { stdout, stderr, tee } from "./io.ts";
@@ -122,7 +122,7 @@ const _$props = {
   // Namespaced modules
   fs, text, path,
   // Command execution
-  cmd, git, docker, deno, str, bytes, toCmd, toCmdLines, initCmds,
+  cmd, git, docker, deno, tmux, str, bytes, toCmd, toCmdLines, initCmds,
   // Streaming primitives
   createStream, fromArray, empty,
   // Stream transforms
@@ -151,7 +151,7 @@ const _$props = {
 };
 
 // Known built-in commands that have dedicated wrappers
-const _$builtins: Record<string, typeof git> = { git, docker, deno };
+const _$builtins: Record<string, typeof git> = { git, docker, deno, tmux };
 
 // Make $ callable: $('git', 'status') or $('whoami')
 function _$fn(command: string, ...args: string[]) {

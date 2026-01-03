@@ -7,7 +7,7 @@
  * @module
  */
 
-import { Command, type CommandOptions } from "./command.ts";
+import { Command, type CommandOptions, type CommandResult } from "./command.ts";
 
 /**
  * Overloaded command function type with options-first pattern.
@@ -100,6 +100,62 @@ export const docker: OverloadedCommandFn = createCommandFactory("docker");
  * ```
  */
 export const deno: OverloadedCommandFn = createCommandFactory("deno");
+
+/** Commands that need a delay after execution to avoid race conditions */
+const TMUX_DELAY_COMMANDS = ["send-keys", "send"];
+const TMUX_DELAY_MS = 10;
+
+/**
+ * Create a tmux command with auto-delay for send-keys
+ *
+ * Automatically adds a small delay after send-keys commands to prevent
+ * race conditions where keystrokes arrive faster than the shell can process.
+ *
+ * @example
+ * ```ts
+ * await tmux("send-keys", "-t", "mywindow", "echo hello", "C-m");
+ * // 10ms delay automatically added after send-keys
+ * await tmux("capture-pane", "-t", "mywindow", "-p");
+ * ```
+ */
+export const tmux: OverloadedCommandFn = function (...args: unknown[]): Command {
+  const baseCmd = createCommandFactory("tmux");
+  const command = baseCmd(...(args as Parameters<OverloadedCommandFn>));
+
+  // Check if this is a send-keys command (first string arg after options)
+  const firstArg = typeof args[0] === "object" && args[0] !== null && !Array.isArray(args[0])
+    ? args[1]
+    : args[0];
+
+  const needsDelay = typeof firstArg === "string" &&
+    TMUX_DELAY_COMMANDS.includes(firstArg);
+
+  if (!needsDelay) {
+    return command;
+  }
+
+  // Wrap exec() to add delay after send-keys
+  const originalExec = command.exec.bind(command);
+  command.exec = async () => {
+    const result = await originalExec();
+    await new Promise(r => setTimeout(r, TMUX_DELAY_MS));
+    return result;
+  };
+
+  // Also wrap then() since Command is thenable
+  const originalThen = command.then.bind(command);
+  command.then = (<TResult1, TResult2>(
+    onFulfilled?: ((value: CommandResult) => TResult1 | PromiseLike<TResult1>) | null,
+    onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ) => {
+    return originalThen(async (result) => {
+      await new Promise(r => setTimeout(r, TMUX_DELAY_MS));
+      return onFulfilled ? onFulfilled(result) : result as unknown as TResult1;
+    }, onRejected);
+  }) as typeof command.then;
+
+  return command;
+} as OverloadedCommandFn;
 
 /**
  * Create a data source for piping text to commands (heredoc equivalent)
