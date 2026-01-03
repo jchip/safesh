@@ -367,8 +367,8 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
     });
   }
 
-  // Get or create shell (auto-creates with requested ID if not exists)
-  const { shell, isTemporary } = ctx.shellManager.getOrCreate(
+  // Get or create shell (auto-creates and persists if not exists)
+  const { shell } = ctx.shellManager.getOrCreate(
     shellId,
     { cwd: ctx.configHolder.cwd, env: parsed.env },
   );
@@ -418,8 +418,8 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
     );
   }
 
-  // Update shell vars if not temporary
-  if (!isTemporary && result.success && shell.vars) {
+  // Update shell vars on success
+  if (result.success && shell.vars) {
     ctx.shellManager.update(shell.id, { vars: shell.vars });
   }
 
@@ -848,7 +848,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     timeout: number | undefined,
     config: SafeShellConfig,
   ): Promise<McpResponse> {
-    const { shell, isTemporary } = shellManager.getOrCreate(
+    const { shell } = shellManager.getOrCreate(
       shellId,
       { cwd: configHolder.cwd, env },
     );
@@ -870,12 +870,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
       shell,
     );
 
-    // Cleanup temporary shell
-    if (isTemporary) {
-      shellManager.end(shell.id);
-    }
-
-    return mcpTextResponse(formatRunResult(result, shellId, result.scriptId), !result.success);
+    return mcpTextResponse(formatRunResult(result, shell.id, result.scriptId), !result.success);
   }
 
   /**

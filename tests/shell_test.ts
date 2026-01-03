@@ -55,16 +55,15 @@ describe("ShellManager", () => {
   describe("getOrCreate", () => {
     it("returns existing shell when ID provided", () => {
       const shell = manager.create();
-      const { shell: retrieved, isTemporary } = manager.getOrCreate(shell.id);
+      const { shell: retrieved, created } = manager.getOrCreate(shell.id);
 
       assertEquals(retrieved, shell);
-      assertEquals(isTemporary, false);
+      assertEquals(created, false);
     });
 
     it("creates and persists shell when ID not found", () => {
-      const { shell, isTemporary, created } = manager.getOrCreate("my-shell");
+      const { shell, created } = manager.getOrCreate("my-shell");
 
-      assertEquals(isTemporary, false);
       assertEquals(created, true);
       assertEquals(shell.id, "my-shell");
       assertEquals(shell.cwd, "/tmp/test"); // Uses default cwd
@@ -74,21 +73,27 @@ describe("ShellManager", () => {
       assertEquals(retrieved, shell);
     });
 
-    it("creates temporary shell when ID undefined", () => {
-      const { shell, isTemporary } = manager.getOrCreate(undefined);
+    it("creates and persists shell when ID undefined", () => {
+      const { shell, created } = manager.getOrCreate(undefined);
 
-      assertEquals(isTemporary, true);
+      assertEquals(created, true);
+      // Verify it was persisted with auto-generated ID
+      const retrieved = manager.get(shell.id);
+      assertEquals(retrieved, shell);
     });
 
-    it("uses fallback options for temporary shell", () => {
-      const { shell, isTemporary } = manager.getOrCreate(undefined, {
+    it("uses fallback options for new shell", () => {
+      const { shell, created } = manager.getOrCreate(undefined, {
         cwd: "/fallback",
         env: { KEY: "value" },
       });
 
-      assertEquals(isTemporary, true);
+      assertEquals(created, true);
       assertEquals(shell.cwd, "/fallback");
-      assertEquals(shell.env, { KEY: "value" });
+      assertEquals(shell.env.KEY, "value");
+      // Verify it was persisted
+      const retrieved = manager.get(shell.id);
+      assertEquals(retrieved, shell);
     });
   });
 

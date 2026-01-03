@@ -225,34 +225,31 @@ export class ShellManager {
   }
 
   /**
-   * Get shell, create with requested ID if not exists, or create temporary one
+   * Get shell by ID, or create a new persisted shell
    *
-   * @param id - Shell ID or undefined
-   * @param fallback - Fallback options for new/temporary shell
-   * @returns Shell and whether it's temporary (no ID provided)
+   * @param id - Shell ID or undefined (auto-generates ID if undefined)
+   * @param fallback - Fallback options for new shell
+   * @returns Shell and whether it was newly created
    */
   getOrCreate(
     id: string | undefined,
     fallback: { cwd?: string; env?: Record<string, string> } = {},
-  ): { shell: Shell; isTemporary: boolean; created?: boolean } {
+  ): { shell: Shell; created: boolean } {
     if (id) {
       const existing = this.get(id);
       if (existing) {
-        return { shell: existing, isTemporary: false };
+        return { shell: existing, created: false };
       }
-      // Shell ID was provided but doesn't exist - create and persist with that ID
-      if (this.shells.size >= MAX_SHELLS) {
-        this.evictLeastRecentShell();
-      }
-      const shell = this.createShellObject({ id, ...fallback });
-      this.shells.set(shell.id, shell);
-      // Persist shell
-      this.persistence?.updateShell(this.toPersistedShell(shell));
-      return { shell, isTemporary: false, created: true };
     }
 
-    // No shell ID provided - create temporary shell (not stored)
-    return { shell: this.createShellObject(fallback), isTemporary: true };
+    // Create and persist new shell (with provided ID or auto-generated)
+    if (this.shells.size >= MAX_SHELLS) {
+      this.evictLeastRecentShell();
+    }
+    const shell = this.createShellObject({ id, ...fallback });
+    this.shells.set(shell.id, shell);
+    this.persistence?.updateShell(this.toPersistedShell(shell));
+    return { shell, created: true };
   }
 
   /**
