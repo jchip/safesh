@@ -21,8 +21,10 @@ Fluent streams (chainable .filter/.map/.head/.tail, terminal .collect()/.first()
   - $.cat('f') → FluentShell (string stream) - has .lines()/.grep()
   - $.glob('*.txt') → FluentStream<File> - files with path/base/contents
   - $.src('*.ts', '*.js') → FluentStream<File> - multiple patterns
+  Note: transform functions (filter, map, head, tail, lines, grep) available as:
+    - methods on fluent streams: stream.filter(...)
+    - functions for .pipe(): stream.pipe($.filter(...))
 
-Transform functions: filter, map, head, tail, lines, grep - use with .pipe() or as fluent methods
 State (persists with shellId): ID, CWD; ENV, VARS (plain objs)
 
 Examples:
