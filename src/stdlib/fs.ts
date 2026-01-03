@@ -6,25 +6,43 @@
  * @module
  */
 
-import { resolve, dirname, basename, join, extname, relative, normalize, isAbsolute, parse, format, toFileUrl, fromFileUrl } from "@std/path";
+import { resolve as stdResolve, dirname as stdDirname, basename as stdBasename, join as stdJoin, extname as stdExtname, relative as stdRelative, normalize as stdNormalize, isAbsolute as stdIsAbsolute, parse as stdParse, format as stdFormat, toFileUrl as stdToFileUrl, fromFileUrl as stdFromFileUrl } from "@std/path";
 import { copy as stdCopy } from "@std/fs/copy";
+
+// Re-export for internal use
+export const resolve = stdResolve;
+export const dirname = stdDirname;
+export const basename = stdBasename;
+export const join = stdJoin;
+
+/**
+ * Coerce a value to string - handles ShellString and other string-like objects
+ */
+function str(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof (value as { toString?: () => string }).toString === "function") {
+    return String(value);
+  }
+  return String(value);
+}
 
 /**
  * Path utilities re-exported from @std/path
+ * All functions accept ShellString or any string-like value
  */
 export const path = {
-  resolve,
-  dirname,
-  basename,
-  join,
-  extname,
-  relative,
-  normalize,
-  isAbsolute,
-  parse,
-  format,
-  toFileUrl,
-  fromFileUrl,
+  resolve: (...paths: unknown[]) => stdResolve(...paths.map(str)),
+  dirname: (p: unknown) => stdDirname(str(p)),
+  basename: (p: unknown, suffix?: string) => stdBasename(str(p), suffix),
+  join: (...paths: unknown[]) => stdJoin(...paths.map(str)),
+  extname: (p: unknown) => stdExtname(str(p)),
+  relative: (from: unknown, to: unknown) => stdRelative(str(from), str(to)),
+  normalize: (p: unknown) => stdNormalize(str(p)),
+  isAbsolute: (p: unknown) => stdIsAbsolute(str(p)),
+  parse: (p: unknown) => stdParse(str(p)),
+  format: stdFormat,
+  toFileUrl: (p: unknown) => stdToFileUrl(str(p)),
+  fromFileUrl: stdFromFileUrl,
 };
 import { ensureDir as stdEnsureDir } from "@std/fs/ensure-dir";
 import { walk as stdWalk, type WalkOptions as StdWalkOptions } from "@std/fs/walk";
