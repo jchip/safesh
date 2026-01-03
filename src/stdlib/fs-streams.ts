@@ -9,6 +9,7 @@
  */
 
 import { createStream, type Stream } from "./stream.ts";
+import { FluentStream } from "./fluent-stream.ts";
 import { validatePath } from "../core/permissions.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 import { expandGlob, type ExpandGlobOptions } from "@std/fs/expand-glob";
@@ -96,18 +97,19 @@ function getGlobBase(pattern: string, cwd: string): string {
  *
  * @example
  * ```ts
- * // Find all TypeScript files
+ * // Find all TypeScript files with fluent API
  * await glob("src/**\/*.ts")
- *   .pipe(filter(f => !f.path.includes(".test.")))
- *   .pipe(dest("dist/"))
+ *   .filter(f => !f.path.includes(".test."))
+ *   .map(f => f.path)
+ *   .collect()
  *
  * // Read all JSON files
  * const configs = await glob("**\/*.json")
- *   .pipe(map(f => JSON.parse(f.contents as string)))
+ *   .map(f => JSON.parse(f.contents as string))
  *   .collect()
  * ```
  */
-export function glob(pattern: string, options: GlobOptions = {}): Stream<File> {
+export function glob(pattern: string, options: GlobOptions = {}): FluentStream<File> {
   const cwd = options.cwd ?? Deno.cwd();
   const config = options.config ?? getDefaultConfig(cwd);
   const base = options.base ?? getGlobBase(pattern, cwd);
@@ -178,7 +180,7 @@ export function glob(pattern: string, options: GlobOptions = {}): Stream<File> {
     }
   })();
 
-  return createStream(iterable);
+  return new FluentStream(createStream(iterable));
 }
 
 /**
@@ -188,29 +190,32 @@ export function glob(pattern: string, options: GlobOptions = {}): Stream<File> {
  *
  * @param patterns - One or more glob patterns
  * @param options - Glob options
- * @returns Stream of File objects
+ * @returns FluentStream of File objects
  *
  * @example
  * ```ts
- * // Process multiple file types
+ * // Process multiple file types with fluent API
  * await src("src/**\/*.ts", "src/**\/*.js")
- *   .pipe(dest("dist/"))
+ *   .filter(f => !f.path.includes('.test.'))
+ *   .map(f => f.path)
+ *   .collect()
  *
  * // With exclude patterns
  * await src("src/**\/*", { exclude: ["**\/*.test.*"] })
- *   .pipe(dest("dist/"))
+ *   .filter(f => f.path.endsWith('.ts'))
+ *   .collect()
  * ```
  */
 export function src(
   ...patterns: string[]
-): Stream<File>;
+): FluentStream<File>;
 export function src(
   options: GlobOptions,
   ...patterns: string[]
-): Stream<File>;
+): FluentStream<File>;
 export function src(
   ...args: [GlobOptions, ...string[]] | string[]
-): Stream<File> {
+): FluentStream<File> {
   // Parse arguments - options object is optional first arg
   let options: GlobOptions = {};
   let patterns: string[];
@@ -235,7 +240,7 @@ export function src(
     }
   })();
 
-  return createStream(iterable);
+  return new FluentStream(createStream(iterable));
 }
 
 /**
