@@ -14,6 +14,8 @@ import type { OptionsMap } from "./types.ts";
 export interface MkdirOptions {
   /** Create parent directories as needed */
   parents?: boolean;
+  /** Alias for parents (Node.js style) */
+  recursive?: boolean;
 }
 
 const OPTIONS_MAP: OptionsMap = {
@@ -48,20 +50,32 @@ export function parseMkdirOptions(optStr: string): MkdirOptions {
  */
 export async function mkdir(
   optionsOrPath: string | MkdirOptions,
-  ...paths: (string | string[])[]
+  ...paths: (string | string[] | MkdirOptions)[]
 ): Promise<ShellString> {
   let options: MkdirOptions = {};
   let allPaths: string[];
 
+  // Check if last argument is an options object (Node.js style: mkdir("dir", { recursive: true }))
+  const lastArg = paths[paths.length - 1];
+  if (lastArg && typeof lastArg === "object" && !Array.isArray(lastArg)) {
+    options = lastArg as MkdirOptions;
+    paths = paths.slice(0, -1);
+  }
+
   // Parse arguments
   if (typeof optionsOrPath === "string" && optionsOrPath.startsWith("-")) {
-    options = parseMkdirOptions(optionsOrPath);
-    allPaths = flattenArgs(...paths);
+    options = { ...options, ...parseMkdirOptions(optionsOrPath) };
+    allPaths = flattenArgs(...(paths as (string | string[])[]));
   } else if (typeof optionsOrPath === "object" && !Array.isArray(optionsOrPath)) {
-    options = optionsOrPath;
-    allPaths = flattenArgs(...paths);
+    options = { ...options, ...optionsOrPath };
+    allPaths = flattenArgs(...(paths as (string | string[])[]));
   } else {
-    allPaths = flattenArgs(optionsOrPath as string, ...paths);
+    allPaths = flattenArgs(optionsOrPath as string, ...(paths as (string | string[])[]));
+  }
+
+  // Handle recursive as alias for parents
+  if (options.recursive) {
+    options.parents = true;
   }
 
   if (allPaths.length === 0) {
