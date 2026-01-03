@@ -138,16 +138,17 @@ export class FluentShell {
   /**
    * Filter items using a predicate
    *
-   * @param predicate - Function returning true for items to keep
+   * @param predicate - Function returning true for items to keep (receives item and index)
    * @returns FluentShell for chaining
    *
    * @example
    * ```ts
    * $('data.txt').lines().filter(line => line.length > 10).print();
+   * $('data.csv').lines().filter((line, idx) => idx > 0).print(); // skip header
    * ```
    */
   filter(
-    predicate: (item: string) => boolean | Promise<boolean>,
+    predicate: (item: string, index: number) => boolean | Promise<boolean>,
   ): FluentShell {
     return new FluentShell(this._stream.pipe(transforms.filter(predicate)));
   }
@@ -155,15 +156,16 @@ export class FluentShell {
   /**
    * Transform each item
    *
-   * @param fn - Transform function
+   * @param fn - Transform function (receives item and index)
    * @returns FluentShell for chaining
    *
    * @example
    * ```ts
    * $('data.txt').lines().map(line => line.toUpperCase()).print();
+   * $('data.txt').lines().map((line, idx) => `${idx}: ${line}`).print();
    * ```
    */
-  map(fn: (item: string) => string | Promise<string>): FluentShell {
+  map(fn: (item: string, index: number) => string | Promise<string>): FluentShell {
     return new FluentShell(this._stream.pipe(transforms.map(fn)));
   }
 

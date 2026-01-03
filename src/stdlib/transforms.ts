@@ -16,7 +16,7 @@ import type { Transform } from "./stream.ts";
  * Only items that pass the predicate test are yielded to the output stream.
  * The predicate can be synchronous or asynchronous.
  *
- * @param predicate - Function that returns true for items to keep
+ * @param predicate - Function that returns true for items to keep (receives item and index)
  * @returns Transform that filters items
  *
  * @example
@@ -24,16 +24,20 @@ import type { Transform } from "./stream.ts";
  * // Filter even numbers
  * const evens = stream.pipe(filter(x => x % 2 === 0));
  *
+ * // Skip header row
+ * const data = stream.pipe(filter((line, idx) => idx > 0));
+ *
  * // Async predicate
  * const valid = stream.pipe(filter(async x => await validate(x)));
  * ```
  */
 export function filter<T>(
-  predicate: (item: T) => boolean | Promise<boolean>,
+  predicate: (item: T, index: number) => boolean | Promise<boolean>,
 ): Transform<T, T> {
   return async function* (stream) {
+    let index = 0;
     for await (const item of stream) {
-      if (await predicate(item)) {
+      if (await predicate(item, index++)) {
         yield item;
       }
     }
@@ -46,13 +50,16 @@ export function filter<T>(
  * Applies a function to each item, yielding the transformed result.
  * The function can be synchronous or asynchronous.
  *
- * @param fn - Function to transform each item
+ * @param fn - Function to transform each item (receives item and index)
  * @returns Transform that maps items from T to U
  *
  * @example
  * ```ts
  * // Double each number
  * const doubled = stream.pipe(map(x => x * 2));
+ *
+ * // Add line numbers
+ * const numbered = stream.pipe(map((line, idx) => `${idx}: ${line}`));
  *
  * // Parse JSON
  * const objects = stream.pipe(map(line => JSON.parse(line)));
@@ -62,11 +69,12 @@ export function filter<T>(
  * ```
  */
 export function map<T, U>(
-  fn: (item: T) => U | Promise<U>,
+  fn: (item: T, index: number) => U | Promise<U>,
 ): Transform<T, U> {
   return async function* (stream) {
+    let index = 0;
     for await (const item of stream) {
-      yield await fn(item);
+      yield await fn(item, index++);
     }
   };
 }
