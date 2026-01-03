@@ -7,7 +7,7 @@
  * @module
  */
 
-import { createStream, type Stream } from "./stream.ts";
+import { createStream, type Stream, type Transform } from "./stream.ts";
 import { FluentStream } from "./fluent-stream.ts";
 import { writeStdin } from "./io.ts";
 import { collectStreamBytes } from "../core/utils.ts";
@@ -257,39 +257,31 @@ export class Command implements PromiseLike<CommandResult> {
    * Creates a pipeline where this command's stdout becomes the next
    * command's stdin. Can be chained for multi-stage pipelines.
    *
-   * @param command - Command name (string) or CommandFn from initCmds()
+   * NOTE: Only accepts CommandFn from initCmds() to enforce permission checks.
+   * Raw string command names are not allowed.
+   *
+   * @param command - CommandFn from initCmds()
    * @param args - Arguments for the target command
    * @param options - Options for the target command
    * @returns New Command instance configured with this command as upstream
    *
    * @example
    * ```ts
-   * // Simple pipe with string
-   * await cmd("cat", ["file.txt"]).pipe("grep", ["pattern"]).exec();
-   *
    * // With CommandFn from initCmds
-   * const [grep] = await initCmds(["grep"]);
+   * const [grep, sort, uniq] = await initCmds(["grep", "sort", "uniq"]);
    * await str("hello\nworld").pipe(grep, ["hello"]).exec();
    *
    * // Multi-stage pipeline
-   * await cmd("cat", ["file.txt"])
-   *   .pipe("grep", ["pattern"])
-   *   .pipe("sort")
-   *   .pipe("uniq", ["-c"])
-   *   .exec();
+   * await $.cat("file.txt").stdout()
+   *   .pipe(toCmd(grep, ["pattern"]))
+   *   .pipe(toCmd(sort))
+   *   .collect();
    * ```
    */
-  pipe(command: string | CommandFn, args: string[] = [], options?: CommandOptions): Command {
-    // Extract command name from CommandFn if needed
-    let cmdName: string;
-    if (typeof command === "function") {
-      const name = command[CMD_NAME_SYMBOL];
-      if (!name) {
-        throw new Error("pipe() received a function without a command name. Use a string command name or a function from initCmds().");
-      }
-      cmdName = name;
-    } else {
-      cmdName = command;
+  pipe(command: CommandFn, args: string[] = [], options?: CommandOptions): Command {
+    const cmdName = command[CMD_NAME_SYMBOL];
+    if (!cmdName) {
+      throw new Error("pipe() requires a CommandFn from initCmds(). Raw string command names are not allowed.");
     }
 
     const next = new Command(cmdName, args, options ?? {});
@@ -556,6 +548,27 @@ export class Command implements PromiseLike<CommandResult> {
     return new FluentStream(this.streamOne("stderr"));
   }
 
+  /**
+   * Apply a transform to command's stdout
+   *
+   * Convenience method that gets stdout as stream and applies a transform.
+   * Equivalent to .stdout().trans(transform).
+   *
+   * @param transform - Transform function to apply
+   * @returns FluentStream for chaining
+   *
+   * @example
+   * ```ts
+   * // Apply transforms to command output
+   * await $.git('log', '--oneline')
+   *   .trans(lines())
+   *   .head(10)
+   *   .collect();
+   * ```
+   */
+  trans<U>(transform: Transform<string, U>): FluentStream<U> {
+    return this.stdout().trans(transform);
+  }
 
   /**
    * Resolve stdin data from upstream command or options
@@ -716,7 +729,7 @@ export {
 export { toCmd, toCmdLines, execStreamToCmd } from "./command-transforms.ts";
 
 // Command initialization (initCmds)
-export { initCmds, type CommandFn } from "./command-init.ts";
+export { initCmds, type CommandFn, CMD_NAME_SYMBOL } from "./command-init.ts";
 
 // Legacy alias for backwards compatibility
 export { initCmds as init } from "./command-init.ts";

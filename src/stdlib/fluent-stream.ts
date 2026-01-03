@@ -9,6 +9,9 @@
 
 import type { Stream, Transform } from "./stream.ts";
 import * as transforms from "./transforms.ts";
+import { type CommandFn, CMD_NAME_SYMBOL } from "./command-init.ts";
+import { toCmdLines } from "./command-transforms.ts";
+import type { CommandOptions } from "./command.ts";
 
 /**
  * FluentStream<T> - A chainable API for stream processing
@@ -184,21 +187,46 @@ export class FluentStream<T> implements AsyncIterable<T> {
   }
 
   /**
-   * Apply a custom transform function to the stream
+   * Pipe stream through a transform or external command
    *
-   * This allows using any stream transform with FluentStream,
-   * enabling interoperability between the fluent API and the transform-based API.
-   *
-   * @param transform - A transform function
-   * @returns FluentStream for chaining
+   * Overloaded to accept either:
+   * - Transform function: applies transform to stream
+   * - CommandFn: pipes stream through external command (yields output lines)
    *
    * @example
    * ```ts
-   * import { filter } from './transforms.ts';
+   * // With transform
    * stream.pipe(filter(x => x > 5));
+   *
+   * // With CommandFn
+   * const [sort] = await initCmds(['sort']);
+   * stream.pipe(sort, ['-r']);
    * ```
    */
-  pipe<U>(transform: Transform<T, U>): FluentStream<U> {
+  pipe<U>(transform: Transform<T, U>): FluentStream<U>;
+  pipe(commandFn: CommandFn, args?: string[], options?: CommandOptions): FluentStream<string>;
+  pipe<U>(
+    transformOrCmd: Transform<T, U> | CommandFn,
+    args: string[] = [],
+    options?: CommandOptions,
+  ): FluentStream<U> | FluentStream<string> {
+    // Check if it's a CommandFn by looking for the symbol
+    if (typeof transformOrCmd === "function" && CMD_NAME_SYMBOL in transformOrCmd) {
+      return new FluentStream(
+        (this._stream as unknown as Stream<string>).pipe(toCmdLines(transformOrCmd as CommandFn, args, options))
+      );
+    }
+    // Otherwise treat as transform
+    return new FluentStream(this._stream.pipe(transformOrCmd as Transform<T, U>));
+  }
+
+  /**
+   * Alias for pipe(transform) - apply a transform function
+   *
+   * @param transform - A transform function
+   * @returns FluentStream for chaining
+   */
+  trans<U>(transform: Transform<T, U>): FluentStream<U> {
     return new FluentStream(this._stream.pipe(transform));
   }
 
