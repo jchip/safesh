@@ -71,6 +71,10 @@ $.path.resolve(...paths: string[]): string
 $.path.relative(from: string, to: string): string
 $.path.normalize(path: string): string
 $.path.isAbsolute(path: string): boolean
+$.path.parse(path: string): { root, dir, base, ext, name }
+$.path.format(pathObject: { root?, dir?, base?, ext?, name? }): string
+$.path.toFileUrl(path: string): URL
+$.path.fromFileUrl(url: string | URL): string
 ```
 
 **Examples:**
@@ -165,6 +169,7 @@ All commands return a `Command` object with methods:
 - `.stdout()` → `FluentStream<string>`
 - `.stderr()` → `FluentStream<string>`
 - `.pipe(cmd, args)` → `Command` (for chaining)
+- `.trans(transform)` → `FluentStream<U>` (convenience for `.stdout().trans(transform)`)
 
 ### Built-in Aliases
 
@@ -234,7 +239,7 @@ const data = await $.str('{"name":"John"}').pipe(jq, [".name"]).exec();
 
 ### General Command Execution
 
-Execute any command.
+Execute any command. Intetionally not documented in MCP instructions.
 
 **API:**
 
@@ -336,6 +341,8 @@ $.empty(): FluentStream<never>
 .tail(n: number): FluentStream<T>
 .take(n: number): FluentStream<T>  // alias for head
 .pipe<U>(transform: Transform<T, U>): FluentStream<U>
+.pipe(commandFn: CommandFn, args?: string[]): FluentStream<string>
+.trans<U>(transform: Transform<T, U>): FluentStream<U>  // alias for pipe(transform)
 
 // String-specific (when T is string)
 .lines(): FluentStream<string>
@@ -396,6 +403,36 @@ const count = await $.glob("**/*.ts").count();
 const firstError = await $.glob("logs/*.log")
   .filter((f) => f.contents.includes("FATAL"))
   .first();
+```
+
+---
+
+### Direct Array Functions
+
+For simple cases where you just need paths or entries without streaming.
+
+**API:**
+
+```typescript
+$.globPaths(pattern: string): Promise<string[]>
+$.globArray(pattern: string): Promise<GlobEntry[]>
+```
+
+**Examples:**
+
+```javascript
+// Get file paths directly (no .collect() needed)
+const paths = await $.globPaths("src/**/*.ts");
+// → ['/project/src/main.ts', '/project/src/utils.ts', ...]
+
+// Get full entries with metadata
+const entries = await $.globArray("*.json");
+// → [{path: '/project/package.json', name: 'package.json', isFile: true, ...}, ...]
+
+// Use in loops
+for (const path of await $.globPaths("tests/*.test.ts")) {
+  console.log(`Running ${path}`);
+}
 ```
 
 ---

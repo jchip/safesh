@@ -19,30 +19,35 @@ NOTE: Only use APIs listed here. DO NOT guess or make up new methods.
 
 Complete API list:
 - Util Objs:
-  - fs: await $.fs.read(pathStr), await $.fs.write(pathStr, content) - async file I/O
-  - path: join, dirname, basename, resolve, etc.
-  - text: trim → S|S[], lines, head, tail; (e.g.: $.text.trim(' h ') → 'h', .trim(' a \n b ') → ['a','b'])
-- Commands (methods: .exec() → {code, stdout: S, stderr: S}; .stdout/stderr() → FluentStream<string> ):
-  - built-in aliases: git('status'), tmux('list-sessions'), docker('ps'), tmuxSubmit(pane,msg,client)
-  - external: const [curl] = await $.initCmds(['curl']); await curl('-s', url);
-  - general: $.cmd('echo', ['hello']) - cmd name, then args array
-  - data sources: str('data'), bytes(data) - data for piping TO other commands
-    - e.g.: $.str('input').pipe(CMD, ['pattern']).exec()
-    - transforms: $.str('data').stdout().pipe($.lines()).collect()
-- glob, src, createStream, fromArray, empty → FluentStream<T> (chainables: .filter/.map/.head/.tail/lines/.grep; terminal: .collect()/.first()/.count()/.forEach())
-  - $.glob('*.txt') → File as T (object with PROPS (NOT methods) {path, base, contents})
-  - $.src('*.ts', '*.js') → multiple patterns
+  - fs: await $.fs.read(pathStr), await $.fs.write(pathStr, content)
+  - path: join, dirname, basename, extname, resolve, relative, normalize, isAbsolute, parse, format, toFileUrl, fromFileUrl
+  - text: trim → S|S[], lines, head, tail, grep, replace, sort, uniq, count, cut, filter, map, diff, joinLines; (e.g.: $.text.trim(' h ') → 'h', .trim(' a \n b ') → ['a','b'])
+- initCmds(['cmd1', ...]) → Promise<CmdFn[]>
+  - e.g.: const [_curl] = await $.initCmds(['curl']); await _curl('-s', url);
+- Commands (.exec() → Promise<{code, stdout: S, stderr: S}>; .pipe(CmdFn,args) for chaining; .trans(transform) → FluentStream; .stdout()/stderr() → FluentStream<string>):
+  - built-in aliases: git('status'), tmux('list-sessions'), docker('ps'), tmuxSubmit(pane,msg,client?) → Promise
+  - data sources: str('data'), bytes(data)
+    - e.g.: $.str('input').pipe(_grepCmdFn, ['pattern']).exec(); or .stdout().lines()
+- FluentStream<T> producers:
+  - chainables: .filter/.map/.head/.tail/.lines()/.grep(); terminals (all Promise): .collect()/.first()/.count()/.forEach()
+  - .pipe(CmdFn, args)
+  - .trans(transform) → FluentStream
+  - glob('*.txt'), src('*.ts', '*.js'), createStream(asyncIter), fromArray([...]), empty()
+  - glob yields {path, base, contents} (PROPS NOT methods)
   - e.g.: $.glob('*.txt').filter(f => f.path.includes('test')).map(f => f.path).collect()
-- cat → FluentShell (specialized FluentStream<string>)
-  - e.g.: $.cat('app.log').lines().grep(/ERROR/).head(10).collect()
-- globPaths → string[]; globArray → GlobEntry[]; (Direct arrays (await, no .collect())):
-- Direct $. transform functions (e.g.: $.filter(...))
-  - filter, map, flatMap, take, head, tail, lines, grep
-  - toCmd(CMD, ['args']) - pipe stream content through external command
-  - toCmdLines(CMD, ['args']) - same but yields output lines 
-- I/O: stdout, stderr, tee
-- Shell-like: echo, cd, pwd, pushd, popd, dirs, tempdir, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls
-- Timing: sleep, delay
+- FluentShell producers (specialized FluentStream<string>):
+  - cat: $.cat('app.log').lines().grep(/ERROR/).head(10).collect()
+- Direct arrays (no .collect()):
+  - globPaths('*.ts') → Promise<string[]>
+  - globArray('*.ts') → Promise<GlobEntry[]>
+- Stream transforms: 
+  - toCmd/toCmdLines(CmdFn, args) - yields single result/lines, stdout, stderr, grep(pattern), lines() → Transform<string, string>
+  - tee, filter, take, head, tail → Transform<T, T>
+  - map, flatMap → Transform<T, U>
+- Shell-like
+  - (sync): echo, cd, pwd, pushd, popd, dirs, tempdir
+  - (async → Promise): test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls
+- Timing: sleep(ms), delay(ms) → Promise<void>
 - State (persists with shellId): ID, ProjectDir, CWD; ENV, VARS (plain objs)
 
 Path expansion:
