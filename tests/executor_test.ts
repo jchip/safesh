@@ -367,3 +367,190 @@ Deno.test("executeFile - handles file errors", async () => {
     "Failed to read file",
   );
 });
+
+// ============================================================================
+// Bug Fix Regression Tests
+// ============================================================================
+
+Deno.test("SSH-202: $.fromArray().filter() works with FluentStream", async () => {
+  const code = `
+    const result = await $.fromArray([1, 2, 3, 4, 5])
+      .filter(x => x > 2)
+      .collect();
+    console.log(JSON.stringify(result));
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "[3,4,5]");
+});
+
+Deno.test("SSH-202: $.fromArray().map().filter().collect() chain works", async () => {
+  const code = `
+    const result = await $.fromArray(['a', 'bb', 'ccc'])
+      .map(s => s.length)
+      .filter(n => n > 1)
+      .collect();
+    console.log(JSON.stringify(result));
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "[2,3]");
+});
+
+Deno.test("SSH-203: $.sleep() waits for specified time", async () => {
+  const code = `
+    const start = Date.now();
+    await $.sleep(50);
+    const elapsed = Date.now() - start;
+    console.log(elapsed >= 45 ? "ok" : "too fast");
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "ok");
+});
+
+Deno.test("SSH-203: $.delay() is alias for $.sleep()", async () => {
+  const code = `
+    const start = Date.now();
+    await $.delay(50);
+    const elapsed = Date.now() - start;
+    console.log(elapsed >= 45 ? "ok" : "too fast");
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "ok");
+});
+
+Deno.test("SSH-202: $.createStream() returns FluentStream with .filter()", async () => {
+  const code = `
+    const stream = $.createStream((async function*() {
+      yield 1; yield 2; yield 3;
+    })());
+    const result = await stream.filter(x => x > 1).collect();
+    console.log(JSON.stringify(result));
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "[2,3]");
+});
+
+Deno.test("SSH-202: $.empty() returns FluentStream", async () => {
+  const code = `
+    const stream = $.empty();
+    const result = await stream.collect();
+    console.log(JSON.stringify(result));
+  `;
+
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "[]");
+});
+
+// Note: SSH-204 (shell.id in response) is tested manually via MCP integration.
+// The fix changed server.ts line 416 from `shellId` to `shell.id`.
+// SSH-201 and SSH-205 were documentation fixes, no code tests needed.
+
+// ============================================================================
+// SSH-206: file vs module execution tests
+// ============================================================================
+
+Deno.test("SSH-206: file param reads content and executes as code", async () => {
+  // This tests that file content goes through the code execution path
+  // (wrapped in async IIFE, same as inline code)
+  const testFile = "/tmp/ssh206-file-test.ts";
+  const fileContent = `
+    console.log("from file");
+    console.log(typeof $.sleep); // Should be function (from preamble)
+  `;
+
+  try {
+    await Deno.writeTextFile(testFile, fileContent);
+
+    // Use executeCode to simulate what handleRun does with file param:
+    // read content and pass to code execution
+    const code = await Deno.readTextFile(testFile);
+    const result = await executeCode(code, testConfig);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "from file");
+    assertStringIncludes(result.stdout, "function"); // $.sleep should exist
+  } finally {
+    try { await Deno.remove(testFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("SSH-206: module execution supports top-level structure", async () => {
+  // This tests that module execution (executeFile) works with module structure
+  const testFile = "/tmp/ssh206-module-test.ts";
+  const moduleContent = `
+    // Module with top-level code
+    console.log("module executed");
+  `;
+
+  try {
+    await Deno.writeTextFile(testFile, moduleContent);
+    const result = await executeFile(testFile, testConfig);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "module executed");
+  } finally {
+    try { await Deno.remove(testFile); } catch { /* ignore */ }
+  }
+});
+
+// ============================================================================
+// SSH-209: $.CWD updates when directory changes
+// ============================================================================
+
+Deno.test("SSH-209: $.CWD updates after $.cd()", async () => {
+  const code = `
+    const initialCwd = $.CWD;
+    await $.mkdir('/tmp/ssh209-test', { recursive: true });
+    $.cd('/tmp/ssh209-test');
+    const afterCd = $.CWD;
+    console.log('initial:', initialCwd);
+    console.log('after:', afterCd);
+    console.log('matches:', afterCd === '/tmp/ssh209-test' || afterCd === '/private/tmp/ssh209-test');
+  `;
+
+  try {
+    const result = await executeCode(code, testConfig);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "matches: true");
+  } finally {
+    try { await Deno.remove("/tmp/ssh209-test", { recursive: true }); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("SSH-209: $.CWD updates after $.pushd()", async () => {
+  const code = `
+    await $.mkdir('/tmp/ssh209-pushd-test', { recursive: true });
+    const initialCwd = $.CWD;
+    $.pushd('/tmp/ssh209-pushd-test');
+    const afterPushd = $.CWD;
+    console.log('initial:', initialCwd);
+    console.log('after:', afterPushd);
+    console.log('matches:', afterPushd === '/tmp/ssh209-pushd-test' || afterPushd === '/private/tmp/ssh209-pushd-test');
+  `;
+
+  try {
+    const result = await executeCode(code, testConfig);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "matches: true");
+  } finally {
+    try { await Deno.remove("/tmp/ssh209-pushd-test", { recursive: true }); } catch { /* ignore */ }
+  }
+});
