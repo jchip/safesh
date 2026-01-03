@@ -579,14 +579,16 @@ function buildDenyWritePermission(paths: string[], cwd: string): string | null {
 
 /**
  * Build network permission flag
+ * Defaults to allowing all network access unless explicitly restricted
  */
-function buildNetPermission(net: boolean | string[] | undefined): string | null {
-  if (net === true) {
-    return "--allow-net";
+function buildNetPermission(net: boolean | string[] | undefined): string {
+  if (net === false) {
+    return "";  // Explicitly disabled
   } else if (Array.isArray(net) && net.length) {
     return `--allow-net=${net.join(",")}`;
   }
-  return null;
+  // Default: allow all network access (undefined or true)
+  return "--allow-net";
 }
 
 /**
