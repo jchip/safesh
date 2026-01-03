@@ -8,18 +8,12 @@
 export function createRunToolDescription(_permSummary?: string): string {
   return `Execute JS/TS in sandboxed Deno - MCPU usage: infoc
 
-$ namespace: fs.read/write, git, docker, cmd, cat, glob, globArray, lines, grep, filter, map, head, tail
+$ namespace: fs.read/write, git, tmux, docker, cmd, cat, glob, globArray, lines, grep, filter, map, head, tail
 State (persists): $.ID, $.CWD, $.ENV (plain obj), $.VARS
 
-COMMANDS: $.git('status') returns {code, stdout, stderr}:
-  const {stdout} = await $.git('log', '--oneline');
-
-GLOB: $.glob() returns stream - use .collect() or $.globArray() for array:
-  const files = await $.globArray('**/*.ts'); // string[] of paths
-
-STREAMING:
-  $.cat('f').lines().grep(/pat/).head(10).collect()
-  $.glob('**').pipe($.filter(f => ...)).pipe($.head(5)).collect()`;
+Built-in commands: $.git(), $.tmux(), $.docker() - return {code, stdout, stderr}
+External: const [_curl] = await $.initCmds(['curl']); await _curl('-s', url);
+Streaming: $.cat('f').lines().grep(/pat/).head(10).collect()`;
 }
 
 export const START_SHELL_DESCRIPTION = "Create persistent shell for state between calls (cwd, env, VARS)";
