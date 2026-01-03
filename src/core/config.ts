@@ -191,7 +191,7 @@ export const DEFAULT_CONFIG: SafeShellConfig = {
   permissions: {
     read: ["${CWD}", "${HOME}", "/tmp"],
     denyRead: [...SENSITIVE_READ_PATHS],
-    write: ["${CWD}", "/tmp"],
+    write: ["${CWD}", "/tmp", "/dev/null"],
     denyWrite: [...SENSITIVE_WRITE_PATHS],
     net: [],
     run: [...SAFE_COMMANDS],
