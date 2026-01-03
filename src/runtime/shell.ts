@@ -174,11 +174,15 @@ export class ShellManager {
     description?: string;
   } = {}): Shell {
     const now = new Date();
+    // Default env: inherit from parent process, then merge any provided env vars
+    const parentEnv = Deno.env.toObject();
+    const env = Object.assign({}, parentEnv, options.env);
+
     return {
       id: options.id ?? `sh${++this.shellSequence}`,
       description: options.description,
       cwd: options.cwd ?? this.defaultCwd,
-      env: options.env ?? {},
+      env,
       vars: {},
       scripts: new Map(),
       scriptsByPid: new Map(),
