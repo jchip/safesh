@@ -456,3 +456,315 @@ Deno.test("mergeConfigs - keeps base blockProjectDirWrite when override is undef
 
   assertEquals(merged.blockProjectDirWrite, true);
 });
+
+// ============================================================================
+// getEffectivePermissions Tests - blockProjectDirWrite adds denyWrite
+// ============================================================================
+
+import { getEffectivePermissions } from "../src/core/permissions.ts";
+
+Deno.test("getEffectivePermissions - adds projectDir to denyWrite when blockProjectDirWrite=true", () => {
+  const config: SafeShellConfig = {
+    projectDir: "/project",
+    blockProjectDirWrite: true,
+    permissions: {},
+  };
+
+  const perms = getEffectivePermissions(config, "/tmp");
+
+  // projectDir should be in denyWrite
+  assertEquals(perms.denyWrite?.includes("/project"), true);
+  // projectDir should NOT be in write
+  assertEquals(perms.write?.includes("/project"), false);
+  // projectDir should still be in read
+  assertEquals(perms.read?.includes("/project"), true);
+});
+
+Deno.test("getEffectivePermissions - projectDir in write when blockProjectDirWrite=false", () => {
+  const config: SafeShellConfig = {
+    projectDir: "/project",
+    blockProjectDirWrite: false,
+    permissions: {},
+  };
+
+  const perms = getEffectivePermissions(config, "/tmp");
+
+  // projectDir should be in write
+  assertEquals(perms.write?.includes("/project"), true);
+  // projectDir should NOT be in denyWrite
+  assertEquals(perms.denyWrite?.includes("/project") ?? false, false);
+  // projectDir should still be in read
+  assertEquals(perms.read?.includes("/project"), true);
+});
+
+Deno.test("getEffectivePermissions - projectDir in write when blockProjectDirWrite is undefined", () => {
+  const config: SafeShellConfig = {
+    projectDir: "/project",
+    // blockProjectDirWrite not set
+    permissions: {},
+  };
+
+  const perms = getEffectivePermissions(config, "/tmp");
+
+  // projectDir should be in write (default behavior)
+  assertEquals(perms.write?.includes("/project"), true);
+  // projectDir should NOT be in denyWrite
+  assertEquals(perms.denyWrite?.includes("/project") ?? false, false);
+});
+
+// ============================================================================
+// Executor Integration Tests - projectDir read/write permissions
+// ============================================================================
+
+import { executeCode } from "../src/runtime/executor.ts";
+import { assertStringIncludes, assertMatch } from "@std/assert";
+
+Deno.test({
+  name: "executor - reads file within projectDir successfully",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const projectDir = `${realTmp}/safesh-exec-read-test`;
+    const testFile = `${projectDir}/data/test.txt`;
+    const testContent = "projectDir read content";
+
+    try {
+      await Deno.mkdir(`${projectDir}/data`, { recursive: true });
+      await Deno.writeTextFile(testFile, testContent);
+
+      const config: SafeShellConfig = {
+        projectDir,
+        permissions: {
+          read: [], // No explicit read - only projectDir should grant access
+          write: ["/tmp"],
+        },
+      };
+
+      const code = `
+        const content = await Deno.readTextFile("${testFile}");
+        console.log(content);
+      `;
+
+      const result = await executeCode(code, config);
+
+      assertEquals(result.success, true);
+      assertStringIncludes(result.stdout, testContent);
+    } finally {
+      try {
+        await Deno.remove(projectDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "executor - writes file within projectDir successfully",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const projectDir = `${realTmp}/safesh-exec-write-test`;
+    const testFile = `${projectDir}/output/result.txt`;
+    const testContent = "projectDir write content";
+
+    try {
+      await Deno.mkdir(`${projectDir}/output`, { recursive: true });
+
+      const config: SafeShellConfig = {
+        projectDir,
+        permissions: {
+          read: [],
+          write: [], // No explicit write - only projectDir should grant access
+        },
+      };
+
+      const code = `
+        await Deno.writeTextFile("${testFile}", "${testContent}");
+        const content = await Deno.readTextFile("${testFile}");
+        console.log(content);
+      `;
+
+      const result = await executeCode(code, config);
+
+      assertEquals(result.success, true);
+      assertStringIncludes(result.stdout, testContent);
+
+      // Verify file was actually written
+      const written = await Deno.readTextFile(testFile);
+      assertEquals(written, testContent);
+    } finally {
+      try {
+        await Deno.remove(projectDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "executor - blocks read outside projectDir when explicitly denied",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const projectDir = `${realTmp}/safesh-exec-block-read-test`;
+    const outsideDir = `${realTmp}/safesh-outside-read-test`;
+    const outsideFile = `${outsideDir}/secret.txt`;
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.mkdir(outsideDir, { recursive: true });
+      await Deno.writeTextFile(outsideFile, "secret data");
+
+      const config: SafeShellConfig = {
+        projectDir,
+        permissions: {
+          read: [],
+          write: [],
+          denyRead: [outsideDir], // Explicitly deny read access
+        },
+      };
+
+      const code = `
+        const content = await Deno.readTextFile("${outsideFile}");
+        console.log(content);
+      `;
+
+      const result = await executeCode(code, config);
+
+      // Should fail because denyRead blocks the outside directory
+      assertEquals(result.success, false);
+      // Should have permission error in stderr
+      assertMatch(result.stderr, /Requires read access|permission|denied|not permitted/i);
+    } finally {
+      try {
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(outsideDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "executor - blocks write outside projectDir when explicitly denied",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const projectDir = `${realTmp}/safesh-exec-block-write-test`;
+    const outsideDir = `${realTmp}/safesh-outside-write-test`;
+    const outsideFile = `${outsideDir}/output.txt`;
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.mkdir(outsideDir, { recursive: true });
+
+      const config: SafeShellConfig = {
+        projectDir,
+        permissions: {
+          read: [outsideDir],
+          write: [],
+          denyWrite: [outsideDir], // Explicitly deny write access
+        },
+      };
+
+      const code = `
+        await Deno.writeTextFile("${outsideFile}", "hacked!");
+        console.log("written");
+      `;
+
+      const result = await executeCode(code, config);
+
+      // Should fail because denyWrite blocks the outside directory
+      assertEquals(result.success, false);
+      // Should have permission error in stderr
+      assertMatch(result.stderr, /Requires write access|permission|denied|not permitted/i);
+    } finally {
+      try {
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(outsideDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "executor - blockProjectDirWrite blocks writes to projectDir",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const projectDir = `${realTmp}/safesh-exec-blocked-write-test`;
+    const testFile = `${projectDir}/blocked.txt`;
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+
+      const config: SafeShellConfig = {
+        projectDir,
+        blockProjectDirWrite: true, // Block writes
+        permissions: {
+          read: [],
+          write: [], // No explicit write
+        },
+      };
+
+      const code = `
+        await Deno.writeTextFile("${testFile}", "blocked write attempt");
+        console.log("written");
+      `;
+
+      const result = await executeCode(code, config);
+
+      // Should fail because blockProjectDirWrite is true
+      assertEquals(result.success, false);
+      // Should have permission error in stderr
+      assertMatch(result.stderr, /Requires write access|permission|denied|not permitted/i);
+    } finally {
+      try {
+        await Deno.remove(projectDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "executor - blockProjectDirWrite allows reads from projectDir",
+  async fn() {
+    const realTmp = await Deno.realPath("/tmp");
+    const projectDir = `${realTmp}/safesh-exec-readonly-test`;
+    const testFile = `${projectDir}/readable.txt`;
+    const testContent = "readonly content";
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(testFile, testContent);
+
+      const config: SafeShellConfig = {
+        projectDir,
+        blockProjectDirWrite: true, // Block writes, but reads should work
+        permissions: {
+          read: [],
+          write: [],
+        },
+      };
+
+      const code = `
+        const content = await Deno.readTextFile("${testFile}");
+        console.log(content);
+      `;
+
+      const result = await executeCode(code, config);
+
+      // Should succeed - reads are still allowed
+      assertEquals(result.success, true);
+      assertStringIncludes(result.stdout, testContent);
+    } finally {
+      try {
+        await Deno.remove(projectDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
