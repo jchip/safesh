@@ -3,6 +3,7 @@
 ## Project Summary
 
 **SafeShell** is a secure, Deno-based shell replacement for AI assistants. It provides:
+
 - Full JS/TS execution in a sandboxed Deno runtime
 - Pre-configured permissions (no prompts for allowed operations)
 - Fine-grained whitelist for external commands (git, docker, etc.)
@@ -13,24 +14,24 @@
 
 ### Completed (16 tickets)
 
-| Ticket | Description |
-|--------|-------------|
-| SSH-44 | Project scaffold - deno.json, directory structure, types |
+| Ticket | Description                                                  |
+| ------ | ------------------------------------------------------------ |
+| SSH-44 | Project scaffold - deno.json, directory structure, types     |
 | SSH-33 | Code execution model - temp file + deno run with permissions |
-| SSH-9 | Deno permission configuration - path expansion, validation |
-| SSH-10 | Config loading - default/global/project config merging |
-| SSH-35 | Symlink resolution security - realPath validation |
-| SSH-34 | Path argument validation for external commands |
-| SSH-13 | External command whitelist registry |
-| SSH-14 | Command and flag validation |
-| SSH-16 | MCP server setup with exec and run tools |
-| SSH-17 | MCP exec tool enhancements |
-| SSH-18 | MCP run tool enhancements |
-| SSH-20 | Stdlib file system utilities |
-| SSH-21 | Stdlib text processing utilities |
-| SSH-22 | Stdlib glob matching |
-| SSH-36 | Session management |
-| SSH-12 | AI-friendly error types (tests) |
+| SSH-9  | Deno permission configuration - path expansion, validation   |
+| SSH-10 | Config loading - default/global/project config merging       |
+| SSH-35 | Symlink resolution security - realPath validation            |
+| SSH-34 | Path argument validation for external commands               |
+| SSH-13 | External command whitelist registry                          |
+| SSH-14 | Command and flag validation                                  |
+| SSH-16 | MCP server setup with exec and run tools                     |
+| SSH-17 | MCP exec tool enhancements                                   |
+| SSH-18 | MCP run tool enhancements                                    |
+| SSH-20 | Stdlib file system utilities                                 |
+| SSH-21 | Stdlib text processing utilities                             |
+| SSH-22 | Stdlib glob matching                                         |
+| SSH-36 | Session management                                           |
+| SSH-12 | AI-friendly error types (tests)                              |
 
 ### Git History
 
@@ -103,6 +104,7 @@ safesh/
 ## Key Features Now Working
 
 1. **MCP Server** with 6 tools:
+
    - `exec` - Execute JS/TS code in sandbox
    - `run` - Execute whitelisted external commands
    - `startSession` - Create persistent session
@@ -111,11 +113,13 @@ safesh/
    - `listSessions` - List active sessions
 
 2. **Stdlib Utilities**:
+
    - `fs.*` - File operations with sandbox validation
    - `text.*` - grep, head, tail, replace, sort, diff
    - `glob.*` - Pattern matching with sandbox checks
 
 3. **Session Management**:
+
    - Persistent cwd, env, vars between calls
    - Job tracking (for future background jobs)
 
@@ -127,16 +131,19 @@ safesh/
 ## Next Tickets (Priority Order)
 
 ### HIGH Priority
+
 - **SSH-37**: Real-time output streaming via MCP
 - **SSH-38**: Background job control (bg, jobs, kill)
 
 ### Standard Priority
+
 - **SSH-32**: CLI entry point and REPL
 - **SSH-39**: Config validation and security presets
 - **SSH-40**: Import security policy
 - **SSH-41**: Fluent shell API ($)
 
 ### Lower Priority
+
 - **SSH-23, SSH-24**: Stream src/dest primitives
 - **SSH-26, SSH-28**: Task runner
 - **SSH-45**: E2E integration tests

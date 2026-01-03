@@ -107,6 +107,15 @@ export interface SafeShellConfig {
    */
   allowProjectCommands?: boolean;
 
+  /**
+   * Project temp directory configuration for $.tempdir().
+   * - true (default): Use projectDir/.temp/<shellId>
+   * - false: Use system /tmp/<shellId>
+   * - string (absolute): Use path directly + /<shellId>
+   * - string (relative): Use projectDir/<path>/<shellId>
+   */
+  projectTemp?: boolean | string;
+
   /** Deno permission configuration */
   permissions?: PermissionsConfig;
 

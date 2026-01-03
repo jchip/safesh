@@ -12,12 +12,14 @@ SafeShell is a secure, Deno-based shell replacement designed to provide AI assis
 ## Core Philosophy
 
 **Bash Tool Limitations:**
+
 - Limited regex-based command matching
 - Permission prompts interrupt flow
 - String-based, error-prone
 - Platform-dependent behavior
 
 **SafeShell Approach:**
+
 - Full JS/TS with Deno's sandboxed runtime
 - Pre-configured permissions per project
 - Type-safe APIs, proper error handling
@@ -51,7 +53,7 @@ async function exec(code: string, options: ExecOptions): Promise<ExecResult> {
       "run",
       "--import-map=/path/to/safesh/import-map.json",
       ...buildPermFlags(config),
-      scriptPath
+      scriptPath,
     ],
     cwd: session.cwd,
     env: filterEnv(session.env, config),
@@ -85,18 +87,20 @@ endSession(sessionId): void
 ### 3. Security Hardening
 
 **Path Argument Validation:**
+
 ```typescript
 interface ExternalCommandConfig {
   allow: boolean | string[];
   denyFlags?: string[];
   pathArgs?: {
-    autoDetect?: boolean;      // Detect /path and ./path
+    autoDetect?: boolean; // Detect /path and ./path
     validateSandbox?: boolean; // Must be in allowed dirs
   };
 }
 ```
 
 **Symlink Resolution:**
+
 ```typescript
 // Always resolve real path before validation
 const realPath = await Deno.realPath(requestedPath);
@@ -106,10 +110,11 @@ if (!isWithinAllowedPaths(realPath, config.paths.allowed)) {
 ```
 
 **Import Security (three-tier):**
+
 ```typescript
 const importPolicy = {
   trusted: ["jsr:@std/*", "safesh:*"],
-  allowed: [],  // User whitelist
+  allowed: [], // User whitelist
   blocked: ["npm:*", "http:*", "https:*"],
 };
 ```
@@ -332,7 +337,7 @@ AI can write and execute JS/TS directly:
 
 // File operations - uses Deno APIs directly
 const content = await Deno.readTextFile("src/main.ts");
-const lines = content.split("\n").filter(l => l.includes("TODO"));
+const lines = content.split("\n").filter((l) => l.includes("TODO"));
 console.log(`Found ${lines.length} TODOs`);
 
 // Complex transformations
@@ -361,21 +366,23 @@ import * as text from "safesh:text";
 import $ from "safesh:shell";
 
 // fs namespace - file operations
-await fs.read("file.txt");                    // Read file
-await fs.write("file.txt", content);          // Write file
-await fs.copy("src.txt", "dest.txt");         // Copy
-await fs.move("old.txt", "new.txt");          // Move/rename
-await fs.remove("file.txt");                  // Delete
-await fs.exists("file.txt");                  // Check existence
-for await (const f of fs.glob("**/*.ts")) {}  // Glob files
-for await (const e of fs.walk("src")) {}      // Walk directory
+await fs.read("file.txt"); // Read file
+await fs.write("file.txt", content); // Write file
+await fs.copy("src.txt", "dest.txt"); // Copy
+await fs.move("old.txt", "new.txt"); // Move/rename
+await fs.remove("file.txt"); // Delete
+await fs.exists("file.txt"); // Check existence
+for await (const f of fs.glob("**/*.ts")) {
+} // Glob files
+for await (const e of fs.walk("src")) {
+} // Walk directory
 
 // text namespace - text processing
-const matches = await text.grep(/TODO/, content);  // Returns Match[]
-const first10 = await text.head(content, 10);      // First N lines
-const last20 = await text.tail(content, 20);       // Last N lines
+const matches = await text.grep(/TODO/, content); // Returns Match[]
+const first10 = await text.head(content, 10); // First N lines
+const last20 = await text.tail(content, 20); // Last N lines
 const replaced = text.replace(content, /old/g, "new");
-const stats = await text.count(content);  // { lines, words, chars }
+const stats = await text.count(content); // { lines, words, chars }
 
 // All functions RETURN results (never print to stdout)
 // All functions THROW on errors with AI-friendly messages
@@ -390,13 +397,15 @@ import $ from "safesh:shell";
 
 // Fluent file operations
 await $("file.txt").read();
-await $("file.txt").grep(/pattern/).print();
+await $("file.txt")
+  .grep(/pattern/)
+  .print();
 await $("src/**/*.ts").grep(/TODO/).count();
 
 // Chain operations
 await $("logs/*.log")
   .lines()
-  .filter(l => l.includes("ERROR"))
+  .filter((l) => l.includes("ERROR"))
   .take(10)
   .save("errors.txt");
 
@@ -437,13 +446,15 @@ import { src, dest, transform, filter } from "safesh/streams";
 
 // Process log files
 await src("logs/**/*.log")
-  .pipe(filter(line => line.includes("ERROR")))
-  .pipe(transform(line => `[EXTRACTED] ${line}`))
+  .pipe(filter((line) => line.includes("ERROR")))
+  .pipe(transform((line) => `[EXTRACTED] ${line}`))
   .pipe(dest("errors.txt"));
 
 // Transform and copy
 await src("src/**/*.ts")
-  .pipe(transform(content => content.replace(/console\.log/g, "logger.debug")))
+  .pipe(
+    transform((content) => content.replace(/console\.log/g, "logger.debug"))
+  )
   .pipe(dest("dist/"));
 ```
 
@@ -504,6 +515,7 @@ const result = await runExternal("git", ["push", "origin", "main"], {
 #### Core Execution
 
 1. **exec** - Execute JS/TS code (supports streaming)
+
    ```typescript
    {
      code: string,        // JS/TS code to execute
@@ -515,6 +527,7 @@ const result = await runExternal("git", ["push", "origin", "main"], {
    ```
 
 2. **run** - Execute whitelisted external command
+
    ```typescript
    {
      command: string,     // Command name
@@ -537,6 +550,7 @@ const result = await runExternal("git", ["push", "origin", "main"], {
 #### Session Management
 
 4. **startSession** - Create new session
+
    ```typescript
    {
      cwd?: string,        // Initial working directory
@@ -546,6 +560,7 @@ const result = await runExternal("git", ["push", "origin", "main"], {
    ```
 
 5. **endSession** - Destroy session and cleanup
+
    ```typescript
    {
      sessionId: string,
@@ -564,6 +579,7 @@ const result = await runExternal("git", ["push", "origin", "main"], {
 #### Background Job Control
 
 7. **bg** - Launch background job
+
    ```typescript
    {
      code?: string,       // JS/TS code
@@ -575,6 +591,7 @@ const result = await runExternal("git", ["push", "origin", "main"], {
    ```
 
 8. **jobs** - List running jobs
+
    ```typescript
    {
      sessionId?: string,  // Filter by session
@@ -583,6 +600,7 @@ const result = await runExternal("git", ["push", "origin", "main"], {
    ```
 
 9. **jobOutput** - Get job's buffered output
+
    ```typescript
    {
      jobId: string,
@@ -592,6 +610,7 @@ const result = await runExternal("git", ["push", "origin", "main"], {
    ```
 
 10. **kill** - Stop a background job
+
     ```typescript
     {
       jobId: string,
@@ -612,25 +631,26 @@ const result = await runExternal("git", ["push", "origin", "main"], {
 ```typescript
 interface SafeShellError {
   code:
-    | "PERMISSION_DENIED"     // Deno permission blocked
-    | "COMMAND_NOT_WHITELISTED"  // External command not in whitelist
-    | "FLAG_NOT_ALLOWED"      // Specific flag blocked
-    | "PATH_VIOLATION"        // Path outside allowed dirs
-    | "TIMEOUT"               // Execution timeout
-    | "EXECUTION_ERROR";      // Runtime error
+    | "PERMISSION_DENIED" // Deno permission blocked
+    | "COMMAND_NOT_WHITELISTED" // External command not in whitelist
+    | "FLAG_NOT_ALLOWED" // Specific flag blocked
+    | "PATH_VIOLATION" // Path outside allowed dirs
+    | "TIMEOUT" // Execution timeout
+    | "EXECUTION_ERROR"; // Runtime error
 
   message: string;
   details?: {
     command?: string;
     flag?: string;
     path?: string;
-    allowed?: string[];       // What IS allowed (helpful for AI)
+    allowed?: string[]; // What IS allowed (helpful for AI)
   };
-  suggestion?: string;        // AI-friendly suggestion
+  suggestion?: string; // AI-friendly suggestion
 }
 ```
 
 **Example:**
+
 ```json
 {
   "code": "FLAG_NOT_ALLOWED",
@@ -700,70 +720,81 @@ Later configs override earlier ones. Permissions are merged (union), while deny 
 ## Implementation Phases
 
 ### Phase 1: Core Runtime (SSH-1)
+
 - [ ] Deno permission configuration
 - [ ] Config file loading and merging
 - [ ] Basic JS/TS execution in sandbox
 - [ ] Error types and AI-friendly messages
 
 ### Phase 2: External Commands (SSH-6)
+
 - [ ] Command whitelist registry
 - [ ] Subcommand validation
 - [ ] Flag filtering
 - [ ] External command executor
 
 ### Phase 3: MCP Integration (SSH-7)
+
 - [ ] MCP server setup
 - [ ] exec tool implementation
 - [ ] run tool implementation
 - [ ] Error response formatting
 
 ### Phase 4: Standard Library (SSH-2, SSH-3)
+
 - [ ] File system utilities (grep, find, etc.)
 - [ ] Text processing utilities
 - [ ] Glob matching
 
 ### Phase 5: Streaming (SSH-4)
+
 - [ ] src/dest primitives
 - [ ] Transform pipelines
 - [ ] Built-in transforms
 
 ### Phase 6: Task Runner (SSH-5)
+
 - [ ] Task definition parsing
 - [ ] Serial/parallel execution
 - [ ] xrun array syntax
 - [ ] Watch mode
 
 ### Phase 7: Advanced Features (SSH-8)
+
 - [ ] Archive utilities (tar, zip)
 - [ ] Process management
 - [ ] Network utilities
 
 ## Comparison: Bash Tool vs SafeShell
 
-| Aspect | Bash Tool | SafeShell |
-|--------|-----------|-----------|
+| Aspect           | Bash Tool              | SafeShell                    |
+| ---------------- | ---------------------- | ---------------------------- |
 | Permission model | Regex command matching | Deno permissions + whitelist |
-| Prompts | Frequent | Pre-configured, none |
-| Language | Shell commands | Full JS/TS |
-| Type safety | None | Full TypeScript |
-| Error messages | Shell errors | AI-friendly with suggestions |
-| Platform | OS-dependent | Cross-platform (Deno) |
-| File ops | Shell commands | Deno APIs |
-| Text processing | grep, sed, awk | JS/TS + stdlib |
-| Extensibility | Limited | Full JS/TS ecosystem |
+| Prompts          | Frequent               | Pre-configured, none         |
+| Language         | Shell commands         | Full JS/TS                   |
+| Type safety      | None                   | Full TypeScript              |
+| Error messages   | Shell errors           | AI-friendly with suggestions |
+| Platform         | OS-dependent           | Cross-platform (Deno)        |
+| File ops         | Shell commands         | Deno APIs                    |
+| Text processing  | grep, sed, awk         | JS/TS + stdlib               |
+| Extensibility    | Limited                | Full JS/TS ecosystem         |
 
 ## Open Questions
 
 1. **REPL mode**: Provide interactive mode for exploration?
+
    - Proposal: Yes, useful for debugging and learning
 
 2. **Import permissions**: Allow arbitrary JSR/npm imports?
+
    - Proposal: Whitelist specific packages or trust all JSR
 
 3. **Subprocess output streaming**: Real-time output for long commands?
+
    - Proposal: Use MCP streaming or periodic updates
 
 4. **State persistence**: Share state between exec calls?
+
    - Proposal: Optional context object passed between calls
 
 5. **Timeout defaults**: Per-command-type timeouts?

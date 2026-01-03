@@ -64,6 +64,7 @@ if (import.meta.main) {
 ```
 
 **What happens**:
+
 - Server is invoked directly via `deno run --allow-all src/mcp/server.ts`
 - The `main()` function is called as the entry point
 - Any uncaught errors terminate the server with exit code 1
@@ -75,11 +76,13 @@ if (import.meta.main) {
 **Loading Order** (cascading priority):
 
 1. **Default Config** (line 140)
+
    - Starts with `STANDARD_PRESET`
    - Location: Built into the binary
    - Provides: Minimal safe defaults
 
 2. **Global Config** (lines 319-328)
+
    - Path: `~/.config/safesh/config.ts`
    - Loaded via: `loadConfigFile(globalPath)`
    - If preset specified: Replaces defaults entirely
@@ -110,6 +113,7 @@ timeout: projectTimeout ?? globalTimeout ?? defaultTimeout
 ```
 
 **Error Handling**:
+
 - Missing config files: Silently ignored (use defaults)
 - Malformed config: Throws `ConfigError` with details
 - TypeScript errors: Import fails with syntax error
@@ -123,16 +127,19 @@ timeout: projectTimeout ?? globalTimeout ?? defaultTimeout
 **Validation Checks**:
 
 1. **Permission Validation**:
+
    - ERROR: `write: ['/']` (root filesystem write)
    - ERROR: `run: ['*']` (wildcard commands)
    - WARNING: `read: ['/']` (entire filesystem)
    - WARNING: `net: true` (unrestricted network)
 
 2. **External Command Validation**:
+
    - ERROR: Conflicting flags (denied + required)
    - WARNING: Commands with no restrictions
 
 3. **Import Policy Validation**:
+
    - ERROR: Pattern both trusted AND blocked
    - WARNING: Empty blocked list
    - WARNING: `npm:*` or `http:*` allowed
@@ -142,6 +149,7 @@ timeout: projectTimeout ?? globalTimeout ?? defaultTimeout
    - WARNING: CWD write + no import blocks
 
 **Result**:
+
 - Errors: Server fails to start (logged to stderr)
 - Warnings: Server starts, warnings logged (lines 364-367)
 
@@ -161,16 +169,19 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 **Components Created**:
 
 1. **Server Instance** (line 96-105)
+
    - MCP SDK server
    - Name: "safesh", Version: "0.1.0"
    - Capabilities: `{ tools: {} }`
 
 2. **Command Registry** (line 108)
+
    - Loads from `config.external`
    - Merges with default command configs
    - Validates command whitelist
 
 3. **Session Manager** (line 109)
+
    - Default CWD: Current directory
    - Empty session map initially
    - Will create sessions on-demand
@@ -198,6 +209,7 @@ export function createServer(config: SafeShellConfig, cwd: string): Server {
 11. `fg` - Stream job output
 
 **Tool Metadata**:
+
 - Name, description, input schema (JSON Schema)
 - Permissions shown in description (AI context)
 - Required vs optional parameters
@@ -213,6 +225,7 @@ console.error("SafeShell MCP Server started");
 ```
 
 **What happens**:
+
 - Server listens on stdin/stdout (stdio transport)
 - AI assistant connects via MCP protocol
 - Server is now ready to handle requests
@@ -225,6 +238,7 @@ console.error("SafeShell MCP Server started");
 **File**: `src/mcp/server.ts` (lines 364-839)
 
 **MCP Request Format**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -260,20 +274,24 @@ switch (name) {
 #### exec Tool (lines 370-407)
 
 1. **Parse Arguments** (line 371)
+
    - Validate against `ExecSchema`
    - Extract: `code`, `sessionId`, `timeout`, `env`
 
 2. **Session Handling** (lines 374-376)
+
    - Get existing session OR create temporary
    - Temporary sessions not persisted
    - Merge additional env vars (line 380-384)
 
 3. **Code Execution** (lines 386-391)
+
    - Call `executeCode()` from runtime/executor
    - Pass: code, config, options, session
    - Sandboxed Deno subprocess spawned
 
 4. **Update Session** (lines 394-396)
+
    - If NOT temporary AND success
    - Update persisted vars from execution
    - Session state saved
@@ -286,14 +304,17 @@ switch (name) {
 #### run Tool (lines 409-456)
 
 1. **Parse Arguments** (line 410-411)
+
    - Validate against `RunSchema`
    - Extract: `command`, `args`, `sessionId`, `cwd`, `timeout`
 
 2. **Session & CWD** (lines 414-417)
+
    - Get/create session for context
    - Working dir: explicit > session > default
 
 3. **Command Execution** (lines 420-430)
+
    - Call `runExternal()` from external/runner
    - Validates against whitelist
    - Validates against sandbox
@@ -319,16 +340,19 @@ const session = sessionManager.create({ cwd: "/project", env: {...} });
 **Session Lifecycle**:
 
 1. **Create** (`startSession` tool):
+
    - Generates UUID
    - Stores in SessionManager map
    - Returns session ID to AI
 
 2. **Use** (`exec`/`run` with sessionId):
+
    - Retrieve from map
    - Pass to executor/runner
    - Session provides: cwd, env, vars, jobs
 
 3. **Update** (`updateSession` tool):
+
    - Modify: cwd, env, vars
    - Merge semantics (don't replace)
    - Session persists across calls
@@ -345,33 +369,39 @@ const session = sessionManager.create({ cwd: "/project", env: {...} });
 **Steps**:
 
 1. **Prepare Script** (lines 180-191)
+
    - Hash code to create cache key
    - Create temp file: `/tmp/safesh/scripts/{hash}.ts`
    - Build preamble with `$session` global
    - Write full code to disk
 
 2. **Import Validation** (lines 176-177)
+
    - Parse code for import statements
    - Check against `config.imports` policy
-   - Reject blocked imports (npm:*, http:*, etc.)
+   - Reject blocked imports (npm:_, http:_, etc.)
 
 3. **Build Deno Command** (lines 196-220)
+
    - Generate import map from policy
    - Build permission flags from config
    - Add: `--no-prompt`, `--import-map`, permissions
    - Args: `['run', ...flags, scriptPath]`
 
 4. **Environment Setup** (lines 217)
+
    - Build allowed env vars
    - Apply masking patterns
    - Merge session env
 
 5. **Spawn Subprocess** (line 214)
+
    - `new Deno.Command('deno', ...)`
    - Isolated Deno runtime
    - Stdout/stderr piped
 
 6. **Execution with Timeout** (lines 226-244)
+
    - Collect stdout/stderr concurrently
    - Wrap in deadline() for timeout
    - Return structured result
@@ -388,24 +418,28 @@ const session = sessionManager.create({ cwd: "/project", env: {...} });
 **Steps**:
 
 1. **Validation** (lines 37-42)
+
    - Create command registry from config
    - Call `validateExternal(command, args, ...)`
    - Checks: whitelist, subcommands, flags, paths
    - Throws if denied
 
 2. **Environment** (lines 45)
+
    - Build from: config.env.allow
    - Apply: config.env.mask
    - Merge: session.env
    - Add: options.env
 
 3. **Execute** (lines 48-55)
+
    - `new Deno.Command(command, ...)`
    - `clearEnv: true` - Don't inherit parent
    - Explicit env vars only
    - Stdout/stderr piped
 
 4. **Timeout & Collection** (lines 60-79)
+
    - Same pattern as code execution
    - Wrap in deadline()
    - Collect streams concurrently
@@ -423,6 +457,7 @@ const session = sessionManager.create({ cwd: "/project", env: {...} });
 **Format Functions**:
 
 1. **formatExecResult** (lines 847-875)
+
    ```
    [stdout content]
 
@@ -434,6 +469,7 @@ const session = sessionManager.create({ cwd: "/project", env: {...} });
    ```
 
 2. **formatRunResult** (lines 880-905)
+
    ```
    $ command arg1 arg2
 
@@ -446,6 +482,7 @@ const session = sessionManager.create({ cwd: "/project", env: {...} });
    ```
 
 3. **formatError** (lines 910-920)
+
    ```
    Error [ERROR_CODE]: message
 
@@ -453,6 +490,7 @@ const session = sessionManager.create({ cwd: "/project", env: {...} });
    ```
 
 **MCP Response Structure**:
+
 ```json
 {
   "content": [
@@ -470,18 +508,22 @@ const session = sessionManager.create({ cwd: "/project", env: {...} });
 ### Sandbox Enforcement Points
 
 1. **Config Loading** (startup):
+
    - Validates permission boundaries
    - Rejects dangerous configurations
 
 2. **Import Validation** (code execution):
+
    - Checks every import statement
    - Blocks untrusted sources
 
 3. **Path Validation** (file operations):
+
    - Every file access checked
    - Symlinks resolved and validated
 
 4. **Command Validation** (external execution):
+
    - Whitelist check
    - Subcommand filtering
    - Flag denial
@@ -517,27 +559,31 @@ Multiple layers protect against escape:
 ### Enable Verbose Logging
 
 Add to config:
+
 ```typescript
 // safesh.config.ts
 export default {
   // ... config
-  __debug: true,  // Enable debug output (not yet implemented)
-}
+  __debug: true, // Enable debug output (not yet implemented)
+};
 ```
 
 ### Common Issues
 
 1. **"Command not whitelisted"**
+
    - Check: `config.permissions.run` includes command
    - Check: `config.external.{command}` is defined
    - Solution: Add to both places
 
 2. **"Path outside allowed directories"**
+
    - Check: `config.permissions.read/write`
    - Note: Symlinks are resolved to real path
    - Solution: Add both `/tmp` and `/private/tmp` on macOS
 
 3. **"Import not allowed"**
+
    - Check: `config.imports.blocked` patterns
    - Check: `config.imports.allowed` or `trusted`
    - Solution: Add to allowed or remove from blocked
@@ -550,6 +596,7 @@ export default {
 ### Inspecting Server State
 
 **List active sessions**:
+
 ```typescript
 // Via MCP tool
 {
@@ -559,6 +606,7 @@ export default {
 ```
 
 **Check background jobs**:
+
 ```typescript
 {
   "name": "jobs",
@@ -577,12 +625,12 @@ export default {
 
 ### Per-Call Overhead
 
-| Tool | Overhead | Notes |
-|------|----------|-------|
-| exec | ~50-100ms | Deno subprocess spawn |
-| run | ~10-50ms | Direct command exec |
-| Session ops | <1ms | In-memory map |
-| Background jobs | ~50ms | Async spawn |
+| Tool            | Overhead  | Notes                 |
+| --------------- | --------- | --------------------- |
+| exec            | ~50-100ms | Deno subprocess spawn |
+| run             | ~10-50ms  | Direct command exec   |
+| Session ops     | <1ms      | In-memory map         |
+| Background jobs | ~50ms     | Async spawn           |
 
 ### Optimization Tips
 
@@ -596,6 +644,7 @@ export default {
 ### Adding New Tools
 
 **Template**:
+
 ```typescript
 // In createServer() function
 
@@ -610,7 +659,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "myTool",
       description: "Does something useful",
-      inputSchema: { /* JSON Schema */ },
+      inputSchema: {
+        /* JSON Schema */
+      },
     },
   ],
 }));
@@ -634,7 +685,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 export function validateMyRule(
   command: string,
   args: string[],
-  config: SafeShellConfig,
+  config: SafeShellConfig
 ): ValidationResult {
   // Your validation logic
 }

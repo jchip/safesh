@@ -7,6 +7,7 @@ This document catalogs packages that work with Deno and are suitable for buildin
 ## MCP (Model Context Protocol)
 
 ### @modelcontextprotocol/sdk (Official)
+
 **Source:** [npm](https://www.npmjs.com/package/@modelcontextprotocol/sdk) | [GitHub](https://github.com/modelcontextprotocol/typescript-sdk)
 
 The official TypeScript SDK for MCP servers and clients. Works with Deno via npm import.
@@ -17,6 +18,7 @@ import { StdioServerTransport } from "npm:@modelcontextprotocol/sdk/server/stdio
 ```
 
 **Features:**
+
 - Full MCP specification implementation
 - Tools, Resources, and Prompts support
 - stdio and Streamable HTTP transports
@@ -29,11 +31,13 @@ import { StdioServerTransport } from "npm:@modelcontextprotocol/sdk/server/stdio
 ## Deno Standard Library (@std)
 
 All packages available on [JSR](https://jsr.io/@std). Install via:
+
 ```bash
 deno add jsr:@std/fs jsr:@std/path jsr:@std/streams
 ```
 
 ### @std/fs - File System
+
 **JSR:** https://jsr.io/@std/fs
 
 ```typescript
@@ -54,6 +58,7 @@ import { walk, expandGlob, ensureDir, copy, move } from "jsr:@std/fs";
 **Use for:** SSH-20 (Stdlib file system utilities)
 
 ### @std/path - Path Utilities
+
 **JSR:** https://jsr.io/@std/path
 
 ```typescript
@@ -63,6 +68,7 @@ import * as windows from "jsr:@std/path/windows";
 ```
 
 **Features:**
+
 - Cross-platform path manipulation
 - Automatic OS detection
 - Explicit POSIX/Windows modules
@@ -70,10 +76,15 @@ import * as windows from "jsr:@std/path/windows";
 **Use for:** Path validation, sandbox checks
 
 ### @std/streams - Stream Utilities
+
 **JSR:** https://jsr.io/@std/streams
 
 ```typescript
-import { toTransformStream, TextLineStream, ByteSliceStream } from "jsr:@std/streams";
+import {
+  toTransformStream,
+  TextLineStream,
+  ByteSliceStream,
+} from "jsr:@std/streams";
 ```
 
 **Key Functions:**
@@ -87,6 +98,7 @@ import { toTransformStream, TextLineStream, ByteSliceStream } from "jsr:@std/str
 **Use for:** SSH-23, SSH-24, SSH-25 (Streaming API)
 
 ### @std/async - Async Utilities
+
 **JSR:** https://jsr.io/@std/async
 
 ```typescript
@@ -105,6 +117,7 @@ import { delay, debounce, retry, pooledMap, deadline } from "jsr:@std/async";
 **Use for:** SSH-27 (Parallel execution), SSH-29 (Watch mode debounce)
 
 ### @std/fmt - Formatting
+
 **JSR:** https://jsr.io/@std/fmt
 
 ```typescript
@@ -114,6 +127,7 @@ import { format as formatDuration } from "jsr:@std/fmt/duration";
 ```
 
 **Features:**
+
 - ANSI color codes
 - Respects NO_COLOR env var
 - Byte/duration formatting
@@ -122,15 +136,22 @@ import { format as formatDuration } from "jsr:@std/fmt/duration";
 **Use for:** CLI output, error messages
 
 ### @std/assert - Assertions
+
 **JSR:** https://jsr.io/@std/assert
 
 ```typescript
-import { assert, assertEquals, assertThrows, assertRejects } from "jsr:@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertThrows,
+  assertRejects,
+} from "jsr:@std/assert";
 ```
 
 **Use for:** Testing, validation
 
 ### @std/testing - Testing Utilities
+
 **JSR:** https://jsr.io/@std/testing
 
 ```typescript
@@ -140,6 +161,7 @@ import { assertSnapshot } from "jsr:@std/testing/snapshot";
 ```
 
 **Features:**
+
 - Mocking/spying
 - BDD-style testing
 - Snapshot testing
@@ -147,6 +169,7 @@ import { assertSnapshot } from "jsr:@std/testing/snapshot";
 **Use for:** All test files
 
 ### @std/dotenv - Environment Variables
+
 **JSR:** https://jsr.io/@std/dotenv (UNSTABLE)
 
 ```typescript
@@ -156,6 +179,7 @@ import "jsr:@std/dotenv/load";
 ```
 
 **Features:**
+
 - Parse .env files
 - Support for defaults and examples
 - Export to process.env
@@ -163,6 +187,7 @@ import "jsr:@std/dotenv/load";
 **Use for:** SSH-10 (Config loading)
 
 ### @std/tar - Archive (Tar)
+
 **JSR:** https://jsr.io/@std/tar (UNSTABLE)
 
 ```typescript
@@ -178,6 +203,7 @@ import { Tar, Untar } from "jsr:@std/tar";
 ## CLI Argument Parsing
 
 ### @std/cli/parse-args (Recommended - Minimal)
+
 **JSR:** https://jsr.io/@std/cli
 
 Simple, no-framework argument parsing. Just parse and get an object.
@@ -193,10 +219,10 @@ const args = parseArgs(Deno.args, {
 });
 
 // args = { config: "foo.ts", verbose: true, _: ["exec", "code here"] }
-console.log(args.config);      // "foo.ts"
-console.log(args.verbose);     // true
-console.log(args._[0]);        // "exec" (positional)
-console.log(args._[1]);        // "code here"
+console.log(args.config); // "foo.ts"
+console.log(args.verbose); // true
+console.log(args._[0]); // "exec" (positional)
+console.log(args._[1]); // "code here"
 ```
 
 **Pros:** Zero bloat, just parsing, no magic
@@ -205,6 +231,7 @@ console.log(args._[1]);        // "code here"
 **Use for:** SSH-32 (CLI entry point) - **RECOMMENDED**
 
 ### @cliffy/flags (Alternative - Slightly More)
+
 **JSR:** https://jsr.io/@cliffy/flags
 
 Better type inference than @std/cli, still just parsing.
@@ -213,19 +240,23 @@ Better type inference than @std/cli, still just parsing.
 import { parseFlags } from "jsr:@cliffy/flags";
 
 const { flags, unknown, literal } = parseFlags(Deno.args, {
-  flags: [{
-    name: "config",
-    aliases: ["c"],
-    type: "string",
-  }, {
-    name: "verbose",
-    aliases: ["v"],
-    type: "boolean",
-  }],
+  flags: [
+    {
+      name: "config",
+      aliases: ["c"],
+      type: "string",
+    },
+    {
+      name: "verbose",
+      aliases: ["v"],
+      type: "boolean",
+    },
+  ],
 });
 ```
 
 ### @cliffy/command (Full Framework - If Needed)
+
 **JSR:** https://jsr.io/@cliffy/command | [Docs](https://cliffy.io)
 
 Full CLI framework with auto-help. **Explicit definition, NOT file-based discovery.**
@@ -260,6 +291,7 @@ await new Command()
 ## Third-Party Libraries
 
 ### @zod/zod - Schema Validation
+
 **JSR:** https://jsr.io/@zod/zod | **npm:** zod
 
 ```typescript
@@ -276,6 +308,7 @@ const ConfigSchema = z.object({
 ```
 
 **Features:**
+
 - TypeScript-first validation
 - Static type inference
 - Required by MCP SDK
@@ -283,10 +316,18 @@ const ConfigSchema = z.object({
 **Use for:** SSH-10 (Config validation), SSH-39 (Security presets)
 
 ### @deno-library/compress - Archive (Zip)
+
 **JSR:** https://jsr.io/@deno-library/compress
 
 ```typescript
-import { zip, unzip, gzip, gunzip, tar, untar } from "jsr:@deno-library/compress";
+import {
+  zip,
+  unzip,
+  gzip,
+  gunzip,
+  tar,
+  untar,
+} from "jsr:@deno-library/compress";
 ```
 
 **Formats:** tar, gzip, tgz, zip, deflate, brotli
@@ -294,13 +335,20 @@ import { zip, unzip, gzip, gunzip, tar, untar } from "jsr:@deno-library/compress
 **Use for:** SSH-30 (Archive utilities - zip support)
 
 ### @codemonument/rx-webstreams - RxJS-like Streams
+
 **JSR:** https://jsr.io/@codemonument/rx-webstreams
 
 ```typescript
-import { fileSource, map, reduce, fileTarget } from "jsr:@codemonument/rx-webstreams";
+import {
+  fileSource,
+  map,
+  reduce,
+  fileTarget,
+} from "jsr:@codemonument/rx-webstreams";
 ```
 
 **Features:**
+
 - RxJS-inspired API for Web Streams
 - Sources: `fileSource()`, `timerSource()`
 - Transforms: `map()`, `reduce()`
@@ -313,18 +361,24 @@ import { fileSource, map, reduce, fileTarget } from "jsr:@codemonument/rx-webstr
 ## Task Runner Libraries
 
 ### devo (iAmNathanJ/devo)
+
 **GitHub:** https://github.com/iAmNathanJ/devo
 
 ```typescript
 import { task, parallel, series } from "https://deno.land/x/devo/mod.ts";
 
-const build = task("build", async () => { /* ... */ });
-const test = task("test", async () => { /* ... */ });
+const build = task("build", async () => {
+  /* ... */
+});
+const test = task("test", async () => {
+  /* ... */
+});
 
 await series(build, parallel(lint, test));
 ```
 
 **Features:**
+
 - `series()` and `parallel()` composition
 - Named tasks
 - Composable chains
@@ -332,6 +386,7 @@ await series(build, parallel(lint, test));
 **Use for:** Inspiration for SSH-26, SSH-27, SSH-28
 
 ### Built-in: deno task
+
 **Docs:** https://docs.deno.com/runtime/reference/cli/task/
 
 ```json
@@ -346,6 +401,7 @@ await series(build, parallel(lint, test));
 ```
 
 **Features:**
+
 - Task dependencies (run in parallel by default)
 - Wildcard patterns (`deno task "build-*"`)
 - Async commands with `&`
@@ -355,6 +411,7 @@ await series(build, parallel(lint, test));
 ## Process Management
 
 ### Deno.Command (Built-in)
+
 **Docs:** https://docs.deno.com/api/deno/~/Deno.Command
 
 ```typescript
@@ -379,6 +436,7 @@ const status = await process.status;
 ```
 
 **Key Points:**
+
 - Use `"piped"` for stdin/stdout/stderr to capture
 - Default inherits from parent process
 - `process.kill(signal)` to terminate
@@ -386,6 +444,7 @@ const status = await process.status;
 **Use for:** SSH-15 (External command executor), SSH-31 (Process management)
 
 ### Limitations
+
 - No native detached process support (setsid)
 - Use `node:child_process` for Node.js compatibility if needed
 
@@ -394,6 +453,7 @@ const status = await process.status;
 ## Logging
 
 ### LogTape (Recommended)
+
 **GitHub:** https://github.com/dahlia/logtape
 
 ```typescript
@@ -409,33 +469,35 @@ logger.info("Starting SafeShell");
 ```
 
 **Features:**
+
 - Zero dependencies
 - Structured logging
 - Hierarchical categories
 - Works in Deno, Node, Bun, browsers
 
 ### @std/log (Deprecated Soon)
+
 **Note:** Deno team recommends OpenTelemetry instead
 
 ---
 
 ## Summary: Recommended Stack
 
-| Component | Package | Notes |
-|-----------|---------|-------|
-| MCP Server | `npm:@modelcontextprotocol/sdk` | Official SDK |
-| File System | `jsr:@std/fs` | walk, glob, copy, move |
-| Paths | `jsr:@std/path` | Cross-platform |
-| Streams | `jsr:@std/streams` | TransformStream utils |
-| Async Utils | `jsr:@std/async` | pooledMap, debounce |
-| CLI Args | `jsr:@std/cli` | Simple parseArgs, no bloat |
-| Validation | `npm:zod` | Required by MCP SDK |
-| Archives | `jsr:@std/tar` + `jsr:@deno-library/compress` | tar + zip |
-| Colors | `jsr:@std/fmt/colors` | ANSI colors |
-| Env Files | `jsr:@std/dotenv` | .env loading |
-| Testing | `jsr:@std/testing` + `jsr:@std/assert` | Mocks, BDD |
-| Logging | `jsr:@logtape/logtape` | Zero-dep, optional |
-| Process | `Deno.Command` | Built-in |
+| Component   | Package                                       | Notes                      |
+| ----------- | --------------------------------------------- | -------------------------- |
+| MCP Server  | `npm:@modelcontextprotocol/sdk`               | Official SDK               |
+| File System | `jsr:@std/fs`                                 | walk, glob, copy, move     |
+| Paths       | `jsr:@std/path`                               | Cross-platform             |
+| Streams     | `jsr:@std/streams`                            | TransformStream utils      |
+| Async Utils | `jsr:@std/async`                              | pooledMap, debounce        |
+| CLI Args    | `jsr:@std/cli`                                | Simple parseArgs, no bloat |
+| Validation  | `npm:zod`                                     | Required by MCP SDK        |
+| Archives    | `jsr:@std/tar` + `jsr:@deno-library/compress` | tar + zip                  |
+| Colors      | `jsr:@std/fmt/colors`                         | ANSI colors                |
+| Env Files   | `jsr:@std/dotenv`                             | .env loading               |
+| Testing     | `jsr:@std/testing` + `jsr:@std/assert`        | Mocks, BDD                 |
+| Logging     | `jsr:@logtape/logtape`                        | Zero-dep, optional         |
+| Process     | `Deno.Command`                                | Built-in                   |
 
 ---
 
@@ -459,6 +521,7 @@ deno add \
 ```
 
 **Optional (only if needed):**
+
 ```bash
 deno add jsr:@logtape/logtape  # Structured logging
 deno add jsr:@cliffy/command   # Only if you want auto --help

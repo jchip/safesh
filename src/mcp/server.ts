@@ -224,7 +224,8 @@ function applyRootsToConfig(
 const RunSchema = z.object({
   code: z.string().optional().describe("JavaScript/TypeScript code to execute"),
   shcmd: z.string().optional().describe("Shell command to execute (basic syntax: &&, ||, |, 2>&1, >, >>, &)"),
-  file: z.string().optional().describe("Path to .ts file to execute (relative to cwd). File should import from 'safesh:stdlib'"),
+  file: z.string().optional().describe("Path to file - reads content and executes as code"),
+  module: z.string().optional().describe("Path to .ts module to execute (supports top-level imports/exports)"),
   shellId: z.string().optional().describe("Shell ID to use"),
   background: z.boolean().optional().describe("Run in background (async), returns { scriptId, pid }"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
@@ -321,15 +322,24 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
     execTimeout = retryResult.timeout;
     background = retryResult.background;
     execConfig = retryResult.config;
-  } else if (parsed.file) {
-    // File execution - delegate to helper
+  } else if (parsed.module) {
+    // Module execution - delegate to helper (supports top-level imports/exports)
     return await ctx.handleFileExecution(
-      parsed.file,
+      parsed.module,
       shellId,
       parsed.env,
       execTimeout,
       execConfig,
     );
+  } else if (parsed.file) {
+    // File execution - read content and treat as code
+    const cwd = ctx.configHolder.cwd;
+    const absolutePath = parsed.file.startsWith("/") ? parsed.file : `${cwd}/${parsed.file}`;
+    try {
+      code = await Deno.readTextFile(absolutePath);
+    } catch (error) {
+      return mcpTextResponse(`Failed to read file '${parsed.file}': ${error instanceof Error ? error.message : String(error)}`, true);
+    }
   } else if (parsed.shcmd) {
     // Shell command - parse and transpile to TypeScript
     try {
@@ -345,7 +355,7 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
   } else if (parsed.code) {
     code = parsed.code;
   } else {
-    return mcpTextResponse("Either 'code', 'shcmd', 'file', or 'retry_id' must be provided", true);
+    return mcpTextResponse("Either 'code', 'shcmd', 'file', 'module', or 'retry_id' must be provided", true);
   }
 
   // Merge session-level allowed commands into config
@@ -413,7 +423,7 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
     ctx.shellManager.update(shell.id, { vars: shell.vars });
   }
 
-  return mcpTextResponse(ctx.formatRunResult(result, shellId, result.scriptId), !result.success);
+  return mcpTextResponse(ctx.formatRunResult(result, shell.id, result.scriptId), !result.success);
 }
 
 /**
@@ -951,7 +961,8 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             properties: {
               code: { type: "string" },
               shcmd: { type: "string", description: "Shell cmd (&&, ||, |, >, >>). No heredocs/subshells" },
-              file: { type: "string", description: ".ts file path (import from 'safesh:stdlib')" },
+              file: { type: "string", description: "File path - reads content and executes as code" },
+              module: { type: "string", description: ".ts module path (supports top-level imports/exports)" },
               shellId: { type: "string" },
               background: { type: "boolean" },
               timeout: { type: "number" },

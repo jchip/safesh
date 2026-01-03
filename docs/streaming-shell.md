@@ -20,52 +20,55 @@ The **recommended** way to use SafeShell is through the fluent `$` API - a simpl
 
 ```typescript
 // Process log files with shell-like syntax
-await $('app.log').lines().grep(/ERROR/).head(10).print();
+await $("app.log").lines().grep(/ERROR/).head(10).print();
 
 // Collect results into array
-const errors = await $('app.log').lines().grep(/ERROR/).collect();
+const errors = await $("app.log").lines().grep(/ERROR/).collect();
 
 // Transform and save
-await $('data.txt').lines().map(l => l.toUpperCase()).save('output.txt');
+await $("data.txt")
+  .lines()
+  .map((l) => l.toUpperCase())
+  .save("output.txt");
 
 // Count, filter, analyze
-const errorCount = await $('server.log').lines().grep(/ERROR/).count();
-const firstError = await $('app.log').lines().grep(/FATAL/).first();
+const errorCount = await $("server.log").lines().grep(/ERROR/).count();
+const firstError = await $("app.log").lines().grep(/FATAL/).first();
 
 // Create from arrays or text
-const fruits = await $.from(['apple', 'banana', 'cherry']).grep(/a/).collect();
-const lines = await $.text('line1\nline2').lines().collect();
+const fruits = await $.from(["apple", "banana", "cherry"]).grep(/a/).collect();
+const lines = await $.text("line1\nline2").lines().collect();
 ```
 
 ### $ API Methods
 
-| Method | Type | Description |
-|--------|------|-------------|
-| `$('file.txt')` | Constructor | Create from file path |
-| `$.from(array)` | Constructor | Create from string array |
+| Method           | Type        | Description              |
+| ---------------- | ----------- | ------------------------ |
+| `$('file.txt')`  | Constructor | Create from file path    |
+| `$.from(array)`  | Constructor | Create from string array |
 | `$.text(string)` | Constructor | Create from text content |
-| `$.wrap(stream)` | Constructor | Wrap existing Stream |
-| `.lines()` | Transform | Split into lines |
-| `.grep(pattern)` | Transform | Filter by regex/string |
-| `.head(n)` | Transform | Take first n items |
-| `.tail(n)` | Transform | Take last n items |
-| `.filter(fn)` | Transform | Filter with predicate |
-| `.map(fn)` | Transform | Transform items |
-| `.take(n)` | Transform | Alias for head() |
-| `.print()` | Terminal | Output to stdout |
-| `.save(path)` | Terminal | Write to file |
-| `.collect()` | Terminal | Return as array |
-| `.first()` | Terminal | Get first item |
-| `.count()` | Terminal | Count items |
-| `.forEach(fn)` | Terminal | Iterate with function |
-| `.stream()` | Escape | Get underlying Stream |
+| `$.wrap(stream)` | Constructor | Wrap existing Stream     |
+| `.lines()`       | Transform   | Split into lines         |
+| `.grep(pattern)` | Transform   | Filter by regex/string   |
+| `.head(n)`       | Transform   | Take first n items       |
+| `.tail(n)`       | Transform   | Take last n items        |
+| `.filter(fn)`    | Transform   | Filter with predicate    |
+| `.map(fn)`       | Transform   | Transform items          |
+| `.take(n)`       | Transform   | Alias for head()         |
+| `.print()`       | Terminal    | Output to stdout         |
+| `.save(path)`    | Terminal    | Write to file            |
+| `.collect()`     | Terminal    | Return as array          |
+| `.first()`       | Terminal    | Get first item           |
+| `.count()`       | Terminal    | Count items              |
+| `.forEach(fn)`   | Terminal    | Iterate with function    |
+| `.stream()`      | Escape      | Get underlying Stream    |
 
 ### Escape Hatch
 
 When you need advanced Stream operations, use `.stream()` to access the full Stream API:
 
 ```typescript
-const stream = $('data.txt').lines().stream();
+const stream = $("data.txt").lines().stream();
 await stream.pipe(customTransform()).pipe(flatMap(fn)).collect();
 ```
 
@@ -75,10 +78,7 @@ For advanced streaming operations beyond the `$` API:
 
 ```typescript
 // Low-level streaming with pipe()
-const errors = await cat("app.log")
-  .pipe(lines())
-  .pipe(grep(/ERROR/))
-  .collect();
+const errors = await cat("app.log").pipe(lines()).pipe(grep(/ERROR/)).collect();
 
 // File operations with glob
 await src("src/**/*.ts")
@@ -234,46 +234,54 @@ The streaming shell API is fully available when SafeShell runs as an MCP server.
 
 ### Benefits Over Traditional Bash Tool
 
-| Traditional Bash | Streaming Shell via MCP |
-|-----------------|------------------------|
+| Traditional Bash                            | Streaming Shell via MCP                                                                           |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `git log --oneline \| grep SSH \| head -10` | `await git('log', '--oneline').stdout().pipe(lines()).pipe(grep(/SSH/)).pipe(take(10)).collect()` |
-| No type safety | Full TypeScript support |
-| String manipulation only | Rich data transformations |
-| Sequential execution | Composable pipelines |
-| Manual error handling | Automatic error propagation |
-| Limited debugging | Stack traces and breakpoints |
+| No type safety                              | Full TypeScript support                                                                           |
+| String manipulation only                    | Rich data transformations                                                                         |
+| Sequential execution                        | Composable pipelines                                                                              |
+| Manual error handling                       | Automatic error propagation                                                                       |
+| Limited debugging                           | Stack traces and breakpoints                                                                      |
 
 ### Auto-imported Functions
 
 When using the MCP `run` tool, these are automatically available:
 
 **Fluent Shell API (Primary):**
+
 - `$('file')` - Create from file path
 - `$.from(array)` - Create from array
 - `$.text(string)` - Create from text
 - `$.wrap(stream)` - Wrap existing stream
 
 **Core Streams:**
+
 - `createStream()`, `fromArray()`, `empty()`
 
 **Transforms:**
+
 - `filter()`, `map()`, `flatMap()`, `take()`, `head()`, `tail()`
 - `lines()`, `grep()`
 
 **I/O:**
+
 - `stdout()`, `stderr()`, `tee()`
 
 **File System:**
+
 - `fs.*` - read, write, exists, readJson, writeJson, etc.
 - `glob()`, `src()`, `cat()`, `dest()`
 
 **Commands:**
+
 - `cmd()`, `git()`, `docker()`, `deno()`, `initCmds()`
 
 **ShellJS-like:**
+
 - `pwd()`, `which()`, `test()`, `echo()`, `cd()`, etc.
 
 **Shell Context (on `$`, uppercase):**
+
 - `$.ID`, `$.CWD`, `$.ENV`, `$.VARS` - Persistent state
 
 No imports needed - just start using them!
@@ -286,8 +294,7 @@ Streams are lazy async iterables that only execute when consumed by a terminal o
 
 ```typescript
 // Create stream (doesn't execute yet)
-const stream = fromArray([1, 2, 3])
-  .pipe(map((x) => x * 2));
+const stream = fromArray([1, 2, 3]).pipe(map((x) => x * 2));
 
 // Execute with terminal operation
 const result = await stream.collect(); // [2, 4, 6]
@@ -301,10 +308,7 @@ Transforms are pure functions that return async generators. They can be chained 
 const transform1 = filter((x) => x > 0);
 const transform2 = map((x) => x * 2);
 
-const result = await stream
-  .pipe(transform1)
-  .pipe(transform2)
-  .collect();
+const result = await stream.pipe(transform1).pipe(transform2).collect();
 ```
 
 ### Terminal Operations
@@ -401,9 +405,7 @@ const textLines = textStream.pipe(lines());
 Filter lines matching a pattern.
 
 ```typescript
-const errors = logStream
-  .pipe(lines())
-  .pipe(grep(/ERROR/));
+const errors = logStream.pipe(lines()).pipe(grep(/ERROR/));
 ```
 
 ### I/O Transforms (`safesh:io`)
@@ -413,9 +415,7 @@ const errors = logStream
 Write to stdout and pass through.
 
 ```typescript
-await stream
-  .pipe(stdout())
-  .forEach(() => {});
+await stream.pipe(stdout()).forEach(() => {});
 ```
 
 #### `stderr(): Transform<string, string>`
@@ -423,9 +423,7 @@ await stream
 Write to stderr and pass through.
 
 ```typescript
-await errorStream
-  .pipe(stderr())
-  .forEach(() => {});
+await errorStream.pipe(stderr()).forEach(() => {});
 ```
 
 #### `tee<T>(sideEffect: Transform<T, T>): Transform<T, T>`
@@ -433,9 +431,7 @@ await errorStream
 Apply side effect while passing through.
 
 ```typescript
-const data = await stream
-  .pipe(tee(stdout()))
-  .collect();
+const data = await stream.pipe(tee(stdout())).collect();
 ```
 
 ### File System Streams (`safesh:fs-streams`)
@@ -444,10 +440,10 @@ const data = await stream
 
 ```typescript
 interface File {
-  path: string;              // Absolute path
-  base: string;              // Base directory
-  contents: string | Uint8Array;  // File contents
-  stat?: Deno.FileInfo;      // Optional file stats
+  path: string; // Absolute path
+  base: string; // Base directory
+  contents: string | Uint8Array; // File contents
+  stat?: Deno.FileInfo; // Optional file stats
 }
 ```
 
@@ -466,8 +462,7 @@ await glob("src/**/*.ts")
 Stream files from multiple glob patterns.
 
 ```typescript
-await src("src/**/*.ts", "lib/**/*.ts")
-  .pipe(dest("dist/"));
+await src("src/**/*.ts", "lib/**/*.ts").pipe(dest("dist/"));
 ```
 
 #### `cat(path: string): Stream<string>`
@@ -475,10 +470,7 @@ await src("src/**/*.ts", "lib/**/*.ts")
 Read file as a stream.
 
 ```typescript
-await cat("app.log")
-  .pipe(lines())
-  .pipe(grep(/ERROR/))
-  .collect();
+await cat("app.log").pipe(lines()).pipe(grep(/ERROR/)).collect();
 ```
 
 #### `dest(outDir: string): Transform<File, File>`
@@ -486,8 +478,7 @@ await cat("app.log")
 Write files to a directory.
 
 ```typescript
-await src("src/**/*.ts")
-  .pipe(dest("dist/"));
+await src("src/**/*.ts").pipe(dest("dist/"));
 ```
 
 ### Command Execution (`safesh:command`)
@@ -528,7 +519,7 @@ Register external commands with upfront permission checking. Returns callable fu
 const [cargo, curl, build] = await initCmds([
   "cargo",
   "curl",
-  "./scripts/build.sh",  // project-local scripts work too
+  "./scripts/build.sh", // project-local scripts work too
 ]);
 
 // Call commands directly (returns Promise<CommandResult>)
@@ -538,9 +529,11 @@ await build("--verbose");
 ```
 
 **Built-in helpers** (no `initCmds` needed):
+
 - `git()`, `docker()`, `deno()` - always available
 
 **When to use initCmds**:
+
 - Any command without a built-in helper
 - Project-local scripts (relative paths)
 - Commands requiring explicit permission
@@ -549,10 +542,10 @@ await build("--verbose");
 
 ```typescript
 interface CommandOptions {
-  mergeStreams?: boolean;  // Merge stderr into stdout
-  cwd?: string;            // Working directory
-  env?: Record<string, string>;  // Environment variables
-  clearEnv?: boolean;      // Clear inherited environment
+  mergeStreams?: boolean; // Merge stderr into stdout
+  cwd?: string; // Working directory
+  env?: Record<string, string>; // Environment variables
+  clearEnv?: boolean; // Clear inherited environment
 }
 ```
 
@@ -562,10 +555,7 @@ interface CommandOptions {
 
 ```typescript
 // Find all errors in log file
-const errors = await cat("app.log")
-  .pipe(lines())
-  .pipe(grep(/ERROR/))
-  .collect();
+const errors = await cat("app.log").pipe(lines()).pipe(grep(/ERROR/)).collect();
 
 // Count errors by type
 const errorCounts = new Map<string, number>();
@@ -585,23 +575,27 @@ await cat("app.log")
 // Copy and transform files
 await src("src/**/*.ts")
   .pipe(filter((f) => !f.path.includes(".test.")))
-  .pipe(map(async (file) => {
-    // Add header comment
-    if (typeof file.contents === "string") {
-      file.contents = "// Auto-generated\n" + file.contents;
-    }
-    return file;
-  }))
+  .pipe(
+    map(async (file) => {
+      // Add header comment
+      if (typeof file.contents === "string") {
+        file.contents = "// Auto-generated\n" + file.contents;
+      }
+      return file;
+    })
+  )
   .pipe(dest("dist/"));
 
 // Find TODO comments
 await glob("**/*.ts")
-  .pipe(flatMap((file) =>
-    cat(file.path)
-      .pipe(lines())
-      .pipe(grep(/TODO/))
-      .pipe(map((line) => ({ file: file.path, line })))
-  ))
+  .pipe(
+    flatMap((file) =>
+      cat(file.path)
+        .pipe(lines())
+        .pipe(grep(/TODO/))
+        .pipe(map((line) => ({ file: file.path, line })))
+    )
+  )
   .forEach(({ file, line }) => {
     console.log(`${file}: ${line}`);
   });
@@ -695,7 +689,7 @@ cat app.log | grep ERROR | head -10
 
 ```typescript
 // SafeShell - Fluent API (recommended)
-await $('app.log').lines().grep(/ERROR/).head(10).print();
+await $("app.log").lines().grep(/ERROR/).head(10).print();
 
 // SafeShell - Streaming API
 await cat("app.log")
@@ -747,9 +741,9 @@ wc -l file.txt
 
 ```typescript
 // SafeShell - Fluent API
-const first5 = await $('file.txt').lines().head(5).collect();
-const last10 = await $('file.txt').lines().tail(10).collect();
-const lineCount = await $('file.txt').lines().count();
+const first5 = await $("file.txt").lines().head(5).collect();
+const last10 = await $("file.txt").lines().tail(10).collect();
+const lineCount = await $("file.txt").lines().count();
 ```
 
 ### From Node.js Streams
@@ -786,19 +780,18 @@ await cat("input.txt")
 
 ```javascript
 // Gulp
-gulp.src("src/**/*.js")
-  .pipe(babel())
-  .pipe(uglify())
-  .pipe(gulp.dest("dist/"));
+gulp.src("src/**/*.js").pipe(babel()).pipe(uglify()).pipe(gulp.dest("dist/"));
 ```
 
 ```typescript
 // Safesh Streaming
 await src("src/**/*.js")
-  .pipe(map(async (file) => {
-    // Transform file.contents
-    return file;
-  }))
+  .pipe(
+    map(async (file) => {
+      // Transform file.contents
+      return file;
+    })
+  )
   .pipe(dest("dist/"));
 ```
 
@@ -826,9 +819,7 @@ Handle errors in streams:
 
 ```typescript
 try {
-  await cat("file.txt")
-    .pipe(lines())
-    .collect();
+  await cat("file.txt").pipe(lines()).collect();
 } catch (error) {
   console.error("Failed to process file:", error);
 }
@@ -860,6 +851,7 @@ Comprehensive codebase audit tool that demonstrates:
 - Anti-pattern detection
 
 Run with:
+
 ```bash
 deno run --allow-all scripts/code-audit.ts
 ```
@@ -875,6 +867,7 @@ Common development tasks showcasing how to replace bash commands:
 - File copying with transforms: `cp` + modifications → `src().pipe(dest())`
 
 Run with:
+
 ```bash
 deno run --allow-all scripts/dev-tasks.ts
 ```
