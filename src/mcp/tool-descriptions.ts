@@ -17,10 +17,10 @@ Commands (return {code, stdout, stderr}):
   - general: $.cmd('ls -la')
   - external: const [curl] = await $.initCmds(['curl']); await curl('-s', url);
 
-Fluent streams - methods that return chainable streams:
-  String streams (FluentShell):
+Fluent streams - $ methods that return chainable streams:
+  String streams (FluentShell): cat
     - $.cat('file.txt') → has .lines()/.grep() plus .filter/.map/.head/.tail
-  File streams (FluentStream<File>):
+  File streams (FluentStream<File>): glob, src
     - $.glob('*.txt') → files with {path, base, contents}
     - $.src('*.ts', '*.js') → multiple patterns
   All fluent streams have:
