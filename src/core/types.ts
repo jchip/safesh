@@ -3,6 +3,13 @@
  */
 
 import { ERROR_COMMAND_NOT_ALLOWED } from "./constants.ts";
+// Re-export defaults for backwards compatibility
+export {
+  SCRIPT_OUTPUT_LIMIT,
+  SHELL_MEMORY_LIMIT,
+  PENDING_RETRY_TTL_MS as PENDING_RETRY_TTL,
+  MAX_PENDING_RETRIES,
+} from "./defaults.ts";
 
 // ============================================================================
 // Configuration Types
@@ -150,10 +157,8 @@ export interface ProjectCommandConfig {
 // Runtime Types
 // ============================================================================
 
-/** Memory limits for shell/script management */
-export const SCRIPT_OUTPUT_LIMIT = 1024 * 1024; // 1MB per stdout/stderr
-export const SHELL_MEMORY_LIMIT = 50 * 1024 * 1024; // 50MB per shell
-export const MAX_SHELLS = 10; // LRU eviction when exceeded
+/** Max shells before LRU eviction */
+export const MAX_SHELLS = 10;
 
 export interface Shell {
   /** Unique shell ID */
@@ -300,11 +305,7 @@ export interface StreamChunk {
 // Retry Types
 // ============================================================================
 
-/** TTL for pending retries (5 minutes) */
-export const PENDING_RETRY_TTL = 5 * 60 * 1000;
-
-/** Maximum pending retries stored */
-export const MAX_PENDING_RETRIES = 50;
+// Note: PENDING_RETRY_TTL and MAX_PENDING_RETRIES are re-exported from defaults.ts above
 
 /**
  * PendingRetry - memoized execution context for permission retry workflow.

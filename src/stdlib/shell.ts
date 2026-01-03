@@ -177,6 +177,42 @@ export class FluentShell {
     return this.head(n);
   }
 
+  /**
+   * Apply a transform function to the stream
+   *
+   * This allows using stream transforms (like $.filter, $.map) with FluentShell,
+   * enabling interoperability between the fluent API and the transform-based API.
+   *
+   * @param transform - A transform function that takes an AsyncIterable<string>
+   *                    and returns an AsyncIterable<string>
+   * @returns FluentShell for chaining
+   *
+   * @example
+   * ```ts
+   * import * as transforms from './transforms.ts';
+   *
+   * // Using pipe with transforms
+   * await $('app.log')
+   *   .lines()
+   *   .pipe(transforms.filter(line => line.includes('ERROR')))
+   *   .pipe(transforms.map(line => line.toUpperCase()))
+   *   .print();
+   *
+   * // Mix fluent methods with pipe
+   * await $('data.txt')
+   *   .lines()
+   *   .head(100)
+   *   .pipe(transforms.filter(line => line.length > 10))
+   *   .map(line => line.trim())
+   *   .collect();
+   * ```
+   */
+  pipe(
+    transform: (stream: AsyncIterable<string>) => AsyncIterable<string>,
+  ): FluentShell {
+    return new FluentShell(this._stream.pipe(transform));
+  }
+
   // ============== Terminal Operations ==============
 
   /**

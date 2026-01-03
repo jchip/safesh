@@ -24,8 +24,7 @@ import { executeCode, executeFile } from "../runtime/executor.ts";
 import { createShellManager, type ShellManager } from "../runtime/shell.ts";
 import { closeAllStatePersistence } from "../runtime/state-persistence.ts";
 import { loadConfigWithArgs, mergeConfigs, saveToLocalJson, loadConfig, type McpInitArgs } from "../core/config.ts";
-import { createRegistry } from "../external/registry.ts";
-import { validateExternal } from "../external/validator.ts";
+import { createRegistry, type CommandRegistry } from "../external/registry.ts";
 import { SafeShellError } from "../core/errors.ts";
 import type { SafeShellConfig, Shell } from "../core/types.ts";
 import {
@@ -33,6 +32,11 @@ import {
   ERROR_COMMAND_NOT_FOUND,
   ERROR_COMMANDS_BLOCKED,
 } from "../core/constants.ts";
+import {
+  DEFAULT_WAIT_TIMEOUT_MS,
+  SCRIPT_POLL_INTERVAL_MS,
+  CODE_PREVIEW_LENGTH,
+} from "../core/defaults.ts";
 import {
   launchCodeScript,
   getScriptOutput,
@@ -51,6 +55,103 @@ import {
   WAIT_SCRIPT_DESCRIPTION,
   LIST_JOBS_DESCRIPTION,
 } from "./tool-descriptions.ts";
+
+// ============================================================================
+// MCP Response Helpers (SSH-175)
+// ============================================================================
+
+/** Standard MCP response type - compatible with MCP SDK CallToolResult */
+interface McpResponse {
+  content: { type: "text"; text: string }[];
+  isError?: boolean;
+  _meta?: Record<string, unknown>;
+}
+
+/**
+ * Create a text MCP response
+ */
+function mcpTextResponse(text: string, isError = false): McpResponse {
+  return { content: [{ type: "text" as const, text }], isError };
+}
+
+/**
+ * Create a JSON MCP response
+ */
+function mcpJsonResponse(data: unknown, isError = false): McpResponse {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], isError };
+}
+
+// ============================================================================
+// Tool Handler Types (SSH-176)
+// ============================================================================
+
+/** Mutable config holder - allows updating config after roots are received */
+interface ConfigHolder {
+  config: SafeShellConfig;
+  cwd: string;
+  rootsReceived: boolean;
+}
+
+/** Result of retry workflow processing */
+interface RetryResult {
+  success: true;
+  code: string;
+  shellId?: string;
+  timeout?: number;
+  background?: boolean;
+  config: SafeShellConfig;
+}
+
+/** Error from retry workflow */
+interface RetryError {
+  success: false;
+  response: McpResponse;
+}
+
+/** Context passed to tool handlers */
+interface ToolContext {
+  shellManager: ShellManager;
+  getConfig: () => SafeShellConfig;
+  getCwd: () => string;
+  configHolder: ConfigHolder;
+  registry: CommandRegistry;
+  updateRegistry: (newRegistry: CommandRegistry) => void;
+  handleRetryWorkflow: (retryId: string, userChoice: number | undefined) => Promise<RetryResult | RetryError>;
+  handleFileExecution: (
+    file: string,
+    shellId: string | undefined,
+    env: Record<string, string> | undefined,
+    timeout: number | undefined,
+    config: SafeShellConfig,
+  ) => Promise<McpResponse>;
+  formatBlockedCommandResponse: (
+    code: string,
+    blockedCommand: string,
+    shell: Shell,
+    env: Record<string, string> | undefined,
+    timeout: number | undefined,
+    background: boolean | undefined,
+    shellId: string | undefined,
+  ) => McpResponse;
+  formatBlockedCommandsResponse: (
+    code: string,
+    blockedCommands: string[],
+    notFoundCommands: string[],
+    shell: Shell,
+    env: Record<string, string> | undefined,
+    timeout: number | undefined,
+    background: boolean | undefined,
+    shellId: string | undefined,
+  ) => McpResponse;
+  formatRunResult: (
+    result: { stdout: string; stderr: string; code: number; success: boolean },
+    shellId?: string,
+    scriptId?: string,
+  ) => string;
+}
+
+/** Tool handler function signature */
+type ToolHandler = (args: unknown, ctx: ToolContext) => Promise<McpResponse>;
 
 // ============================================================================
 // MCP Roots Support
@@ -184,12 +285,351 @@ const KillJobSchema = z.object({
   signal: z.string().optional().describe("Signal to send (default: SIGTERM)"),
 });
 
-/** Mutable config holder - allows updating config after roots are received */
-interface ConfigHolder {
-  config: SafeShellConfig;
-  cwd: string;
-  rootsReceived: boolean;
+// ============================================================================
+// Tool Handlers (SSH-176)
+// ============================================================================
+
+/**
+ * Handle 'run' tool - execute code, shell commands, or files
+ */
+async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = RunSchema.parse(args);
+
+  // Determine execution context (code, config, shellId, etc.)
+  let code: string;
+  let shellId: string | undefined = parsed.shellId;
+  let execTimeout: number | undefined = parsed.timeout;
+  let background: boolean | undefined = parsed.background;
+  let execConfig = ctx.configHolder.config;
+
+  // Handle retry workflow
+  if (parsed.retry_id) {
+    const retryResult = await ctx.handleRetryWorkflow(
+      parsed.retry_id,
+      parsed.userChoice,
+    );
+    if (!retryResult.success) {
+      return retryResult.response;
+    }
+    code = retryResult.code;
+    shellId = retryResult.shellId;
+    execTimeout = retryResult.timeout;
+    background = retryResult.background;
+    execConfig = retryResult.config;
+  } else if (parsed.file) {
+    // File execution - delegate to helper
+    return await ctx.handleFileExecution(
+      parsed.file,
+      shellId,
+      parsed.env,
+      execTimeout,
+      execConfig,
+    );
+  } else if (parsed.shcmd) {
+    // Shell command - parse and transpile to TypeScript
+    try {
+      const parseResult = parseShellCommand(parsed.shcmd);
+      code = parseResult.code;
+      // background param overrides trailing &
+      if (background === undefined) {
+        background = parseResult.isBackground;
+      }
+    } catch (error) {
+      return mcpTextResponse(`Shell parse error: ${error instanceof Error ? error.message : String(error)}`, true);
+    }
+  } else if (parsed.code) {
+    code = parsed.code;
+  } else {
+    return mcpTextResponse("Either 'code', 'shcmd', 'file', or 'retry_id' must be provided", true);
+  }
+
+  // Merge session-level allowed commands into config
+  const sessionCommands = ctx.shellManager.getSessionAllowedCommands();
+  if (sessionCommands.length > 0) {
+    execConfig = mergeConfigs(execConfig, {
+      permissions: { run: sessionCommands },
+      external: Object.fromEntries(sessionCommands.map((cmd) => [cmd, { allow: true }])),
+    });
+  }
+
+  // Get or create shell (auto-creates with requested ID if not exists)
+  const { shell, isTemporary } = ctx.shellManager.getOrCreate(
+    shellId,
+    { cwd: ctx.configHolder.cwd, env: parsed.env },
+  );
+
+  // Merge additional env vars into the actual shell temporarily
+  const originalEnv = shell.env;
+  if (parsed.env) {
+    shell.env = { ...shell.env, ...parsed.env };
+  }
+
+  // Background execution: launch script and return immediately
+  if (background) {
+    const script = await launchCodeScript(code, execConfig, shell);
+    shell.env = originalEnv;
+
+    return mcpJsonResponse({ scriptId: script.id, pid: script.pid, shellId: shell.id, background: true });
+  }
+
+  // Foreground execution: wait for completion
+  const result = await executeCode(code, execConfig, { timeout: execTimeout, cwd: shell.cwd }, shell);
+  shell.env = originalEnv;
+
+  // Check for blocked commands from init() (multiple commands)
+  if (result.blockedCommands?.length || result.notFoundCommands?.length) {
+    return ctx.formatBlockedCommandsResponse(
+      code,
+      result.blockedCommands ?? [],
+      result.notFoundCommands ?? [],
+      shell,
+      parsed.env,
+      execTimeout,
+      background,
+      shellId,
+    );
+  }
+
+  // Check for blocked command (legacy single command)
+  if (result.blockedCommand) {
+    return ctx.formatBlockedCommandResponse(
+      code,
+      result.blockedCommand,
+      shell,
+      parsed.env,
+      execTimeout,
+      background,
+      shellId,
+    );
+  }
+
+  // Update shell vars if not temporary
+  if (!isTemporary && result.success && shell.vars) {
+    ctx.shellManager.update(shell.id, { vars: shell.vars });
+  }
+
+  return mcpTextResponse(ctx.formatRunResult(result, shellId, result.scriptId), !result.success);
 }
+
+/**
+ * Handle 'startShell' tool - create a new persistent shell
+ */
+async function handleStartShell(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = StartShellSchema.parse(args);
+  const shell = ctx.shellManager.create({
+    cwd: parsed.cwd,
+    env: parsed.env,
+  });
+
+  return mcpJsonResponse(ctx.shellManager.serialize(shell));
+}
+
+/**
+ * Handle 'updateShell' tool - modify shell state
+ */
+async function handleUpdateShell(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = UpdateShellSchema.parse(args);
+  const shell = ctx.shellManager.update(parsed.shellId, {
+    cwd: parsed.cwd,
+    env: parsed.env,
+  });
+
+  if (!shell) {
+    return mcpTextResponse(`Shell not found: ${parsed.shellId}`, true);
+  }
+
+  return mcpJsonResponse(ctx.shellManager.serialize(shell));
+}
+
+/**
+ * Handle 'endShell' tool - destroy a shell
+ */
+async function handleEndShell(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = EndShellSchema.parse(args);
+  const ended = ctx.shellManager.end(parsed.shellId);
+
+  if (!ended) {
+    return mcpTextResponse(`Shell not found: ${parsed.shellId}`, true);
+  }
+
+  return mcpTextResponse(`Shell ended: ${parsed.shellId}`);
+}
+
+/**
+ * Handle 'listShells' tool - list active shells
+ */
+async function handleListShells(_args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const shells = ctx.shellManager.list();
+
+  if (shells.length === 0) {
+    return mcpTextResponse("No active shells");
+  }
+
+  const serialized = shells.map((s) => ctx.shellManager.serialize(s));
+  return mcpJsonResponse(serialized);
+}
+
+/**
+ * Handle 'listScripts' tool - list scripts in a shell
+ */
+async function handleListScripts(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = ListScriptsSchema.parse(args);
+  const scripts = ctx.shellManager.listScripts(parsed.shellId, parsed.filter);
+
+  if (scripts.length === 0) {
+    return mcpTextResponse("No scripts found");
+  }
+
+  // Serialize scripts (newest first, already sorted by listScripts)
+  const serialized = scripts.map((s) => ({
+    id: s.id,
+    code: s.code.length > CODE_PREVIEW_LENGTH ? `${s.code.slice(0, CODE_PREVIEW_LENGTH)}...` : s.code,
+    pid: s.pid,
+    status: s.status,
+    background: s.background,
+    startedAt: s.startedAt.toISOString(),
+    duration: s.duration,
+    exitCode: s.exitCode,
+    jobIds: s.jobIds,
+    truncated: {
+      stdout: s.stdoutTruncated,
+      stderr: s.stderrTruncated,
+    },
+  }));
+
+  return mcpJsonResponse(serialized);
+}
+
+/**
+ * Handle 'getScriptOutput' tool - get output from a script
+ */
+async function handleGetScriptOutput(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = GetScriptOutputSchema.parse(args);
+  const script = ctx.shellManager.getScript(parsed.shellId, parsed.scriptId);
+
+  if (!script) {
+    return mcpTextResponse(`Script not found: ${parsed.scriptId}`, true);
+  }
+
+  const output = getScriptOutput(script, parsed.since);
+
+  return mcpJsonResponse({
+    scriptId: script.id,
+    status: output.status,
+    stdout: output.stdout,
+    stderr: output.stderr,
+    offset: output.offset,
+    exitCode: output.exitCode,
+    truncated: output.truncated,
+  });
+}
+
+/**
+ * Handle 'killScript' tool - kill a running script
+ */
+async function handleKillScript(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = KillJobSchema.parse(args);
+  const script = ctx.shellManager.getScript(parsed.shellId, parsed.scriptId);
+
+  if (!script) {
+    return mcpTextResponse(`Script not found: ${parsed.scriptId}`, true);
+  }
+
+  const signal = (parsed.signal ?? "SIGTERM") as Deno.Signal;
+  await killScript(script, signal);
+
+  return mcpTextResponse(`Script ${parsed.scriptId} killed with ${signal}`);
+}
+
+/**
+ * Handle 'waitScript' tool - wait for script completion
+ */
+async function handleWaitScript(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = WaitScriptSchema.parse(args);
+  const script = ctx.shellManager.getScript(parsed.shellId, parsed.scriptId);
+
+  if (!script) {
+    return mcpTextResponse(`Script not found: ${parsed.scriptId}`, true);
+  }
+
+  if (script.status !== "running") {
+    // Script already completed
+    return mcpJsonResponse({
+      scriptId: script.id,
+      status: script.status,
+      stdout: script.stdout,
+      stderr: script.stderr,
+      exitCode: script.exitCode,
+      duration: script.duration,
+      truncated: {
+        stdout: script.stdoutTruncated,
+        stderr: script.stderrTruncated,
+      },
+    }, script.status === "failed");
+  }
+
+  // Wait for script completion with optional timeout
+  const startTime = Date.now();
+  const timeoutMs = parsed.timeout ?? DEFAULT_WAIT_TIMEOUT_MS;
+
+  while (script.status === "running") {
+    if (Date.now() - startTime > timeoutMs) {
+      return mcpTextResponse(`Timeout waiting for script ${parsed.scriptId}`, true);
+    }
+    await new Promise((r) => setTimeout(r, SCRIPT_POLL_INTERVAL_MS));
+  }
+
+  return mcpJsonResponse({
+    scriptId: script.id,
+    status: script.status,
+    stdout: script.stdout,
+    stderr: script.stderr,
+    exitCode: script.exitCode,
+    duration: script.duration,
+    truncated: {
+      stdout: script.stdoutTruncated,
+      stderr: script.stderrTruncated,
+    },
+  }, script.status === "failed");
+}
+
+/**
+ * Handle 'listJobs' tool - list jobs in a shell
+ */
+async function handleListJobs(args: unknown, ctx: ToolContext): Promise<McpResponse> {
+  const parsed = ListJobsSchema.parse(args);
+  const jobs = ctx.shellManager.listJobs(parsed.shellId, parsed.filter);
+
+  // Serialize jobs (newest first, already sorted by listJobs)
+  const serialized = jobs.map((job) => ({
+    id: job.id,
+    scriptId: job.scriptId,
+    command: job.command,
+    args: job.args,
+    pid: job.pid,
+    status: job.status,
+    exitCode: job.exitCode,
+    startedAt: job.startedAt.toISOString(),
+    completedAt: job.completedAt?.toISOString(),
+    duration: job.duration,
+  }));
+
+  return mcpJsonResponse(serialized);
+}
+
+/** Map tool names to handler functions */
+const toolHandlers: Record<string, ToolHandler> = {
+  run: handleRun,
+  startShell: handleStartShell,
+  updateShell: handleUpdateShell,
+  endShell: handleEndShell,
+  listShells: handleListShells,
+  listScripts: handleListScripts,
+  getScriptOutput: handleGetScriptOutput,
+  killScript: handleKillScript,
+  waitScript: handleWaitScript,
+  listJobs: handleListJobs,
+};
 
 /**
  * Create and configure the MCP server
@@ -283,22 +723,6 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
   // Run Tool Helper Functions
   // ============================================================================
 
-  /** Result of retry workflow processing */
-  interface RetryResult {
-    success: true;
-    code: string;
-    shellId?: string;
-    timeout?: number;
-    background?: boolean;
-    config: SafeShellConfig;
-  }
-
-  /** Error from retry workflow */
-  interface RetryError {
-    success: false;
-    response: { content: { type: string; text: string }[]; isError: boolean };
-  }
-
   /**
    * Handle retry workflow - process retry_id and permission choices
    */
@@ -386,7 +810,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     env: Record<string, string> | undefined,
     timeout: number | undefined,
     config: SafeShellConfig,
-  ): Promise<{ content: { type: string; text: string }[]; isError: boolean }> {
+  ): Promise<McpResponse> {
     const { shell, isTemporary } = shellManager.getOrCreate(
       shellId,
       { cwd: configHolder.cwd, env },
@@ -414,10 +838,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
       shellManager.end(shell.id);
     }
 
-    return {
-      content: [{ type: "text", text: formatRunResult(result, shellId, result.scriptId) }],
-      isError: !result.success,
-    };
+    return mcpTextResponse(formatRunResult(result, shellId, result.scriptId), !result.success);
   }
 
   /**
@@ -431,7 +852,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     timeout: number | undefined,
     background: boolean | undefined,
     shellId: string | undefined,
-  ): { content: { type: string; text: string }[]; isError: boolean } {
+  ): McpResponse {
     const retry = shellManager.createPendingRetry(
       code,
       blockedCommand,
@@ -439,21 +860,15 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
       shellId,
     );
 
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          error: {
-            type: ERROR_COMMAND_NOT_ALLOWED,
-            command: blockedCommand,
-            message: `Command '${blockedCommand}' is not allowed`,
-          },
-          retry_id: retry.id,
-          hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
-        }, null, 2),
-      }],
-      isError: true,
-    };
+    return mcpJsonResponse({
+      error: {
+        type: ERROR_COMMAND_NOT_ALLOWED,
+        command: blockedCommand,
+        message: `Command '${blockedCommand}' is not allowed`,
+      },
+      retry_id: retry.id,
+      hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
+    }, true);
   }
 
   /**
@@ -468,7 +883,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     timeout: number | undefined,
     background: boolean | undefined,
     shellId: string | undefined,
-  ): { content: { type: string; text: string }[]; isError: boolean } {
+  ): McpResponse {
     const retry = shellManager.createPendingRetryMulti(
       code,
       blockedCommands,
@@ -477,7 +892,6 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
       shellId,
     );
 
-    const allBlocked = [...blockedCommands];
     const errors: Array<{ command: string; error: string }> = [];
 
     for (const cmd of blockedCommands) {
@@ -487,21 +901,15 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
       errors.push({ command: cmd, error: ERROR_COMMAND_NOT_FOUND });
     }
 
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          error: {
-            type: ERROR_COMMANDS_BLOCKED,
-            commands: errors,
-            message: `${blockedCommands.length} command(s) not allowed, ${notFoundCommands.length} command(s) not found`,
-          },
-          retry_id: retry.id,
-          hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), or 3 (always). Note: Commands not found cannot be allowed - they must be fixed in code.`,
-        }, null, 2),
-      }],
-      isError: true,
-    };
+    return mcpJsonResponse({
+      error: {
+        type: ERROR_COMMANDS_BLOCKED,
+        commands: errors,
+        message: `${blockedCommands.length} command(s) not allowed, ${notFoundCommands.length} command(s) not found`,
+      },
+      retry_id: retry.id,
+      hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), or 3 (always). Note: Commands not found cannot be allowed - they must be fixed in code.`,
+    }, true);
   }
 
   // List available tools
@@ -641,494 +1049,39 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     };
   });
 
-  // Handle tool calls
+  // Build the tool context for handlers
+  const toolContext: ToolContext = {
+    shellManager,
+    getConfig,
+    getCwd,
+    configHolder,
+    registry,
+    updateRegistry: (newRegistry: CommandRegistry) => { registry = newRegistry; },
+    handleRetryWorkflow,
+    handleFileExecution,
+    formatBlockedCommandResponse,
+    formatBlockedCommandsResponse,
+    formatRunResult,
+  };
+
+  // Handle tool calls using handler map (SSH-176)
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
+    const handler = toolHandlers[name];
+    if (!handler) {
+      return mcpTextResponse(`Unknown tool: ${name}`, true);
+    }
+
     try {
-      switch (name) {
-        case "run": {
-          const parsed = RunSchema.parse(args);
-
-          // Determine execution context (code, config, shellId, etc.)
-          let code: string;
-          let shellId: string | undefined = parsed.shellId;
-          let execTimeout: number | undefined = parsed.timeout;
-          let background: boolean | undefined = parsed.background;
-          let execConfig = configHolder.config;
-
-          // Handle retry workflow
-          if (parsed.retry_id) {
-            const retryResult = await handleRetryWorkflow(
-              parsed.retry_id,
-              parsed.userChoice,
-            );
-            if (!retryResult.success) {
-              return retryResult.response;
-            }
-            code = retryResult.code;
-            shellId = retryResult.shellId;
-            execTimeout = retryResult.timeout;
-            background = retryResult.background;
-            execConfig = retryResult.config;
-          } else if (parsed.file) {
-            // File execution - delegate to helper
-            return await handleFileExecution(
-              parsed.file,
-              shellId,
-              parsed.env,
-              execTimeout,
-              execConfig,
-            );
-          } else if (parsed.shcmd) {
-            // Shell command - parse and transpile to TypeScript
-            try {
-              const parseResult = parseShellCommand(parsed.shcmd);
-              code = parseResult.code;
-              // background param overrides trailing &
-              if (background === undefined) {
-                background = parseResult.isBackground;
-              }
-            } catch (error) {
-              return {
-                content: [{ type: "text", text: `Shell parse error: ${error instanceof Error ? error.message : String(error)}` }],
-                isError: true,
-              };
-            }
-          } else if (parsed.code) {
-            code = parsed.code;
-          } else {
-            return {
-              content: [{ type: "text", text: "Either 'code', 'shcmd', 'file', or 'retry_id' must be provided" }],
-              isError: true,
-            };
-          }
-
-          // Merge session-level allowed commands into config
-          const sessionCommands = shellManager.getSessionAllowedCommands();
-          if (sessionCommands.length > 0) {
-            execConfig = mergeConfigs(execConfig, {
-              permissions: { run: sessionCommands },
-              external: Object.fromEntries(sessionCommands.map((cmd) => [cmd, { allow: true }])),
-            });
-          }
-
-          // Get or create shell (auto-creates with requested ID if not exists)
-          const { shell, isTemporary } = shellManager.getOrCreate(
-            shellId,
-            { cwd: configHolder.cwd, env: parsed.env },
-          );
-
-          // Merge additional env vars into the actual shell temporarily
-          const originalEnv = shell.env;
-          if (parsed.env) {
-            shell.env = { ...shell.env, ...parsed.env };
-          }
-
-          // Background execution: launch script and return immediately
-          if (background) {
-            const script = await launchCodeScript(code, execConfig, shell);
-            shell.env = originalEnv;
-
-            return {
-              content: [{
-                type: "text",
-                text: JSON.stringify({ scriptId: script.id, pid: script.pid, shellId: shell.id, background: true }, null, 2),
-              }],
-            };
-          }
-
-          // Foreground execution: wait for completion
-          const result = await executeCode(code, execConfig, { timeout: execTimeout, cwd: shell.cwd }, shell);
-          shell.env = originalEnv;
-
-          // Check for blocked commands from init() (multiple commands)
-          if (result.blockedCommands?.length || result.notFoundCommands?.length) {
-            return formatBlockedCommandsResponse(
-              code,
-              result.blockedCommands ?? [],
-              result.notFoundCommands ?? [],
-              shell,
-              parsed.env,
-              execTimeout,
-              background,
-              shellId,
-            );
-          }
-
-          // Check for blocked command (legacy single command)
-          if (result.blockedCommand) {
-            return formatBlockedCommandResponse(
-              code,
-              result.blockedCommand,
-              shell,
-              parsed.env,
-              execTimeout,
-              background,
-              shellId,
-            );
-          }
-
-          // Update shell vars if not temporary
-          if (!isTemporary && result.success && shell.vars) {
-            shellManager.update(shell.id, { vars: shell.vars });
-          }
-
-          return {
-            content: [{ type: "text", text: formatRunResult(result, shellId, result.scriptId) }],
-            isError: !result.success,
-          };
-        }
-
-        case "startShell": {
-          const parsed = StartShellSchema.parse(args);
-          const shell = shellManager.create({
-            cwd: parsed.cwd,
-            env: parsed.env,
-          });
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(shellManager.serialize(shell), null, 2),
-              },
-            ],
-          };
-        }
-
-        case "updateShell": {
-          const parsed = UpdateShellSchema.parse(args);
-          const shell = shellManager.update(parsed.shellId, {
-            cwd: parsed.cwd,
-            env: parsed.env,
-          });
-
-          if (!shell) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Shell not found: ${parsed.shellId}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(shellManager.serialize(shell), null, 2),
-              },
-            ],
-          };
-        }
-
-        case "endShell": {
-          const parsed = EndShellSchema.parse(args);
-          const ended = shellManager.end(parsed.shellId);
-
-          if (!ended) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Shell not found: ${parsed.shellId}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Shell ended: ${parsed.shellId}`,
-              },
-            ],
-          };
-        }
-
-        case "listShells": {
-          const shells = shellManager.list();
-
-          if (shells.length === 0) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "No active shells",
-                },
-              ],
-            };
-          }
-
-          const serialized = shells.map((s) => shellManager.serialize(s));
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(serialized, null, 2),
-              },
-            ],
-          };
-        }
-
-        // Script management tools (SSH-90)
-        case "listScripts": {
-          const parsed = ListScriptsSchema.parse(args);
-          const scripts = shellManager.listScripts(parsed.shellId, parsed.filter);
-
-          if (scripts.length === 0) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "No scripts found",
-                },
-              ],
-            };
-          }
-
-          // Serialize scripts (newest first, already sorted by listScripts)
-          const serialized = scripts.map((s) => ({
-            id: s.id,
-            code: s.code.length > 100 ? `${s.code.slice(0, 100)}...` : s.code,
-            pid: s.pid,
-            status: s.status,
-            background: s.background,
-            startedAt: s.startedAt.toISOString(),
-            duration: s.duration,
-            exitCode: s.exitCode,
-            jobIds: s.jobIds,
-            truncated: {
-              stdout: s.stdoutTruncated,
-              stderr: s.stderrTruncated,
-            },
-          }));
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(serialized, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "getScriptOutput": {
-          const parsed = GetScriptOutputSchema.parse(args);
-          const script = shellManager.getScript(parsed.shellId, parsed.scriptId);
-
-          if (!script) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Script not found: ${parsed.scriptId}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-
-          const output = getScriptOutput(script, parsed.since);
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  scriptId: script.id,
-                  status: output.status,
-                  stdout: output.stdout,
-                  stderr: output.stderr,
-                  offset: output.offset,
-                  exitCode: output.exitCode,
-                  truncated: output.truncated,
-                }, null, 2),
-              },
-            ],
-          };
-        }
-
-        case "killScript": {
-          const parsed = KillJobSchema.parse(args);
-          const script = shellManager.getScript(parsed.shellId, parsed.scriptId);
-
-          if (!script) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Script not found: ${parsed.scriptId}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-
-          const signal = (parsed.signal ?? "SIGTERM") as Deno.Signal;
-          await killScript(script, signal);
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Script ${parsed.scriptId} killed with ${signal}`,
-              },
-            ],
-          };
-        }
-
-        case "waitScript": {
-          const parsed = WaitScriptSchema.parse(args);
-          const script = shellManager.getScript(parsed.shellId, parsed.scriptId);
-
-          if (!script) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Script not found: ${parsed.scriptId}`,
-                },
-              ],
-              isError: true,
-            };
-          }
-
-          if (script.status !== "running") {
-            // Script already completed
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify({
-                    scriptId: script.id,
-                    status: script.status,
-                    stdout: script.stdout,
-                    stderr: script.stderr,
-                    exitCode: script.exitCode,
-                    duration: script.duration,
-                    truncated: {
-                      stdout: script.stdoutTruncated,
-                      stderr: script.stderrTruncated,
-                    },
-                  }, null, 2),
-                },
-              ],
-              isError: script.status === "failed",
-            };
-          }
-
-          // Wait for script completion with optional timeout
-          const startTime = Date.now();
-          const timeoutMs = parsed.timeout ?? 30000;
-
-          while (script.status === "running") {
-            if (Date.now() - startTime > timeoutMs) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Timeout waiting for script ${parsed.scriptId}`,
-                  },
-                ],
-                isError: true,
-              };
-            }
-            await new Promise((r) => setTimeout(r, 100));
-          }
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  scriptId: script.id,
-                  status: script.status,
-                  stdout: script.stdout,
-                  stderr: script.stderr,
-                  exitCode: script.exitCode,
-                  duration: script.duration,
-                  truncated: {
-                    stdout: script.stdoutTruncated,
-                    stderr: script.stderrTruncated,
-                  },
-                }, null, 2),
-              },
-            ],
-            isError: script.status === "failed",
-          };
-        }
-
-        case "listJobs": {
-          const parsed = ListJobsSchema.parse(args);
-          const jobs = shellManager.listJobs(parsed.shellId, parsed.filter);
-
-          // Serialize jobs (newest first, already sorted by listJobs)
-          const serialized = jobs.map((job) => ({
-            id: job.id,
-            scriptId: job.scriptId,
-            command: job.command,
-            args: job.args,
-            pid: job.pid,
-            status: job.status,
-            exitCode: job.exitCode,
-            startedAt: job.startedAt.toISOString(),
-            completedAt: job.completedAt?.toISOString(),
-            duration: job.duration,
-          }));
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(serialized, null, 2),
-              },
-            ],
-          };
-        }
-
-        default:
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Unknown tool: ${name}`,
-              },
-            ],
-            isError: true,
-          };
-      }
+      return await handler(args, toolContext);
     } catch (error) {
       // Handle SafeShellError with full formatting
       if (error instanceof SafeShellError) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: formatError(error),
-            },
-          ],
-          isError: true,
-        };
+        return mcpTextResponse(formatError(error), true);
       }
-
       // Handle other errors
-      return {
-        content: [
-          {
-            type: "text",
-            text: error instanceof Error ? error.message : String(error),
-          },
-        ],
-        isError: true,
-      };
+      return mcpTextResponse(error instanceof Error ? error.message : String(error), true);
     }
   });
 

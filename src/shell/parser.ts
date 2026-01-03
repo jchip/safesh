@@ -459,6 +459,18 @@ export class ShellParser {
 // Code Generator
 // ============================================================================
 
+/**
+ * Context passed to command generator helper methods
+ */
+interface GenerateContext {
+  cmd: SimpleCommand;
+  lines: string[];
+  hasGlobs: boolean;
+  hasExpansions: boolean;
+  argsExpr: string;
+  simpleArgsStr: string;
+}
+
 export class TypeScriptGenerator {
   private varCounter = 0;
 
@@ -694,25 +706,43 @@ export class TypeScriptGenerator {
     }
   }
 
-  private generateSimple(cmd: SimpleCommand, lines: string[]): string {
+  // ==========================================================================
+  // Command Generator Helpers (SSH-180, SSH-181)
+  // ==========================================================================
+
+  /**
+   * Generate code for shell.js file operations (mkdir, rm, cp, mv, touch, chmod, ln)
+   */
+  private generateShellJsFileOp(
+    op: string,
+    hasGlobs: boolean,
+    argsExpr: string,
+    simpleArgsStr: string,
+    lines: string[]
+  ): string {
+    const resultVar = this.nextVar();
+    const shellStrVar = this.nextVar();
+
+    if (hasGlobs) {
+      const argsVar = this.nextVar();
+      lines.push(`const ${argsVar} = ${argsExpr};`);
+      lines.push(`const ${shellStrVar} = await $.${op}(...${argsVar});`);
+    } else {
+      lines.push(`const ${shellStrVar} = await $.${op}(${simpleArgsStr});`);
+    }
+
+    lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
+    return resultVar;
+  }
+
+  /**
+   * Generate code for directory commands: cd, pwd, pushd, popd, dirs
+   */
+  private generateDirCommand(ctx: GenerateContext): string {
+    const { cmd, lines } = ctx;
     const resultVar = this.nextVar();
 
-    // Check if any args have expansion (vars, tilde, globs)
-    const hasExpansions = cmd.args.some(a => this.hasExpansion(a));
-    const hasGlobs = cmd.args.some(a => this.isGlob(a));
-
-    // Generate args expression - handles var/tilde/glob expansion
-    const argsExpr = this.generateArgsExpr(cmd.args);
-    // Simple comma-joined args for builtins that don't need glob expansion
-    const simpleArgsStr = cmd.args.map(a => this.expandArg(a)).join(", ");
-
-    // Check for input redirect
-    const inputRedirect = cmd.redirects.find(r => r.type === "<");
-    const outputRedirects = cmd.redirects.filter(r => r.type !== "<");
-
-    // Handle builtins
     switch (cmd.command) {
-      // Directory operations
       case "cd": {
         const dir = cmd.args[0] ? this.expandArg(cmd.args[0]) : `(Deno.env.get('HOME') ?? '~')`;
         lines.push(`await $.cd(${dir});`);
@@ -743,34 +773,50 @@ export class TypeScriptGenerator {
         this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
       }
+      default:
+        throw new Error(`Unknown directory command: ${cmd.command}`);
+    }
+  }
 
-      // Output
-      case "echo": {
-        // $.echo() already prints to stdout
-        // For redirects, we build text manually and write to file (no printing)
-        if (cmd.redirects.length > 0) {
-          const textExpr = simpleArgsStr ? `[${simpleArgsStr}].join(' ')` : "''";
-          const textVar = this.nextVar();
-          lines.push(`const ${textVar} = ${textExpr};`);
-          // Write to file
-          for (const redirect of cmd.redirects) {
-            if (redirect.type === "<") continue;
-            const target = this.expandArg(redirect.target);
-            if (redirect.type === ">") {
-              lines.push(`await Deno.writeTextFile(${target}, ${textVar});`);
-            } else if (redirect.type === ">>") {
-              lines.push(`await Deno.writeTextFile(${target}, ${textVar}, { append: true });`);
-            }
-          }
-          lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
-        } else {
-          lines.push(`$.echo(${simpleArgsStr || "''"});`);
-          lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+  /**
+   * Generate code for output commands: echo
+   */
+  private generateOutputCommand(ctx: GenerateContext): string {
+    const { cmd, lines, simpleArgsStr } = ctx;
+    const resultVar = this.nextVar();
+
+    // $.echo() already prints to stdout
+    // For redirects, we build text manually and write to file (no printing)
+    if (cmd.redirects.length > 0) {
+      const textExpr = simpleArgsStr ? `[${simpleArgsStr}].join(' ')` : "''";
+      const textVar = this.nextVar();
+      lines.push(`const ${textVar} = ${textExpr};`);
+      // Write to file
+      for (const redirect of cmd.redirects) {
+        if (redirect.type === "<") continue;
+        const target = this.expandArg(redirect.target);
+        if (redirect.type === ">") {
+          lines.push(`await Deno.writeTextFile(${target}, ${textVar});`);
+        } else if (redirect.type === ">>") {
+          lines.push(`await Deno.writeTextFile(${target}, ${textVar}, { append: true });`);
         }
-        return resultVar;
       }
+      lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+    } else {
+      lines.push(`$.echo(${simpleArgsStr || "''"});`);
+      lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+    }
+    return resultVar;
+  }
 
-      // Tests
+  /**
+   * Generate code for test commands: true, false, test, [
+   */
+  private generateTestCommand(ctx: GenerateContext): string {
+    const { cmd, lines, simpleArgsStr } = ctx;
+    const resultVar = this.nextVar();
+
+    switch (cmd.command) {
       case "true":
         lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
         return resultVar;
@@ -784,134 +830,100 @@ export class TypeScriptGenerator {
         lines.push(`const ${resultVar} = { code: ${testVar} ? 0 : 1, success: ${testVar}, stdout: '', stderr: '' };`);
         return resultVar;
       }
+      default:
+        throw new Error(`Unknown test command: ${cmd.command}`);
+    }
+  }
 
-      // File listing - supports globs, but only certain flags
-      // Supported flags: -a, -A, -d, -l, -R
-      // For unsupported flags (like -F, -h, -S, etc.), use external ls
-      case "ls": {
-        const unsupportedLsFlags = this.hasUnsupportedLsFlags(cmd.args);
-        if (unsupportedLsFlags) {
-          // Use external ls command for unsupported flags
-          break; // Fall through to external command handling
-        }
-        const lsVar = this.nextVar();
-        if (hasGlobs) {
-          const lsArgsVar = this.nextVar();
-          lines.push(`const ${lsArgsVar} = ${argsExpr};`);
-          lines.push(`const ${lsVar} = await $.ls(...${lsArgsVar});`);
-        } else {
-          lines.push(`const ${lsVar} = await $.ls(${simpleArgsStr || "'.'"});`);
-        }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: Array.isArray(${lsVar}) ? ${lsVar}.join('\\n') : String(${lsVar}), stderr: '' };`);
-        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
-        return resultVar;
-      }
+  /**
+   * Generate code for ls command
+   * Returns null if unsupported flags detected (caller should fall through to external)
+   */
+  private generateLsCommand(ctx: GenerateContext): string | null {
+    const { cmd, lines, hasGlobs, argsExpr, simpleArgsStr } = ctx;
 
-      // File operations - support globs and expansion
-      // These return ShellString with code, stdout, stderr
-      case "mkdir": {
-        const shellStrVar = this.nextVar();
-        if (hasGlobs) {
-          const argsVar = this.nextVar();
-          lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`const ${shellStrVar} = await $.mkdir(...${argsVar});`);
-        } else {
-          lines.push(`const ${shellStrVar} = await $.mkdir(${simpleArgsStr});`);
-        }
-        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
-        return resultVar;
-      }
-      case "rm": {
-        const shellStrVar = this.nextVar();
-        if (hasGlobs) {
-          const argsVar = this.nextVar();
-          lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`const ${shellStrVar} = await $.rm(...${argsVar});`);
-        } else {
-          lines.push(`const ${shellStrVar} = await $.rm(${simpleArgsStr});`);
-        }
-        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
-        return resultVar;
-      }
-      case "cp": {
-        const shellStrVar = this.nextVar();
-        if (hasGlobs) {
-          const argsVar = this.nextVar();
-          lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`const ${shellStrVar} = await $.cp(...${argsVar});`);
-        } else {
-          lines.push(`const ${shellStrVar} = await $.cp(${simpleArgsStr});`);
-        }
-        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
-        return resultVar;
-      }
-      case "mv": {
-        const shellStrVar = this.nextVar();
-        if (hasGlobs) {
-          const argsVar = this.nextVar();
-          lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`const ${shellStrVar} = await $.mv(...${argsVar});`);
-        } else {
-          lines.push(`const ${shellStrVar} = await $.mv(${simpleArgsStr});`);
-        }
-        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
-        return resultVar;
-      }
-      case "touch": {
-        const shellStrVar = this.nextVar();
-        if (hasGlobs) {
-          const argsVar = this.nextVar();
-          lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`const ${shellStrVar} = await $.touch(...${argsVar});`);
-        } else {
-          lines.push(`const ${shellStrVar} = await $.touch(${simpleArgsStr});`);
-        }
-        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
-        return resultVar;
-      }
-      case "chmod": {
-        const shellStrVar = this.nextVar();
-        if (hasGlobs) {
-          const argsVar = this.nextVar();
-          lines.push(`const ${argsVar} = ${argsExpr};`);
-          lines.push(`const ${shellStrVar} = await $.chmod(...${argsVar});`);
-        } else {
-          lines.push(`const ${shellStrVar} = await $.chmod(${simpleArgsStr});`);
-        }
-        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
-        return resultVar;
-      }
-      case "ln": {
-        const shellStrVar = this.nextVar();
-        lines.push(`const ${shellStrVar} = await $.ln(${simpleArgsStr});`);
-        lines.push(`const ${resultVar} = { code: ${shellStrVar}.code, success: ${shellStrVar}.code === 0, stdout: ${shellStrVar}.stdout, stderr: ${shellStrVar}.stderr };`);
-        return resultVar;
-      }
-      case "which": {
-        const whichVar = this.nextVar();
-        lines.push(`const ${whichVar} = await $.which(${simpleArgsStr});`);
-        lines.push(`const ${resultVar} = { code: ${whichVar} ? 0 : 1, success: !!${whichVar}, stdout: ${whichVar} || '', stderr: '' };`);
-        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
-        return resultVar;
-      }
-
-      case "export":
-        // Handle export VAR=value - expand values
-        for (const arg of cmd.args) {
-          const eqIdx = arg.indexOf("=");
-          if (eqIdx > 0) {
-            const varName = arg.slice(0, eqIdx);
-            const varValue = arg.slice(eqIdx + 1);
-            const expandedValue = this.expandArg(varValue);
-            lines.push(`$.ENV['${this.escapeString(varName)}'] = ${expandedValue};`);
-            lines.push(`Deno.env.set('${this.escapeString(varName)}', ${expandedValue});`);
-          }
-        }
-        lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
-        return resultVar;
+    const unsupportedLsFlags = this.hasUnsupportedLsFlags(cmd.args);
+    if (unsupportedLsFlags) {
+      return null; // Fall through to external command handling
     }
 
-    // External command - use $.cmd()
+    const resultVar = this.nextVar();
+    const lsVar = this.nextVar();
+
+    if (hasGlobs) {
+      const lsArgsVar = this.nextVar();
+      lines.push(`const ${lsArgsVar} = ${argsExpr};`);
+      lines.push(`const ${lsVar} = await $.ls(...${lsArgsVar});`);
+    } else {
+      lines.push(`const ${lsVar} = await $.ls(${simpleArgsStr || "'.'"});`);
+    }
+
+    lines.push(`const ${resultVar} = { code: 0, success: true, stdout: Array.isArray(${lsVar}) ? ${lsVar}.join('\\n') : String(${lsVar}), stderr: '' };`);
+    this.generateOutputRedirects(resultVar, cmd.redirects, lines);
+    return resultVar;
+  }
+
+  /**
+   * Generate code for file operations: mkdir, rm, cp, mv, touch, chmod, ln
+   */
+  private generateFileOpCommand(ctx: GenerateContext): string {
+    const { cmd, hasGlobs, argsExpr, simpleArgsStr, lines } = ctx;
+
+    // ln doesn't support globs, use simplified version
+    if (cmd.command === "ln") {
+      return this.generateShellJsFileOp("ln", false, "", simpleArgsStr, lines);
+    }
+
+    return this.generateShellJsFileOp(cmd.command, hasGlobs, argsExpr, simpleArgsStr, lines);
+  }
+
+  /**
+   * Generate code for which command
+   */
+  private generateWhichCommand(ctx: GenerateContext): string {
+    const { cmd, lines, simpleArgsStr } = ctx;
+    const resultVar = this.nextVar();
+    const whichVar = this.nextVar();
+
+    lines.push(`const ${whichVar} = await $.which(${simpleArgsStr});`);
+    lines.push(`const ${resultVar} = { code: ${whichVar} ? 0 : 1, success: !!${whichVar}, stdout: ${whichVar} || '', stderr: '' };`);
+    this.generateOutputRedirects(resultVar, cmd.redirects, lines);
+    return resultVar;
+  }
+
+  /**
+   * Generate code for export command
+   */
+  private generateExportCommand(ctx: GenerateContext): string {
+    const { cmd, lines } = ctx;
+    const resultVar = this.nextVar();
+
+    // Handle export VAR=value - expand values
+    for (const arg of cmd.args) {
+      const eqIdx = arg.indexOf("=");
+      if (eqIdx > 0) {
+        const varName = arg.slice(0, eqIdx);
+        const varValue = arg.slice(eqIdx + 1);
+        const expandedValue = this.expandArg(varValue);
+        lines.push(`$.ENV['${this.escapeString(varName)}'] = ${expandedValue};`);
+        lines.push(`Deno.env.set('${this.escapeString(varName)}', ${expandedValue});`);
+      }
+    }
+    lines.push(`const ${resultVar} = { code: 0, success: true, stdout: '', stderr: '' };`);
+    return resultVar;
+  }
+
+  /**
+   * Generate code for external commands (not builtins)
+   */
+  private generateExternalCommand(ctx: GenerateContext): string {
+    const { cmd, lines, hasGlobs, hasExpansions, argsExpr } = ctx;
+    const resultVar = this.nextVar();
+
+    // Check for input redirect
+    const inputRedirect = cmd.redirects.find(r => r.type === "<");
+    const outputRedirects = cmd.redirects.filter(r => r.type !== "<");
+
     const cmdStr = `'${this.escapeString(cmd.command)}'`;
 
     // Build options
@@ -957,6 +969,69 @@ export class TypeScriptGenerator {
     }
 
     return resultVar;
+  }
+
+  // ==========================================================================
+  // Main generateSimple dispatcher
+  // ==========================================================================
+
+  private generateSimple(cmd: SimpleCommand, lines: string[]): string {
+    // Pre-compute common values for context
+    const hasGlobs = cmd.args.some(a => this.isGlob(a));
+    const hasExpansions = cmd.args.some(a => this.hasExpansion(a));
+    const argsExpr = this.generateArgsExpr(cmd.args);
+    const simpleArgsStr = cmd.args.map(a => this.expandArg(a)).join(", ");
+
+    const ctx: GenerateContext = { cmd, lines, hasGlobs, hasExpansions, argsExpr, simpleArgsStr };
+
+    switch (cmd.command) {
+      // Directory operations
+      case "cd":
+      case "pwd":
+      case "pushd":
+      case "popd":
+      case "dirs":
+        return this.generateDirCommand(ctx);
+
+      // Output
+      case "echo":
+        return this.generateOutputCommand(ctx);
+
+      // Tests
+      case "true":
+      case "false":
+      case "test":
+      case "[":
+        return this.generateTestCommand(ctx);
+
+      // File listing - may fall through to external for unsupported flags
+      case "ls": {
+        const result = this.generateLsCommand(ctx);
+        if (result !== null) return result;
+        break; // Fall through to external for unsupported flags
+      }
+
+      // File operations
+      case "mkdir":
+      case "rm":
+      case "cp":
+      case "mv":
+      case "touch":
+      case "chmod":
+      case "ln":
+        return this.generateFileOpCommand(ctx);
+
+      // Which command
+      case "which":
+        return this.generateWhichCommand(ctx);
+
+      // Export command
+      case "export":
+        return this.generateExportCommand(ctx);
+    }
+
+    // Default: external command
+    return this.generateExternalCommand(ctx);
   }
 
   private generatePipeline(pipeline: PipelineCommand, lines: string[]): string {

@@ -31,9 +31,7 @@ import {
   ERROR_COMMAND_NOT_ALLOWED,
   ERROR_COMMANDS_BLOCKED,
 } from "../core/constants.ts";
-
-const TEMP_DIR = "/tmp/safesh/scripts";
-const DEFAULT_TIMEOUT = 30000;
+import { DEFAULT_TIMEOUT_MS, TEMP_SCRIPT_DIR } from "../core/defaults.ts";
 
 // Cache for existing commands (checked once per unique command list + cwd)
 const existingCommandsCache = new Map<string, string[]>();
@@ -491,67 +489,57 @@ function resolveWithBoth(p: string): string[] {
 }
 
 /**
+ * Build a path-based permission flag.
+ * Common helper for read/write allow/deny permissions.
+ */
+function buildPathPermission(
+  flag: string,
+  paths: string[],
+  cwd: string,
+  extraPaths: string[] = [],
+): string | null {
+  const allPaths = [...paths];
+  for (const extra of extraPaths) {
+    if (!allPaths.includes(extra)) {
+      allPaths.push(extra);
+    }
+  }
+  if (allPaths.length) {
+    const expanded = allPaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
+    return `--${flag}=${expanded}`;
+  }
+  return null;
+}
+
+/** Safesh source directory for imports */
+const SAFESH_SRC_DIR = new URL("../../", import.meta.url).pathname;
+
+/**
  * Build read permission flag
  */
 function buildReadPermission(paths: string[], cwd: string): string | null {
-  const readPaths = [...paths];
-
-  // Always include temp dir for script files
-  if (!readPaths.includes(TEMP_DIR)) {
-    readPaths.push(TEMP_DIR);
-  }
-
-  // Add safesh source directory for imports (resolve from this file's location)
-  const safeshSrcDir = new URL("../../", import.meta.url).pathname;
-  if (!readPaths.includes(safeshSrcDir)) {
-    readPaths.push(safeshSrcDir);
-  }
-
-  if (readPaths.length) {
-    const expanded = readPaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
-    return `--allow-read=${expanded}`;
-  }
-  return null;
+  return buildPathPermission("allow-read", paths, cwd, [TEMP_SCRIPT_DIR, SAFESH_SRC_DIR]);
 }
 
 /**
  * Build deny-read permission flag
  */
 function buildDenyReadPermission(paths: string[], cwd: string): string | null {
-  if (paths.length) {
-    const expanded = paths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
-    return `--deny-read=${expanded}`;
-  }
-  return null;
+  return buildPathPermission("deny-read", paths, cwd);
 }
 
 /**
  * Build write permission flag
  */
 function buildWritePermission(paths: string[], cwd: string): string | null {
-  const writePaths = [...paths];
-
-  // Always include temp dir for script files
-  if (!writePaths.includes(TEMP_DIR)) {
-    writePaths.push(TEMP_DIR);
-  }
-
-  if (writePaths.length) {
-    const expanded = writePaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
-    return `--allow-write=${expanded}`;
-  }
-  return null;
+  return buildPathPermission("allow-write", paths, cwd, [TEMP_SCRIPT_DIR]);
 }
 
 /**
  * Build deny-write permission flag
  */
 function buildDenyWritePermission(paths: string[], cwd: string): string | null {
-  if (paths.length) {
-    const expanded = paths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
-    return `--deny-write=${expanded}`;
-  }
-  return null;
+  return buildPathPermission("deny-write", paths, cwd);
 }
 
 /**
@@ -656,7 +644,7 @@ export async function executeCode(
   shell?: Shell,
 ): Promise<ExecResult> {
   const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
-  const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT;
+  const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT_MS;
 
   // Validate imports against security policy
   const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
@@ -671,11 +659,11 @@ export async function executeCode(
   }
 
   // Ensure temp directory exists
-  await ensureDir(TEMP_DIR);
+  await ensureDir(TEMP_SCRIPT_DIR);
 
   // Create script file
   const hash = await hashCode(code);
-  const scriptPath = join(TEMP_DIR, `${hash}.ts`);
+  const scriptPath = join(TEMP_SCRIPT_DIR, `${hash}.ts`);
 
   // Build full code with preamble, user code, and error handler
   const preambleConfig = extractPreambleConfig(config, cwd);
@@ -798,7 +786,7 @@ export async function executeFile(
   shell?: Shell,
 ): Promise<ExecResult> {
   const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
-  const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT;
+  const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT_MS;
 
   // Resolve file path - if already absolute, use as-is, otherwise resolve from cwd
   const absolutePath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
@@ -825,9 +813,9 @@ export async function executeFile(
   const wrappedCode = filePreamble + fileCode + filePostamble;
 
   // Write wrapped code to temp file
-  await ensureDir(TEMP_DIR);
+  await ensureDir(TEMP_SCRIPT_DIR);
   const hash = await hashCode(wrappedCode);
-  const tempPath = join(TEMP_DIR, `file_${hash}.ts`);
+  const tempPath = join(TEMP_SCRIPT_DIR, `file_${hash}.ts`);
   await Deno.writeTextFile(tempPath, wrappedCode);
 
   // Generate import map and build command args
@@ -864,6 +852,66 @@ export async function executeFile(
 }
 
 /**
+ * Properly merge stdout and stderr streams concurrently using Promise.race
+ */
+async function* mergeStreams(
+  stdoutReader: ReadableStreamDefaultReader<Uint8Array>,
+  stderrReader: ReadableStreamDefaultReader<Uint8Array>,
+): AsyncGenerator<{ type: "stdout" | "stderr"; data: string }> {
+  type StreamResult = { stream: "stdout" | "stderr"; result: ReadableStreamReadResult<Uint8Array> };
+  const decoder = new TextDecoder();
+
+  let stdoutDone = false;
+  let stderrDone = false;
+
+  // Create pending read promises
+  let stdoutPromise: Promise<StreamResult> | null = null;
+  let stderrPromise: Promise<StreamResult> | null = null;
+
+  const createStdoutPromise = () =>
+    stdoutReader.read().then(result => ({ stream: "stdout" as const, result }));
+  const createStderrPromise = () =>
+    stderrReader.read().then(result => ({ stream: "stderr" as const, result }));
+
+  while (!stdoutDone || !stderrDone) {
+    // Start reads if not already pending
+    if (!stdoutDone && !stdoutPromise) {
+      stdoutPromise = createStdoutPromise();
+    }
+    if (!stderrDone && !stderrPromise) {
+      stderrPromise = createStderrPromise();
+    }
+
+    // Wait for either stream to have data
+    const promises: Promise<StreamResult>[] = [];
+    if (stdoutPromise) promises.push(stdoutPromise);
+    if (stderrPromise) promises.push(stderrPromise);
+
+    if (promises.length === 0) break;
+
+    const { stream, result } = await Promise.race(promises);
+
+    if (result.done) {
+      if (stream === "stdout") {
+        stdoutDone = true;
+        stdoutPromise = null;
+      } else {
+        stderrDone = true;
+        stderrPromise = null;
+      }
+    } else if (result.value) {
+      yield { type: stream, data: decoder.decode(result.value) };
+      // Clear the completed promise so we start a new read
+      if (stream === "stdout") {
+        stdoutPromise = null;
+      } else {
+        stderrPromise = null;
+      }
+    }
+  }
+}
+
+/**
  * Execute code with streaming output
  */
 export async function* executeCodeStreaming(
@@ -879,11 +927,11 @@ export async function* executeCodeStreaming(
   validateImports(code, importPolicy);
 
   // Ensure temp directory exists
-  await ensureDir(TEMP_DIR);
+  await ensureDir(TEMP_SCRIPT_DIR);
 
   // Create script file
   const hash = await hashCode(code);
-  const scriptPath = join(TEMP_DIR, `${hash}.ts`);
+  const scriptPath = join(TEMP_SCRIPT_DIR, `${hash}.ts`);
 
   // Build full code with preamble and error handler
   const preambleConfig = extractPreambleConfig(config, cwd);
@@ -925,28 +973,12 @@ export async function* executeCodeStreaming(
 
   const process = command.spawn();
 
-  // Stream stdout
+  // Get stream readers
   const stdoutReader = process.stdout.getReader();
   const stderrReader = process.stderr.getReader();
-  const decoder = new TextDecoder();
 
-  // Read both streams concurrently
-  const readStream = async function* (
-    reader: ReadableStreamDefaultReader<Uint8Array>,
-    type: "stdout" | "stderr",
-  ) {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      yield { type, data: decoder.decode(value) };
-    }
-  };
-
-  // Merge streams (simplified - in production use proper merging)
-  for await (const chunk of readStream(stdoutReader, "stdout")) {
-    yield chunk;
-  }
-  for await (const chunk of readStream(stderrReader, "stderr")) {
+  // Use the merged stream for proper real-time interleaving
+  for await (const chunk of mergeStreams(stdoutReader, stderrReader)) {
     yield chunk;
   }
 
