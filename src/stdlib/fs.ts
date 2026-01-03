@@ -6,8 +6,26 @@
  * @module
  */
 
-import { resolve, dirname, basename, join } from "@std/path";
+import { resolve, dirname, basename, join, extname, relative, normalize, isAbsolute, parse, format, toFileUrl, fromFileUrl } from "@std/path";
 import { copy as stdCopy } from "@std/fs/copy";
+
+/**
+ * Path utilities re-exported from @std/path
+ */
+export const path = {
+  resolve,
+  dirname,
+  basename,
+  join,
+  extname,
+  relative,
+  normalize,
+  isAbsolute,
+  parse,
+  format,
+  toFileUrl,
+  fromFileUrl,
+};
 import { ensureDir as stdEnsureDir } from "@std/fs/ensure-dir";
 import { walk as stdWalk, type WalkOptions as StdWalkOptions } from "@std/fs/walk";
 import { validatePath, expandPath, isPathAllowed } from "../core/permissions.ts";
