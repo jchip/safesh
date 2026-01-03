@@ -11,7 +11,7 @@ export function createRunToolDescription(_permSummary?: string): string {
 $ top-level object categories:
 
 Shell-like utils: cd, pwd, ls, mkdir, touch, rm, cp, mv, chmod, ln, which, test, tempdir, pushd, popd, dirs, echo
-File system: $.fs.read(), $.fs.write() - sync file I/O
+File system: await $.fs.read(path), await $.fs.write(path, content) - async file I/O
 Commands (return {code, stdout, stderr}): $.git(), $.tmux(), $.docker(), $.cmd()
   - external: const [curl] = await $.initCmds(['curl']); await curl('-s', url);
 
