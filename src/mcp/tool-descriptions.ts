@@ -9,10 +9,10 @@ export function createRunToolDescription(_permSummary?: string): string {
   return `Execute JS/TS in sandboxed Deno - MCPU usage: infoc
 
 Execution modes (use ONE):
+- shcmd: basic shell command → code string (&&, ||, ;, |, >, >>, <, 2>&1, &, globs) **RECOMMENDED** for simple commands
 - code: code string
 - file: file content as code string
 - module: import as .ts module
-- shcmd: basic shell command → code string (&&, ||, ;, |, >, >>, <, 2>&1, &, globs)
 
 All APIs under global object '$' (e.g., $.mkdir() - will skip $. below for brevity):
 NOTE: Only use APIs listed here. DO NOT guess or make up new methods.
