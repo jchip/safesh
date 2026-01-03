@@ -625,7 +625,14 @@ export class TypeScriptGenerator {
           i++;
         }
         i++; // skip VAR_END
-        parts.push(`($.ENV['${varName}'] ?? Deno.env.get('${varName}') ?? '')`);
+        // Special handling for CWD and HOME (not env vars but shell state)
+        if (varName === "CWD") {
+          parts.push(`$.CWD`);
+        } else if (varName === "HOME") {
+          parts.push(`(Deno.env.get('HOME') ?? '')`);
+        } else {
+          parts.push(`($.ENV['${varName}'] ?? Deno.env.get('${varName}') ?? '')`);
+        }
       } else {
         literal += s[i];
         i++;

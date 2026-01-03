@@ -6,7 +6,6 @@
  * @module
  */
 
-import { homedir } from "node:os";
 import { resolve, join, DELIMITER } from "@std/path";
 import { expandGlob } from "@std/fs/expand-glob";
 import type { OptionsMap, ParsedOptions } from "./types.ts";
@@ -154,7 +153,8 @@ export function isGlob(str: string): boolean {
  */
 export function expandTilde(path: string): string {
   if (path === "~" || path.startsWith("~/")) {
-    return path.replace(/^~/, homedir());
+    const home = Deno.env.get("HOME") ?? "";
+    return path.replace(/^~/, home);
   }
   return path;
 }

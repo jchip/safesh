@@ -22,11 +22,19 @@ The main tool is `run` - never guess names like `execute`, `eval`, etc.
 
 ## Common Gotchas
 
+- **Output**: `return` does NOT print. Use `console.log()` to see output.
+- **`$.cat()`** returns a stream, not string. Use `await $.cat('file').collect()` to get content.
 - **`$.ENV`** is a plain object (not Map). Use `$.ENV.FOO = 'bar'` not `.set()`.
 - **`ls()`** returns `string[]`; `ls('-l')` returns formatted strings, NOT objects.
 - **`$.glob()`** returns `{path, base, contents}`, not strings. Use `f.path` for filtering.
 - **Streaming**: `$.cat().head(1)` returns first **chunk**, not line. Use `$.cat().lines().head(1)`.
 - **Async chaining**: `(await $.ls('-la')).slice(0, 5)` not `await $.ls('-la').slice(0, 5)`.
+
+## Streaming vs Direct
+
+**Streams (need `.collect()`):** `$.cat()`, `$.from()`, `$.text()`, `$.glob()`, and chains: `.lines()`, `.grep()`, `.filter()`, `.map()`, `.head()`, `.tail()`
+
+**Direct (return value):** `$.fs.read()`, `$.ls()`, `$.mkdir()`, `$.rm()`, `$.cp()`, `$.mv()`, `$.touch()`
 
 ## Commands
 
