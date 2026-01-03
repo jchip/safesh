@@ -473,6 +473,7 @@ interface GenerateContext {
 
 export class TypeScriptGenerator {
   private varCounter = 0;
+  private cmdFnMap: Map<string, string> = new Map(); // command name -> variable name
 
   generate(command: Command): string {
     const lines: string[] = [];
@@ -481,7 +482,13 @@ export class TypeScriptGenerator {
     const commands = this.collectCommands(command);
     if (commands.length > 0) {
       const cmdsStr = commands.map(c => `'${this.escapeString(c)}'`).join(", ");
-      lines.push(`await $.initCmds([${cmdsStr}]);`);
+      // Destructure to get CommandFn objects
+      const cmdVars = commands.map((cmd, i) => `_cmd${i}`);
+      lines.push(`const [${cmdVars.join(", ")}] = await $.initCmds([${cmdsStr}]);`);
+      // Store mapping for later use
+      commands.forEach((cmd, i) => {
+        this.cmdFnMap.set(cmd, `_cmd${i}`);
+      });
     }
 
     const resultVar = this.generateCommand(command, lines);
@@ -507,16 +514,14 @@ export class TypeScriptGenerator {
     return Array.from(commands);
   }
 
-  /** Builtins that don't need permission checks (implemented internally in shelljs) */
+  /** Builtins that don't need permission checks (implemented internally) */
   private static readonly BUILTINS = new Set([
     // Directory navigation
     "cd", "pwd", "pushd", "popd", "dirs",
     // Shell basics
-    "echo", "printf", "test", "[", "true", "false", "export", "env", "printenv",
+    "echo", "test", "[", "true", "false", "export",
     // File operations (internal implementations)
-    "cat", "ls", "mkdir", "rm", "cp", "mv", "touch", "chmod", "ln", "which",
-    // Temp
-    "mktemp",
+    "ls", "mkdir", "rm", "cp", "mv", "touch", "chmod", "ln", "which",
   ]);
 
   private collectCommandsRecursive(command: Command, commands: Set<string>): void {
@@ -527,10 +532,9 @@ export class TypeScriptGenerator {
         }
         break;
       case "pipeline":
+        // In pipelines, ALL commands need CommandFn (even builtins) for .pipe() to work
         for (const cmd of command.commands) {
-          if (!TypeScriptGenerator.BUILTINS.has(cmd.command)) {
-            commands.add(cmd.command);
-          }
+          commands.add(cmd.command);
         }
         break;
       case "sequence":
@@ -545,6 +549,19 @@ export class TypeScriptGenerator {
 
   private nextVar(): string {
     return `_r${this.varCounter++}`;
+  }
+
+  /**
+   * Get the CommandFn variable for a command name
+   * Returns the variable name if it's an external command, or a quoted string for builtins
+   */
+  private getCmdRef(cmdName: string): string {
+    const cmdVar = this.cmdFnMap.get(cmdName);
+    if (cmdVar) {
+      return cmdVar; // CommandFn variable for external commands
+    }
+    // Builtin commands don't need CommandFn
+    return `'${this.escapeString(cmdName)}'`;
   }
 
   private generateCommand(command: Command, lines: string[]): string | null {
@@ -931,7 +948,8 @@ export class TypeScriptGenerator {
     const inputRedirect = cmd.redirects.find(r => r.type === "<");
     const outputRedirects = cmd.redirects.filter(r => r.type !== "<");
 
-    const cmdStr = `'${this.escapeString(cmd.command)}'`;
+    // Use CommandFn reference if available (from initCmds), otherwise use string
+    const cmdRef = this.getCmdRef(cmd.command);
 
     // Build options
     const options: string[] = [];
@@ -953,16 +971,32 @@ export class TypeScriptGenerator {
     // Generate the command call
     const optionsStr = options.length > 0 ? `, { ${options.join(", ")} }` : "";
 
+    // Use CommandFn for simple cases (no options), $.cmd() when we need custom options
+    const isCommandFn = this.cmdFnMap.has(cmd.command);
+    const useCommandFn = isCommandFn && options.length === 0;
+
     if (hasGlobs || hasExpansions) {
       // Need to evaluate args expression
       lines.push(`const _args = ${argsExpr};`);
-      lines.push(`const ${resultVar} = await $.cmd(${cmdStr}, _args${optionsStr});`);
+      if (useCommandFn) {
+        lines.push(`const ${resultVar} = await ${cmdRef}(..._args);`);
+      } else {
+        lines.push(`const ${resultVar} = await $.cmd(${cmdRef}, _args${optionsStr});`);
+      }
     } else if (cmd.args.length > 0) {
-      lines.push(`const ${resultVar} = await $.cmd(${cmdStr}, ${argsExpr}${optionsStr});`);
+      if (useCommandFn) {
+        lines.push(`const ${resultVar} = await ${cmdRef}(${argsExpr});`);
+      } else {
+        lines.push(`const ${resultVar} = await $.cmd(${cmdRef}, ${argsExpr}${optionsStr});`);
+      }
     } else if (options.length > 0) {
-      lines.push(`const ${resultVar} = await $.cmd(${cmdStr}, []${optionsStr});`);
+      lines.push(`const ${resultVar} = await $.cmd(${cmdRef}, []${optionsStr});`);
     } else {
-      lines.push(`const ${resultVar} = await $.cmd(${cmdStr});`);
+      if (useCommandFn) {
+        lines.push(`const ${resultVar} = await ${cmdRef}();`);
+      } else {
+        lines.push(`const ${resultVar} = await $.cmd(${cmdRef});`);
+      }
     }
 
     // Handle output redirects
@@ -1049,7 +1083,7 @@ export class TypeScriptGenerator {
     const first = cmds[0]!;
     const firstHasExpansion = first.args.some(a => this.hasExpansion(a));
     const firstHasGlobs = first.args.some(a => this.isGlob(a));
-    const firstCmdStr = `'${this.escapeString(first.command)}'`;
+    const firstCmdRef = this.getCmdRef(first.command); // Use CommandFn variable
 
     // Check for input redirect on first command
     const inputRedirect = first.redirects.find(r => r.type === "<");
@@ -1065,35 +1099,47 @@ export class TypeScriptGenerator {
     }
     const firstOptStr = firstOptions.length > 0 ? `, { ${firstOptions.join(", ")} }` : "";
 
+    // For pipelines, use CommandFn directly (not $.cmd) for first command
+    // CommandFn(...args) returns a Command object that can be piped
     if (firstHasGlobs || firstHasExpansion) {
       const argsExpr = this.generateArgsExpr(first.args);
       lines.push(`const _pipeArgs0 = ${argsExpr};`);
-      expr = `$.cmd(${firstCmdStr}, _pipeArgs0${firstOptStr})`;
+      if (firstOptions.length > 0) {
+        // Need to create Command with options - use $.cmd for now
+        expr = `new Command(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, _pipeArgs0${firstOptStr})`;
+      } else {
+        expr = `${firstCmdRef}(..._pipeArgs0)`;
+      }
     } else if (first.args.length > 0) {
       const argsExpr = this.generateArgsExpr(first.args);
-      expr = `$.cmd(${firstCmdStr}, ${argsExpr}${firstOptStr})`;
+      const argsArray = `[${argsExpr}]`;
+      if (firstOptions.length > 0) {
+        expr = `new Command(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, ${argsArray}${firstOptStr})`;
+      } else {
+        expr = `${firstCmdRef}(...${argsArray})`;
+      }
     } else if (firstOptions.length > 0) {
-      expr = `$.cmd(${firstCmdStr}, []${firstOptStr})`;
+      expr = `new Command(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, []${firstOptStr})`;
     } else {
-      expr = `$.cmd(${firstCmdStr})`;
+      expr = `${firstCmdRef}()`;
     }
 
     // Pipe to remaining commands
     for (let i = 1; i < cmds.length; i++) {
       const cmd = cmds[i]!;
-      const cmdStr = `'${this.escapeString(cmd.command)}'`;
+      const cmdRef = this.getCmdRef(cmd.command); // Use CommandFn variable
       const hasExpansion = cmd.args.some(a => this.hasExpansion(a));
       const hasGlobs = cmd.args.some(a => this.isGlob(a));
 
       if (hasGlobs || hasExpansion) {
         const argsExpr = this.generateArgsExpr(cmd.args);
         lines.push(`const _pipeArgs${i} = ${argsExpr};`);
-        expr += `.pipe(${cmdStr}, _pipeArgs${i})`;
+        expr += `.pipe(${cmdRef}, _pipeArgs${i})`;
       } else if (cmd.args.length > 0) {
         const argsExpr = this.generateArgsExpr(cmd.args);
-        expr += `.pipe(${cmdStr}, ${argsExpr})`;
+        expr += `.pipe(${cmdRef}, ${argsExpr})`;
       } else {
-        expr += `.pipe(${cmdStr})`;
+        expr += `.pipe(${cmdRef})`;
       }
     }
 
