@@ -214,10 +214,16 @@ export function getEffectivePermissions(
   const defaultWrite = ["/tmp"];
 
   // projectDir gets full read access, and write access unless blockProjectDirWrite is true
+  // When blockProjectDirWrite is true, add projectDir to denyWrite to ensure it's blocked
+  // even if a parent directory (like /tmp) is in the write list
+  const denyWrite = [...(perms.denyWrite ?? [])];
   if (config.projectDir) {
     defaultRead.push(config.projectDir);
     if (!config.blockProjectDirWrite) {
       defaultWrite.push(config.projectDir);
+    } else {
+      // Add to denyWrite to block writes at Deno sandbox level
+      denyWrite.push(config.projectDir);
     }
   }
 
@@ -225,7 +231,7 @@ export function getEffectivePermissions(
     read: [...new Set([...defaultRead, ...(perms.read ?? [])])],
     denyRead: perms.denyRead ?? [],
     write: [...new Set([...defaultWrite, ...(perms.write ?? [])])],
-    denyWrite: perms.denyWrite ?? [],
+    denyWrite,
     net: perms.net ?? [],
     run: perms.run ?? [],
     env: perms.env ?? [],
