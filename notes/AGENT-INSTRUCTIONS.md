@@ -31,7 +31,7 @@ The main tool is `run` - never guess names like `execute`, `eval`, etc.
 ## Commands
 
 ```typescript
-// Built-in: git, docker, deno
+// Built-in: git, tmux
 const { stdout } = await $.git('status');
 
 // External commands: MUST register first with initCmds
