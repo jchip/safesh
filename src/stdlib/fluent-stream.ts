@@ -59,16 +59,17 @@ export class FluentStream<T> implements AsyncIterable<T> {
   /**
    * Filter items using a predicate
    *
-   * @param predicate - Function returning true for items to keep
+   * @param predicate - Function returning true for items to keep (receives item and index)
    * @returns FluentStream for chaining
    *
    * @example
    * ```ts
    * stream.filter(item => item.value > 10);
+   * stream.filter((line, idx) => idx > 0); // skip first item
    * ```
    */
   filter(
-    predicate: (item: T) => boolean | Promise<boolean>,
+    predicate: (item: T, index: number) => boolean | Promise<boolean>,
   ): FluentStream<T> {
     return new FluentStream(this._stream.pipe(transforms.filter(predicate)));
   }
@@ -76,15 +77,16 @@ export class FluentStream<T> implements AsyncIterable<T> {
   /**
    * Transform each item
    *
-   * @param fn - Transform function
+   * @param fn - Transform function (receives item and index)
    * @returns FluentStream for chaining
    *
    * @example
    * ```ts
    * stream.map(item => item.toUpperCase());
+   * stream.map((line, idx) => `${idx}: ${line}`); // add line numbers
    * ```
    */
-  map<U>(fn: (item: T) => U | Promise<U>): FluentStream<U> {
+  map<U>(fn: (item: T, index: number) => U | Promise<U>): FluentStream<U> {
     return new FluentStream(this._stream.pipe(transforms.map(fn)));
   }
 
