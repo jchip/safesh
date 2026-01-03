@@ -46,7 +46,7 @@ const SAFE_COMMANDS = [
   // ============================================================================
   // File/Directory Inspection (read-only)
   // ============================================================================
-  "ls", "find", "tree", "du", "df", "file", "stat",
+  "ls", "find", "tree", "du", "df", "file", "stat", "pwd",
   "locate", "whereis", "type",
   "readlink", "realpath", "basename", "dirname",
 
