@@ -4,6 +4,7 @@ Complete API documentation for SafeShell ($.\*)
 
 ## Table of Contents
 
+- [Type Definitions](#type-definitions)
 - [Utility Objects](#utility-objects)
   - [$.fs - File System](#fs---file-system)
   - [$.path - Path Utilities](#path---path-utilities)
@@ -22,6 +23,119 @@ Complete API documentation for SafeShell ($.\*)
 - [Shell-like Commands](#shell-like-commands)
 - [State Variables](#state-variables)
 - [Path Expansion](#path-expansion)
+
+---
+
+## Type Definitions
+
+Core TypeScript types used throughout the SafeShell API.
+
+### Command Types
+
+```typescript
+// Command execution result
+interface CommandResult {
+  code: number;           // Exit code
+  stdout: string;         // Standard output
+  stderr: string;         // Standard error
+  success: boolean;       // true if code === 0
+}
+
+// Command configuration options
+interface CommandOptions {
+  cwd?: string;                      // Working directory
+  env?: Record<string, string>;      // Environment variables
+  stdin?: "inherit" | "piped" | "null";
+  stdout?: "inherit" | "piped" | "null";
+  stderr?: "inherit" | "piped" | "null";
+}
+
+// Command function type (from $.initCmds)
+type CommandFn = (...args: string[]) => Command;
+```
+
+### File and Glob Types
+
+```typescript
+// File object returned by $.glob() and $.src()
+interface File {
+  path: string;                    // Absolute path
+  base: string;                    // Base directory for relative paths
+  contents: string | Uint8Array;   // File contents (property, not method!)
+  stat?: Deno.FileInfo;           // File stats (present after read)
+}
+
+// Glob entry with metadata
+interface GlobEntry {
+  path: string;        // Absolute path
+  name: string;        // File/directory name
+  isFile: boolean;     // Is a regular file
+  isDirectory: boolean;// Is a directory
+  isSymlink: boolean;  // Is a symbolic link
+}
+```
+
+### Text Processing Types
+
+```typescript
+// Grep match result
+interface GrepMatch {
+  line: number;        // Line number (1-indexed)
+  content: string;     // Full line content
+  match: string;       // The matched text
+}
+
+// Text statistics
+interface TextStats {
+  lines: number;       // Number of lines
+  words: number;       // Number of words
+  chars: number;       // Number of characters
+  bytes: number;       // Number of bytes
+}
+
+// Sort options
+interface SortOptions {
+  numeric?: boolean;   // Sort numerically
+  reverse?: boolean;   // Reverse order
+  unique?: boolean;    // Remove duplicates
+}
+
+// Uniq options
+interface UniqOptions {
+  count?: boolean;     // Return {line, count}[] instead of string[]
+  ignoreCase?: boolean;// Case-insensitive comparison
+}
+
+// Cut options
+interface CutOptions {
+  delimiter?: string;  // Field delimiter (default: tab)
+  fields?: number[];   // Field numbers to extract (1-indexed)
+}
+```
+
+### Stream Types
+
+```typescript
+// Generic transform function
+type Transform<T, U> = (stream: AsyncIterable<T>) => AsyncIterable<U>;
+
+// Stream predicate
+type Predicate<T> = (item: T, index: number) => boolean | Promise<boolean>;
+
+// Stream mapper
+type Mapper<T, U> = (item: T, index: number) => U | Promise<U>;
+```
+
+### Shell Types
+
+```typescript
+// ShellString - returned by $.pwd(), $.cd()
+// Extends String with additional methods
+interface ShellString extends String {
+  toString(): string;
+  valueOf(): string;
+}
+```
 
 ---
 
@@ -239,7 +353,7 @@ const data = await $.str('{"name":"John"}').pipe(jq, [".name"]).exec();
 
 ### General Command Execution
 
-Execute any command. Intetionally not documented in MCP instructions.
+Execute any command. Intentionally not documented in MCP instructions.
 
 **API:**
 
