@@ -635,26 +635,48 @@ export class Command implements PromiseLike<CommandResult> {
 /**
  * Create a command
  *
- * @param command - Command name or path
- * @param args - Command arguments
- * @param options - Execution options
- * @returns Command instance
+ * Supports multiple calling conventions:
+ * - `cmd("ls")` - simple command
+ * - `cmd("git", "status")` - variadic args
+ * - `cmd("git", ["status"])` - array args (legacy)
+ * - `cmd({ cwd: "/tmp" }, "ls", "-la")` - options first
  *
  * @example
  * ```ts
- * // Simple command
- * const result = await cmd("echo", ["hello"]).exec();
- *
- * // With options
- * const result = await cmd("npm", ["test"], { cwd: "/project" }).exec();
+ * const result = await cmd("ls").exec();
+ * const result = await cmd("git", "status", "-s").exec();
+ * const result = await cmd({ cwd: "/project" }, "npm", "test").exec();
  * ```
  */
-export function cmd(
-  command: string,
-  args: string[] = [],
-  options?: CommandOptions,
-): Command {
-  return new Command(command, args, options);
+export function cmd(...params: unknown[]): Command {
+  // Check if first arg is options object
+  if (
+    params.length > 0 &&
+    typeof params[0] === "object" &&
+    params[0] !== null &&
+    !Array.isArray(params[0])
+  ) {
+    const options = params[0] as CommandOptions;
+    const command = params[1] as string;
+    const args = params.slice(2) as string[];
+    return new Command(command, args, options);
+  }
+
+  const command = params[0] as string;
+  const rest = params.slice(1);
+
+  // Legacy: cmd("git", ["status"]) - array as second arg
+  if (rest.length === 1 && Array.isArray(rest[0])) {
+    return new Command(command, rest[0] as string[], {});
+  }
+
+  // Legacy: cmd("git", ["status"], { cwd: ... }) - array + options
+  if (rest.length === 2 && Array.isArray(rest[0])) {
+    return new Command(command, rest[0] as string[], rest[1] as CommandOptions);
+  }
+
+  // Variadic: cmd("git", "status", "-s")
+  return new Command(command, rest as string[], {});
 }
 
 // ============================================================================
