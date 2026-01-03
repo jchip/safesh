@@ -113,6 +113,9 @@ import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln,
  *
  * Also callable as shorthand: $('git', 'status') or $('whoami')
  */
+// Sleep/delay utility
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
 const _$props = {
   // Fluent file API ($.cat('file').lines().grep(/pattern/).collect())
   cat: fluentShell, FluentShell,
@@ -130,6 +133,8 @@ const _$props = {
   glob, globPaths, globArray, src, dest,
   // ShellJS commands
   echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString,
+  // Timing
+  sleep, delay: sleep,
   // Deno file aliases
   writeFile: Deno.writeFile,
   writeFileSync: Deno.writeFileSync,
