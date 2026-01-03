@@ -683,12 +683,13 @@ export function cmd(...params: unknown[]): Command {
 // Re-exports from split modules for backwards compatibility
 // ============================================================================
 
-// Command helpers (git, docker, tmux, str, bytes)
+// Command helpers (git, docker, tmux, tmuxSubmit, str, bytes)
 export {
   createCommandFactory,
   git,
   docker,
   tmux,
+  tmuxSubmit,
   str,
   bytes,
 } from "./command-helpers.ts";

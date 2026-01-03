@@ -30,6 +30,7 @@ export {
   git,
   docker,
   tmux,
+  tmuxSubmit,
   str,
   bytes,
   toCmd,
@@ -99,7 +100,7 @@ export type { GrepMatch, GrepOptions, CountResult, DiffLine } from "./text.ts";
 // Import remaining exports for _$ namespace
 import { default as fluentShell } from "./shell.ts";
 import { FluentShell } from "./shell.ts";
-import { cmd, git, docker, tmux, str, bytes, toCmd, toCmdLines, initCmds } from "./command.ts";
+import { cmd, git, docker, tmux, tmuxSubmit, str, bytes, toCmd, toCmdLines, initCmds } from "./command.ts";
 import { createStream, fromArray, empty } from "./stream.ts";
 import { filter, map, flatMap, take, head, tail, lines, grep } from "./transforms.ts";
 import { stdout, stderr, tee } from "./io.ts";
@@ -122,7 +123,7 @@ const _$props = {
   // Namespaced modules
   fs, text, path,
   // Command execution
-  cmd, git, docker, tmux, str, bytes, toCmd, toCmdLines, initCmds,
+  cmd, git, docker, tmux, tmuxSubmit, str, bytes, toCmd, toCmdLines, initCmds,
   // Streaming primitives
   createStream, fromArray, empty,
   // Stream transforms
