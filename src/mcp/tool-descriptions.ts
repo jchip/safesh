@@ -9,7 +9,6 @@ export function createRunToolDescription(_permSummary?: string): string {
   return `Execute JS/TS in sandboxed Deno - MCPU usage: infoc
 
 Execution modes (use ONE):
-- shcmd: basic shell command → code string (&&, ||, ;, |, >, >>, <, 2>&1, &, globs) RECOMMENDED for simple commands - NO heredoc, command substitution
 - code: code string
 - file: file content as code string
 - module: import as .ts module
