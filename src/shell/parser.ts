@@ -1145,12 +1145,12 @@ export class TypeScriptGenerator {
       }
     } else if (first.args.length > 0) {
       const argsExpr = this.generateArgsExpr(first.args);
-      const argsArray = `[${argsExpr}]`;
       if (firstOptions.length > 0) {
-        // Use $.cmd(command, argsArray, options) form
-        expr = `$.cmd(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, ${argsArray}${firstOptStr})`;
+        // Use $.cmd(command, argsArray, options) form - argsExpr is already an array
+        expr = `$.cmd(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, ${argsExpr}${firstOptStr})`;
       } else {
-        expr = `${firstCmdRef}(...${argsArray})`;
+        // Spread the args - argsExpr is already an array expression like ['arg1', 'arg2']
+        expr = `${firstCmdRef}(...${argsExpr})`;
       }
     } else if (firstOptions.length > 0) {
       // Use $.cmd(command, argsArray, options) form
