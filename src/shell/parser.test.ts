@@ -293,13 +293,16 @@ Deno.test("generator - external command with args", () => {
   const { code } = parseShellCommand("git status");
 
   assertEquals(code.includes("$.initCmds(['git'])"), true);
-  assertEquals(code.includes("$.cmd('git'"), true);
+  // Should use CmdFn, not $.cmd()
+  assertEquals(code.includes("_cmd0('status')"), true);
 });
 
 Deno.test("generator - pipeline", () => {
   const { code } = parseShellCommand("git log | head -5");
 
-  assertEquals(code.includes(".pipe('head'"), true);
+  // Both commands should be in initCmds and piped using CmdFn
+  assertEquals(code.includes("$.initCmds(['git', 'head'])"), true);
+  assertEquals(code.includes(".pipe(_cmd"), true);
 });
 
 Deno.test("generator - output redirect", () => {
@@ -402,21 +405,21 @@ Deno.test("generator - ls with supported flags uses builtin", () => {
 
   // Should use $.ls() builtin
   assertEquals(code.includes("$.ls('-la')"), true);
-  assertEquals(code.includes("$.cmd('ls'"), false);
+  assertEquals(code.includes("$.initCmds(['ls'])"), false);
 });
 
 Deno.test("generator - ls with unsupported flags uses external command", () => {
   const { code } = parseShellCommand("ls -F");
 
-  // Should use $.cmd() external command
-  assertEquals(code.includes("$.cmd('ls'"), true);
+  // Should use external ls via Command, not builtin $.ls()
+  assertEquals(code.includes("new Command('ls'"), true);
   assertEquals(code.includes("$.ls("), false);
 });
 
 Deno.test("generator - ls with mixed flags uses external if any unsupported", () => {
   const { code } = parseShellCommand("ls -laF");
 
-  // -F is unsupported, so should use external command
-  assertEquals(code.includes("$.cmd('ls'"), true);
+  // -F is unsupported, so should use external ls via Command
+  assertEquals(code.includes("new Command('ls'"), true);
   assertEquals(code.includes("$.ls("), false);
 });
