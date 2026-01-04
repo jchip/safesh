@@ -288,7 +288,7 @@ export class ShellTokenizer {
 
     // Detect unsupported command substitution
     if (char === "(") {
-      throw new Error("Command substitution $(...) is not supported. Use code mode with $.cmd() instead.");
+      throw new Error("Command substitution $(...) is not supported. Use code mode with $.initCmds() instead.");
     }
 
     // Special vars like $?, $!, $$ - pass through for now
@@ -869,16 +869,46 @@ export class TypeScriptGenerator {
 
   /**
    * Generate code for ls command
-   * Returns null if unsupported flags detected (caller should fall through to external)
+   * Uses builtin for supported flags, external command for unsupported flags
    */
-  private generateLsCommand(ctx: GenerateContext): string | null {
+  private generateLsCommand(ctx: GenerateContext): string {
     const { cmd, lines, hasGlobs, argsExpr, simpleArgsStr } = ctx;
 
     const unsupportedLsFlags = this.hasUnsupportedLsFlags(cmd.args);
     if (unsupportedLsFlags) {
-      return null; // Fall through to external command handling
+      // Use external ls command - need to ensure it's in cmdFnMap
+      if (!this.cmdFnMap.has('ls')) {
+        // Add ls to the commands that need initialization
+        const cmdVar = `_cmd${this.cmdFnMap.size}`;
+        this.cmdFnMap.set('ls', cmdVar);
+        // Need to regenerate initCmds - but we can't do that here
+        // Instead, we'll use the Command class directly
+        const resultVar = this.nextVar();
+        const simpleArgs = cmd.args.map(a => this.expandArg(a)).join(", ");
+        if (hasGlobs || ctx.hasExpansions) {
+          lines.push(`const _args = ${argsExpr};`);
+          lines.push(`const ${resultVar} = await new Command('ls', _args).exec();`);
+        } else {
+          lines.push(`const ${resultVar} = await new Command('ls', [${simpleArgs}]).exec();`);
+        }
+        this.generateOutputRedirects(resultVar, cmd.redirects, lines);
+        return resultVar;
+      }
+      // ls is already in cmdFnMap (probably from a pipeline), use it
+      const cmdRef = this.cmdFnMap.get('ls')!;
+      const resultVar = this.nextVar();
+      const simpleArgs = cmd.args.map(a => this.expandArg(a)).join(", ");
+      if (hasGlobs || ctx.hasExpansions) {
+        lines.push(`const _args = ${argsExpr};`);
+        lines.push(`const ${resultVar} = await ${cmdRef}(..._args);`);
+      } else {
+        lines.push(`const ${resultVar} = await ${cmdRef}(${simpleArgs});`);
+      }
+      this.generateOutputRedirects(resultVar, cmd.redirects, lines);
+      return resultVar;
     }
 
+    // Use builtin ls for supported flags
     const resultVar = this.nextVar();
     const lsVar = this.nextVar();
 
@@ -979,32 +1009,27 @@ export class TypeScriptGenerator {
     // Generate the command call
     const optionsStr = options.length > 0 ? `, { ${options.join(", ")} }` : "";
 
-    // Use CommandFn for simple cases (no options), $.cmd() when we need custom options
-    const isCommandFn = this.cmdFnMap.has(cmd.command);
-    const useCommandFn = isCommandFn && options.length === 0;
-
+    // Use CmdFn directly - when options are needed, construct Command manually
     if (hasGlobs || hasExpansions) {
       // Need to evaluate args expression
       lines.push(`const _args = ${argsExpr};`);
-      if (useCommandFn) {
+      if (options.length === 0) {
         lines.push(`const ${resultVar} = await ${cmdRef}(..._args);`);
       } else {
-        lines.push(`const ${resultVar} = await $.cmd(${cmdRef}, _args${optionsStr});`);
+        lines.push(`const ${resultVar} = await new Command(${cmdRef}[Symbol.for('safesh.cmdName')], _args${optionsStr}).exec();`);
       }
     } else if (cmd.args.length > 0) {
-      if (useCommandFn) {
-        lines.push(`const ${resultVar} = await ${cmdRef}(${argsExpr});`);
+      // Spread individual args for CmdFn call
+      const simpleArgsStr = cmd.args.map(a => this.expandArg(a)).join(", ");
+      if (options.length === 0) {
+        lines.push(`const ${resultVar} = await ${cmdRef}(${simpleArgsStr});`);
       } else {
-        lines.push(`const ${resultVar} = await $.cmd(${cmdRef}, ${argsExpr}${optionsStr});`);
+        lines.push(`const ${resultVar} = await new Command(${cmdRef}[Symbol.for('safesh.cmdName')], [${simpleArgsStr}]${optionsStr}).exec();`);
       }
     } else if (options.length > 0) {
-      lines.push(`const ${resultVar} = await $.cmd(${cmdRef}, []${optionsStr});`);
+      lines.push(`const ${resultVar} = await new Command(${cmdRef}[Symbol.for('safesh.cmdName')], []${optionsStr}).exec();`);
     } else {
-      if (useCommandFn) {
-        lines.push(`const ${resultVar} = await ${cmdRef}();`);
-      } else {
-        lines.push(`const ${resultVar} = await $.cmd(${cmdRef});`);
-      }
+      lines.push(`const ${resultVar} = await ${cmdRef}();`);
     }
 
     // Handle output redirects
@@ -1053,12 +1078,9 @@ export class TypeScriptGenerator {
       case "[":
         return this.generateTestCommand(ctx);
 
-      // File listing - may fall through to external for unsupported flags
-      case "ls": {
-        const result = this.generateLsCommand(ctx);
-        if (result !== null) return result;
-        break; // Fall through to external for unsupported flags
-      }
+      // File listing
+      case "ls":
+        return this.generateLsCommand(ctx);
 
       // File operations
       case "mkdir":
@@ -1107,13 +1129,13 @@ export class TypeScriptGenerator {
     }
     const firstOptStr = firstOptions.length > 0 ? `, { ${firstOptions.join(", ")} }` : "";
 
-    // For pipelines, use CommandFn directly (not $.cmd) for first command
+    // For pipelines, use CommandFn directly
     // CommandFn(...args) returns a Command object that can be piped
     if (firstHasGlobs || firstHasExpansion) {
       const argsExpr = this.generateArgsExpr(first.args);
       lines.push(`const _pipeArgs0 = ${argsExpr};`);
       if (firstOptions.length > 0) {
-        // Need to create Command with options - use $.cmd for now
+        // Need to create Command with options manually
         expr = `new Command(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, _pipeArgs0${firstOptStr})`;
       } else {
         expr = `${firstCmdRef}(..._pipeArgs0)`;
