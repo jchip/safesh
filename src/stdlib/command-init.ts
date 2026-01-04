@@ -88,6 +88,11 @@ async function checkPermission(
 ): Promise<PermResult> {
   const { allowedCommands, projectDir, allowProjectCommands, cwd } = config;
 
+  // Validate command is actually a string
+  if (typeof command !== "string") {
+    throw new Error(`checkPermission expected string, got ${typeof command}: ${JSON.stringify(command)}`);
+  }
+
   // Is command basic name only (no `/`)?
   if (!command.includes("/")) {
     if (isInAllowedList(command, allowedCommands)) {
