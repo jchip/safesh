@@ -79,7 +79,7 @@ const SAFE_COMMANDS = [
   // ============================================================================
   // Process & System Info
   // ============================================================================
-  "ps", "pgrep", "lsof", "fuser",
+  "ps", "pgrep", "pkill", "lsof", "fuser",
   "top", "htop", "uptime", "w", "who", "users", "last", "lastlog",
   "uname", "hostname", "hostnamectl", "arch", "nproc", "lscpu", "lsmem",
   "free", "vmstat", "iostat", "mpstat", "sar",
