@@ -796,10 +796,9 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         try {
           await saveToLocalJson(retryCwd, blockedCmds);
           execConfig = await loadConfig(retryCwd);
-          if (retryCwd === configHolder.cwd) {
-            configHolder.config = execConfig;
-            registry = createRegistry(configHolder.config, configHolder.cwd);
-          }
+          // Always update configHolder to persist the permission
+          configHolder.config = execConfig;
+          registry = createRegistry(configHolder.config, configHolder.cwd);
         } catch (error) {
           return {
             success: false,
