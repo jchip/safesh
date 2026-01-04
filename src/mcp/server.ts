@@ -713,20 +713,31 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
           console.error(`    - ${root.uri}${root.name ? ` (${root.name})` : ""}`);
         }
 
-        // Apply roots to config
-        const { config: newConfig, projectDir } = applyRootsToConfig(
+        // First, check if we have a projectDir from roots
+        const { config: tempConfig, projectDir } = applyRootsToConfig(
           configHolder.config,
           result.roots,
         );
-        configHolder.config = newConfig;
-        configHolder.rootsReceived = true;
 
-        // Update cwd to projectDir if available
+        // If we have a projectDir, reload config from there to pick up saved permissions
         if (projectDir) {
           configHolder.cwd = projectDir;
           console.error(`  projectDir set to: ${projectDir}`);
+
+          // Reload config from projectDir to pick up any saved permissions
+          const reloadedConfig = await loadConfig(projectDir);
+          console.error(`  Reloaded config from projectDir`);
+
+          // Re-apply roots to the reloaded config
+          const { config: finalConfig } = applyRootsToConfig(reloadedConfig, result.roots);
+          configHolder.config = finalConfig;
           console.error(`  config.projectDir is now: ${configHolder.config.projectDir}`);
+        } else {
+          // No projectDir, just use the config with roots applied
+          configHolder.config = tempConfig;
         }
+
+        configHolder.rootsReceived = true;
 
         // Recreate registry with updated config
         registry = createRegistry(configHolder.config, configHolder.cwd);
@@ -792,12 +803,21 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
 
     if (blockedCmds.length > 0 && userChoice) {
       if (userChoice === 3) {
-        // Always allow: save to JSON and reload config
+        // Always allow: save to projectDir (from MCP roots), fallback to initial cwd
+        const targetDir = configHolder.config.projectDir ?? configHolder.cwd;
         try {
-          await saveToLocalJson(retryCwd, blockedCmds);
-          execConfig = await loadConfig(retryCwd);
-          // Always update configHolder to persist the permission
-          configHolder.config = execConfig;
+          await saveToLocalJson(targetDir, blockedCmds);
+          const reloadedConfig = await loadConfig(targetDir);
+
+          // Preserve projectDir and root permissions from current config
+          configHolder.config = mergeConfigs(reloadedConfig, {
+            projectDir: configHolder.config.projectDir,
+            permissions: {
+              read: configHolder.config.permissions?.read,
+              write: configHolder.config.permissions?.write,
+            },
+          });
+          execConfig = configHolder.config;
           registry = createRegistry(configHolder.config, configHolder.cwd);
         } catch (error) {
           return {
@@ -805,7 +825,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             response: {
               content: [{
                 type: "text",
-                text: `Failed to save to .claude/safesh.local.json: ${error instanceof Error ? error.message : String(error)}`,
+                text: `Failed to save to ${targetDir}/.config/safesh/config.local.json: ${error instanceof Error ? error.message : String(error)}`,
               }],
               isError: true,
             },
