@@ -13,6 +13,48 @@ import type { SandboxOptions } from "./fs.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 
 /**
+ * Validation helpers for type checking with helpful error messages
+ */
+
+function getTypeName(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  if (value === null) return "null";
+  return typeof value;
+}
+
+function validateString(input: unknown, functionName: string): asserts input is string {
+  if (typeof input !== "string") {
+    const actualType = getTypeName(input);
+    throw new TypeError(
+      `${functionName} expected string, got ${actualType}. ` +
+      (actualType === "array"
+        ? `Use array.slice() or array.join('\\n') instead.`
+        : `Convert to string first.`),
+    );
+  }
+}
+
+function validateStringOrArray(input: unknown, functionName: string): asserts input is string | string[] {
+  if (typeof input !== "string" && !Array.isArray(input)) {
+    const actualType = getTypeName(input);
+    throw new TypeError(
+      `${functionName} expected string or array, got ${actualType}. ` +
+      `Provide a string or string[] instead.`,
+    );
+  }
+  // If it's an array, validate all elements are strings
+  if (Array.isArray(input)) {
+    for (let i = 0; i < input.length; i++) {
+      if (typeof input[i] !== "string") {
+        throw new TypeError(
+          `${functionName} expected array of strings, but element at index ${i} is ${getTypeName(input[i])}.`,
+        );
+      }
+    }
+  }
+}
+
+/**
  * Grep match result
  */
 export interface GrepMatch {
@@ -68,6 +110,8 @@ export function grep(
   input: string,
   options: Omit<GrepOptions, keyof SandboxOptions> = {},
 ): GrepMatch[] {
+  validateString(input, "$.text.grep()");
+
   const matches: GrepMatch[] = [];
   const regex = typeof pattern === "string"
     ? new RegExp(pattern, options.ignoreCase ? "gi" : "g")
@@ -169,6 +213,7 @@ export async function grepFiles(
  * ```
  */
 export function head(input: string, n: number = 10): string[] {
+  validateString(input, "$.text.head()");
   return input.split("\n").slice(0, n);
 }
 
@@ -202,6 +247,7 @@ export async function headFile(
  * ```
  */
 export function tail(input: string, n: number = 10): string[] {
+  validateString(input, "$.text.tail()");
   const lines = input.split("\n");
   return lines.slice(Math.max(0, lines.length - n));
 }
@@ -241,6 +287,7 @@ export function replace(
   pattern: RegExp | string,
   replacement: string,
 ): string {
+  validateString(input, "$.text.replace()");
   return input.replace(pattern, replacement);
 }
 
@@ -311,6 +358,7 @@ export async function replaceInFiles(
  * @returns Array of lines
  */
 export function lines(input: string): string[] {
+  validateString(input, "$.text.lines()");
   return input.split("\n");
 }
 
@@ -352,6 +400,7 @@ export interface CountResult {
  * ```
  */
 export function count(input: string): CountResult {
+  validateString(input, "$.text.count()");
   const lineCount = input.split("\n").length;
   const wordCount = input.split(/\s+/).filter((w) => w.length > 0).length;
   const charCount = input.length;
@@ -405,6 +454,7 @@ export function sort(
     ignoreCase?: boolean;
   } = {},
 ): string[] {
+  validateStringOrArray(input, "$.text.sort()");
   let lineArray = Array.isArray(input) ? [...input] : input.split("\n");
 
   // Unique first
@@ -456,6 +506,7 @@ export function uniq(
     ignoreCase?: boolean;
   } = {},
 ): string[] | { line: string; count: number }[] {
+  validateStringOrArray(input, "$.text.uniq()");
   const lineArray = Array.isArray(input) ? input : input.split("\n");
   const seen = new Map<string, { line: string; count: number }>();
 
@@ -500,6 +551,7 @@ export function cut(
     characters?: number[];
   } = {},
 ): string[] {
+  validateStringOrArray(input, "$.text.cut()");
   const lineArray = Array.isArray(input) ? input : input.split("\n");
   const delimiter = options.delimiter ?? "\t";
 
@@ -543,6 +595,8 @@ export interface DiffLine {
  * @returns Array of diff lines
  */
 export function diff(oldText: string, newText: string): DiffLine[] {
+  validateString(oldText, "$.text.diff()");
+  validateString(newText, "$.text.diff()");
   const oldLines = oldText.split("\n");
   const newLines = newText.split("\n");
   const result: DiffLine[] = [];
@@ -686,6 +740,7 @@ export function trim(
   input: string | string[],
   mode: "both" | "left" | "right" = "both",
 ): string | string[] {
+  validateStringOrArray(input, "$.text.trim()");
   const trimFn = (line: string) => {
     switch (mode) {
       case "left":
@@ -718,6 +773,7 @@ export function filter(
   input: string | string[],
   predicate: (line: string, index: number) => boolean,
 ): string[] {
+  validateStringOrArray(input, "$.text.filter()");
   const lineArray = Array.isArray(input) ? input : input.split("\n");
   return lineArray.filter(predicate);
 }
@@ -733,6 +789,7 @@ export function map(
   input: string | string[],
   mapper: (line: string, index: number) => string,
 ): string[] {
+  validateStringOrArray(input, "$.text.map()");
   const lineArray = Array.isArray(input) ? input : input.split("\n");
   return lineArray.map(mapper);
 }
