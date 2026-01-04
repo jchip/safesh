@@ -129,6 +129,9 @@ export class ShellTokenizer {
     const next = this.input[this.position + 1];
 
     // Check for operators (multi-char first)
+    if (char === "<" && next === "<") {
+      throw new Error("Heredocs (<<EOF) are not supported. Use code mode to pass multi-line strings directly.");
+    }
     if (char === ">" && next === ">") {
       this.position += 2;
       return { type: "REDIRECT_APPEND", value: ">>", position: start };
@@ -281,6 +284,11 @@ export class ShellTokenizer {
         this.position++;
       }
       return VAR_START + varName + VAR_END;
+    }
+
+    // Detect unsupported command substitution
+    if (char === "(") {
+      throw new Error("Command substitution $(...) is not supported. Use code mode with $.cmd() instead.");
     }
 
     // Special vars like $?, $!, $$ - pass through for now
