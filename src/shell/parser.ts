@@ -1126,6 +1126,12 @@ export class TypeScriptGenerator {
     if (first.stderrMerge) {
       firstOptions.push("mergeStreams: true");
     }
+    if (Object.keys(first.envVars).length > 0) {
+      const envEntries = Object.entries(first.envVars)
+        .map(([k, v]) => `'${this.escapeString(k)}': ${this.expandArg(v)}`)
+        .join(", ");
+      firstOptions.push(`env: { ${envEntries} }`);
+    }
     if (inputRedirect) {
       const inputFile = this.expandArg(inputRedirect.target);
       firstOptions.push(`stdin: await Deno.readTextFile(${inputFile})`);
@@ -1139,7 +1145,11 @@ export class TypeScriptGenerator {
       lines.push(`const _pipeArgs0 = ${argsExpr};`);
       if (firstOptions.length > 0) {
         // Use $.cmd(command, argsArray, options) form
-        expr = `$.cmd(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, _pipeArgs0${firstOptStr})`;
+        // Extract command name from CmdFn symbol, or use string directly for builtins
+        const cmdName = this.cmdFnMap.has(first.command)
+          ? `${firstCmdRef}[Symbol.for('safesh.cmdName')]`
+          : firstCmdRef;
+        expr = `$.cmd(${cmdName}, _pipeArgs0${firstOptStr})`;
       } else {
         expr = `${firstCmdRef}(..._pipeArgs0)`;
       }
@@ -1147,14 +1157,22 @@ export class TypeScriptGenerator {
       const argsExpr = this.generateArgsExpr(first.args);
       if (firstOptions.length > 0) {
         // Use $.cmd(command, argsArray, options) form - argsExpr is already an array
-        expr = `$.cmd(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, ${argsExpr}${firstOptStr})`;
+        // Extract command name from CmdFn symbol, or use string directly for builtins
+        const cmdName = this.cmdFnMap.has(first.command)
+          ? `${firstCmdRef}[Symbol.for('safesh.cmdName')]`
+          : firstCmdRef;
+        expr = `$.cmd(${cmdName}, ${argsExpr}${firstOptStr})`;
       } else {
         // Spread the args - argsExpr is already an array expression like ['arg1', 'arg2']
         expr = `${firstCmdRef}(...${argsExpr})`;
       }
     } else if (firstOptions.length > 0) {
       // Use $.cmd(command, argsArray, options) form
-      expr = `$.cmd(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, []${firstOptStr})`;
+      // Extract command name from CmdFn symbol, or use string directly for builtins
+      const cmdName = this.cmdFnMap.has(first.command)
+        ? `${firstCmdRef}[Symbol.for('safesh.cmdName')]`
+        : firstCmdRef;
+      expr = `$.cmd(${cmdName}, []${firstOptStr})`;
     } else {
       expr = `${firstCmdRef}()`;
     }
