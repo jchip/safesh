@@ -46,8 +46,14 @@ export function parseRmOptions(optStr: string): RmOptions {
  * // Force remove (ignore if doesn't exist)
  * await rm("-f", "maybe-exists.txt");
  *
- * // Remove directory recursively
+ * // Remove directory recursively (string options)
  * await rm("-rf", "some-dir");
+ *
+ * // Remove directory recursively (object options as second arg)
+ * await rm("some-dir", { recursive: true });
+ *
+ * // Remove directory recursively (object options first)
+ * await rm({ recursive: true }, "some-dir");
  *
  * // Remove multiple files
  * await rm("file1.txt", "file2.txt", "file3.txt");
@@ -57,22 +63,42 @@ export function parseRmOptions(optStr: string): RmOptions {
  * ```
  */
 export async function rm(
-  optionsOrPath: string | RmOptions,
+  path: string,
+  options: RmOptions,
+  ...morePaths: (string | string[])[]
+): Promise<ShellString>;
+export async function rm(
+  options: RmOptions | string,
   ...paths: (string | string[])[]
+): Promise<ShellString>;
+export async function rm(
+  optionsOrPath: string | RmOptions,
+  ...paths: (string | string[] | RmOptions)[]
 ): Promise<ShellString> {
   let options: RmOptions = {};
   let allPaths: string[];
 
   // Parse arguments
   if (typeof optionsOrPath === "string" && optionsOrPath.startsWith("-")) {
+    // Pattern: rm("-rf", "path1", "path2")
     options = parseRmOptions(optionsOrPath);
-    allPaths = flattenArgs(...paths);
+    allPaths = flattenArgs(...(paths as (string | string[])[]));
   } else if (typeof optionsOrPath === "object" && !Array.isArray(optionsOrPath)) {
+    // Pattern: rm({ recursive: true }, "path1", "path2")
     options = optionsOrPath;
-    allPaths = flattenArgs(...paths);
+    allPaths = flattenArgs(...(paths as (string | string[])[]));
+  } else if (
+    typeof optionsOrPath === "string" &&
+    paths.length > 0 &&
+    typeof paths[0] === "object" &&
+    !Array.isArray(paths[0])
+  ) {
+    // Pattern: rm("path", { recursive: true })
+    options = paths[0] as RmOptions;
+    allPaths = [optionsOrPath, ...flattenArgs(...(paths.slice(1) as (string | string[])[]))];
   } else {
     // First arg is a path
-    allPaths = flattenArgs(optionsOrPath as string, ...paths);
+    allPaths = flattenArgs(optionsOrPath as string, ...(paths as (string | string[])[]));
   }
 
   if (allPaths.length === 0) {
