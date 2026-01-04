@@ -882,14 +882,14 @@ export class TypeScriptGenerator {
         const cmdVar = `_cmd${this.cmdFnMap.size}`;
         this.cmdFnMap.set('ls', cmdVar);
         // Need to regenerate initCmds - but we can't do that here
-        // Instead, we'll use the Command class directly
+        // Instead, we'll use $.cmd() directly
         const resultVar = this.nextVar();
         const simpleArgs = cmd.args.map(a => this.expandArg(a)).join(", ");
         if (hasGlobs || ctx.hasExpansions) {
           lines.push(`const _args = ${argsExpr};`);
-          lines.push(`const ${resultVar} = await new Command('ls', _args).exec();`);
+          lines.push(`const ${resultVar} = await $.cmd('ls', _args);`);
         } else {
-          lines.push(`const ${resultVar} = await new Command('ls', [${simpleArgs}]).exec();`);
+          lines.push(`const ${resultVar} = await $.cmd('ls', [${simpleArgs}]);`);
         }
         this.generateOutputRedirects(resultVar, cmd.redirects, lines);
         return resultVar;
@@ -1009,14 +1009,15 @@ export class TypeScriptGenerator {
     // Generate the command call
     const optionsStr = options.length > 0 ? `, { ${options.join(", ")} }` : "";
 
-    // Use CmdFn directly - when options are needed, construct Command manually
+    // Use CmdFn directly when no options, $.cmd() when options are needed
     if (hasGlobs || hasExpansions) {
       // Need to evaluate args expression
       lines.push(`const _args = ${argsExpr};`);
       if (options.length === 0) {
         lines.push(`const ${resultVar} = await ${cmdRef}(..._args);`);
       } else {
-        lines.push(`const ${resultVar} = await new Command(${cmdRef}[Symbol.for('safesh.cmdName')], _args${optionsStr}).exec();`);
+        // Use $.cmd(command, argsArray, options) form
+        lines.push(`const ${resultVar} = await $.cmd(${cmdRef}[Symbol.for('safesh.cmdName')], _args${optionsStr});`);
       }
     } else if (cmd.args.length > 0) {
       // Spread individual args for CmdFn call
@@ -1024,10 +1025,12 @@ export class TypeScriptGenerator {
       if (options.length === 0) {
         lines.push(`const ${resultVar} = await ${cmdRef}(${simpleArgsStr});`);
       } else {
-        lines.push(`const ${resultVar} = await new Command(${cmdRef}[Symbol.for('safesh.cmdName')], [${simpleArgsStr}]${optionsStr}).exec();`);
+        // Use $.cmd(command, argsArray, options) form
+        lines.push(`const ${resultVar} = await $.cmd(${cmdRef}[Symbol.for('safesh.cmdName')], [${simpleArgsStr}]${optionsStr});`);
       }
     } else if (options.length > 0) {
-      lines.push(`const ${resultVar} = await new Command(${cmdRef}[Symbol.for('safesh.cmdName')], []${optionsStr}).exec();`);
+      // Use $.cmd(command, argsArray, options) form
+      lines.push(`const ${resultVar} = await $.cmd(${cmdRef}[Symbol.for('safesh.cmdName')], []${optionsStr});`);
     } else {
       lines.push(`const ${resultVar} = await ${cmdRef}();`);
     }
@@ -1135,8 +1138,8 @@ export class TypeScriptGenerator {
       const argsExpr = this.generateArgsExpr(first.args);
       lines.push(`const _pipeArgs0 = ${argsExpr};`);
       if (firstOptions.length > 0) {
-        // Need to create Command with options manually
-        expr = `new Command(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, _pipeArgs0${firstOptStr})`;
+        // Use $.cmd(command, argsArray, options) form
+        expr = `$.cmd(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, _pipeArgs0${firstOptStr})`;
       } else {
         expr = `${firstCmdRef}(..._pipeArgs0)`;
       }
@@ -1144,12 +1147,14 @@ export class TypeScriptGenerator {
       const argsExpr = this.generateArgsExpr(first.args);
       const argsArray = `[${argsExpr}]`;
       if (firstOptions.length > 0) {
-        expr = `new Command(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, ${argsArray}${firstOptStr})`;
+        // Use $.cmd(command, argsArray, options) form
+        expr = `$.cmd(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, ${argsArray}${firstOptStr})`;
       } else {
         expr = `${firstCmdRef}(...${argsArray})`;
       }
     } else if (firstOptions.length > 0) {
-      expr = `new Command(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, []${firstOptStr})`;
+      // Use $.cmd(command, argsArray, options) form
+      expr = `$.cmd(${firstCmdRef}[Symbol.for('safesh.cmdName')] ?? ${firstCmdRef}, []${firstOptStr})`;
     } else {
       expr = `${firstCmdRef}()`;
     }

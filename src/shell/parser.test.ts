@@ -411,15 +411,15 @@ Deno.test("generator - ls with supported flags uses builtin", () => {
 Deno.test("generator - ls with unsupported flags uses external command", () => {
   const { code } = parseShellCommand("ls -F");
 
-  // Should use external ls via Command, not builtin $.ls()
-  assertEquals(code.includes("new Command('ls'"), true);
+  // Should use external ls via $.cmd(), not builtin $.ls()
+  assertEquals(code.includes("$.cmd('ls'"), true);
   assertEquals(code.includes("$.ls("), false);
 });
 
 Deno.test("generator - ls with mixed flags uses external if any unsupported", () => {
   const { code } = parseShellCommand("ls -laF");
 
-  // -F is unsupported, so should use external ls via Command
-  assertEquals(code.includes("new Command('ls'"), true);
+  // -F is unsupported, so should use external ls via $.cmd()
+  assertEquals(code.includes("$.cmd('ls'"), true);
   assertEquals(code.includes("$.ls("), false);
 });
