@@ -1,0 +1,128 @@
+/**
+ * AWK Command Implementation
+ *
+ * Pure TypeScript implementation of AWK for safesh.
+ * Provides a sandboxed, safe AWK interpreter.
+ */
+
+import { AwkParser } from "./parser.ts";
+import {
+  AwkInterpreter,
+  createRuntimeContext,
+  type AwkFileSystem,
+  type CreateContextOptions,
+} from "./interpreter/index.ts";
+import { setFieldSeparator } from "./interpreter/fields.ts";
+
+/**
+ * Options for running AWK
+ */
+export interface AwkOptions {
+  /** Field separator (-F option) */
+  fieldSeparator?: string;
+  /** Variable assignments (-v option) */
+  variables?: Record<string, string | number>;
+  /** Maximum iterations for loops (default: 10000) */
+  maxIterations?: number;
+  /** Maximum recursion depth (default: 100) */
+  maxRecursionDepth?: number;
+  /** File system access (for getline < file and print > file) */
+  fs?: AwkFileSystem;
+  /** Current working directory */
+  cwd?: string;
+}
+
+/**
+ * Result from running AWK
+ */
+export interface AwkResult {
+  /** Standard output */
+  stdout: string;
+  /** Exit code (0 for success) */
+  exitCode: number;
+}
+
+/**
+ * Run an AWK program on input text.
+ *
+ * @param program - The AWK program source code
+ * @param input - Input text to process (lines separated by newlines)
+ * @param options - Optional configuration
+ * @returns Result with stdout and exit code
+ *
+ * @example
+ * // Simple field extraction
+ * const result = await awk('{ print $1 }', 'hello world\nfoo bar');
+ * console.log(result.stdout); // "hello\nfoo\n"
+ *
+ * @example
+ * // With field separator
+ * const result = await awk('{ print $2 }', 'a:b:c', { fieldSeparator: ':' });
+ * console.log(result.stdout); // "b\n"
+ *
+ * @example
+ * // With variables
+ * const result = await awk('{ print n, $0 }', 'hello', { variables: { n: 42 } });
+ * console.log(result.stdout); // "42 hello\n"
+ */
+export async function awk(
+  program: string,
+  input: string,
+  options: AwkOptions = {},
+): Promise<AwkResult> {
+  // Parse the program
+  const parser = new AwkParser();
+  const ast = parser.parse(program);
+
+  // Create runtime context
+  const contextOptions: CreateContextOptions = {
+    maxIterations: options.maxIterations,
+    maxRecursionDepth: options.maxRecursionDepth,
+    fs: options.fs,
+    cwd: options.cwd,
+  };
+  const ctx = createRuntimeContext(contextOptions);
+
+  // Set field separator if provided
+  if (options.fieldSeparator) {
+    setFieldSeparator(ctx, options.fieldSeparator);
+  }
+
+  // Set user variables
+  if (options.variables) {
+    for (const [name, value] of Object.entries(options.variables)) {
+      ctx.vars[name] = value;
+    }
+  }
+
+  // Split input into lines and set up for getline
+  const lines = input.split("\n");
+  // Remove trailing empty line if input ends with newline
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  ctx.lines = lines;
+  ctx.lineIndex = -1;
+
+  // Create interpreter and run
+  const interpreter = new AwkInterpreter(ctx);
+  interpreter.execute(ast);
+
+  // Run BEGIN blocks
+  await interpreter.executeBegin();
+
+  // Process each line
+  for (let i = 0; i < lines.length; i++) {
+    if (ctx.shouldExit) break;
+    ctx.lineIndex = i;
+    await interpreter.executeLine(lines[i]);
+  }
+
+  // Run END blocks
+  await interpreter.executeEnd();
+
+  return {
+    stdout: interpreter.getOutput(),
+    exitCode: interpreter.getExitCode(),
+  };
+}
