@@ -1,0 +1,624 @@
+/**
+ * Comprehensive unit tests for the bash parser
+ */
+
+import { assertEquals, assertExists, assertThrows } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
+import { parse } from "./parser.ts";
+import type * as AST from "./ast.ts";
+
+describe("Bash Parser", () => {
+  describe("Simple Commands", () => {
+    it("should parse a simple command", () => {
+      const ast = parse("ls");
+      assertEquals(ast.type, "Program");
+      assertEquals(ast.body.length, 1);
+
+      const pipeline = ast.body[0] as AST.Pipeline;
+      assertEquals(pipeline.type, "Pipeline");
+      assertEquals(pipeline.commands.length, 1);
+
+      const cmd = pipeline.commands[0] as AST.Command;
+      assertEquals(cmd.type, "Command");
+      assertEquals((cmd.name as AST.Word).value, "ls");
+      assertEquals(cmd.args.length, 0);
+    });
+
+    it("should parse a command with arguments", () => {
+      const ast = parse("ls -la /tmp");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals((cmd.name as AST.Word).value, "ls");
+      assertEquals(cmd.args.length, 2);
+      assertEquals(cmd.args[0]?.type, "Word");
+      assertEquals((cmd.args[0] as AST.Word).value, "-la");
+      assertEquals((cmd.args[1] as AST.Word).value, "/tmp");
+    });
+
+    it("should parse a command with quoted arguments", () => {
+      const ast = parse('echo "hello world"');
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals((cmd.name as AST.Word).value, "echo");
+      assertEquals(cmd.args.length, 1);
+      assertEquals((cmd.args[0] as AST.Word).value, "hello world");
+      assertEquals((cmd.args[0] as AST.Word).quoted, true);
+    });
+
+    it("should parse single-quoted arguments", () => {
+      const ast = parse("echo 'hello world'");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals((cmd.args[0] as AST.Word).value, "hello world");
+      assertEquals((cmd.args[0] as AST.Word).singleQuoted, true);
+    });
+  });
+
+  describe("Pipelines", () => {
+    it("should parse a simple pipeline", () => {
+      const ast = parse("ls | grep test");
+      const pipeline = ast.body[0] as AST.Pipeline;
+
+      assertEquals(pipeline.type, "Pipeline");
+      assertEquals(pipeline.commands.length, 2);
+      assertEquals(pipeline.operator, "|");
+
+      const cmd1 = pipeline.commands[0] as AST.Command;
+      const cmd2 = pipeline.commands[1] as AST.Command;
+
+      assertEquals((cmd1.name as AST.Word).value, "ls");
+      assertEquals((cmd2.name as AST.Word).value, "grep");
+      assertEquals((cmd2.args[0] as AST.Word).value, "test");
+    });
+
+    it("should parse multiple pipes", () => {
+      const ast = parse("cat file | grep foo | sort");
+      const pipeline = ast.body[0] as AST.Pipeline;
+
+      assertEquals(pipeline.commands.length, 3);
+      assertEquals(((pipeline.commands[0] as AST.Command).name as AST.Word).value, "cat");
+      assertEquals(((pipeline.commands[1] as AST.Command).name as AST.Word).value, "grep");
+      assertEquals(((pipeline.commands[2] as AST.Command).name as AST.Word).value, "sort");
+    });
+  });
+
+  describe("Logical Operators", () => {
+    it("should parse AND operator", () => {
+      const ast = parse("cmd1 && cmd2");
+      const pipeline = ast.body[0] as AST.Pipeline;
+
+      assertEquals(pipeline.operator, "&&");
+      assertEquals(pipeline.commands.length, 2);
+      assertEquals(((pipeline.commands[0] as AST.Command).name as AST.Word).value, "cmd1");
+      assertEquals(((pipeline.commands[1] as AST.Command).name as AST.Word).value, "cmd2");
+    });
+
+    it("should parse OR operator", () => {
+      const ast = parse("cmd1 || cmd2");
+      const pipeline = ast.body[0] as AST.Pipeline;
+
+      assertEquals(pipeline.operator, "||");
+      assertEquals(pipeline.commands.length, 2);
+    });
+
+    it("should parse semicolon separator", () => {
+      const ast = parse("cmd1; cmd2");
+      assertEquals(ast.body.length, 2);
+
+      const p1 = ast.body[0] as AST.Pipeline;
+      const p2 = ast.body[1] as AST.Pipeline;
+
+      assertEquals(((p1.commands[0] as AST.Command).name as AST.Word).value, "cmd1");
+      assertEquals(((p2.commands[0] as AST.Command).name as AST.Word).value, "cmd2");
+    });
+
+    it("should parse background operator", () => {
+      const ast = parse("cmd &");
+      const pipeline = ast.body[0] as AST.Pipeline;
+
+      assertEquals(pipeline.background, true);
+      assertEquals(pipeline.operator, "&");
+    });
+  });
+
+  describe("Redirections", () => {
+    it("should parse output redirection", () => {
+      const ast = parse("echo hello > file.txt");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects.length, 1);
+      assertEquals(cmd.redirects[0]?.operator, ">");
+      assertEquals((cmd.redirects[0]?.target as AST.Word).value, "file.txt");
+    });
+
+    it("should parse append redirection", () => {
+      const ast = parse("echo hello >> file.txt");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects[0]?.operator, ">>");
+    });
+
+    it("should parse input redirection", () => {
+      const ast = parse("cat < input.txt");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects[0]?.operator, "<");
+      assertEquals((cmd.redirects[0]?.target as AST.Word).value, "input.txt");
+    });
+
+    it("should parse stderr redirection", () => {
+      const ast = parse("cmd 2> error.log");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects[0]?.fd, 2);
+      assertEquals(cmd.redirects[0]?.operator, ">");
+    });
+
+    it("should parse combined stdout/stderr redirection", () => {
+      const ast = parse("cmd &> all.log");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects[0]?.operator, "&>");
+    });
+
+    it("should parse multiple redirections", () => {
+      const ast = parse("cmd < in.txt > out.txt 2> err.txt");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects.length, 3);
+      assertEquals(cmd.redirects[0]?.operator, "<");
+      assertEquals(cmd.redirects[1]?.operator, ">");
+      assertEquals(cmd.redirects[2]?.operator, ">");
+      assertEquals(cmd.redirects[2]?.fd, 2);
+    });
+  });
+
+  describe("Variable Assignments", () => {
+    it("should parse simple variable assignment", () => {
+      const ast = parse("NAME=value");
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals(cmd.assignments.length, 1);
+      assertEquals(cmd.assignments[0]?.name, "NAME");
+      assertEquals(cmd.assignments[0]?.value.type, "Word");
+      assertEquals((cmd.assignments[0]?.value as AST.Word).value, "value");
+    });
+
+    it("should parse assignment with quoted value", () => {
+      const ast = parse('NAME="hello world"');
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals(cmd.assignments[0]?.name, "NAME");
+      assertEquals((cmd.assignments[0]?.value as AST.Word).value, "hello world");
+    });
+
+    it("should parse assignment with empty value", () => {
+      const ast = parse("NAME=");
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals(cmd.assignments[0]?.name, "NAME");
+      assertEquals((cmd.assignments[0]?.value as AST.Word).value, "");
+    });
+
+    it("should parse assignment with equals in value", () => {
+      const ast = parse("URL=http://example.com?foo=bar");
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals(cmd.assignments[0]?.name, "URL");
+      assertEquals(
+        (cmd.assignments[0]?.value as AST.Word).value,
+        "http://example.com?foo=bar"
+      );
+    });
+
+    it("should parse command with leading assignments", () => {
+      const ast = parse("VAR=value cmd arg");
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals(cmd.assignments.length, 1);
+      assertEquals(cmd.assignments[0]?.name, "VAR");
+      assertEquals((cmd.name as AST.Word).value, "cmd");
+      assertEquals((cmd.args[0] as AST.Word).value, "arg");
+    });
+  });
+
+  describe("If Statements", () => {
+    it("should parse simple if statement", () => {
+      const ast = parse(`
+        if test -f file.txt
+        then
+          echo exists
+        fi
+      `);
+
+      const stmt = ast.body[0] as AST.IfStatement;
+      assertEquals(stmt.type, "IfStatement");
+      assertExists(stmt.test);
+      assertEquals(stmt.consequent.length, 1);
+      assertEquals(stmt.alternate, null);
+    });
+
+    it("should parse if-else statement", () => {
+      const ast = parse(`
+        if test -f file.txt
+        then
+          echo exists
+        else
+          echo missing
+        fi
+      `);
+
+      const stmt = ast.body[0] as AST.IfStatement;
+      assertEquals(Array.isArray(stmt.alternate), true);
+      assertEquals((stmt.alternate as AST.Statement[]).length, 1);
+    });
+
+    it("should parse if-elif-else statement", () => {
+      const ast = parse(`
+        if test -f file1.txt
+        then
+          echo file1
+        elif test -f file2.txt
+        then
+          echo file2
+        else
+          echo none
+        fi
+      `);
+
+      const stmt = ast.body[0] as AST.IfStatement;
+      assertExists(stmt.alternate);
+      assertEquals((stmt.alternate as AST.IfStatement).type, "IfStatement");
+
+      const elif = stmt.alternate as AST.IfStatement;
+      assertEquals(Array.isArray(elif.alternate), true);
+    });
+  });
+
+  describe("For Loops", () => {
+    it("should parse for loop with word list", () => {
+      const ast = parse(`
+        for var in a b c
+        do
+          echo $var
+        done
+      `);
+
+      const stmt = ast.body[0] as AST.ForStatement;
+      assertEquals(stmt.type, "ForStatement");
+      assertEquals(stmt.variable, "var");
+      assertEquals(stmt.iterable.length, 3);
+      assertEquals((stmt.iterable[0] as AST.Word).value, "a");
+      assertEquals((stmt.iterable[1] as AST.Word).value, "b");
+      assertEquals((stmt.iterable[2] as AST.Word).value, "c");
+      assertEquals(stmt.body.length, 1);
+    });
+
+    it("should parse for loop without word list", () => {
+      const ast = parse(`
+        for var
+        do
+          echo $var
+        done
+      `);
+
+      const stmt = ast.body[0] as AST.ForStatement;
+      assertEquals(stmt.variable, "var");
+      assertEquals(stmt.iterable.length, 0);
+    });
+
+    it("should parse for loop with glob pattern", () => {
+      const ast = parse(`
+        for file in *.ts
+        do
+          echo $file
+        done
+      `);
+
+      const stmt = ast.body[0] as AST.ForStatement;
+      assertEquals((stmt.iterable[0] as AST.Word).value, "*.ts");
+    });
+  });
+
+  describe("While Loops", () => {
+    it("should parse while loop", () => {
+      const ast = parse(`
+        while test $count -lt 10
+        do
+          echo $count
+        done
+      `);
+
+      const stmt = ast.body[0] as AST.WhileStatement;
+      assertEquals(stmt.type, "WhileStatement");
+      assertExists(stmt.test);
+      assertEquals(stmt.body.length, 1);
+    });
+
+    it("should parse while true loop", () => {
+      const ast = parse(`
+        while true
+        do
+          echo loop
+        done
+      `);
+
+      const stmt = ast.body[0] as AST.WhileStatement;
+      assertExists(stmt.test);
+    });
+  });
+
+  describe("Until Loops", () => {
+    it("should parse until loop", () => {
+      const ast = parse(`
+        until test $count -ge 10
+        do
+          echo $count
+        done
+      `);
+
+      const stmt = ast.body[0] as AST.UntilStatement;
+      assertEquals(stmt.type, "UntilStatement");
+      assertExists(stmt.test);
+      assertEquals(stmt.body.length, 1);
+    });
+  });
+
+  describe("Case Statements", () => {
+    it("should parse case statement", () => {
+      const ast = parse(`
+        case $var in
+          a)
+            echo A
+            ;;
+          b)
+            echo B
+            ;;
+        esac
+      `);
+
+      const stmt = ast.body[0] as AST.CaseStatement;
+      assertEquals(stmt.type, "CaseStatement");
+      assertExists(stmt.word);
+      assertEquals(stmt.cases.length, 2);
+
+      assertEquals(stmt.cases[0]?.patterns.length, 1);
+      assertEquals((stmt.cases[0]?.patterns[0] as AST.Word).value, "a");
+      assertEquals(stmt.cases[0]?.body.length, 1);
+
+      assertEquals((stmt.cases[1]?.patterns[0] as AST.Word).value, "b");
+    });
+
+    it("should parse case with multiple patterns", () => {
+      const ast = parse(`
+        case $var in
+          a|b|c)
+            echo ABC
+            ;;
+        esac
+      `);
+
+      const stmt = ast.body[0] as AST.CaseStatement;
+      assertEquals(stmt.cases[0]?.patterns.length, 3);
+      assertEquals((stmt.cases[0]?.patterns[0] as AST.Word).value, "a");
+      assertEquals((stmt.cases[0]?.patterns[1] as AST.Word).value, "b");
+      assertEquals((stmt.cases[0]?.patterns[2] as AST.Word).value, "c");
+    });
+
+    it("should parse case with wildcard pattern", () => {
+      const ast = parse(`
+        case $var in
+          *.txt)
+            echo text file
+            ;;
+          *)
+            echo other
+            ;;
+        esac
+      `);
+
+      const stmt = ast.body[0] as AST.CaseStatement;
+      assertEquals((stmt.cases[0]?.patterns[0] as AST.Word).value, "*.txt");
+      assertEquals((stmt.cases[1]?.patterns[0] as AST.Word).value, "*");
+    });
+  });
+
+  describe("Functions", () => {
+    it("should parse function declaration", () => {
+      const ast = parse(`
+        function myfunc {
+          echo hello
+        }
+      `);
+
+      const stmt = ast.body[0] as AST.FunctionDeclaration;
+      assertEquals(stmt.type, "FunctionDeclaration");
+      assertEquals(stmt.name, "myfunc");
+      assertEquals(stmt.body.length, 1);
+    });
+
+    it("should parse function with parentheses", () => {
+      const ast = parse(`
+        function myfunc() {
+          echo hello
+        }
+      `);
+
+      const stmt = ast.body[0] as AST.FunctionDeclaration;
+      assertEquals(stmt.name, "myfunc");
+    });
+  });
+
+  describe("Grouping", () => {
+    it("should parse subshell", () => {
+      const ast = parse("(echo hello; echo world)");
+
+      const stmt = ast.body[0] as AST.Subshell;
+
+      assertEquals(stmt.type, "Subshell");
+      assertEquals(stmt.body.length, 2);
+    });
+
+    it("should parse brace group", () => {
+      const ast = parse("{ echo hello; echo world; }");
+
+      const stmt = ast.body[0] as AST.BraceGroup;
+
+      assertEquals(stmt.type, "BraceGroup");
+      assertEquals(stmt.body.length, 2);
+    });
+  });
+
+  describe("Comments", () => {
+    it("should ignore comments", () => {
+      const ast = parse(`
+        # This is a comment
+        echo hello  # inline comment
+        # Another comment
+      `);
+
+      assertEquals(ast.body.length, 1);
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+      assertEquals((cmd.name as AST.Word).value, "echo");
+    });
+  });
+
+  describe("Multiple Statements", () => {
+    it("should parse multiple statements separated by newlines", () => {
+      const ast = parse(`
+        cmd1
+        cmd2
+        cmd3
+      `);
+
+      assertEquals(ast.body.length, 3);
+      assertEquals((ast.body[0] as AST.Pipeline).commands[0]?.type, "Command");
+      assertEquals((ast.body[1] as AST.Pipeline).commands[0]?.type, "Command");
+      assertEquals((ast.body[2] as AST.Pipeline).commands[0]?.type, "Command");
+    });
+
+    it("should parse multiple statements separated by semicolons", () => {
+      const ast = parse("cmd1; cmd2; cmd3");
+
+      assertEquals(ast.body.length, 3);
+    });
+
+    it("should handle empty lines", () => {
+      const ast = parse(`
+        cmd1
+
+
+        cmd2
+      `);
+
+      assertEquals(ast.body.length, 2);
+    });
+  });
+
+  describe("Complex Nested Structures", () => {
+    it("should parse nested if in for loop", () => {
+      const ast = parse(`
+        for file in *.txt
+        do
+          if test -f $file
+          then
+            cat $file
+          fi
+        done
+      `);
+
+      const forStmt = ast.body[0] as AST.ForStatement;
+      assertEquals(forStmt.body.length, 1);
+      assertEquals((forStmt.body[0] as AST.IfStatement).type, "IfStatement");
+    });
+
+    it("should parse pipeline in if condition", () => {
+      const ast = parse(`
+        if cat file.txt | grep pattern
+        then
+          echo found
+        fi
+      `);
+
+      const stmt = ast.body[0] as AST.IfStatement;
+      assertEquals(stmt.test.type, "Pipeline");
+      assertEquals((stmt.test as AST.Pipeline).commands.length, 2);
+    });
+  });
+
+  describe("Error Handling", () => {
+    it("should throw on unclosed if", () => {
+      assertThrows(
+        () => parse("if test -f file\nthen\necho hello"),
+        Error,
+        "Expected"
+      );
+    });
+
+    it("should throw on unclosed for", () => {
+      assertThrows(
+        () => parse("for x in a b c\ndo\necho $x"),
+        Error,
+        "Expected"
+      );
+    });
+
+    it("should throw on unclosed while", () => {
+      assertThrows(
+        () => parse("while true\ndo\necho loop"),
+        Error,
+        "Expected"
+      );
+    });
+
+    it("should throw on unexpected token", () => {
+      assertThrows(
+        () => parse("if then fi"),
+        Error
+      );
+    });
+  });
+
+  describe("Edge Cases", () => {
+    it("should parse empty input", () => {
+      const ast = parse("");
+      assertEquals(ast.type, "Program");
+      assertEquals(ast.body.length, 0);
+    });
+
+    it("should parse whitespace only", () => {
+      const ast = parse("   \n\n   ");
+      assertEquals(ast.body.length, 0);
+    });
+
+    it("should parse command with trailing whitespace", () => {
+      const ast = parse("echo hello   \n");
+      assertEquals(ast.body.length, 1);
+    });
+
+    it("should handle various quote combinations", () => {
+      const ast = parse(`echo "double" 'single' mixed`);
+      const cmd = (ast.body[0] as AST.Pipeline).commands[0] as AST.Command;
+
+      assertEquals(cmd.args.length, 3);
+      assertEquals((cmd.args[0] as AST.Word).quoted, true);
+      assertEquals((cmd.args[1] as AST.Word).singleQuoted, true);
+      assertEquals((cmd.args[2] as AST.Word).quoted, false);
+    });
+  });
+});
