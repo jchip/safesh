@@ -1,0 +1,83 @@
+
+/**
+ * Parse AWK command-line arguments.
+ *
+ * Supports:
+ * - awk 'program' [file...]
+ * - awk -F sep 'program' [file...]
+ * - awk -v var=value 'program' [file...]
+ * - awk -f progfile [file...]
+ *
+ * @param args - Command-line arguments (without 'awk' command name)
+ * @returns Parsed options and program
+ */
+export interface ParsedAwkArgs {
+  program: string;
+  fieldSeparator?: string;
+  variables: Record<string, string | number>;
+  files: string[];
+}
+
+export function parseAwkArgs(args: string[]): ParsedAwkArgs {
+  const result: ParsedAwkArgs = {
+    program: "",
+    variables: {},
+    files: [],
+  };
+
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+
+    if (arg === "-F" && i + 1 < args.length) {
+      // Field separator
+      result.fieldSeparator = args[++i];
+    } else if (arg.startsWith("-F")) {
+      // Field separator attached: -F:
+      result.fieldSeparator = arg.slice(2);
+    } else if (arg === "-v" && i + 1 < args.length) {
+      // Variable assignment
+      const assignment = args[++i];
+      const eqIdx = assignment.indexOf("=");
+      if (eqIdx > 0) {
+        const name = assignment.slice(0, eqIdx);
+        const value = assignment.slice(eqIdx + 1);
+        // Try to parse as number
+        const numVal = parseFloat(value);
+        result.variables[name] = Number.isNaN(numVal) ? value : numVal;
+      }
+    } else if (arg === "-f" && i + 1 < args.length) {
+      // Program file - would need fs access, mark for later
+      throw new Error("awk -f is not yet supported in safesh");
+    } else if (arg === "--") {
+      // End of options
+      i++;
+      break;
+    } else if (arg.startsWith("-")) {
+      // Unknown option - skip
+      console.error(`awk: unknown option: ${arg}`);
+    } else {
+      // First non-option is the program
+      if (!result.program) {
+        result.program = arg;
+      } else {
+        // Remaining args are files
+        result.files.push(arg);
+      }
+    }
+    i++;
+  }
+
+  // Collect remaining args as files
+  while (i < args.length) {
+    result.files.push(args[i++]);
+  }
+
+  return result;
+}
+
+// Re-export types and classes for external use
+export { AwkParser } from "./parser.ts";
+export { AwkInterpreter, createRuntimeContext } from "./interpreter/index.ts";
+export type { AwkProgram, AwkExpr, AwkStmt } from "./ast.ts";
+export type { AwkFileSystem, AwkValue, AwkRuntimeContext } from "./interpreter/index.ts";
