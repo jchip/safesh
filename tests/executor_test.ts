@@ -37,11 +37,12 @@ const testConfig: SafeShellConfig = {
 Deno.test("buildPermissionFlags - generates correct flags", () => {
   const flags = buildPermissionFlags(testConfig, "/project");
 
-  // Should have read, write, and env flags
-  assertEquals(flags.length, 3);
+  // Should have read, write, net, and env flags
+  assertEquals(flags.length, 4);
   assertStringIncludes(flags[0] ?? "", "--allow-read=");
   assertStringIncludes(flags[1] ?? "", "--allow-write=");
-  assertEquals(flags[2], "--allow-env"); // default: allow all env reads
+  assertEquals(flags[2], "--allow-net"); // default: allow all network
+  assertEquals(flags[3], "--allow-env"); // default: allow all env reads
 });
 
 Deno.test("buildPermissionFlags - expands CWD variable", () => {

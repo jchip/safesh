@@ -5,6 +5,7 @@
 import {
   ERROR_COMMAND_NOT_ALLOWED,
   ERROR_COMMAND_NOT_FOUND,
+  ERROR_NETWORK_BLOCKED,
 } from "./constants.ts";
 
 export type ErrorCode =
@@ -12,6 +13,7 @@ export type ErrorCode =
   | "COMMAND_NOT_WHITELISTED"
   | typeof ERROR_COMMAND_NOT_ALLOWED
   | typeof ERROR_COMMAND_NOT_FOUND
+  | typeof ERROR_NETWORK_BLOCKED
   | "SUBCOMMAND_NOT_ALLOWED"
   | "FLAG_NOT_ALLOWED"
   | "PATH_VIOLATION"
@@ -30,6 +32,7 @@ export interface ErrorDetails {
   allowed?: string[];
   denied?: string[];
   import?: string;
+  host?: string;
 }
 
 export class SafeShellError extends Error {
@@ -198,5 +201,19 @@ export function importError(
     `Import '${importPath}' matches blocked pattern and is not in the allowed list`,
     { import: importPath, denied: blocked, allowed },
     `Blocked patterns: ${blocked.join(", ")}. Allowed patterns: ${allowed.join(", ")}. Add to imports.allowed in safesh.config.ts if needed.`,
+  );
+}
+
+export function networkBlocked(
+  host: string,
+  allowed?: string[],
+): SafeShellError {
+  return new SafeShellError(
+    ERROR_NETWORK_BLOCKED,
+    `Network access to '${host}' is not allowed`,
+    { host, allowed },
+    allowed?.length
+      ? `Allowed hosts: ${allowed.join(", ")}`
+      : "Add host to permissions.net in safesh.config.ts or enable network access",
   );
 }

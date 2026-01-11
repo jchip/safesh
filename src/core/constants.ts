@@ -31,6 +31,11 @@ export const CMD_ERROR_MARKER = "__SAFESH_CMD_ERROR__:";
 export const INIT_ERROR_MARKER = "__SAFESH_INIT_ERROR__:";
 
 /**
+ * Network permission error marker - emitted when network access is blocked.
+ */
+export const NET_ERROR_MARKER = "__SAFESH_NET_ERROR__:";
+
+/**
  * Shell state marker - used to sync shell state (CWD, ENV, VARS) back
  * from subprocess to main process via stdout.
  */
@@ -73,3 +78,8 @@ export const ERROR_COMMANDS_BLOCKED = "COMMANDS_BLOCKED";
  * Error type for command not found.
  */
 export const ERROR_COMMAND_NOT_FOUND = "COMMAND_NOT_FOUND";
+
+/**
+ * Error type for network access blocked.
+ */
+export const ERROR_NETWORK_BLOCKED = "NETWORK_BLOCKED";
