@@ -680,3 +680,246 @@ Deno.test({
     assertStringIncludes(result.stdout, "paths: ok");
   },
 });
+
+// ============================================================================
+// SSH-192: Shell Lifecycle Management Tests
+// ============================================================================
+
+Deno.test({
+  name: "SSH-192 - startShell creates a new shell with default cwd",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    // Create shell without options
+    const shell = shellManager.create({});
+
+    assertEquals(typeof shell.id, "string");
+    assertEquals(shell.cwd, "/tmp"); // Uses default cwd
+    assertEquals(typeof shell.createdAt, "object");
+
+    // Cleanup
+    shellManager.end(shell.id);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - startShell creates shell with custom cwd",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    const customCwd = Deno.cwd();
+    const shell = shellManager.create({ cwd: customCwd });
+
+    assertEquals(shell.cwd, customCwd);
+
+    // Cleanup
+    shellManager.end(shell.id);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - startShell creates shell with custom env",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    const shell = shellManager.create({
+      env: { MY_VAR: "test_value", ANOTHER: "123" },
+    });
+
+    assertEquals(shell.env.MY_VAR, "test_value");
+    assertEquals(shell.env.ANOTHER, "123");
+
+    // Cleanup
+    shellManager.end(shell.id);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - listShells returns empty array when no shells",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    const shells = shellManager.list();
+    assertEquals(shells.length, 0);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - listShells returns all active shells",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    // Create multiple shells
+    const shell1 = shellManager.create({ cwd: "/tmp" });
+    const shell2 = shellManager.create({ cwd: Deno.cwd() });
+    const shell3 = shellManager.create({});
+
+    const shells = shellManager.list();
+    assertEquals(shells.length, 3);
+
+    // All shells should be in the list
+    const ids = shells.map((s) => s.id);
+    assertEquals(ids.includes(shell1.id), true);
+    assertEquals(ids.includes(shell2.id), true);
+    assertEquals(ids.includes(shell3.id), true);
+
+    // Cleanup
+    shellManager.end(shell1.id);
+    shellManager.end(shell2.id);
+    shellManager.end(shell3.id);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - endShell removes shell from list",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    // Create shell
+    const shell = shellManager.create({});
+    assertEquals(shellManager.list().length, 1);
+
+    // End shell
+    const ended = shellManager.end(shell.id);
+    assertEquals(ended, true);
+
+    // Shell should be removed
+    assertEquals(shellManager.list().length, 0);
+    assertEquals(shellManager.get(shell.id), undefined);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - endShell returns false for non-existent shell",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    const ended = shellManager.end("non-existent-shell-id");
+    assertEquals(ended, false);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - updateShell modifies cwd",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    const shell = shellManager.create({ cwd: "/tmp" });
+    assertEquals(shell.cwd, "/tmp");
+
+    const newCwd = Deno.cwd();
+    const updated = shellManager.update(shell.id, { cwd: newCwd });
+
+    assertEquals(updated?.cwd, newCwd);
+    assertEquals(shellManager.get(shell.id)?.cwd, newCwd);
+
+    // Cleanup
+    shellManager.end(shell.id);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - updateShell modifies env",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    const shell = shellManager.create({ env: { OLD: "value" } });
+    assertEquals(shell.env.OLD, "value");
+
+    const updated = shellManager.update(shell.id, {
+      env: { NEW: "new_value" },
+    });
+
+    // New env should be merged
+    assertEquals(updated?.env.NEW, "new_value");
+    assertEquals(updated?.env.OLD, "value"); // Old value preserved
+
+    // Cleanup
+    shellManager.end(shell.id);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - updateShell returns undefined for non-existent shell",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    const updated = shellManager.update("non-existent", { cwd: "/tmp" });
+    assertEquals(updated, undefined);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - shell serialize includes all required fields",
+  async fn() {
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    const shell = shellManager.create({
+      cwd: "/tmp",
+      env: { TEST: "value" },
+    });
+
+    const serialized = shellManager.serialize(shell);
+
+    // Check required fields exist
+    assertEquals(typeof serialized.shellId, "string");
+    assertEquals(typeof serialized.cwd, "string");
+    assertEquals(typeof serialized.createdAt, "string"); // ISO string
+    assertEquals(typeof serialized.env, "object");
+    assertEquals(serialized.env.TEST, "value");
+
+    // Cleanup
+    shellManager.end(shell.id);
+  },
+});
+
+Deno.test({
+  name: "SSH-192 - shells are isolated from each other",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { executeCode } = await import("../src/runtime/executor.ts");
+    const { createShellManager } = await import("../src/runtime/shell.ts");
+    const shellManager = createShellManager("/tmp");
+
+    // Create two shells with different envs
+    const shell1 = shellManager.create({ env: { SHELL_ID: "one" } });
+    const shell2 = shellManager.create({ env: { SHELL_ID: "two" } });
+
+    // Execute in shell1 - shell's env is used via the shell object
+    const result1 = await executeCode(
+      'console.log($.ENV.SHELL_ID ?? "undefined");',
+      testConfig,
+      { cwd: shell1.cwd },
+      shell1,
+    );
+
+    // Execute in shell2
+    const result2 = await executeCode(
+      'console.log($.ENV.SHELL_ID ?? "undefined");',
+      testConfig,
+      { cwd: shell2.cwd },
+      shell2,
+    );
+
+    assertEquals(result1.success, true);
+    assertEquals(result2.success, true);
+    assertStringIncludes(result1.stdout, "one");
+    assertStringIncludes(result2.stdout, "two");
+
+    // Cleanup
+    shellManager.end(shell1.id);
+    shellManager.end(shell2.id);
+  },
+});
