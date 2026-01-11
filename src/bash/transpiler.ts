@@ -349,7 +349,7 @@ export class Transpiler {
     if (stmt.value.type === "ArithmeticExpansion") {
       value = "0"; // Simplified arithmetic handling
     } else {
-      value = this.transpileWord(stmt.value);
+      value = this.escapeForQuotes(this.transpileWord(stmt.value));
     }
     return `const ${stmt.name} = "${value}"`;
   }
@@ -390,11 +390,13 @@ export class Transpiler {
     word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
   ): string {
     if (word.type === "Word") {
-      return word.value;
+      // Escape the value to prevent injection in template literals
+      return this.escapeForTemplate(word.value);
     } else if (word.type === "ParameterExpansion") {
+      // Variable expansion - keep the syntax
       return `\${${word.parameter}}`;
     } else if (word.type === "CommandSubstitution") {
-      // TODO: Handle command substitution
+      // TODO: Handle command substitution properly
       return "$(...)";
     }
 
@@ -408,7 +410,7 @@ export class Transpiler {
   private applyRedirection(cmdExpr: string, redirect: AST.Redirection): string {
     const target = typeof redirect.target === "number"
       ? redirect.target.toString()
-      : `"${this.transpileWord(redirect.target)}"`;
+      : `"${this.escapeForQuotes(this.transpileWord(redirect.target))}"`;
 
     switch (redirect.operator) {
       case "<":
@@ -430,6 +432,31 @@ export class Transpiler {
   // ===========================================================================
   // Helper Methods
   // ===========================================================================
+
+  /**
+   * Escape a string for safe inclusion in template literals
+   * Prevents injection attacks by escaping backticks, backslashes, and ${
+   */
+  private escapeForTemplate(str: string): string {
+    return str
+      .replace(/\\/g, "\\\\")  // Escape backslashes
+      .replace(/`/g, "\\`")     // Escape backticks
+      .replace(/\$\{/g, "\\${") // Escape template literal interpolation
+      .replace(/\$/g, "\\$");   // Escape dollar signs
+  }
+
+  /**
+   * Escape a string for safe inclusion in double-quoted strings
+   * Used for redirect targets and variable values
+   */
+  private escapeForQuotes(str: string): string {
+    return str
+      .replace(/\\/g, "\\\\")   // Escape backslashes
+      .replace(/"/g, '\\"')     // Escape double quotes
+      .replace(/\n/g, "\\n")    // Escape newlines
+      .replace(/\r/g, "\\r")    // Escape carriage returns
+      .replace(/\t/g, "\\t");   // Escape tabs
+  }
 
   private buildTestExpression(test: AST.Pipeline | AST.Command): string {
     if (test.type === "Pipeline") {
