@@ -9,6 +9,21 @@ import { Lexer, Token, TokenType } from "./lexer.ts";
 import type * as AST from "./ast.ts";
 
 // =============================================================================
+// Parser Context (for better error messages)
+// =============================================================================
+
+type ParserContext =
+  | { type: "if"; startLine: number; startColumn: number }
+  | { type: "for"; variable: string; startLine: number; startColumn: number }
+  | { type: "while"; startLine: number; startColumn: number }
+  | { type: "until"; startLine: number; startColumn: number }
+  | { type: "case"; startLine: number; startColumn: number }
+  | { type: "function"; name: string; startLine: number; startColumn: number }
+  | { type: "subshell"; startLine: number; startColumn: number }
+  | { type: "brace_group"; startLine: number; startColumn: number }
+  | { type: "command_substitution"; startLine: number; startColumn: number };
+
+// =============================================================================
 // Parser Class
 // =============================================================================
 
@@ -16,6 +31,7 @@ export class Parser {
   private lexer: Lexer;
   private currentToken: Token;
   private peekToken: Token;
+  private contextStack: ParserContext[] = [];
 
   constructor(input: string) {
     this.lexer = new Lexer(input);
@@ -82,7 +98,45 @@ export class Parser {
 
   private error(message: string): Error {
     const { line, column } = this.currentToken;
-    return new Error(`Parse error at ${line}:${column}: ${message}`);
+    const contextInfo = this.getContextInfo();
+    const fullMessage = contextInfo
+      ? `Parse error at ${line}:${column}: ${message}\n  ${contextInfo}`
+      : `Parse error at ${line}:${column}: ${message}`;
+    return new Error(fullMessage);
+  }
+
+  private getContextInfo(): string | null {
+    if (this.contextStack.length === 0) return null;
+
+    const context = this.contextStack[this.contextStack.length - 1]!;
+    switch (context.type) {
+      case "if":
+        return `in 'if' statement started at line ${context.startLine}`;
+      case "for":
+        return `in 'for' loop (variable: ${context.variable}) started at line ${context.startLine}`;
+      case "while":
+        return `in 'while' loop started at line ${context.startLine}`;
+      case "until":
+        return `in 'until' loop started at line ${context.startLine}`;
+      case "case":
+        return `in 'case' statement started at line ${context.startLine}`;
+      case "function":
+        return `in function '${context.name}' started at line ${context.startLine}`;
+      case "subshell":
+        return `in subshell started at line ${context.startLine}`;
+      case "brace_group":
+        return `in brace group started at line ${context.startLine}`;
+      case "command_substitution":
+        return `in command substitution started at line ${context.startLine}`;
+    }
+  }
+
+  private pushContext(context: ParserContext): void {
+    this.contextStack.push(context);
+  }
+
+  private popContext(): void {
+    this.contextStack.pop();
   }
 
   // ===========================================================================
@@ -314,6 +368,10 @@ export class Parser {
   // ===========================================================================
 
   private parseIfStatement(): AST.IfStatement {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+    this.pushContext({ type: "if", startLine, startColumn });
+
     this.expect(TokenType.IF);
     this.skipNewlines();
 
@@ -328,14 +386,18 @@ export class Parser {
     let alternate: AST.Statement[] | AST.IfStatement | null = null;
 
     if (this.is(TokenType.ELIF)) {
+      this.popContext(); // Pop before recursing for elif
       alternate = this.parseIfStatement();
     } else if (this.is(TokenType.ELSE)) {
       this.advance();
       this.skipNewlines();
       alternate = this.parseStatementList([TokenType.FI]);
+      this.expect(TokenType.FI);
+      this.popContext();
+    } else {
+      this.expect(TokenType.FI);
+      this.popContext();
     }
-
-    this.expect(TokenType.FI);
 
     return {
       type: "IfStatement",
@@ -346,8 +408,13 @@ export class Parser {
   }
 
   private parseForStatement(): AST.ForStatement {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+
     this.expect(TokenType.FOR);
     const variable = this.expect(TokenType.NAME).value;
+
+    this.pushContext({ type: "for", variable, startLine, startColumn });
     this.skipNewlines();
 
     let iterable: (AST.Word | AST.ParameterExpansion | AST.CommandSubstitution)[] = [];
@@ -371,6 +438,7 @@ export class Parser {
 
     const body = this.parseStatementList([TokenType.DONE]);
     this.expect(TokenType.DONE);
+    this.popContext();
 
     return {
       type: "ForStatement",
@@ -396,6 +464,11 @@ export class Parser {
     keyword: TokenType.WHILE | TokenType.UNTIL,
     type: T,
   ): T extends "WhileStatement" ? AST.WhileStatement : AST.UntilStatement {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+    const contextType = keyword === TokenType.WHILE ? "while" : "until";
+    this.pushContext({ type: contextType, startLine, startColumn });
+
     this.expect(keyword);
     this.skipNewlines();
 
@@ -406,6 +479,7 @@ export class Parser {
 
     const body = this.parseStatementList([TokenType.DONE]);
     this.expect(TokenType.DONE);
+    this.popContext();
 
     return {
       type,
@@ -415,6 +489,10 @@ export class Parser {
   }
 
   private parseCaseStatement(): AST.CaseStatement {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+    this.pushContext({ type: "case", startLine, startColumn });
+
     this.expect(TokenType.CASE);
     const word = this.parseWord();
     this.skipNewlines();
@@ -462,6 +540,7 @@ export class Parser {
     }
 
     this.expect(TokenType.ESAC);
+    this.popContext();
 
     return {
       type: "CaseStatement",
@@ -471,8 +550,13 @@ export class Parser {
   }
 
   private parseFunctionDeclaration(): AST.FunctionDeclaration {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+
     this.expect(TokenType.FUNCTION);
     const name = this.expect(TokenType.NAME).value;
+
+    this.pushContext({ type: "function", name, startLine, startColumn });
     this.skipNewlines();
 
     // Optional ()
@@ -495,6 +579,8 @@ export class Parser {
       throw this.error("Expected function body");
     }
 
+    this.popContext();
+
     return {
       type: "FunctionDeclaration",
       name,
@@ -507,12 +593,17 @@ export class Parser {
   // ===========================================================================
 
   private parseSubshell(): AST.Subshell {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+    this.pushContext({ type: "subshell", startLine, startColumn });
+
     this.expect(TokenType.LPAREN);
     this.skipNewlines();
 
     const body = this.parseStatementList([TokenType.RPAREN]);
 
     this.expect(TokenType.RPAREN);
+    this.popContext();
 
     return {
       type: "Subshell",
@@ -521,12 +612,17 @@ export class Parser {
   }
 
   private parseBraceGroup(): AST.BraceGroup {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+    this.pushContext({ type: "brace_group", startLine, startColumn });
+
     this.expect(TokenType.LBRACE);
     this.skipNewlines();
 
     const body = this.parseStatementList([TokenType.RBRACE]);
 
     this.expect(TokenType.RBRACE);
+    this.popContext();
 
     return {
       type: "BraceGroup",
@@ -668,14 +764,400 @@ export class Parser {
   }
 
   private parseWordParts(value: string, quoted: boolean): AST.WordPart[] {
-    // Simple implementation: treat as literal for now
-    // A full implementation would parse expansions within the word
-    return [
-      {
-        type: "LiteralPart",
-        value,
-      },
+    const parts: AST.WordPart[] = [];
+    let pos = 0;
+    let literal = "";
+
+    const flushLiteral = () => {
+      if (literal) {
+        parts.push({ type: "LiteralPart", value: literal });
+        literal = "";
+      }
+    };
+
+    while (pos < value.length) {
+      const char = value[pos];
+
+      if (char === "$") {
+        const next = value[pos + 1];
+
+        // $((arithmetic))
+        if (next === "(" && value[pos + 2] === "(") {
+          flushLiteral();
+          // startPos should be position of first '(' (pos + 1)
+          const result = this.extractBalancedDouble(value, pos + 1, "(", ")");
+          parts.push(this.parseArithmeticContent(result.content));
+          pos = result.end + 1;
+          continue;
+        }
+
+        // $(command)
+        if (next === "(") {
+          flushLiteral();
+          const result = this.extractBalanced(value, pos + 1, "(", ")");
+          parts.push(this.parseCommandSubstitutionContent(result.content, false));
+          pos = result.end + 1;
+          continue;
+        }
+
+        // ${parameter}
+        if (next === "{") {
+          flushLiteral();
+          const result = this.extractBalanced(value, pos + 1, "{", "}");
+          parts.push(this.parseParameterExpansionContent(result.content));
+          pos = result.end + 1;
+          continue;
+        }
+
+        // Special variables: $#, $?, $$, $!, $@, $*, $-, $0-$9
+        if (next && /^[#?$!@*\-0-9]$/.test(next)) {
+          flushLiteral();
+          parts.push({
+            type: "ParameterExpansion",
+            parameter: next,
+          });
+          pos += 2;
+          continue;
+        }
+
+        // Simple $VAR
+        const varMatch = value.slice(pos + 1).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
+        if (varMatch) {
+          flushLiteral();
+          parts.push({
+            type: "ParameterExpansion",
+            parameter: varMatch[0],
+          });
+          pos += 1 + varMatch[0].length;
+          continue;
+        }
+
+        // Just a literal $
+        literal += char;
+        pos++;
+        continue;
+      }
+
+      // Backtick command substitution (only outside double quotes or when explicitly in double quotes)
+      if (char === "`") {
+        flushLiteral();
+        const endIdx = this.findMatchingBacktick(value, pos + 1);
+        const content = value.slice(pos + 1, endIdx);
+        parts.push(this.parseCommandSubstitutionContent(content, true));
+        pos = endIdx + 1;
+        continue;
+      }
+
+      // Process substitution <() or >()
+      if ((char === "<" || char === ">") && value[pos + 1] === "(") {
+        flushLiteral();
+        const operator = char === "<" ? "<(" : ">(";
+        const result = this.extractBalanced(value, pos + 1, "(", ")");
+        parts.push(this.parseProcessSubstitutionContent(operator, result.content));
+        pos = result.end + 1;
+        continue;
+      }
+
+      literal += char;
+      pos++;
+    }
+
+    flushLiteral();
+
+    return parts.length > 0 ? parts : [{ type: "LiteralPart", value }];
+  }
+
+  // ===========================================================================
+  // Expansion Parsing Helpers
+  // ===========================================================================
+
+  /**
+   * Extract content between balanced delimiters (e.g., { and })
+   */
+  private extractBalanced(
+    value: string,
+    startPos: number,
+    open: string,
+    close: string
+  ): { content: string; end: number } {
+    let depth = 1;
+    let pos = startPos + 1; // Skip opening delimiter
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    while (pos < value.length && depth > 0) {
+      const char = value[pos];
+
+      // Handle quotes
+      if (char === "'" && !inDoubleQuote) {
+        inSingleQuote = !inSingleQuote;
+      } else if (char === '"' && !inSingleQuote) {
+        inDoubleQuote = !inDoubleQuote;
+      } else if (!inSingleQuote && !inDoubleQuote) {
+        // Handle escapes
+        if (char === "\\" && pos + 1 < value.length) {
+          pos += 2;
+          continue;
+        }
+        if (char === open) depth++;
+        else if (char === close) depth--;
+      }
+      pos++;
+    }
+
+    const content = value.slice(startPos + 1, pos - 1);
+    return { content, end: pos - 1 };
+  }
+
+  /**
+   * Extract content between double balanced delimiters (e.g., (( and )))
+   * For $((expr)), startPos points to the first '(' after '$'
+   */
+  private extractBalancedDouble(
+    value: string,
+    startPos: number,
+    open: string,
+    close: string
+  ): { content: string; end: number } {
+    let depth = 2; // Start with depth 2 for ((
+    let pos = startPos + 2; // Skip opening ((
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    while (pos < value.length && depth > 0) {
+      const char = value[pos];
+
+      if (char === "'" && !inDoubleQuote) {
+        inSingleQuote = !inSingleQuote;
+      } else if (char === '"' && !inSingleQuote) {
+        inDoubleQuote = !inDoubleQuote;
+      } else if (!inSingleQuote && !inDoubleQuote) {
+        if (char === "\\" && pos + 1 < value.length) {
+          pos += 2;
+          continue;
+        }
+        if (char === open) depth++;
+        else if (char === close) depth--;
+      }
+      pos++;
+    }
+
+    // Content starts after '((' (startPos + 2) and ends before '))' (pos - 2)
+    // But startPos points to first '(', so content starts at startPos + 2
+    const contentStart = startPos + 2;
+    const contentEnd = pos - 2;
+    const content = value.slice(contentStart, contentEnd);
+    return { content, end: pos - 1 };
+  }
+
+  /**
+   * Find matching backtick, handling escapes
+   */
+  private findMatchingBacktick(value: string, startPos: number): number {
+    let pos = startPos;
+    while (pos < value.length) {
+      if (value[pos] === "\\") {
+        pos += 2; // Skip escaped char
+        continue;
+      }
+      if (value[pos] === "`") {
+        return pos;
+      }
+      pos++;
+    }
+    return value.length; // No match found, return end
+  }
+
+  /**
+   * Parse ${...} parameter expansion content
+   */
+  private parseParameterExpansionContent(content: string): AST.ParameterExpansion {
+    // Handle ${#var} - length
+    if (content.startsWith("#")) {
+      const param = content.slice(1);
+      return {
+        type: "ParameterExpansion",
+        parameter: param,
+        modifier: "length",
+      };
+    }
+
+    // Find parameter name and modifier
+    const modifiers: Array<{ pattern: RegExp; modifier: AST.ParameterModifier }> = [
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*):-(.*)/s, modifier: ":-" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)-(.*)/s, modifier: "-" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*):=(.*)/s, modifier: ":=" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)=(.*)/s, modifier: "=" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*):\?(.*)/s, modifier: ":?" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\?(.*)/s, modifier: "?" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*):\+(.*)/s, modifier: ":+" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\+(.*)/s, modifier: "+" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)##(.*)/s, modifier: "##" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)#(.*)/s, modifier: "#" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)%%(.*)/s, modifier: "%%" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)%(.*)/s, modifier: "%" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\^\^(.*)/s, modifier: "^^" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\^(.*)/s, modifier: "^" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*),,(.*)/s, modifier: ",," },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*),(.*)/s, modifier: "," },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\/\/(.*)/s, modifier: "//" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\/(.*)/s, modifier: "/" },
+      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)@(.*)/s, modifier: "@" },
     ];
+
+    for (const { pattern, modifier } of modifiers) {
+      const match = content.match(pattern);
+      if (match) {
+        const result: AST.ParameterExpansion = {
+          type: "ParameterExpansion",
+          parameter: match[1]!,
+          modifier,
+        };
+        if (match[2]) {
+          result.modifierArg = {
+            type: "Word",
+            value: match[2],
+            quoted: false,
+            singleQuoted: false,
+            parts: this.parseWordParts(match[2], false),
+          };
+        }
+        return result;
+      }
+    }
+
+    // Simple ${VAR}
+    const simpleMatch = content.match(/^([a-zA-Z_][a-zA-Z0-9_]*|\d+|[#?$!@*\-])$/);
+    if (simpleMatch) {
+      return {
+        type: "ParameterExpansion",
+        parameter: simpleMatch[1]!,
+      };
+    }
+
+    // Fallback: treat entire content as parameter name
+    return {
+      type: "ParameterExpansion",
+      parameter: content,
+    };
+  }
+
+  /**
+   * Parse $(...) or `...` command substitution content
+   */
+  private parseCommandSubstitutionContent(
+    content: string,
+    backtick: boolean
+  ): AST.CommandSubstitution {
+    // Recursively parse the inner commands
+    const innerParser = new Parser(content);
+    const innerProgram = innerParser.parse();
+
+    return {
+      type: "CommandSubstitution",
+      command: innerProgram.body,
+      backtick,
+    };
+  }
+
+  /**
+   * Parse $((expr)) arithmetic content
+   */
+  private parseArithmeticContent(content: string): AST.ArithmeticExpansion {
+    return {
+      type: "ArithmeticExpansion",
+      expression: this.parseArithmeticExpression(content.trim()),
+    };
+  }
+
+  /**
+   * Parse <() or >() process substitution content
+   */
+  private parseProcessSubstitutionContent(
+    operator: "<(" | ">(",
+    content: string
+  ): AST.ProcessSubstitution {
+    const innerParser = new Parser(content);
+    const innerProgram = innerParser.parse();
+
+    return {
+      type: "ProcessSubstitution",
+      operator,
+      command: innerProgram.body,
+    };
+  }
+
+  /**
+   * Parse arithmetic expression (basic implementation)
+   * Full Pratt parser will be added in Phase 2
+   */
+  private parseArithmeticExpression(expr: string): AST.ArithmeticExpression {
+    expr = expr.trim();
+
+    // Try to parse as number
+    const numMatch = expr.match(/^-?\d+$/);
+    if (numMatch) {
+      return {
+        type: "NumberLiteral",
+        value: parseInt(expr, 10),
+      };
+    }
+
+    // Try to parse as variable reference
+    const varMatch = expr.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/);
+    if (varMatch) {
+      return {
+        type: "VariableReference",
+        name: expr,
+      };
+    }
+
+    // Basic binary operator parsing (will be enhanced in Phase 2)
+    const binaryOps = [
+      "**", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
+      "+=", "-=", "*=", "/=", "%=",
+      "+", "-", "*", "/", "%", "&", "|", "^", "<", ">", "=",
+    ];
+
+    for (const op of binaryOps) {
+      const idx = this.findOperator(expr, op);
+      if (idx > 0 && idx < expr.length - op.length) {
+        const left = expr.slice(0, idx).trim();
+        const right = expr.slice(idx + op.length).trim();
+        return {
+          type: "BinaryArithmeticExpression",
+          operator: op as AST.BinaryArithmeticExpression["operator"],
+          left: this.parseArithmeticExpression(left),
+          right: this.parseArithmeticExpression(right),
+        };
+      }
+    }
+
+    // Handle parenthesized expressions
+    if (expr.startsWith("(") && expr.endsWith(")")) {
+      return this.parseArithmeticExpression(expr.slice(1, -1));
+    }
+
+    // Fallback: treat as variable reference
+    return {
+      type: "VariableReference",
+      name: expr,
+    };
+  }
+
+  /**
+   * Find operator position, respecting parentheses
+   */
+  private findOperator(expr: string, op: string): number {
+    let depth = 0;
+    for (let i = 0; i <= expr.length - op.length; i++) {
+      if (expr[i] === "(") depth++;
+      else if (expr[i] === ")") depth--;
+      else if (depth === 0 && expr.slice(i, i + op.length) === op) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   // ===========================================================================

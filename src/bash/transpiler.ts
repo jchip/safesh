@@ -397,23 +397,209 @@ export class Transpiler {
     word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
   ): string {
     if (word.type === "Word") {
-      // Escape the value to prevent injection in template literals
+      // Build from parts if they contain expansions
+      if (word.parts.length > 0) {
+        return word.parts.map((part) => this.transpileWordPart(part)).join("");
+      }
+      // Fallback to escaped value
       return this.escapeForTemplate(word.value);
     } else if (word.type === "ParameterExpansion") {
-      // Variable expansion - keep the syntax
-      return `\${${word.parameter}}`;
+      return this.transpileParameterExpansion(word);
     } else if (word.type === "CommandSubstitution") {
-      // Command substitution is not yet implemented
-      // Emit a runtime error that will be visible when executed
-      throw new Error(
-        "Command substitution $(...)  or `...` is not yet supported in the transpiler. " +
-        "Please use the direct TypeScript API instead."
-      );
+      return this.transpileCommandSubstitution(word);
     }
 
     // This should never be reached due to TypeScript's exhaustiveness checking
     const _exhaustive: never = word;
     return "";
+  }
+
+  private transpileWordPart(part: AST.WordPart): string {
+    switch (part.type) {
+      case "LiteralPart":
+        return this.escapeForTemplate(part.value);
+      case "ParameterExpansion":
+        return this.transpileParameterExpansion(part);
+      case "CommandSubstitution":
+        return this.transpileCommandSubstitution(part);
+      case "ArithmeticExpansion":
+        return this.transpileArithmeticExpansion(part);
+      case "ProcessSubstitution":
+        return this.transpileProcessSubstitution(part);
+      case "GlobPattern":
+        // Glob patterns are passed through as literals
+        return this.escapeForTemplate(part.pattern);
+      default: {
+        const _exhaustive: never = part;
+        return "";
+      }
+    }
+  }
+
+  private transpileParameterExpansion(expansion: AST.ParameterExpansion): string {
+    const param = expansion.parameter;
+    const modifier = expansion.modifier;
+
+    if (!modifier) {
+      // Simple expansion: ${VAR} or $VAR
+      return `\${${param}}`;
+    }
+
+    // Handle modifiers
+    const modifierArg = expansion.modifierArg
+      ? this.transpileWord(expansion.modifierArg)
+      : "";
+
+    switch (modifier) {
+      case "length":
+        // ${#VAR} - length of variable
+        return `\${${param}.length}`;
+      case ":-":
+        // ${VAR:-default} - use default if unset or null
+        return `\${${param} ?? "${this.escapeForQuotes(modifierArg)}"}`;
+      case "-":
+        // ${VAR-default} - use default if unset
+        return `\${${param} !== undefined ? ${param} : "${this.escapeForQuotes(modifierArg)}"}`;
+      case ":=":
+      case "=":
+        // ${VAR:=default} - assign default if unset
+        return `\${${param} ??= "${this.escapeForQuotes(modifierArg)}"}`;
+      case ":?":
+      case "?":
+        // ${VAR:?error} - error if unset
+        return `\${${param} ?? (() => { throw new Error("${this.escapeForQuotes(modifierArg)}"); })()}`;
+      case ":+":
+      case "+":
+        // ${VAR:+alternate} - use alternate if set
+        return `\${${param} ? "${this.escapeForQuotes(modifierArg)}" : ""}`;
+      case "#":
+        // ${VAR#pattern} - remove shortest prefix
+        return `\${${param}.replace(/^${this.escapeRegex(modifierArg)}/, "")}`;
+      case "##":
+        // ${VAR##pattern} - remove longest prefix
+        return `\${${param}.replace(/^${this.escapeRegex(modifierArg)}.*?/, "")}`;
+      case "%":
+        // ${VAR%pattern} - remove shortest suffix
+        return `\${${param}.replace(/${this.escapeRegex(modifierArg)}$/, "")}`;
+      case "%%":
+        // ${VAR%%pattern} - remove longest suffix
+        return `\${${param}.replace(/.*?${this.escapeRegex(modifierArg)}$/, "")}`;
+      case "^":
+        // ${VAR^} - uppercase first char
+        return `\${${param}.charAt(0).toUpperCase() + ${param}.slice(1)}`;
+      case "^^":
+        // ${VAR^^} - uppercase all
+        return `\${${param}.toUpperCase()}`;
+      case ",":
+        // ${VAR,} - lowercase first char
+        return `\${${param}.charAt(0).toLowerCase() + ${param}.slice(1)}`;
+      case ",,":
+        // ${VAR,,} - lowercase all
+        return `\${${param}.toLowerCase()}`;
+      case "/":
+        // ${VAR/pattern/replacement} - replace first
+        const [pattern, replacement] = modifierArg.split("/");
+        return `\${${param}.replace("${this.escapeForQuotes(pattern || "")}", "${this.escapeForQuotes(replacement || "")}")}`;
+      case "//":
+        // ${VAR//pattern/replacement} - replace all
+        const [pat, rep] = modifierArg.split("/");
+        return `\${${param}.replaceAll("${this.escapeForQuotes(pat || "")}", "${this.escapeForQuotes(rep || "")}")}`;
+      default:
+        // Unknown modifier, just use simple expansion
+        return `\${${param}}`;
+    }
+  }
+
+  private transpileCommandSubstitution(cs: AST.CommandSubstitution): string {
+    // Transpile the inner commands and wrap in an async IIFE that captures output
+    const innerStatements = cs.command
+      .map((stmt) => {
+        // Create a temporary transpiler instance for inner commands
+        const innerOutput: string[] = [];
+        const saveOutput = this.output;
+        const saveLevel = this.indentLevel;
+        this.output = innerOutput;
+        this.indentLevel = 0;
+        this.transpileStatement(stmt);
+        this.output = saveOutput;
+        this.indentLevel = saveLevel;
+        return innerOutput.join(" ");
+      })
+      .join(" ");
+
+    // Generate inline command substitution that captures stdout
+    return `\${await (async () => { const __result = ${innerStatements.replace(/^await /, "").replace(/;$/, "")}; return (await __result.text()).trim(); })()}`;
+  }
+
+  private transpileArithmeticExpansion(arith: AST.ArithmeticExpansion): string {
+    return `\${${this.transpileArithmeticExpr(arith.expression)}}`;
+  }
+
+  private transpileArithmeticExpr(expr: AST.ArithmeticExpression): string {
+    switch (expr.type) {
+      case "NumberLiteral":
+        return expr.value.toString();
+      case "VariableReference":
+        return `Number(${expr.name})`;
+      case "BinaryArithmeticExpression": {
+        const left = this.transpileArithmeticExpr(expr.left);
+        const right = this.transpileArithmeticExpr(expr.right);
+        // Handle assignment operators specially
+        if (expr.operator.endsWith("=") && expr.operator !== "==" && expr.operator !== "!=") {
+          // Assignment: a += b, etc.
+          return `(${left} ${expr.operator} ${right})`;
+        }
+        return `(${left} ${expr.operator} ${right})`;
+      }
+      case "UnaryArithmeticExpression": {
+        const arg = this.transpileArithmeticExpr(expr.argument);
+        if (expr.prefix) {
+          return `(${expr.operator}${arg})`;
+        } else {
+          return `(${arg}${expr.operator})`;
+        }
+      }
+      case "ConditionalArithmeticExpression": {
+        const test = this.transpileArithmeticExpr(expr.test);
+        const cons = this.transpileArithmeticExpr(expr.consequent);
+        const alt = this.transpileArithmeticExpr(expr.alternate);
+        return `(${test} ? ${cons} : ${alt})`;
+      }
+      default: {
+        const _exhaustive: never = expr;
+        return "0";
+      }
+    }
+  }
+
+  private transpileProcessSubstitution(ps: AST.ProcessSubstitution): string {
+    // Process substitution creates a temp file and returns its path
+    // The inner command writes to (>()) or reads from (<()) the file
+    const innerStatements = ps.command
+      .map((stmt) => {
+        const innerOutput: string[] = [];
+        const saveOutput = this.output;
+        const saveLevel = this.indentLevel;
+        this.output = innerOutput;
+        this.indentLevel = 0;
+        this.transpileStatement(stmt);
+        this.output = saveOutput;
+        this.indentLevel = saveLevel;
+        return innerOutput.join(" ");
+      })
+      .join(" ");
+
+    if (ps.operator === "<(") {
+      // Input process substitution: command writes to temp file, we return path
+      return `\${await (async () => { const __tmpFile = await Deno.makeTempFile(); const __cmd = ${innerStatements.replace(/^await /, "").replace(/;$/, "")}; await Deno.writeTextFile(__tmpFile, await __cmd.text()); return __tmpFile; })()}`;
+    } else {
+      // Output process substitution: we return temp file path, command will read from it
+      return `\${await (async () => { const __tmpFile = await Deno.makeTempFile(); return __tmpFile; })()}`;
+    }
+  }
+
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   // ===========================================================================
