@@ -42,7 +42,7 @@ import {
   getScriptOutput,
   killScript,
 } from "../runtime/scripts.ts";
-import { parseShellCommand } from "../shell/parser.ts";
+import { parseShellCommand } from "../bash/mod.ts";
 import {
   createRunToolDescription,
   START_SHELL_DESCRIPTION,
