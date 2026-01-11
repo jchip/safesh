@@ -23,7 +23,7 @@ export { Lexer, TokenType, type Token, type Position } from "./lexer.ts";
 export type * as AST from "./ast.ts";
 
 // Parser
-export { Parser, parse } from "./parser.ts";
+export { Parser, parse, parseWithRecovery } from "./parser.ts";
 
 // Transpiler
 export { Transpiler, transpile, type TranspilerOptions } from "./transpiler.ts";

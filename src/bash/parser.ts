@@ -32,6 +32,8 @@ export class Parser {
   private currentToken: Token;
   private peekToken: Token;
   private contextStack: ParserContext[] = [];
+  private diagnostics: AST.ParseDiagnostic[] = [];
+  private recoveryMode = false;
 
   constructor(input: string) {
     this.lexer = new Lexer(input);
@@ -162,6 +164,85 @@ export class Parser {
       type: "Program",
       body,
     };
+  }
+
+  /**
+   * Parse with error recovery - returns AST and diagnostics
+   * Continues parsing after errors to collect multiple issues
+   */
+  public parseWithRecovery(): AST.ParseResult {
+    this.recoveryMode = true;
+    this.diagnostics = [];
+    const body: AST.Statement[] = [];
+
+    this.skipNewlines();
+
+    while (!this.is(TokenType.EOF)) {
+      if (this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON)) {
+        this.advance();
+        continue;
+      }
+
+      try {
+        body.push(this.parseStatement());
+      } catch (e) {
+        // Record the error and try to recover
+        if (e instanceof Error) {
+          this.addDiagnostic("error", e.message);
+        }
+        this.recover();
+      }
+      this.skipNewlines();
+    }
+
+    return {
+      ast: { type: "Program", body },
+      diagnostics: this.diagnostics,
+    };
+  }
+
+  /**
+   * Add a diagnostic without throwing
+   */
+  private addDiagnostic(
+    severity: AST.DiagnosticSeverity,
+    message: string,
+    code?: string
+  ): void {
+    this.diagnostics.push({
+      severity,
+      message,
+      line: this.currentToken.line,
+      column: this.currentToken.column,
+      code,
+      context: this.getContextInfo() ?? undefined,
+    });
+  }
+
+  /**
+   * Recover from an error by skipping to a synchronization point
+   */
+  private recover(): void {
+    // Skip until we find a statement boundary
+    const syncTokens = [
+      TokenType.NEWLINE,
+      TokenType.SEMICOLON,
+      TokenType.EOF,
+      TokenType.FI,
+      TokenType.DONE,
+      TokenType.ESAC,
+      TokenType.RBRACE,
+      TokenType.RPAREN,
+    ];
+
+    while (!this.isAny(...syncTokens)) {
+      this.advance();
+    }
+
+    // Also pop any open contexts
+    while (this.contextStack.length > 0) {
+      this.popContext();
+    }
   }
 
   // ===========================================================================
@@ -344,10 +425,15 @@ export class Parser {
         TokenType.AND_GREAT,
         TokenType.AND_DGREAT,
         TokenType.NUMBER,
+        TokenType.LESS_LPAREN,
+        TokenType.GREAT_LPAREN,
       )
     ) {
-      // Check for redirection
-      if (this.isRedirectionOperator()) {
+      // Check for process substitution
+      if (this.isAny(TokenType.LESS_LPAREN, TokenType.GREAT_LPAREN)) {
+        args.push(this.parseProcessSubstitutionWord());
+      } else if (this.isRedirectionOperator()) {
+        // Check for redirection
         redirects.push(this.parseRedirection());
       } else {
         args.push(this.parseWord());
@@ -763,6 +849,41 @@ export class Parser {
     };
   }
 
+  /**
+   * Parse a process substitution <(...) or >(...)
+   * Returns a Word containing a ProcessSubstitution part
+   */
+  private parseProcessSubstitutionWord(): AST.Word {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+    const isInput = this.is(TokenType.LESS_LPAREN);
+    const operator: "<(" | ">(" = isInput ? "<(" : ">(";
+
+    this.pushContext({ type: "command_substitution", startLine, startColumn });
+    this.advance(); // consume <( or >(
+    this.skipNewlines();
+
+    // Parse the commands inside
+    const body = this.parseStatementList([TokenType.RPAREN]);
+
+    this.expect(TokenType.RPAREN);
+    this.popContext();
+
+    const processSubstitution: AST.ProcessSubstitution = {
+      type: "ProcessSubstitution",
+      operator,
+      command: body,
+    };
+
+    return {
+      type: "Word",
+      value: `${operator}...)`, // Placeholder value
+      quoted: false,
+      singleQuoted: false,
+      parts: [processSubstitution],
+    };
+  }
+
   private parseWordParts(value: string, quoted: boolean): AST.WordPart[] {
     const parts: AST.WordPart[] = [];
     let pos = 0;
@@ -848,15 +969,8 @@ export class Parser {
         continue;
       }
 
-      // Process substitution <() or >()
-      if ((char === "<" || char === ">") && value[pos + 1] === "(") {
-        flushLiteral();
-        const operator = char === "<" ? "<(" : ">(";
-        const result = this.extractBalanced(value, pos + 1, "(", ")");
-        parts.push(this.parseProcessSubstitutionContent(operator, result.content));
-        pos = result.end + 1;
-        continue;
-      }
+      // Process substitution <() or >() is handled at the token level
+      // by LESS_LPAREN and GREAT_LPAREN tokens
 
       literal += char;
       pos++;
@@ -1181,10 +1295,19 @@ export class Parser {
 }
 
 // =============================================================================
-// Convenience Function
+// Convenience Functions
 // =============================================================================
 
 export function parse(input: string): AST.Program {
   const parser = new Parser(input);
   return parser.parse();
+}
+
+/**
+ * Parse with error recovery - returns AST and diagnostics
+ * Continues parsing after errors to collect multiple issues
+ */
+export function parseWithRecovery(input: string): AST.ParseResult {
+  const parser = new Parser(input);
+  return parser.parseWithRecovery();
 }
