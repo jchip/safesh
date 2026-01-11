@@ -344,12 +344,22 @@ line 5: HELLO`;
 
     it("trims left only", () => {
       const result = text.trim("  hello  ", "left");
-      assertEquals(result, ["hello  "]);
+      assertEquals(result, "hello  ");
     });
 
     it("trims right only", () => {
       const result = text.trim("  hello  ", "right");
-      assertEquals(result, ["  hello"]);
+      assertEquals(result, "  hello");
+    });
+
+    it("returns string for single-line input", () => {
+      const result = text.trim("  hello  ");
+      assertEquals(result, "hello");
+    });
+
+    it("returns array for array input", () => {
+      const result = text.trim(["  a  ", "  b  "]);
+      assertEquals(result, ["a", "b"]);
     });
   });
 
