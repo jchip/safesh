@@ -336,8 +336,8 @@ async function callUserFunction(
 
   // Set up parameters
   for (let i = 0; i < func.params.length; i++) {
-    const param = func.params[i];
-    const value = i < args.length ? await evalExpr(ctx, args[i]) : "";
+    const param = func.params[i]!;
+    const value = i < args.length ? await evalExpr(ctx, args[i]!) : "";
     ctx.vars[param] = value;
   }
 
@@ -567,7 +567,7 @@ async function evalGetline(
     return 0; // No more lines
   }
 
-  const nextLine = ctx.lines[nextLineIndex];
+  const nextLine = ctx.lines[nextLineIndex]!;
 
   if (variable) {
     setVariable(ctx, variable, nextLine);
@@ -625,7 +625,7 @@ async function evalGetlineFromFile(
     return 0;
   }
 
-  const line = lines[nextIndex];
+  const line = lines[nextIndex]!;
   ctx.vars[indexKey] = nextIndex;
 
   if (variable) {
@@ -643,7 +643,7 @@ async function evalTuple(
 ): Promise<AwkValue> {
   if (elements.length === 0) return "";
   for (let i = 0; i < elements.length - 1; i++) {
-    await evalExpr(ctx, elements[i]);
+    await evalExpr(ctx, elements[i]!);
   }
-  return evalExpr(ctx, elements[elements.length - 1]);
+  return evalExpr(ctx, elements[elements.length - 1]!);
 }

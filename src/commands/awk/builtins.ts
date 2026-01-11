@@ -44,7 +44,7 @@ async function awkLength(
   if (args.length === 0) {
     return ctx.line.length;
   }
-  const str = toAwkString(await evaluator.evalExpr(args[0]));
+  const str = toAwkString(await evaluator.evalExpr(args[0]!));
   return str.length;
 }
 
@@ -54,11 +54,11 @@ async function awkSubstr(
   evaluator: AwkEvaluator,
 ): Promise<string> {
   if (args.length < 2) return "";
-  const str = toAwkString(await evaluator.evalExpr(args[0]));
-  const start = Math.floor(toNumber(await evaluator.evalExpr(args[1]))) - 1;
+  const str = toAwkString(await evaluator.evalExpr(args[0]!));
+  const start = Math.floor(toNumber(await evaluator.evalExpr(args[1]!))) - 1;
 
   if (args.length >= 3) {
-    const len = Math.floor(toNumber(await evaluator.evalExpr(args[2])));
+    const len = Math.floor(toNumber(await evaluator.evalExpr(args[2]!)));
     return str.substr(Math.max(0, start), len);
   }
   return str.substr(Math.max(0, start));
@@ -70,8 +70,8 @@ async function awkIndex(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length < 2) return 0;
-  const str = toAwkString(await evaluator.evalExpr(args[0]));
-  const target = toAwkString(await evaluator.evalExpr(args[1]));
+  const str = toAwkString(await evaluator.evalExpr(args[0]!));
+  const target = toAwkString(await evaluator.evalExpr(args[1]!));
   const idx = str.indexOf(target);
   return idx === -1 ? 0 : idx + 1;
 }
@@ -82,9 +82,9 @@ async function awkSplit(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length < 2) return 0;
-  const str = toAwkString(await evaluator.evalExpr(args[0]));
+  const str = toAwkString(await evaluator.evalExpr(args[0]!));
 
-  const arrayExpr = args[1];
+  const arrayExpr = args[1]!;
   if (arrayExpr.type !== "variable") {
     return 0;
   }
@@ -92,7 +92,7 @@ async function awkSplit(
 
   let sep: string | RegExp = ctx.FS;
   if (args.length >= 3) {
-    const sepVal = toAwkString(await evaluator.evalExpr(args[2]));
+    const sepVal = toAwkString(await evaluator.evalExpr(args[2]!));
     sep = sepVal === " " ? /\s+/ : sepVal;
   } else if (ctx.FS === " ") {
     sep = /\s+/;
@@ -102,7 +102,7 @@ async function awkSplit(
 
   ctx.arrays[arrayName] = {};
   for (let i = 0; i < parts.length; i++) {
-    ctx.arrays[arrayName][String(i + 1)] = parts[i];
+    ctx.arrays[arrayName][String(i + 1)] = parts[i]!;
   }
 
   return parts.length;
@@ -116,20 +116,20 @@ async function awkSub(
   if (args.length < 2) return 0;
 
   let pattern: string;
-  if (args[0].type === "regex") {
-    pattern = args[0].pattern;
+  if (args[0]!.type === "regex") {
+    pattern = args[0]!.pattern;
   } else {
-    pattern = toAwkString(await evaluator.evalExpr(args[0]));
+    pattern = toAwkString(await evaluator.evalExpr(args[0]!));
     if (pattern.startsWith("/") && pattern.endsWith("/")) {
       pattern = pattern.slice(1, -1);
     }
   }
 
-  const replacement = toAwkString(await evaluator.evalExpr(args[1]));
+  const replacement = toAwkString(await evaluator.evalExpr(args[1]!));
 
   let targetName = "$0";
   if (args.length >= 3) {
-    const targetExpr = args[2];
+    const targetExpr = args[2]!;
     if (targetExpr.type === "variable") {
       targetName = targetExpr.name;
     } else if (targetExpr.type === "field") {
@@ -186,20 +186,20 @@ async function awkGsub(
   if (args.length < 2) return 0;
 
   let pattern: string;
-  if (args[0].type === "regex") {
-    pattern = args[0].pattern;
+  if (args[0]!.type === "regex") {
+    pattern = args[0]!.pattern;
   } else {
-    pattern = toAwkString(await evaluator.evalExpr(args[0]));
+    pattern = toAwkString(await evaluator.evalExpr(args[0]!));
     if (pattern.startsWith("/") && pattern.endsWith("/")) {
       pattern = pattern.slice(1, -1);
     }
   }
 
-  const replacement = toAwkString(await evaluator.evalExpr(args[1]));
+  const replacement = toAwkString(await evaluator.evalExpr(args[1]!));
 
   let targetName = "$0";
   if (args.length >= 3) {
-    const targetExpr = args[2];
+    const targetExpr = args[2]!;
     if (targetExpr.type === "variable") {
       targetName = targetExpr.name;
     } else if (targetExpr.type === "field") {
@@ -289,13 +289,13 @@ async function awkMatch(
     return 0;
   }
 
-  const str = toAwkString(await evaluator.evalExpr(args[0]));
+  const str = toAwkString(await evaluator.evalExpr(args[0]!));
 
   let pattern: string;
-  if (args[1].type === "regex") {
-    pattern = args[1].pattern;
+  if (args[1]!.type === "regex") {
+    pattern = args[1]!.pattern;
   } else {
-    pattern = toAwkString(await evaluator.evalExpr(args[1]));
+    pattern = toAwkString(await evaluator.evalExpr(args[1]!));
     if (pattern.startsWith("/") && pattern.endsWith("/")) {
       pattern = pattern.slice(1, -1);
     }
@@ -326,20 +326,20 @@ async function awkGensub(
   if (args.length < 3) return "";
 
   let pattern: string;
-  if (args[0].type === "regex") {
-    pattern = args[0].pattern;
+  if (args[0]!.type === "regex") {
+    pattern = args[0]!.pattern;
   } else {
-    pattern = toAwkString(await evaluator.evalExpr(args[0]));
+    pattern = toAwkString(await evaluator.evalExpr(args[0]!));
     if (pattern.startsWith("/") && pattern.endsWith("/")) {
       pattern = pattern.slice(1, -1);
     }
   }
 
-  const replacement = toAwkString(await evaluator.evalExpr(args[1]));
-  const how = toAwkString(await evaluator.evalExpr(args[2]));
+  const replacement = toAwkString(await evaluator.evalExpr(args[1]!));
+  const how = toAwkString(await evaluator.evalExpr(args[2]!));
   const target =
     args.length >= 4
-      ? toAwkString(await evaluator.evalExpr(args[3]))
+      ? toAwkString(await evaluator.evalExpr(args[3]!))
       : ctx.line;
 
   try {
@@ -376,15 +376,15 @@ function processGensub(
   let i = 0;
   while (i < replacement.length) {
     if (replacement[i] === "\\" && i + 1 < replacement.length) {
-      const next = replacement[i + 1];
+      const next = replacement[i + 1]!;
       if (next === "&") {
         result += "&";
         i += 2;
       } else if (next === "0") {
         result += match;
         i += 2;
-      } else if (next >= "1" && next <= "9") {
-        const idx = parseInt(next, 10) - 1;
+      } else if (next! >= "1" && next! <= "9") {
+        const idx = parseInt(next!, 10) - 1;
         result += groups[idx] || "";
         i += 2;
       } else if (next === "n") {
@@ -414,7 +414,7 @@ async function awkTolower(
   evaluator: AwkEvaluator,
 ): Promise<string> {
   if (args.length === 0) return "";
-  return toAwkString(await evaluator.evalExpr(args[0])).toLowerCase();
+  return toAwkString(await evaluator.evalExpr(args[0]!)).toLowerCase();
 }
 
 async function awkToupper(
@@ -423,7 +423,7 @@ async function awkToupper(
   evaluator: AwkEvaluator,
 ): Promise<string> {
   if (args.length === 0) return "";
-  return toAwkString(await evaluator.evalExpr(args[0])).toUpperCase();
+  return toAwkString(await evaluator.evalExpr(args[0]!)).toUpperCase();
 }
 
 async function awkSprintf(
@@ -432,10 +432,10 @@ async function awkSprintf(
   evaluator: AwkEvaluator,
 ): Promise<string> {
   if (args.length === 0) return "";
-  const format = toAwkString(await evaluator.evalExpr(args[0]));
+  const format = toAwkString(await evaluator.evalExpr(args[0]!));
   const values: AwkValue[] = [];
   for (let i = 1; i < args.length; i++) {
-    values.push(await evaluator.evalExpr(args[i]));
+    values.push(await evaluator.evalExpr(args[i]!));
   }
   return formatPrintf(format, values);
 }
@@ -448,7 +448,7 @@ async function awkInt(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length === 0) return 0;
-  return Math.floor(toNumber(await evaluator.evalExpr(args[0])));
+  return Math.floor(toNumber(await evaluator.evalExpr(args[0]!)));
 }
 
 async function awkSqrt(
@@ -457,7 +457,7 @@ async function awkSqrt(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length === 0) return 0;
-  return Math.sqrt(toNumber(await evaluator.evalExpr(args[0])));
+  return Math.sqrt(toNumber(await evaluator.evalExpr(args[0]!)));
 }
 
 async function awkSin(
@@ -466,7 +466,7 @@ async function awkSin(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length === 0) return 0;
-  return Math.sin(toNumber(await evaluator.evalExpr(args[0])));
+  return Math.sin(toNumber(await evaluator.evalExpr(args[0]!)));
 }
 
 async function awkCos(
@@ -475,7 +475,7 @@ async function awkCos(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length === 0) return 0;
-  return Math.cos(toNumber(await evaluator.evalExpr(args[0])));
+  return Math.cos(toNumber(await evaluator.evalExpr(args[0]!)));
 }
 
 async function awkAtan2(
@@ -483,8 +483,8 @@ async function awkAtan2(
   _ctx: AwkRuntimeContext,
   evaluator: AwkEvaluator,
 ): Promise<number> {
-  const y = args.length > 0 ? toNumber(await evaluator.evalExpr(args[0])) : 0;
-  const x = args.length > 1 ? toNumber(await evaluator.evalExpr(args[1])) : 0;
+  const y = args.length > 0 ? toNumber(await evaluator.evalExpr(args[0]!)) : 0;
+  const x = args.length > 1 ? toNumber(await evaluator.evalExpr(args[1]!)) : 0;
   return Math.atan2(y, x);
 }
 
@@ -494,7 +494,7 @@ async function awkLog(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length === 0) return 0;
-  return Math.log(toNumber(await evaluator.evalExpr(args[0])));
+  return Math.log(toNumber(await evaluator.evalExpr(args[0]!)));
 }
 
 async function awkExp(
@@ -503,7 +503,7 @@ async function awkExp(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length === 0) return 1;
-  return Math.exp(toNumber(await evaluator.evalExpr(args[0])));
+  return Math.exp(toNumber(await evaluator.evalExpr(args[0]!)));
 }
 
 function awkRand(
@@ -520,7 +520,7 @@ async function awkSrand(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   const seed =
-    args.length > 0 ? toNumber(await evaluator.evalExpr(args[0])) : Date.now();
+    args.length > 0 ? toNumber(await evaluator.evalExpr(args[0]!)) : Date.now();
   ctx.vars._srand_seed = seed;
   return seed;
 }
@@ -553,18 +553,21 @@ export function formatPrintf(format: string, values: AwkValue[]): string {
       let width = "";
       let precision = "";
 
-      while (j < format.length && /[-+ #0]/.test(format[j])) {
-        flags += format[j++];
+      while (j < format.length && /[-+ #0]/.test(format[j]!)) {
+        flags += format[j]!;
+        j++;
       }
 
-      while (j < format.length && /\d/.test(format[j])) {
-        width += format[j++];
+      while (j < format.length && /\d/.test(format[j]!)) {
+        width += format[j]!;
+        j++;
       }
 
       if (format[j] === ".") {
         j++;
-        while (j < format.length && /\d/.test(format[j])) {
-          precision += format[j++];
+        while (j < format.length && /\d/.test(format[j]!)) {
+          precision += format[j]!;
+          j++;
         }
       }
 

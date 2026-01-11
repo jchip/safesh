@@ -28,8 +28,10 @@ export interface AwkOptions {
   rs?: string;
   /** Variable assignments (-v var=value) */
   variables?: Record<string, string | number>;
-  /** Execution limits */
-  limits?: CreateContextOptions["limits"];
+  /** Max iterations for loops */
+  maxIterations?: number;
+  /** Max recursion depth */
+  maxRecursionDepth?: number;
   /** File system interface (for getline, etc.) */
   fileSystem?: CreateContextOptions["fs"];
 }
@@ -63,13 +65,19 @@ export async function awkExec(
 
     // Create runtime context
     const ctx = createRuntimeContext({
-      limits: options.limits,
+      maxIterations: options.maxIterations,
+      maxRecursionDepth: options.maxRecursionDepth,
       fs: options.fileSystem,
+      fieldSep: typeof options.fieldSeparator === "string"
+        ? new RegExp(options.fieldSeparator)
+        : options.fieldSeparator,
     });
 
     // Apply options
     if (options.fieldSeparator !== undefined) {
-      ctx.FS = options.fieldSeparator;
+      ctx.FS = typeof options.fieldSeparator === "string"
+        ? options.fieldSeparator
+        : options.fieldSeparator.source;
     }
     if (options.ofs !== undefined) {
       ctx.OFS = options.ofs;
@@ -77,14 +85,11 @@ export async function awkExec(
     if (options.ors !== undefined) {
       ctx.ORS = options.ors;
     }
-    if (options.rs !== undefined) {
-      ctx.RS = options.rs;
-    }
 
     // Set user variables
     if (options.variables) {
       for (const [key, value] of Object.entries(options.variables)) {
-        ctx.vars.set(key, value);
+        ctx.vars[key] = value;
       }
     }
 
@@ -95,8 +100,9 @@ export async function awkExec(
     // Execute BEGIN blocks
     await interpreter.executeBegin();
 
-    // Process input lines
-    const lines = input.split(typeof ctx.RS === "string" ? ctx.RS : /\n/);
+    // Process input lines (use ORS for record separator, default to newline)
+    const rs = options.rs ?? "\n";
+    const lines = input.split(rs);
 
     for (const line of lines) {
       if (ctx.shouldExit) break;

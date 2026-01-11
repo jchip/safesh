@@ -67,7 +67,7 @@ export class AwkInterpreter {
       if (this.ctx.shouldExit || this.ctx.shouldNext || this.ctx.shouldNextFile)
         break;
 
-      const rule = this.program.rules[i];
+      const rule = this.program.rules[i]!;
 
       // Skip BEGIN/END rules
       if (rule.pattern?.type === "begin" || rule.pattern?.type === "end") {
