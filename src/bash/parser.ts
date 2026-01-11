@@ -381,26 +381,22 @@ export class Parser {
   }
 
   private parseWhileStatement(): AST.WhileStatement {
-    this.expect(TokenType.WHILE);
-    this.skipNewlines();
-
-    const test = this.parsePipeline();
-    this.skipNewlines();
-    this.expect(TokenType.DO);
-    this.skipNewlines();
-
-    const body = this.parseStatementList([TokenType.DONE]);
-    this.expect(TokenType.DONE);
-
-    return {
-      type: "WhileStatement",
-      test,
-      body,
-    };
+    return this.parseLoopStatement(TokenType.WHILE, "WhileStatement");
   }
 
   private parseUntilStatement(): AST.UntilStatement {
-    this.expect(TokenType.UNTIL);
+    return this.parseLoopStatement(TokenType.UNTIL, "UntilStatement");
+  }
+
+  /**
+   * Shared helper for parsing while and until loops
+   * Both have the same structure: KEYWORD test DO body DONE
+   */
+  private parseLoopStatement<T extends "WhileStatement" | "UntilStatement">(
+    keyword: TokenType.WHILE | TokenType.UNTIL,
+    type: T,
+  ): T extends "WhileStatement" ? AST.WhileStatement : AST.UntilStatement {
+    this.expect(keyword);
     this.skipNewlines();
 
     const test = this.parsePipeline();
@@ -412,10 +408,10 @@ export class Parser {
     this.expect(TokenType.DONE);
 
     return {
-      type: "UntilStatement",
+      type,
       test,
       body,
-    };
+    } as T extends "WhileStatement" ? AST.WhileStatement : AST.UntilStatement;
   }
 
   private parseCaseStatement(): AST.CaseStatement {

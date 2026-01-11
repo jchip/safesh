@@ -115,8 +115,11 @@ export class Transpiler {
       case "BraceGroup":
         this.transpileBraceGroup(statement);
         break;
-      default:
-        throw new Error(`Unknown statement type: ${(statement as any).type}`);
+      default: {
+        // Exhaustiveness check: this ensures all statement types are handled
+        const _exhaustive: never = statement;
+        throw new Error(`Unknown statement type: ${JSON.stringify(statement)}`);
+      }
     }
   }
 
@@ -259,29 +262,30 @@ export class Transpiler {
   }
 
   private transpileWhileStatement(stmt: AST.WhileStatement): void {
-    this.emit("while (true) {");
-    this.indentLevel++;
-
-    const testVar = this.getTempVar();
-    this.emit(`const ${testVar} = await ${this.buildTestExpression(stmt.test)};`);
-    this.emit(`if (${testVar}.code !== 0) break;`);
-    this.emit("");
-
-    for (const s of stmt.body) {
-      this.transpileStatement(s);
-    }
-
-    this.indentLevel--;
-    this.emit("}");
+    this.transpileLoop(stmt, false);
   }
 
   private transpileUntilStatement(stmt: AST.UntilStatement): void {
+    this.transpileLoop(stmt, true);
+  }
+
+  /**
+   * Shared helper for transpiling while and until loops
+   * @param breakOnSuccess - true for until (break when code === 0), false for while (break when code !== 0)
+   */
+  private transpileLoop(
+    stmt: AST.WhileStatement | AST.UntilStatement,
+    breakOnSuccess: boolean,
+  ): void {
     this.emit("while (true) {");
     this.indentLevel++;
 
     const testVar = this.getTempVar();
     this.emit(`const ${testVar} = await ${this.buildTestExpression(stmt.test)};`);
-    this.emit(`if (${testVar}.code === 0) break;`);
+
+    // Break condition differs: while breaks on failure (!== 0), until breaks on success (=== 0)
+    const breakCondition = breakOnSuccess ? `${testVar}.code === 0` : `${testVar}.code !== 0`;
+    this.emit(`if (${breakCondition}) break;`);
     this.emit("");
 
     for (const s of stmt.body) {
@@ -347,7 +351,10 @@ export class Transpiler {
   private buildVariableAssignment(stmt: AST.VariableAssignment): string {
     let value: string;
     if (stmt.value.type === "ArithmeticExpansion") {
-      value = "0"; // Simplified arithmetic handling
+      // Arithmetic expansion not yet fully implemented
+      // Emit a comment warning and use placeholder
+      this.emit(`// WARNING: Arithmetic expansion not yet supported, using placeholder value`);
+      value = "0";
     } else {
       value = this.escapeForQuotes(this.transpileWord(stmt.value));
     }
@@ -396,10 +403,16 @@ export class Transpiler {
       // Variable expansion - keep the syntax
       return `\${${word.parameter}}`;
     } else if (word.type === "CommandSubstitution") {
-      // TODO: Handle command substitution properly
-      return "$(...)";
+      // Command substitution is not yet implemented
+      // Emit a runtime error that will be visible when executed
+      throw new Error(
+        "Command substitution $(...)  or `...` is not yet supported in the transpiler. " +
+        "Please use the direct TypeScript API instead."
+      );
     }
 
+    // This should never be reached due to TypeScript's exhaustiveness checking
+    const _exhaustive: never = word;
     return "";
   }
 
