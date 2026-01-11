@@ -49,6 +49,10 @@ export enum TokenType {
   AND_GREAT = "AND_GREAT", // &>
   AND_DGREAT = "AND_DGREAT", // &>>
 
+  // Process substitution
+  LESS_LPAREN = "LESS_LPAREN", // <(
+  GREAT_LPAREN = "GREAT_LPAREN", // >(
+
   // Grouping
   LPAREN = "LPAREN", // (
   RPAREN = "RPAREN", // )
@@ -181,6 +185,8 @@ const TWO_CHAR_OPS: Array<[string, string, TokenType]> = [
   ["<", ">", TokenType.LESSGREAT],
   [">", "|", TokenType.CLOBBER],
   ["&", ">", TokenType.AND_GREAT],
+  ["<", "(", TokenType.LESS_LPAREN],
+  [">", "(", TokenType.GREAT_LPAREN],
 ];
 
 /**

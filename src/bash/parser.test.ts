@@ -4,7 +4,7 @@
 
 import { assertEquals, assertExists, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { parse } from "./parser.ts";
+import { parse, parseWithRecovery } from "./parser.ts";
 import type * as AST from "./ast.ts";
 
 describe("Bash Parser", () => {
@@ -753,9 +753,7 @@ describe("Bash Parser", () => {
   });
 
   describe("Process Substitution", () => {
-    // TODO: Process substitution requires lexer-level support (Phase 4)
-    // The lexer currently tokenizes <( as LESS + LPAREN instead of as a word
-    it.skip("should parse <() process substitution", () => {
+    it("should parse <() process substitution", () => {
       const ast = parse("diff <(ls dir1) <(ls dir2)");
       const pipeline = ast.body[0] as AST.Pipeline;
       const cmd = pipeline.commands[0] as AST.Command;
@@ -767,7 +765,7 @@ describe("Bash Parser", () => {
       assertEquals(ps.operator, "<(");
     });
 
-    it.skip("should parse >() process substitution", () => {
+    it("should parse >() process substitution", () => {
       const ast = parse("tee >(grep error > errors.log)");
       const pipeline = ast.body[0] as AST.Pipeline;
       const cmd = pipeline.commands[0] as AST.Command;
@@ -804,6 +802,33 @@ describe("Bash Parser", () => {
       assertEquals((cmd.args[0] as AST.Word).quoted, true);
       assertEquals((cmd.args[1] as AST.Word).singleQuoted, true);
       assertEquals((cmd.args[2] as AST.Word).quoted, false);
+    });
+  });
+
+  describe("Error Recovery", () => {
+    it("should return empty diagnostics for valid input", () => {
+      const result = parseWithRecovery("echo hello");
+
+      assertEquals(result.ast.body.length, 1);
+      assertEquals(result.diagnostics.length, 0);
+    });
+
+    it("should collect error without throwing", () => {
+      const result = parseWithRecovery("if test; then");
+
+      // Should have returned a result instead of throwing
+      assertEquals(result.ast.type, "Program");
+      assertEquals(result.diagnostics.length > 0, true);
+    });
+
+    it("should include context in error messages", () => {
+      const result = parseWithRecovery("if test; then");
+
+      // Check that context is included
+      const hasContext = result.diagnostics.some(
+        (d) => d.context && d.context.includes("if")
+      );
+      assertEquals(hasContext, true);
     });
   });
 });

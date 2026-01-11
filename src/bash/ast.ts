@@ -381,3 +381,23 @@ export interface StringTest extends BaseNode {
   type: "StringTest";
   value: Word | ParameterExpansion;
 }
+
+// =============================================================================
+// Parse Diagnostics (for error recovery)
+// =============================================================================
+
+export type DiagnosticSeverity = "error" | "warning" | "info";
+
+export interface ParseDiagnostic {
+  severity: DiagnosticSeverity;
+  message: string;
+  line: number;
+  column: number;
+  code?: string; // Optional error code (e.g., "SSH001")
+  context?: string; // Optional context info (e.g., "in 'if' statement")
+}
+
+export interface ParseResult {
+  ast: Program;
+  diagnostics: ParseDiagnostic[];
+}
