@@ -257,3 +257,47 @@ export function tail<T>(n: number = 10): Transform<T, T> {
     }
   };
 }
+
+/**
+ * Process JSON with jq-like queries
+ *
+ * Apply jq query expressions to JSON data in the stream.
+ * Each line is processed as JSON and the query result is yielded.
+ *
+ * @param query - jq query expression (e.g., ".name", ".items[]", "select(.age > 18)")
+ * @param options - Optional jq options
+ * @returns Transform that processes JSON with queries
+ *
+ * @example
+ * ```ts
+ * import { jq as jqCommand } from "../commands/jq/jq.ts";
+ *
+ * // Extract field from JSON
+ * await cat('data.json')
+ *   .pipe(lines())
+ *   .pipe(jq('.name'))
+ *   .collect();
+ *
+ * // Filter and transform
+ * await cat('users.json')
+ *   .pipe(lines())
+ *   .pipe(jq('select(.age > 18) | .email'))
+ *   .collect();
+ *
+ * // Array operations
+ * await cat('api-response.json')
+ *   .pipe(jq('.items[] | .id'))
+ *   .collect();
+ * ```
+ */
+export function jq(
+  query: string,
+  options?: { raw?: boolean; compact?: boolean; exitOnError?: boolean },
+): Transform<string, string> {
+  // Dynamic import to avoid circular dependencies
+  return async function* (stream: AsyncIterable<string>) {
+    const { jq: jqCommand } = await import("../commands/jq/jq.ts");
+    const transform = jqCommand(query, options);
+    yield* transform(stream);
+  };
+}

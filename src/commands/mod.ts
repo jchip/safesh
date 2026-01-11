@@ -131,3 +131,13 @@ export {
   type AwkOptions,
   type AwkResult,
 } from "./awk/awk.ts";
+
+// jq - JSON query processor
+export {
+  jq,
+  jqExec,
+  jqTransform,
+  jqLines,
+  type JqOptions,
+  type JqResult,
+} from "./jq/jq.ts";
