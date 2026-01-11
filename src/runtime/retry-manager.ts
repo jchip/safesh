@@ -85,6 +85,37 @@ export class RetryManager {
   }
 
   /**
+   * Create a pending retry for a blocked network host
+   */
+  createPendingRetryNetwork(
+    code: string,
+    blockedHost: string,
+    context: PendingRetry["context"],
+    shellId?: string,
+  ): PendingRetry {
+    // Cleanup expired retries first
+    this.cleanupExpiredRetries();
+
+    // Enforce limit with FIFO eviction
+    if (this.pendingRetries.size >= MAX_PENDING_RETRIES) {
+      const oldest = this.pendingRetries.keys().next().value;
+      if (oldest) this.pendingRetries.delete(oldest);
+    }
+
+    const retry: PendingRetry = {
+      id: `rt${++this.retrySequence}`,
+      code,
+      shellId,
+      context,
+      blockedHost,
+      createdAt: new Date(),
+    };
+
+    this.pendingRetries.set(retry.id, retry);
+    return retry;
+  }
+
+  /**
    * Get a pending retry by ID
    */
   getPendingRetry(id: string): PendingRetry | undefined {

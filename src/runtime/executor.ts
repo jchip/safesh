@@ -26,10 +26,12 @@ import {
   JOB_MARKER,
   CMD_ERROR_MARKER,
   INIT_ERROR_MARKER,
+  NET_ERROR_MARKER,
   ENV_SHELL_ID,
   ENV_SCRIPT_ID,
   ERROR_COMMAND_NOT_ALLOWED,
   ERROR_COMMANDS_BLOCKED,
+  ERROR_NETWORK_BLOCKED,
 } from "../core/constants.ts";
 import { DEFAULT_TIMEOUT_MS, TEMP_SCRIPT_DIR } from "../core/defaults.ts";
 
@@ -77,6 +79,7 @@ const STDERR_MARKERS = {
   job: JOB_MARKER,
   cmdError: CMD_ERROR_MARKER,
   initError: INIT_ERROR_MARKER,
+  netError: NET_ERROR_MARKER,
 } as const;
 
 /** Job event from subprocess */
@@ -107,6 +110,12 @@ interface InitErrorEvent {
   notFound: string[];
 }
 
+/** Network error event from subprocess */
+interface NetworkErrorEvent {
+  type: typeof ERROR_NETWORK_BLOCKED;
+  host: string;
+}
+
 /** Parse a marker line, returns parsed JSON or null if invalid */
 function parseMarkerLine<T>(line: string, marker: string): T | null {
   if (!line.startsWith(marker)) return null;
@@ -122,21 +131,22 @@ function parseMarkerLine<T>(line: string, marker: string): T | null {
  * Enhance Deno permission errors with CWD context and allowed paths.
  * Transforms: 'Requires write access to ".temp/foo"'
  * Into: 'Requires write access to ".temp/foo"\nCWD: /full/path\nAllowed write paths: /foo, /bar'
+ * Also detects network permission errors and injects NET_ERROR_MARKER
  */
 function enhancePermissionErrors(stderr: string, cwd: string, config: SafeShellConfig): string {
-  // Match Deno permission error patterns
+  // Match Deno permission error patterns for files
   const pattern = /Requires (read|write) access to "([^"]+)"/g;
   const perms = getEffectivePermissions(config, cwd);
   let hasMatch = false;
   let firstAccessType: string | null = null;
 
-  const enhanced = stderr.replace(pattern, (match, accessType) => {
+  let enhanced = stderr.replace(pattern, (match, accessType) => {
     hasMatch = true;
     if (!firstAccessType) firstAccessType = accessType;
     return match;
   });
 
-  // If we found permission errors, append context info
+  // If we found file permission errors, append context info
   if (hasMatch && firstAccessType) {
     const allowedPaths = firstAccessType === "write" ? perms.write : perms.read;
     const expandedPaths = allowedPaths?.map(p => expandPath(p, cwd)) ?? [];
@@ -147,10 +157,21 @@ function enhancePermissionErrors(stderr: string, cwd: string, config: SafeShellC
     if (expandedPaths.length > 0) {
       lines.push(`Allowed ${firstAccessType} paths: ${expandedPaths.join(", ")}`);
     }
-    return lines.join("\n");
+    enhanced = lines.join("\n");
   }
 
-  return stderr;
+  // Detect network permission errors and extract host
+  // Deno error format: "Requires net access to \"example.com\""
+  const netPattern = /Requires net access to "([^"]+)"/;
+  const netMatch = enhanced.match(netPattern);
+  if (netMatch && netMatch[1]) {
+    const host = netMatch[1];
+    // Inject NET_ERROR_MARKER so extractStderrEvents can pick it up
+    const netErrorJson = JSON.stringify({ type: ERROR_NETWORK_BLOCKED, host });
+    enhanced = `${NET_ERROR_MARKER}${netErrorJson}\n${enhanced}`;
+  }
+
+  return enhanced;
 }
 
 /**
@@ -161,11 +182,13 @@ function extractStderrEvents(stderr: string): {
   jobEvents: JobEvent[];
   cmdErrors: CommandErrorEvent[];
   initErrors: InitErrorEvent[];
+  netErrors: NetworkErrorEvent[];
 } {
   const lines = stderr.split("\n");
   const jobEvents: JobEvent[] = [];
   const cmdErrors: CommandErrorEvent[] = [];
   const initErrors: InitErrorEvent[] = [];
+  const netErrors: NetworkErrorEvent[] = [];
   const cleanLines: string[] = [];
 
   for (const line of lines) {
@@ -187,10 +210,16 @@ function extractStderrEvents(stderr: string): {
       continue;
     }
 
+    const netError = parseMarkerLine<NetworkErrorEvent>(line, STDERR_MARKERS.netError);
+    if (netError) {
+      netErrors.push(netError);
+      continue;
+    }
+
     cleanLines.push(line);
   }
 
-  return { cleanStderr: cleanLines.join("\n"), jobEvents, cmdErrors, initErrors };
+  return { cleanStderr: cleanLines.join("\n"), jobEvents, cmdErrors, initErrors, netErrors };
 }
 
 /**
@@ -495,7 +524,8 @@ function updateScriptFailure(script: Script): void {
 function extractBlockedCommands(
   cmdErrors: CommandErrorEvent[],
   initErrors: InitErrorEvent[],
-): { blockedCommand?: string; blockedCommands?: string[]; notFoundCommands?: string[] } {
+  netErrors: NetworkErrorEvent[],
+): { blockedCommand?: string; blockedCommands?: string[]; notFoundCommands?: string[]; blockedHost?: string } {
   // Check for blocked command (legacy single command)
   const firstCmdError = cmdErrors[0];
   const blockedCommand = firstCmdError?.command;
@@ -505,7 +535,11 @@ function extractBlockedCommands(
   const blockedCommands = firstInitError?.notAllowed.length ? firstInitError.notAllowed : undefined;
   const notFoundCommands = firstInitError?.notFound.length ? firstInitError.notFound : undefined;
 
-  return { blockedCommand, blockedCommands, notFoundCommands };
+  // Check for network errors
+  const firstNetError = netErrors[0];
+  const blockedHost = firstNetError?.host;
+
+  return { blockedCommand, blockedCommands, notFoundCommands, blockedHost };
 }
 
 /**
@@ -705,7 +739,7 @@ export async function executeCode(
   // Build full code with preamble, user code, and error handler
   const preambleConfig = extractPreambleConfig(config, cwd);
   const { preamble, preambleLineCount } = buildPreamble(shell, preambleConfig);
-  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell);
+  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell, !!preambleConfig.vfs?.enabled);
 
   // Structure: preamble (with async IIFE start) + user code + error handler (closes IIFE with catch)
   const fullCode = preamble + code + errorHandler;
@@ -762,7 +796,7 @@ export async function executeCode(
   syncShellState(shell, extractedState);
 
   // Extract job events and command errors from stderr
-  const { cleanStderr, jobEvents, cmdErrors, initErrors } = extractStderrEvents(rawStderr);
+  const { cleanStderr, jobEvents, cmdErrors, initErrors, netErrors } = extractStderrEvents(rawStderr);
   if (shell && script && jobEvents.length > 0) {
     processJobEvents(shell, script, jobEvents);
   }
@@ -771,7 +805,7 @@ export async function executeCode(
   const stderr = enhancePermissionErrors(cleanStderr, cwd, config);
 
   // Extract blocked command info
-  const { blockedCommand, blockedCommands, notFoundCommands } = extractBlockedCommands(cmdErrors, initErrors);
+  const { blockedCommand, blockedCommands, notFoundCommands, blockedHost } = extractBlockedCommands(cmdErrors, initErrors, netErrors);
 
   // Update script with results
   if (script) {
@@ -787,6 +821,7 @@ export async function executeCode(
     blockedCommand,
     blockedCommands,
     notFoundCommands,
+    blockedHost,
   };
 }
 
@@ -979,7 +1014,7 @@ export async function* executeCodeStreaming(
   // Build full code with preamble and error handler
   const preambleConfig = extractPreambleConfig(config, cwd);
   const { preamble, preambleLineCount } = buildPreamble(shell, preambleConfig);
-  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell);
+  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell, !!preambleConfig.vfs?.enabled);
   const fullCode = preamble + code + errorHandler;
 
   // Write script to temp file

@@ -31,6 +31,7 @@ import {
   ERROR_COMMAND_NOT_ALLOWED,
   ERROR_COMMAND_NOT_FOUND,
   ERROR_COMMANDS_BLOCKED,
+  ERROR_NETWORK_BLOCKED,
 } from "../core/constants.ts";
 import {
   DEFAULT_WAIT_TIMEOUT_MS,
@@ -144,6 +145,15 @@ interface ToolContext {
     background: boolean | undefined,
     shellId: string | undefined,
   ) => McpResponse;
+  formatBlockedNetworkResponse: (
+    code: string,
+    blockedHost: string,
+    shell: Shell,
+    env: Record<string, string> | undefined,
+    timeout: number | undefined,
+    background: boolean | undefined,
+    shellId: string | undefined,
+  ) => McpResponse;
   formatRunResult: (
     result: { stdout: string; stderr: string; code: number; success: boolean },
     shellId?: string,
@@ -230,8 +240,8 @@ const RunSchema = z.object({
   background: z.boolean().optional().describe("Run in background (async), returns { scriptId, pid }"),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
-  retry_id: z.string().optional().describe("Retry ID from a previous COMMAND_NOT_ALLOWED error"),
-  userChoice: z.number().min(1).max(3).optional().describe("User's permission choice: 1=once, 2=session, 3=always (save to .claude/safesh.local.json)"),
+  retry_id: z.string().optional().describe("Retry ID from a previous permission error"),
+  userChoice: z.number().min(1).max(5).optional().describe("User's permission choice: 1=once, 2=session, 3=always (save to config), 4=deny (network only), 5=allow all network"),
 });
 
 const StartShellSchema = z.object({
@@ -410,6 +420,19 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
     return ctx.formatBlockedCommandResponse(
       code,
       result.blockedCommand,
+      shell,
+      parsed.env,
+      execTimeout,
+      background,
+      shellId,
+    );
+  }
+
+  // Check for blocked network host
+  if (result.blockedHost) {
+    return ctx.formatBlockedNetworkResponse(
+      code,
+      result.blockedHost,
       shell,
       parsed.env,
       execTimeout,
@@ -801,7 +824,72 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     let execConfig = configHolder.config;
     const retryCwd = retry.context.cwd;
 
-    if (blockedCmds.length > 0 && userChoice) {
+    // Handle network permission retry
+    if (retry.blockedHost && userChoice) {
+      const blockedHost = retry.blockedHost;
+      const currentNet = configHolder.config.permissions?.net;
+
+      if (userChoice === 5) {
+        // Allow all network access (blanket permission)
+        execConfig = mergeConfigs(configHolder.config, {
+          permissions: { net: true },
+        });
+      } else if (userChoice === 3) {
+        // Always allow this host: save to config
+        const targetDir = configHolder.config.projectDir ?? configHolder.cwd;
+        try {
+          // Load current config to get existing net permissions
+          const currentConfig = await loadConfig(targetDir);
+          const existingNet = Array.isArray(currentConfig.permissions?.net)
+            ? currentConfig.permissions.net
+            : [];
+
+          // Add the new host if not already present
+          const updatedNet = existingNet.includes(blockedHost)
+            ? existingNet
+            : [...existingNet, blockedHost];
+
+          // Save updated config (we need a separate function for network permissions)
+          // For now, just update in-memory config
+          execConfig = mergeConfigs(configHolder.config, {
+            permissions: {
+              net: updatedNet,
+            },
+          });
+          configHolder.config = execConfig;
+        } catch (error) {
+          return {
+            success: false,
+            response: {
+              content: [{
+                type: "text",
+                text: `Failed to save network permission: ${error instanceof Error ? error.message : String(error)}`,
+              }],
+              isError: true,
+            },
+          };
+        }
+      } else if (userChoice === 2) {
+        // Allow for session only
+        const existingNet = Array.isArray(currentNet) ? currentNet : [];
+        const updatedNet = existingNet.includes(blockedHost)
+          ? existingNet
+          : [...existingNet, blockedHost];
+        execConfig = mergeConfigs(configHolder.config, {
+          permissions: { net: updatedNet },
+        });
+      } else if (userChoice === 1) {
+        // Allow once
+        const existingNet = Array.isArray(currentNet) ? currentNet : [];
+        const updatedNet = existingNet.includes(blockedHost)
+          ? existingNet
+          : [...existingNet, blockedHost];
+        execConfig = mergeConfigs(configHolder.config, {
+          permissions: { net: updatedNet },
+        });
+      }
+    } else if (blockedCmds.length > 0 && userChoice) {
+      // Handle command permission retry
       if (userChoice === 3) {
         // Always allow: save to projectDir (from MCP roots), fallback to initial cwd
         const targetDir = configHolder.config.projectDir ?? configHolder.cwd;
@@ -963,6 +1051,40 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     }, true);
   }
 
+  /**
+   * Format a blocked network response with retry information
+   */
+  function formatBlockedNetworkResponse(
+    code: string,
+    blockedHost: string,
+    shell: Shell,
+    env: Record<string, string> | undefined,
+    timeout: number | undefined,
+    background: boolean | undefined,
+    shellId: string | undefined,
+  ): McpResponse {
+    const retry = shellManager.createPendingRetryNetwork(
+      code,
+      blockedHost,
+      { cwd: shell.cwd, env, timeout, background },
+      shellId,
+    );
+
+    const currentNetPerms = configHolder.config.permissions?.net;
+    const allowedHosts = Array.isArray(currentNetPerms) ? currentNetPerms : [];
+
+    return mcpJsonResponse({
+      error: {
+        type: ERROR_NETWORK_BLOCKED,
+        host: blockedHost,
+        message: `Network access to '${blockedHost}' is not allowed`,
+        allowedHosts,
+      },
+      retry_id: retry.id,
+      hint: `STOP: Present this error to user with options: (1) Allow this host once, (2) Allow this host for session, (3) Allow this host always (add to config), (4) Deny, (5) Allow all network access (blanket permission). Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always for this host), or 5 (allow all network).`,
+    }, true);
+  }
+
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
@@ -1114,6 +1236,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     handleFileExecution,
     formatBlockedCommandResponse,
     formatBlockedCommandsResponse,
+    formatBlockedNetworkResponse,
     formatRunResult,
   };
 

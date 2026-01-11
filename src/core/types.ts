@@ -136,6 +136,20 @@ export interface SafeShellConfig {
 
   /** Additional Deno CLI flags for script execution (e.g., --unsafely-ignore-certificate-errors=localhost) */
   denoFlags?: string[];
+
+  /** Virtual File System configuration */
+  vfs?: {
+    /** Enable VFS for this execution */
+    enabled: boolean;
+    /** Path prefix for VFS paths (default: "/@vfs/") */
+    prefix?: string;
+    /** Maximum total size in bytes (default: 100MB) */
+    maxSize?: number;
+    /** Maximum number of files (default: 10000) */
+    maxFiles?: number;
+    /** Pre-populate VFS with files (null for directories) */
+    preload?: Record<string, string | null>;
+  };
 }
 
 /**
@@ -296,6 +310,8 @@ export interface ExecResult {
   blockedCommands?: string[];
   /** Commands not found (from init() upfront check) */
   notFoundCommands?: string[];
+  /** Blocked network host if network access was not allowed */
+  blockedHost?: string;
 }
 
 export interface RunOptions extends ExecOptions {
@@ -343,6 +359,8 @@ export interface PendingRetry {
   blockedCommands?: string[];
   /** Commands not found (from init() upfront check) */
   notFoundCommands?: string[];
+  /** Network host that was blocked */
+  blockedHost?: string;
   /** Creation timestamp (for TTL) */
   createdAt: Date;
 }
