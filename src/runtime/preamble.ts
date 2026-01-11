@@ -30,6 +30,14 @@ export interface PreambleConfig {
   cwd: string;
   /** Project temp directory config: true=.temp (default), false=/tmp, string=custom path */
   projectTemp?: boolean | string;
+  /** VFS configuration */
+  vfs?: {
+    enabled: boolean;
+    prefix?: string;
+    maxSize?: number;
+    maxFiles?: number;
+    preload?: Record<string, string | null>;
+  };
 }
 
 /**
@@ -58,6 +66,7 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
     allowedCommands: Array.from(allowedCommands),
     cwd,
     projectTemp: config.projectTemp,
+    vfs: config.vfs,
   };
 }
 
@@ -91,7 +100,7 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     "",
     "// Import streaming shell API (aliased to avoid TDZ conflicts with user code)",
     `import { createStream as __createStream, fromArray as __fromArray, empty as __empty } from 'file://${stdlibPath}stream.ts';`,
-    `import { filter as __filter, map as __map, flatMap as __flatMap, take as __take, head as __head, tail as __tail, lines as __lines, grep as __grep } from 'file://${stdlibPath}transforms.ts';`,
+    `import { filter as __filter, map as __map, flatMap as __flatMap, take as __take, head as __head, tail as __tail, lines as __lines, grep as __grep, jq as __jq } from 'file://${stdlibPath}transforms.ts';`,
     `import { stdout as __stdout, stderr as __stderr, tee as __tee } from 'file://${stdlibPath}io.ts';`,
     `import { cat as __cat, glob as __glob, src as __src, dest as __dest } from 'file://${stdlibPath}fs-streams.ts';`,
     `import { cmd as __cmd, git as __git, docker as __docker, tmux as __tmux, tmuxSubmit as __tmuxSubmit, str as __str, bytes as __bytes, toCmd as __toCmd, toCmdLines as __toCmdLines, initCmds as __initCmds } from 'file://${stdlibPath}command.ts';`,
@@ -103,6 +112,48 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `import __fluentShell, { FluentShell as __FluentShell } from 'file://${stdlibPath}shell.ts';`,
     `import { FluentStream as __FluentStream } from 'file://${stdlibPath}fluent-stream.ts';`,
     "",
+  ];
+
+  // Add VFS imports and setup if enabled
+  if (preambleConfig?.vfs?.enabled) {
+    const vfsPath = new URL("../vfs/", import.meta.url).pathname;
+    preambleLines.push(
+      "// Import Virtual File System",
+      `import { VirtualFileSystem as __VirtualFileSystem, setupVFS as __setupVFS } from 'file://${vfsPath}mod.ts';`,
+      "",
+      "// Initialize VFS",
+      `const __vfs = new __VirtualFileSystem(${JSON.stringify({
+        prefix: preambleConfig.vfs.prefix,
+        maxSize: preambleConfig.vfs.maxSize,
+        maxFiles: preambleConfig.vfs.maxFiles,
+      })});`,
+      "",
+    );
+
+    // Add preload functionality if specified
+    if (preambleConfig.vfs.preload && Object.keys(preambleConfig.vfs.preload).length > 0) {
+      preambleLines.push(
+        "// Preload VFS files",
+        `const __vfsPreload = ${JSON.stringify(preambleConfig.vfs.preload)};`,
+        `for (const [path, content] of Object.entries(__vfsPreload)) {`,
+        `  if (content === null) {`,
+        `    __vfs.mkdir(path, { recursive: true });`,
+        `  } else {`,
+        `    __vfs.write(path, new TextEncoder().encode(content));`,
+        `  }`,
+        `}`,
+        "",
+      );
+    }
+
+    preambleLines.push(
+      "// Setup VFS interception",
+      `const __restoreVFS = __setupVFS(__vfs);`,
+      "",
+    );
+  }
+
+  preambleLines.push(
     "// Sync shell ENV to Deno.env so child processes inherit them",
     `for (const [k, v] of Object.entries(${JSON.stringify(shellEnv)})) { Deno.env.set(k, v); }`,
     "",
@@ -158,7 +209,7 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `  fromArray: (items: any[]) => new __FluentStream(__fromArray(items)),`,
     `  empty: () => new __FluentStream(__empty()),`,
     `  // Stream transforms`,
-    `  filter: __filter, map: __map, flatMap: __flatMap, take: __take, head: __head, tail: __tail, lines: __lines, grep: __grep,`,
+    `  filter: __filter, map: __map, flatMap: __flatMap, take: __take, head: __head, tail: __tail, lines: __lines, grep: __grep, jq: __jq,`,
     `  // I/O streams`,
     `  stdout: __stdout, stderr: __stderr, tee: __tee,`,
     `  // File streaming (cat is fluent API above, not streaming)`,
@@ -172,9 +223,26 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `  // Timing utilities`,
     `  sleep: (ms: number) => new Promise<void>(r => setTimeout(r, ms)),`,
     `  delay: (ms: number) => new Promise<void>(r => setTimeout(r, ms)),`,
+  );
+
+  // Add VFS to $ if enabled
+  if (preambleConfig?.vfs?.enabled) {
+    preambleLines.push(
+      `  // Virtual File System`,
+      `  vfs: __vfs,`,
+    );
+  } else {
+    // Close the $ object without VFS
+    const lastLine = preambleLines[preambleLines.length - 1];
+    if (lastLine) {
+      preambleLines[preambleLines.length - 1] = lastLine.replace(/,$/, '');
+    }
+  }
+
+  preambleLines.push(
     `};`,
     "",
-  ];
+  );
 
   // Count lines so far for line number mapping (before the async function line)
   const preambleLineCount = preambleLines.length + 1; // +1 for the function declaration line
@@ -209,7 +277,7 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
     "",
     "// Import streaming shell API (aliased to avoid TDZ conflicts with user code)",
     `import { createStream as __createStream, fromArray as __fromArray, empty as __empty } from 'file://${stdlibPath}stream.ts';`,
-    `import { filter as __filter, map as __map, flatMap as __flatMap, take as __take, head as __head, tail as __tail, lines as __lines, grep as __grep } from 'file://${stdlibPath}transforms.ts';`,
+    `import { filter as __filter, map as __map, flatMap as __flatMap, take as __take, head as __head, tail as __tail, lines as __lines, grep as __grep, jq as __jq } from 'file://${stdlibPath}transforms.ts';`,
     `import { stdout as __stdout, stderr as __stderr, tee as __tee } from 'file://${stdlibPath}io.ts';`,
     `import { cat as __cat, glob as __glob, src as __src, dest as __dest } from 'file://${stdlibPath}fs-streams.ts';`,
     `import { cmd as __cmd, git as __git, docker as __docker, tmux as __tmux, tmuxSubmit as __tmuxSubmit, str as __str, bytes as __bytes, toCmd as __toCmd, toCmdLines as __toCmdLines, initCmds as __initCmds } from 'file://${stdlibPath}command.ts';`,
@@ -304,15 +372,27 @@ export function buildFilePostamble(hasShell: boolean): string {
  * @param preambleLineCount - Number of preamble lines (for line number offset)
  * @param hasShell - Whether to output shell state after execution
  */
-export function buildErrorHandler(scriptPath: string, preambleLineCount: number, hasShell: boolean): string {
+export function buildErrorHandler(scriptPath: string, preambleLineCount: number, hasShell: boolean, vfsEnabled = false): string {
   const shellOutput = hasShell
     ? `console.log("${SHELL_STATE_MARKER}" + JSON.stringify({ CWD: Deno.cwd(), ENV: $.ENV, VARS: $.VARS }));`
+    : "";
+
+  const vfsCleanup = vfsEnabled
+    ? `  // Cleanup VFS
+  if (typeof __restoreVFS === 'function') {
+    try { __restoreVFS(); } catch {}
+  }
+  if (typeof __vfs !== 'undefined' && typeof __vfs.clear === 'function') {
+    try { __vfs.clear(); } catch {}
+  }`
     : "";
 
   return `
 })().then(() => {
   ${shellOutput}
+  ${vfsCleanup}
 }).catch((e) => {
+  ${vfsCleanup}
   // Known friendly error patterns that don't need stack traces
   const FRIENDLY = [/^Command not found:/, /^Command ".+" is not allowed/, /^Project command/];
   const msg = e instanceof Error ? e.message : String(e);
