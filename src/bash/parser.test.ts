@@ -594,6 +594,191 @@ describe("Bash Parser", () => {
     });
   });
 
+  describe("Variable Expansions", () => {
+    it("should parse simple $VAR expansion", () => {
+      const ast = parse("echo $HOME");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.args.length, 1);
+      const arg = cmd.args[0] as AST.Word;
+      assertEquals(arg.parts.length, 1);
+      assertEquals(arg.parts[0]?.type, "ParameterExpansion");
+      assertEquals((arg.parts[0] as AST.ParameterExpansion).parameter, "HOME");
+    });
+
+    it("should parse ${VAR} expansion", () => {
+      const ast = parse("echo ${PATH}");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      assertEquals(arg.parts[0]?.type, "ParameterExpansion");
+      assertEquals((arg.parts[0] as AST.ParameterExpansion).parameter, "PATH");
+    });
+
+    it("should parse ${VAR:-default} expansion", () => {
+      const ast = parse("echo ${NAME:-world}");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      const expansion = arg.parts[0] as AST.ParameterExpansion;
+      assertEquals(expansion.parameter, "NAME");
+      assertEquals(expansion.modifier, ":-");
+      assertEquals((expansion.modifierArg as AST.Word).value, "world");
+    });
+
+    it("should parse ${#VAR} length expansion", () => {
+      const ast = parse("echo ${#PATH}");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      const expansion = arg.parts[0] as AST.ParameterExpansion;
+      assertEquals(expansion.parameter, "PATH");
+      assertEquals(expansion.modifier, "length");
+    });
+
+    it("should parse mixed literal and expansion", () => {
+      const ast = parse('echo "Hello $USER!"');
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      assertEquals(arg.parts.length, 3);
+      assertEquals(arg.parts[0]?.type, "LiteralPart");
+      assertEquals((arg.parts[0] as AST.LiteralPart).value, "Hello ");
+      assertEquals(arg.parts[1]?.type, "ParameterExpansion");
+      assertEquals(arg.parts[2]?.type, "LiteralPart");
+    });
+
+    it("should parse special variables $?, $$, $#", () => {
+      const ast = parse("echo $? $$ $#");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.args.length, 3);
+      assertEquals((cmd.args[0] as AST.Word).parts[0]?.type, "ParameterExpansion");
+      assertEquals(((cmd.args[0] as AST.Word).parts[0] as AST.ParameterExpansion).parameter, "?");
+      assertEquals(((cmd.args[1] as AST.Word).parts[0] as AST.ParameterExpansion).parameter, "$");
+      assertEquals(((cmd.args[2] as AST.Word).parts[0] as AST.ParameterExpansion).parameter, "#");
+    });
+  });
+
+  describe("Command Substitution", () => {
+    it("should parse $(command) substitution", () => {
+      const ast = parse("echo $(pwd)");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      assertEquals(arg.parts[0]?.type, "CommandSubstitution");
+      const cs = arg.parts[0] as AST.CommandSubstitution;
+      assertEquals(cs.backtick, false);
+      assertEquals(cs.command.length, 1);
+    });
+
+    it("should parse backtick command substitution", () => {
+      const ast = parse("echo `pwd`");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      assertEquals(arg.parts[0]?.type, "CommandSubstitution");
+      const cs = arg.parts[0] as AST.CommandSubstitution;
+      assertEquals(cs.backtick, true);
+    });
+
+    it("should parse nested command substitution", () => {
+      const ast = parse("echo $(cat $(pwd)/file.txt)");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      assertEquals(arg.parts[0]?.type, "CommandSubstitution");
+      const cs = arg.parts[0] as AST.CommandSubstitution;
+      assertEquals(cs.command.length, 1);
+      // Inner command should have nested substitution
+      const innerCmd = (cs.command[0] as AST.Pipeline).commands[0] as AST.Command;
+      assertEquals((innerCmd.name as AST.Word).value, "cat");
+    });
+
+    it("should parse command substitution with pipeline", () => {
+      const ast = parse("echo $(ls | grep foo)");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      const cs = arg.parts[0] as AST.CommandSubstitution;
+      const innerPipeline = cs.command[0] as AST.Pipeline;
+      assertEquals(innerPipeline.operator, "|");
+    });
+  });
+
+  describe("Arithmetic Expansion", () => {
+    it("should parse simple arithmetic", () => {
+      const ast = parse("echo $((1 + 2))");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      assertEquals(arg.parts[0]?.type, "ArithmeticExpansion");
+      const arith = arg.parts[0] as AST.ArithmeticExpansion;
+      assertEquals(arith.expression.type, "BinaryArithmeticExpression");
+    });
+
+    it("should parse arithmetic with variable", () => {
+      const ast = parse("echo $((count + 1))");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      const arith = arg.parts[0] as AST.ArithmeticExpansion;
+      const expr = arith.expression as AST.BinaryArithmeticExpression;
+      assertEquals(expr.left.type, "VariableReference");
+      assertEquals((expr.left as AST.VariableReference).name, "count");
+    });
+
+    it("should parse number literal", () => {
+      const ast = parse("echo $((42))");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      const arith = arg.parts[0] as AST.ArithmeticExpansion;
+      assertEquals(arith.expression.type, "NumberLiteral");
+      assertEquals((arith.expression as AST.NumberLiteral).value, 42);
+    });
+  });
+
+  describe("Process Substitution", () => {
+    // TODO: Process substitution requires lexer-level support (Phase 4)
+    // The lexer currently tokenizes <( as LESS + LPAREN instead of as a word
+    it.skip("should parse <() process substitution", () => {
+      const ast = parse("diff <(ls dir1) <(ls dir2)");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.args.length, 2);
+      const arg1 = cmd.args[0] as AST.Word;
+      assertEquals(arg1.parts[0]?.type, "ProcessSubstitution");
+      const ps = arg1.parts[0] as AST.ProcessSubstitution;
+      assertEquals(ps.operator, "<(");
+    });
+
+    it.skip("should parse >() process substitution", () => {
+      const ast = parse("tee >(grep error > errors.log)");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const arg = cmd.args[0] as AST.Word;
+      assertEquals(arg.parts[0]?.type, "ProcessSubstitution");
+      const ps = arg.parts[0] as AST.ProcessSubstitution;
+      assertEquals(ps.operator, ">(");
+    });
+  });
+
   describe("Edge Cases", () => {
     it("should parse empty input", () => {
       const ast = parse("");
