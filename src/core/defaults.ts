@@ -31,6 +31,9 @@ export const SHELL_MEMORY_LIMIT = 50 * 1024 * 1024;
 /** Maximum length for code/command preview in responses */
 export const CODE_PREVIEW_LENGTH = 100;
 
+/** Minimum retention time for completed scripts in milliseconds (5 minutes) */
+export const SCRIPT_RETENTION_MS = 5 * 60 * 1000;
+
 // ============================================================================
 // Retry Management
 // ============================================================================

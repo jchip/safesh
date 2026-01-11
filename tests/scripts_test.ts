@@ -235,6 +235,65 @@ describe("Background Script Control", () => {
       assertStringIncludes(output.stdout, "stdout");
       assertStringIncludes(output.stderr, "stderr");
     });
+
+    it("allows output retrieval after script completion (SSH-223)", async () => {
+      // Launch a quick background script
+      const script = await launchCodeScript(
+        'console.log("Background task output");',
+        config,
+        shell,
+      );
+
+      const scriptId = script.id;
+
+      // Wait for script to complete
+      let attempts = 0;
+      while (script.status === "running" && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        attempts++;
+      }
+
+      // Verify script completed
+      assertEquals(script.status, "completed");
+
+      // Script should still be in shell's scripts map
+      const retrievedScript = shell.scripts.get(scriptId);
+      assertExists(retrievedScript);
+
+      // Should be able to get output after completion
+      const output = getScriptOutput(script);
+      assertStringIncludes(output.stdout, "Background task output");
+      assertEquals(output.status, "completed");
+    });
+
+    it("allows retrieval via shellManager after completion (SSH-223)", async () => {
+      // Launch a background script
+      const script = await launchCodeScript(
+        'console.log("Background output");',
+        config,
+        shell,
+      );
+
+      const scriptId = script.id;
+      const shellId = shell.id;
+
+      // Wait for completion
+      let attempts = 0;
+      while (script.status === "running" && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        attempts++;
+      }
+
+      assertEquals(script.status, "completed");
+
+      // Simulate the MCP getScriptOutput workflow
+      const retrieved = shellManager.getScript(shellId, scriptId);
+      assertExists(retrieved);
+
+      const output = getScriptOutput(retrieved);
+      assertStringIncludes(output.stdout, "Background output");
+      assertEquals(output.status, "completed");
+    });
   });
 
   describe("killScript", () => {
