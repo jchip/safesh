@@ -572,6 +572,115 @@ export class Lexer {
     };
   }
 
+  // ===========================================================================
+  // Helper Methods for Word Parsing
+  // ===========================================================================
+
+  /**
+   * Check if a character is a word separator/boundary
+   */
+  private isSeparator(char: string | undefined): boolean {
+    return (
+      char === " " || char === "\t" || char === "\n" || char === ";" ||
+      char === "&" || char === "|" || char === "(" || char === ")" ||
+      char === "<" || char === ">"
+    );
+  }
+
+  /**
+   * Check if a character is a special character that requires slow path
+   */
+  private isSpecialChar(char: string | undefined): boolean {
+    return (
+      char === "'" || char === '"' || char === "\\" || char === "$" ||
+      char === "`" || char === "{" || char === "}" || char === "~" ||
+      char === "*" || char === "?" || char === "["
+    );
+  }
+
+  /**
+   * Read a single-quoted string starting at current position
+   * Handles both regular single quotes and $'' ANSI-C quoting
+   */
+  private readSingleQuotedString(pos: number, isANSI: boolean): {
+    value: string;
+    pos: number;
+    col: number;
+  } {
+    const input = this.input;
+    const len = input.length;
+    let value = isANSI ? "$'" : "";
+    let col = this.column + (isANSI ? 2 : 1);
+    pos += isANSI ? 2 : 1;
+
+    while (pos < len && input[pos] !== "'") {
+      if (isANSI && input[pos] === "\\" && pos + 1 < len) {
+        value += input[pos]! + input[pos + 1]!;
+        pos += 2;
+        col += 2;
+      } else {
+        value += input[pos]!;
+        pos++;
+        col++;
+      }
+    }
+
+    if (pos < len) {
+      value += isANSI ? "'" : "";
+      pos++;
+      col++;
+    }
+
+    return { value, pos, col };
+  }
+
+  /**
+   * Read a double-quoted string starting at current position
+   * Handles both regular double quotes and $"..." locale quoting
+   */
+  private readDoubleQuotedString(pos: number, isLocale: boolean): {
+    value: string;
+    pos: number;
+    col: number;
+  } {
+    const input = this.input;
+    const len = input.length;
+    let value = isLocale ? '$"' : "";
+    let col = this.column + (isLocale ? 2 : 1);
+    pos += isLocale ? 2 : 1;
+
+    while (pos < len && input[pos] !== '"') {
+      const char = input[pos]!;
+
+      // Handle escapes in double quotes
+      if (char === "\\" && pos + 1 < len) {
+        const nextChar = input[pos + 1]!;
+        if (nextChar === '"' || nextChar === "\\" || nextChar === "$" || nextChar === "`" || nextChar === "\n") {
+          if (nextChar === "$" || nextChar === "`") {
+            value += char + nextChar;
+          } else {
+            value += nextChar;
+          }
+          pos += 2;
+          col += 2;
+          continue;
+        }
+      }
+
+      value += char;
+      pos++;
+      col++;
+    }
+
+    if (pos < len) {
+      value += isLocale ? '"' : "";
+      pos++;
+      col++;
+    }
+
+    return { value, pos, col };
+  }
+
   private readComment(start: number, line: number, column: number): Token {
     const input = this.input;
     const len = input.length;
@@ -600,44 +709,41 @@ export class Lexer {
     const len = input.length;
     let pos = this.pos;
 
-    // Fast path: scan for simple word
+    // Fast path: scan for simple word (no special characters)
     const fastStart = pos;
     while (pos < len) {
       const c = input[pos];
-      if (
-        c === " " || c === "\t" || c === "\n" || c === ";" || c === "&" ||
-        c === "|" || c === "(" || c === ")" || c === "<" || c === ">" ||
-        c === "'" || c === '"' || c === "\\" || c === "$" || c === "`" ||
-        c === "{" || c === "}" || c === "~" || c === "*" || c === "?" || c === "["
-      ) {
+      if (this.isSeparator(c) || this.isSpecialChar(c)) {
         break;
       }
       pos++;
     }
 
+    // If we found a simple word ending at a separator or EOF, process it
     if (pos > fastStart) {
       const c = input[pos];
-      if (
-        pos >= len || c === " " || c === "\t" || c === "\n" || c === ";" ||
-        c === "&" || c === "|" || c === "(" || c === ")" || c === "<" || c === ">"
-      ) {
+      if (pos >= len || this.isSeparator(c)) {
         const value = input.slice(fastStart, pos);
         this.pos = pos;
         this.column = column + (pos - fastStart);
 
+        // Check for reserved words
         if (RESERVED_WORDS[value]) {
-          return { type: RESERVED_WORDS[value], value, start, end: pos, line, column };
+          return { type: RESERVED_WORDS[value]!, value, start, end: pos, line, column };
         }
 
+        // Check for variable assignment
         const eqIdx = value.indexOf("=");
         if (eqIdx > 0 && isValidAssignmentLHS(value.slice(0, eqIdx))) {
           return { type: TokenType.ASSIGNMENT_WORD, value, start, end: pos, line, column };
         }
 
+        // Check for numbers
         if (/^[0-9]+$/.test(value)) {
           return { type: TokenType.NUMBER, value, start, end: pos, line, column };
         }
 
+        // Check for valid identifiers
         if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
           return { type: TokenType.NAME, value, start, end: pos, line, column, quoted: false, singleQuoted: false };
         }
@@ -646,7 +752,7 @@ export class Lexer {
       }
     }
 
-    // Slow path: handle complex words
+    // Slow path: handle complex words with quotes, escapes, expansions
     pos = this.pos;
     let col = this.column;
     let ln = this.line;
@@ -660,12 +766,9 @@ export class Lexer {
     while (pos < len) {
       const char = input[pos];
 
+      // Check for word boundaries (only when not inside quotes)
       if (!inSingleQuote && !inDoubleQuote) {
-        if (
-          char === " " || char === "\t" || char === "\n" || char === ";" ||
-          char === "&" || char === "|" || char === "(" || char === ")" ||
-          char === "<" || char === ">"
-        ) {
+        if (this.isSeparator(char)) {
           break;
         }
       }
