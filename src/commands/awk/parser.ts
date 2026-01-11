@@ -489,7 +489,7 @@ export class AwkParser {
     let i = this.pos;
 
     while (i < this.tokens.length) {
-      const token = this.tokens[i];
+      const token = this.tokens[i]!;
 
       if (token.type === TokenType.LPAREN) depth++;
       if (token.type === TokenType.RPAREN) depth--;
@@ -581,7 +581,7 @@ export class AwkParser {
       };
       left = {
         type: "binary",
-        operator: opMap[opToken.value as string],
+        operator: opMap[opToken.value as string]!,
         left,
         right,
       };
@@ -659,7 +659,7 @@ export class AwkParser {
 
       return {
         type: "assignment",
-        operator: opMap[opToken.value as string],
+        operator: opMap[opToken.value as string]!,
         target: expr as AwkVariable | AwkFieldRef | AwkArrayAccess,
         value,
       };
@@ -777,7 +777,7 @@ export class AwkParser {
       };
       left = {
         type: "binary",
-        operator: opMap[opToken.value as string],
+        operator: opMap[opToken.value as string]!,
         left,
         right,
       };
@@ -870,7 +870,7 @@ export class AwkParser {
       };
       left = {
         type: "binary",
-        operator: opMap[opToken.value as string],
+        operator: opMap[opToken.value as string]!,
         left,
         right,
       };
@@ -1074,9 +1074,9 @@ export class AwkParser {
 
         let key: AwkExpr;
         if (keys.length === 1) {
-          key = keys[0];
+          key = keys[0]!;
         } else {
-          key = keys[0];
+          key = keys[0]!;
           for (let i = 1; i < keys.length; i++) {
             key = {
               type: "binary",
@@ -1087,7 +1087,7 @@ export class AwkParser {
                 left: key,
                 right: { type: "variable", name: "SUBSEP" },
               },
-              right: keys[i],
+              right: keys[i]!,
             };
           }
         }
