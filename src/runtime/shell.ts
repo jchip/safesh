@@ -18,6 +18,7 @@ import {
   SHELL_MEMORY_LIMIT,
   MAX_SHELLS,
 } from "../core/types.ts";
+import { SCRIPT_RETENTION_MS } from "../core/defaults.ts";
 import { RetryManager } from "./retry-manager.ts";
 import { JobManager } from "./job-manager.ts";
 import {
@@ -522,6 +523,18 @@ export class ShellManager {
   }
 
   /**
+   * Create a pending retry for a blocked network host
+   */
+  createPendingRetryNetwork(
+    code: string,
+    blockedHost: string,
+    context: PendingRetry["context"],
+    shellId?: string,
+  ): PendingRetry {
+    return this.retryManager.createPendingRetryNetwork(code, blockedHost, context, shellId);
+  }
+
+  /**
    * Get a pending retry by ID
    */
   getPendingRetry(id: string): PendingRetry | undefined {
@@ -611,24 +624,58 @@ export class ShellManager {
 
   /**
    * Trim oldest completed scripts if shell exceeds memory limit
+   *
+   * SSH-223: Scripts are retained for at least SCRIPT_RETENTION_MS after completion
+   * to allow users to retrieve output from short-lived background tasks.
    */
   private trimShellIfNeeded(shell: Shell): void {
     const memoryUsage = this.estimateShellMemory(shell);
     if (memoryUsage <= SHELL_MEMORY_LIMIT) return;
 
-    // Get completed scripts sorted by startedAt (oldest first)
-    const completedScripts = Array.from(shell.scripts.values())
-      .filter((s) => s.status !== "running")
-      .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
+    const now = Date.now();
+    const retentionMs = SCRIPT_RETENTION_MS;
 
-    // Remove oldest scripts until under limit
-    for (const script of completedScripts) {
+    // Get completed scripts sorted by completion time (oldest first)
+    // Only consider scripts that have passed the retention period
+    const eligibleScripts = Array.from(shell.scripts.values())
+      .filter((s) => {
+        // Only completed/failed scripts are eligible for trimming
+        if (s.status === "running") return false;
+
+        // Scripts must have a completion time
+        if (!s.completedAt) return false;
+
+        // Script must be older than retention period
+        const age = now - s.completedAt.getTime();
+        return age >= retentionMs;
+      })
+      .sort((a, b) => {
+        // Sort by completion time (oldest first)
+        const aTime = a.completedAt?.getTime() ?? 0;
+        const bTime = b.completedAt?.getTime() ?? 0;
+        return aTime - bTime;
+      });
+
+    // Remove oldest eligible scripts until under limit
+    for (const script of eligibleScripts) {
       shell.scripts.delete(script.id);
       shell.scriptsByPid.delete(script.pid);
+
+      // Remove from persistence
+      this.persistence?.removeScript(script.id);
 
       if (this.estimateShellMemory(shell) <= SHELL_MEMORY_LIMIT) {
         break;
       }
+    }
+
+    // If still over limit and no eligible scripts, log warning
+    const stillOverLimit = this.estimateShellMemory(shell) > SHELL_MEMORY_LIMIT;
+    if (stillOverLimit && eligibleScripts.length === 0) {
+      console.warn(
+        `[ShellManager] Shell ${shell.id} exceeds memory limit (${(memoryUsage / 1024 / 1024).toFixed(2)} MB) ` +
+        `but no scripts are eligible for trimming (all within ${retentionMs}ms retention period)`
+      );
     }
   }
 
