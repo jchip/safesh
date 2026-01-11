@@ -115,6 +115,15 @@ export class Transpiler {
       case "BraceGroup":
         this.transpileBraceGroup(statement);
         break;
+      case "TestCommand":
+        this.transpileTestCommand(statement);
+        break;
+      case "ArithmeticCommand":
+        this.transpileArithmeticCommand(statement);
+        break;
+      case "CStyleForStatement":
+        this.transpileCStyleForStatement(statement);
+        break;
       default: {
         // Exhaustiveness check: this ensures all statement types are handled
         const _exhaustive: never = statement;
@@ -390,6 +399,192 @@ export class Transpiler {
   }
 
   // ===========================================================================
+  // Test Command ([[ ... ]])
+  // ===========================================================================
+
+  private transpileTestCommand(stmt: AST.TestCommand): void {
+    const condition = this.transpileTestCondition(stmt.expression);
+    this.emit(`if (${condition}) { /* test passed */ }`);
+  }
+
+  private transpileTestCondition(test: AST.TestCondition): string {
+    switch (test.type) {
+      case "UnaryTest":
+        return this.transpileUnaryTest(test);
+      case "BinaryTest":
+        return this.transpileBinaryTest(test);
+      case "LogicalTest":
+        return this.transpileLogicalTest(test);
+      case "StringTest":
+        return this.transpileStringTest(test);
+      default: {
+        const _exhaustive: never = test;
+        return "false";
+      }
+    }
+  }
+
+  private transpileUnaryTest(test: AST.UnaryTest): string {
+    const arg = this.transpileWord(test.argument);
+
+    switch (test.operator) {
+      // File existence tests
+      case "-e":
+        return `await $.fs.exists(\`${arg}\`)`;
+      case "-f":
+        return `(await $.fs.stat(\`${arg}\`))?.isFile ?? false`;
+      case "-d":
+        return `(await $.fs.stat(\`${arg}\`))?.isDirectory ?? false`;
+      case "-L":
+      case "-h":
+        return `(await $.fs.stat(\`${arg}\`))?.isSymlink ?? false`;
+      case "-b":
+        return `(await $.fs.stat(\`${arg}\`))?.isBlockDevice ?? false`;
+      case "-c":
+        return `(await $.fs.stat(\`${arg}\`))?.isCharDevice ?? false`;
+      case "-p":
+        return `(await $.fs.stat(\`${arg}\`))?.isFifo ?? false`;
+      case "-S":
+        return `(await $.fs.stat(\`${arg}\`))?.isSocket ?? false`;
+      case "-t":
+        return `Deno.isatty(Number(\`${arg}\`))`;
+
+      // File permission tests
+      case "-r":
+        return `await $.fs.readable(\`${arg}\`)`;
+      case "-w":
+        return `await $.fs.writable(\`${arg}\`)`;
+      case "-x":
+        return `await $.fs.executable(\`${arg}\`)`;
+      case "-s":
+        return `((await $.fs.stat(\`${arg}\`))?.size ?? 0) > 0`;
+
+      // File attribute tests
+      case "-g":
+        return `(((await $.fs.stat(\`${arg}\`))?.mode ?? 0) & 0o2000) !== 0`;
+      case "-u":
+        return `(((await $.fs.stat(\`${arg}\`))?.mode ?? 0) & 0o4000) !== 0`;
+      case "-k":
+        return `(((await $.fs.stat(\`${arg}\`))?.mode ?? 0) & 0o1000) !== 0`;
+      case "-O":
+        return `(await $.fs.stat(\`${arg}\`))?.uid === Deno.uid()`;
+      case "-G":
+        return `(await $.fs.stat(\`${arg}\`))?.gid === Deno.gid()`;
+      case "-N":
+        return `(await $.fs.stat(\`${arg}\`))?.mtime > (await $.fs.stat(\`${arg}\`))?.atime`;
+
+      // String tests
+      case "-z":
+        return `(\`${arg}\`).length === 0`;
+      case "-n":
+        return `(\`${arg}\`).length > 0`;
+
+      default: {
+        const _exhaustive: never = test.operator;
+        return "false";
+      }
+    }
+  }
+
+  private transpileBinaryTest(test: AST.BinaryTest): string {
+    const left = this.transpileWord(test.left);
+    const right = this.transpileWord(test.right);
+
+    switch (test.operator) {
+      // String comparison
+      case "=":
+      case "==":
+        return `\`${left}\` === \`${right}\``;
+      case "!=":
+        return `\`${left}\` !== \`${right}\``;
+      case "<":
+        return `\`${left}\` < \`${right}\``;
+      case ">":
+        return `\`${left}\` > \`${right}\``;
+
+      // Numeric comparison
+      case "-eq":
+        return `Number(\`${left}\`) === Number(\`${right}\`)`;
+      case "-ne":
+        return `Number(\`${left}\`) !== Number(\`${right}\`)`;
+      case "-lt":
+        return `Number(\`${left}\`) < Number(\`${right}\`)`;
+      case "-le":
+        return `Number(\`${left}\`) <= Number(\`${right}\`)`;
+      case "-gt":
+        return `Number(\`${left}\`) > Number(\`${right}\`)`;
+      case "-ge":
+        return `Number(\`${left}\`) >= Number(\`${right}\`)`;
+
+      // File comparison
+      case "-nt":
+        return `(await $.fs.stat(\`${left}\`))?.mtime > (await $.fs.stat(\`${right}\`))?.mtime`;
+      case "-ot":
+        return `(await $.fs.stat(\`${left}\`))?.mtime < (await $.fs.stat(\`${right}\`))?.mtime`;
+      case "-ef":
+        return `(await $.fs.stat(\`${left}\`))?.ino === (await $.fs.stat(\`${right}\`))?.ino`;
+
+      // Regex match
+      case "=~":
+        return `new RegExp(\`${right}\`).test(\`${left}\`)`;
+
+      default: {
+        const _exhaustive: never = test.operator;
+        return "false";
+      }
+    }
+  }
+
+  private transpileLogicalTest(test: AST.LogicalTest): string {
+    if (test.operator === "!") {
+      return `!(${this.transpileTestCondition(test.right)})`;
+    }
+
+    const left = test.left ? this.transpileTestCondition(test.left) : "";
+    const right = this.transpileTestCondition(test.right);
+
+    if (test.operator === "&&") {
+      return `(${left} && ${right})`;
+    } else {
+      return `(${left} || ${right})`;
+    }
+  }
+
+  private transpileStringTest(test: AST.StringTest): string {
+    const value = this.transpileWord(test.value);
+    return `(\`${value}\`).length > 0`;
+  }
+
+  // ===========================================================================
+  // Arithmetic Command ((( ... )))
+  // ===========================================================================
+
+  private transpileArithmeticCommand(stmt: AST.ArithmeticCommand): void {
+    const expr = this.transpileArithmeticExpr(stmt.expression);
+    this.emit(`${expr};`);
+  }
+
+  // ===========================================================================
+  // C-Style For Statement
+  // ===========================================================================
+
+  private transpileCStyleForStatement(stmt: AST.CStyleForStatement): void {
+    const init = stmt.init ? this.transpileArithmeticExpr(stmt.init) : "";
+    const test = stmt.test ? this.transpileArithmeticExpr(stmt.test) : "true";
+    const update = stmt.update ? this.transpileArithmeticExpr(stmt.update) : "";
+
+    this.emit(`for (${init}; ${test}; ${update}) {`);
+    this.indentLevel++;
+
+    for (const s of stmt.body) {
+      this.transpileStatement(s);
+    }
+
+    this.indentLevel--;
+    this.emit("}");
+  }
+
+  // ===========================================================================
   // Words and Expansions
   // ===========================================================================
 
@@ -565,6 +760,12 @@ export class Transpiler {
         const alt = this.transpileArithmeticExpr(expr.alternate);
         return `(${test} ? ${cons} : ${alt})`;
       }
+      case "AssignmentExpression": {
+        const right = this.transpileArithmeticExpr(expr.right);
+        return `(${expr.left.name} ${expr.operator} ${right})`;
+      }
+      case "GroupedArithmeticExpression":
+        return `(${this.transpileArithmeticExpr(expr.expression)})`;
       default: {
         const _exhaustive: never = expr;
         return "0";
