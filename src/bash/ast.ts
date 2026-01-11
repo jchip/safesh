@@ -37,13 +37,16 @@ export type Statement =
   | Command
   | IfStatement
   | ForStatement
+  | CStyleForStatement
   | WhileStatement
   | UntilStatement
   | CaseStatement
   | FunctionDeclaration
   | VariableAssignment
   | Subshell
-  | BraceGroup;
+  | BraceGroup
+  | TestCommand
+  | ArithmeticCommand;
 
 // =============================================================================
 // Commands
@@ -79,6 +82,14 @@ export interface ForStatement extends BaseNode {
   type: "ForStatement";
   variable: string;
   iterable: (Word | ParameterExpansion | CommandSubstitution)[];
+  body: Statement[];
+}
+
+export interface CStyleForStatement extends BaseNode {
+  type: "CStyleForStatement";
+  init: ArithmeticExpression | null;
+  test: ArithmeticExpression | null;
+  update: ArithmeticExpression | null;
   body: Statement[];
 }
 
@@ -126,6 +137,16 @@ export interface BraceGroup extends BaseNode {
   body: Statement[];
 }
 
+export interface TestCommand extends BaseNode {
+  type: "TestCommand";
+  expression: TestCondition;
+}
+
+export interface ArithmeticCommand extends BaseNode {
+  type: "ArithmeticCommand";
+  expression: ArithmeticExpression;
+}
+
 // =============================================================================
 // Variables
 // =============================================================================
@@ -145,6 +166,7 @@ export interface Redirection extends BaseNode {
   type: "Redirection";
   operator: RedirectionOperator;
   fd?: number; // File descriptor (default: 0 for input, 1 for output)
+  fdVar?: string; // Variable name for {var}>file syntax (Bash 4.1+)
   target: Word | number; // File path or fd number
 }
 
@@ -244,7 +266,9 @@ export type ArithmeticExpression =
   | VariableReference
   | BinaryArithmeticExpression
   | UnaryArithmeticExpression
-  | ConditionalArithmeticExpression;
+  | ConditionalArithmeticExpression
+  | AssignmentExpression
+  | GroupedArithmeticExpression;
 
 export interface NumberLiteral extends BaseNode {
   type: "NumberLiteral";
@@ -278,12 +302,7 @@ export interface BinaryArithmeticExpression extends BaseNode {
     | ">"
     | "<="
     | ">="
-    | "="
-    | "+="
-    | "-="
-    | "*="
-    | "/="
-    | "%=";
+    | ","; // Comma operator for sequencing
   left: ArithmeticExpression;
   right: ArithmeticExpression;
 }
@@ -300,6 +319,18 @@ export interface ConditionalArithmeticExpression extends BaseNode {
   test: ArithmeticExpression;
   consequent: ArithmeticExpression;
   alternate: ArithmeticExpression;
+}
+
+export interface AssignmentExpression extends BaseNode {
+  type: "AssignmentExpression";
+  operator: "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^=";
+  left: VariableReference;
+  right: ArithmeticExpression;
+}
+
+export interface GroupedArithmeticExpression extends BaseNode {
+  type: "GroupedArithmeticExpression";
+  expression: ArithmeticExpression;
 }
 
 // =============================================================================

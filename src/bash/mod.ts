@@ -25,6 +25,9 @@ export type * as AST from "./ast.ts";
 // Parser
 export { Parser, parse, parseWithRecovery } from "./parser.ts";
 
+// Arithmetic Expression Parser
+export { ArithmeticParser, parseArithmetic } from "./arithmetic-parser.ts";
+
 // Transpiler
 export { Transpiler, transpile, type TranspilerOptions } from "./transpiler.ts";
 
