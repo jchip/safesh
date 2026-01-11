@@ -7,6 +7,7 @@
 
 import { Lexer, Token, TokenType } from "./lexer.ts";
 import type * as AST from "./ast.ts";
+import { parseArithmetic } from "./arithmetic-parser.ts";
 
 // =============================================================================
 // Parser Context (for better error messages)
@@ -270,6 +271,16 @@ export class Parser {
       return this.parseFunctionDeclaration();
     }
 
+    // Test expression [[ ... ]]
+    if (this.is(TokenType.DBRACK_START)) {
+      return this.parseTestCommand();
+    }
+
+    // Arithmetic command (( ... ))
+    if (this.is(TokenType.DPAREN_START)) {
+      return this.parseArithmeticCommand();
+    }
+
     // Grouping
     if (this.is(TokenType.LPAREN)) {
       return this.parseSubshell();
@@ -278,12 +289,7 @@ export class Parser {
       return this.parseBraceGroup();
     }
 
-    // Variable assignment or pipeline
-    if (this.is(TokenType.ASSIGNMENT_WORD)) {
-      return this.parseVariableAssignment();
-    }
-
-    // Default: parse as pipeline
+    // Default: parse as pipeline (handles assignments as part of commands)
     return this.parsePipeline();
   }
 
@@ -412,6 +418,7 @@ export class Parser {
       this.isAny(
         TokenType.WORD,
         TokenType.NAME,
+        TokenType.NUMBER,
         TokenType.LESS,
         TokenType.GREAT,
         TokenType.DGREAT,
@@ -424,7 +431,6 @@ export class Parser {
         TokenType.TLESS,
         TokenType.AND_GREAT,
         TokenType.AND_DGREAT,
-        TokenType.NUMBER,
         TokenType.LESS_LPAREN,
         TokenType.GREAT_LPAREN,
       )
@@ -433,7 +439,10 @@ export class Parser {
       if (this.isAny(TokenType.LESS_LPAREN, TokenType.GREAT_LPAREN)) {
         args.push(this.parseProcessSubstitutionWord());
       } else if (this.isRedirectionOperator()) {
-        // Check for redirection
+        // Check for redirection (including {var}>file pattern)
+        redirects.push(this.parseRedirection());
+      } else if (this.isFdVarRedirection()) {
+        // Check for {var}>file FD variable redirection
         redirects.push(this.parseRedirection());
       } else {
         args.push(this.parseWord());
@@ -493,11 +502,18 @@ export class Parser {
     };
   }
 
-  private parseForStatement(): AST.ForStatement {
+  private parseForStatement(): AST.ForStatement | AST.CStyleForStatement {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
 
     this.expect(TokenType.FOR);
+    this.skipNewlines();
+
+    // Check for C-style for loop: for (( init; test; update ))
+    if (this.is(TokenType.DPAREN_START)) {
+      return this.parseCStyleForStatement(startLine, startColumn);
+    }
+
     const variable = this.expect(TokenType.NAME).value;
 
     this.pushContext({ type: "for", variable, startLine, startColumn });
@@ -532,6 +548,91 @@ export class Parser {
       iterable,
       body,
     };
+  }
+
+  /**
+   * Parse C-style for loop: for (( init; test; update )); do body; done
+   */
+  private parseCStyleForStatement(
+    startLine: number,
+    startColumn: number
+  ): AST.CStyleForStatement {
+    this.pushContext({ type: "for", variable: "(C-style)", startLine, startColumn });
+
+    this.expect(TokenType.DPAREN_START);
+
+    // Collect content until ))
+    // Only track DPAREN_START/END for depth, not regular parens
+    let content = "";
+    let depth = 1;
+    while (depth > 0 && !this.is(TokenType.EOF)) {
+      if (this.is(TokenType.DPAREN_START)) {
+        depth++;
+        content += "((";
+        this.advance();
+      } else if (this.is(TokenType.DPAREN_END)) {
+        depth--;
+        if (depth > 0) {
+          content += "))";
+        }
+        this.advance();
+      } else {
+        // Include regular parens as part of content
+        content += this.currentToken.value;
+        this.advance();
+      }
+    }
+
+    // Parse the three parts: init; test; update
+    const parts = this.splitCStyleForParts(content);
+    const init = parts[0]?.trim() ? parseArithmetic(parts[0].trim()) : null;
+    const test = parts[1]?.trim() ? parseArithmetic(parts[1].trim()) : null;
+    const update = parts[2]?.trim() ? parseArithmetic(parts[2].trim()) : null;
+
+    this.skipNewlines();
+    this.skip(TokenType.SEMICOLON);
+    this.skipNewlines();
+    this.expect(TokenType.DO);
+    this.skipNewlines();
+
+    const body = this.parseStatementList([TokenType.DONE]);
+    this.expect(TokenType.DONE);
+    this.popContext();
+
+    return {
+      type: "CStyleForStatement",
+      init,
+      test,
+      update,
+      body,
+    };
+  }
+
+  /**
+   * Split C-style for parts on semicolons, respecting nested parens
+   */
+  private splitCStyleForParts(content: string): string[] {
+    const parts: string[] = [];
+    let current = "";
+    let depth = 0;
+
+    for (const char of content) {
+      if (char === "(" || char === "[") {
+        depth++;
+        current += char;
+      } else if (char === ")" || char === "]") {
+        depth--;
+        current += char;
+      } else if (char === ";" && depth === 0) {
+        parts.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    parts.push(current);
+
+    return parts;
   }
 
   private parseWhileStatement(): AST.WhileStatement {
@@ -717,6 +818,224 @@ export class Parser {
   }
 
   // ===========================================================================
+  // Test Command [[ ... ]]
+  // ===========================================================================
+
+  /**
+   * Parse [[ expression ]] test command
+   */
+  private parseTestCommand(): AST.TestCommand {
+    this.expect(TokenType.DBRACK_START);
+    this.skipNewlines();
+
+    const expression = this.parseTestExpression();
+
+    this.skipNewlines();
+    this.expect(TokenType.DBRACK_END);
+
+    return {
+      type: "TestCommand",
+      expression,
+    };
+  }
+
+  /**
+   * Parse test expression with logical operators
+   * Handles: || (lowest), && (higher), ! (prefix), comparisons (highest)
+   */
+  private parseTestExpression(): AST.TestCondition {
+    return this.parseTestOr();
+  }
+
+  private parseTestOr(): AST.TestCondition {
+    let left = this.parseTestAnd();
+
+    while (this.is(TokenType.OR_OR)) {
+      this.advance();
+      this.skipNewlines();
+      const right = this.parseTestAnd();
+      left = {
+        type: "LogicalTest",
+        operator: "||",
+        left,
+        right,
+      };
+    }
+
+    return left;
+  }
+
+  private parseTestAnd(): AST.TestCondition {
+    let left = this.parseTestUnary();
+
+    while (this.is(TokenType.AND_AND)) {
+      this.advance();
+      this.skipNewlines();
+      const right = this.parseTestUnary();
+      left = {
+        type: "LogicalTest",
+        operator: "&&",
+        left,
+        right,
+      };
+    }
+
+    return left;
+  }
+
+  private parseTestUnary(): AST.TestCondition {
+    // Handle ! negation
+    if (this.is(TokenType.BANG)) {
+      this.advance();
+      this.skipNewlines();
+      const operand = this.parseTestUnary();
+      return {
+        type: "LogicalTest",
+        operator: "!",
+        right: operand,
+      };
+    }
+
+    // Handle parenthesized expressions
+    if (this.is(TokenType.LPAREN)) {
+      this.advance();
+      this.skipNewlines();
+      const expr = this.parseTestExpression();
+      this.skipNewlines();
+      this.expect(TokenType.RPAREN);
+      return expr;
+    }
+
+    return this.parseTestPrimary();
+  }
+
+  private parseTestPrimary(): AST.TestCondition {
+    // Check for unary file/string test operators
+    const unaryOps: AST.UnaryTestOperator[] = [
+      "-e", "-f", "-d", "-L", "-h", "-b", "-c", "-p", "-S", "-t",
+      "-r", "-w", "-x", "-s", "-g", "-u", "-k", "-O", "-G", "-N",
+      "-z", "-n",
+    ];
+
+    if (this.is(TokenType.WORD) || this.is(TokenType.NAME)) {
+      const value = this.currentToken.value;
+      if (unaryOps.includes(value as AST.UnaryTestOperator)) {
+        this.advance();
+        this.skipNewlines();
+        const argument = this.parseTestWord();
+        return {
+          type: "UnaryTest",
+          operator: value as AST.UnaryTestOperator,
+          argument,
+        };
+      }
+    }
+
+    // Parse left operand
+    const left = this.parseTestWord();
+    this.skipNewlines();
+
+    // Check for binary operators
+    if (this.is(TokenType.DBRACK_END) || this.is(TokenType.AND_AND) ||
+        this.is(TokenType.OR_OR) || this.is(TokenType.RPAREN)) {
+      // Just a string test (non-empty check)
+      return {
+        type: "StringTest",
+        value: left,
+      };
+    }
+
+    // Binary operators
+    const binaryOps: Record<string, AST.BinaryTestOperator> = {
+      "=": "=",
+      "==": "==",
+      "!=": "!=",
+      "<": "<",
+      ">": ">",
+      "-eq": "-eq",
+      "-ne": "-ne",
+      "-lt": "-lt",
+      "-le": "-le",
+      "-gt": "-gt",
+      "-ge": "-ge",
+      "-nt": "-nt",
+      "-ot": "-ot",
+      "-ef": "-ef",
+      "=~": "=~",
+    };
+
+    const opToken = this.currentToken;
+    const op = binaryOps[opToken.value];
+    if (op) {
+      this.advance();
+      this.skipNewlines();
+      const right = this.parseTestWord();
+      return {
+        type: "BinaryTest",
+        operator: op,
+        left,
+        right,
+      };
+    }
+
+    // Fallback to string test
+    return {
+      type: "StringTest",
+      value: left,
+    };
+  }
+
+  private parseTestWord(): AST.Word | AST.ParameterExpansion {
+    if (this.isAny(TokenType.WORD, TokenType.NAME, TokenType.NUMBER)) {
+      return this.parseWord();
+    }
+    throw this.error("Expected word in test expression");
+  }
+
+  // ===========================================================================
+  // Arithmetic Command (( ... ))
+  // ===========================================================================
+
+  /**
+   * Parse (( expression )) arithmetic command
+   */
+  private parseArithmeticCommand(): AST.ArithmeticCommand {
+    this.expect(TokenType.DPAREN_START);
+
+    // Collect all tokens until ))
+    // Only track DPAREN_START/END for depth, not regular parens
+    let content = "";
+    let depth = 1;
+
+    while (depth > 0 && !this.is(TokenType.EOF)) {
+      if (this.is(TokenType.DPAREN_START)) {
+        depth++;
+        content += "((";
+        this.advance();
+      } else if (this.is(TokenType.DPAREN_END)) {
+        depth--;
+        if (depth > 0) {
+          content += "))";
+        }
+        this.advance();
+      } else {
+        content += this.currentToken.value;
+        if (this.is(TokenType.NEWLINE)) {
+          content += " ";
+        }
+        this.advance();
+      }
+    }
+
+    const expression = parseArithmetic(content.trim());
+
+    return {
+      type: "ArithmeticCommand",
+      expression,
+    };
+  }
+
+  // ===========================================================================
   // Variables
   // ===========================================================================
 
@@ -744,7 +1063,8 @@ export class Parser {
   // ===========================================================================
 
   private isRedirectionOperator(): boolean {
-    return this.isAny(
+    // Direct redirection operators
+    if (this.isAny(
       TokenType.LESS,
       TokenType.GREAT,
       TokenType.DGREAT,
@@ -757,16 +1077,87 @@ export class Parser {
       TokenType.TLESS,
       TokenType.AND_GREAT,
       TokenType.AND_DGREAT,
-      TokenType.NUMBER,
-    );
+    )) {
+      return true;
+    }
+
+    // Number followed by redirection operator (e.g., 2> or 10>&)
+    if (this.is(TokenType.NUMBER)) {
+      return this.isNextTokenRedirect();
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if the peek token is a redirection operator
+   */
+  private isNextTokenRedirect(): boolean {
+    return [
+      TokenType.LESS,
+      TokenType.GREAT,
+      TokenType.DGREAT,
+      TokenType.LESSAND,
+      TokenType.GREATAND,
+      TokenType.LESSGREAT,
+      TokenType.CLOBBER,
+    ].includes(this.peekToken.type);
+  }
+
+  /**
+   * Check if current token is a {var} pattern followed by a redirection operator
+   * This supports Bash 4.1+ FD variable syntax: {fd}>file
+   */
+  private isFdVarRedirection(): boolean {
+    if (!this.isAny(TokenType.WORD, TokenType.NAME)) {
+      return false;
+    }
+
+    const value = this.currentToken.value;
+    // Check for {identifier} pattern
+    if (!/^\{[a-zA-Z_][a-zA-Z0-9_]*\}$/.test(value)) {
+      return false;
+    }
+
+    // Check if next token is a redirection operator
+    const nextType = this.peekToken.type;
+    return [
+      TokenType.LESS,
+      TokenType.GREAT,
+      TokenType.DGREAT,
+      TokenType.LESSAND,
+      TokenType.GREATAND,
+      TokenType.LESSGREAT,
+      TokenType.CLOBBER,
+    ].includes(nextType);
   }
 
   private parseRedirection(): AST.Redirection {
     let fd: number | undefined;
+    let fdVar: string | undefined;
 
     // Check for fd number (e.g., "2>")
     if (this.is(TokenType.NUMBER)) {
       fd = parseInt(this.advance().value, 10);
+    }
+    // Check for fd variable (e.g., "{fd}>") - Bash 4.1+ syntax
+    else if (this.is(TokenType.WORD) || this.is(TokenType.NAME)) {
+      const value = this.currentToken.value;
+      const fdVarMatch = value.match(/^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/);
+      if (fdVarMatch) {
+        // Check if NEXT token is a redirection operator
+        const nextIsRedirect = [
+          TokenType.LESS, TokenType.GREAT, TokenType.DGREAT,
+          TokenType.LESSAND, TokenType.GREATAND, TokenType.LESSGREAT,
+          TokenType.CLOBBER,
+        ].includes(this.peekToken.type);
+
+        if (nextIsRedirect) {
+          // This is a {var} prefix for FD variable allocation
+          fdVar = fdVarMatch[1];
+          this.advance();
+        }
+      }
     }
 
     // Parse operator
@@ -819,16 +1210,28 @@ export class Parser {
 
     if (this.is(TokenType.NUMBER) && (operator === ">&" || operator === "<&")) {
       target = parseInt(this.advance().value, 10);
+    } else if (this.is(TokenType.WORD) && this.currentToken.value === "-" &&
+               (operator === ">&" || operator === "<&")) {
+      // Handle close FD syntax: >&- or <&-
+      target = this.parseWord();
     } else {
       target = this.parseWord();
     }
 
-    return {
+    const result: AST.Redirection = {
       type: "Redirection",
       operator,
-      fd,
       target,
     };
+
+    if (fd !== undefined) {
+      result.fd = fd;
+    }
+    if (fdVar !== undefined) {
+      result.fdVar = fdVar;
+    }
+
+    return result;
   }
 
   // ===========================================================================
@@ -836,7 +1239,7 @@ export class Parser {
   // ===========================================================================
 
   private parseWord(): AST.Word {
-    const token = this.isAny(TokenType.WORD, TokenType.NAME)
+    const token = this.isAny(TokenType.WORD, TokenType.NAME, TokenType.NUMBER)
       ? this.advance()
       : this.expect(TokenType.WORD);
 
@@ -1084,11 +1487,27 @@ export class Parser {
 
   /**
    * Parse ${...} parameter expansion content
+   * Uses proper tokenized parsing instead of regex for robustness with nested expansions
    */
   private parseParameterExpansionContent(content: string): AST.ParameterExpansion {
+    let pos = 0;
+
+    // Handle ${!var} indirect expansion or ${!prefix*} prefix matching
+    const isIndirect = content[0] === "!";
+    if (isIndirect) {
+      pos = 1;
+    }
+
     // Handle ${#var} - length
-    if (content.startsWith("#")) {
+    if (content[0] === "#" && !isIndirect) {
       const param = content.slice(1);
+      // Check if it's ${#} (number of positional params) vs ${#var} (length of var)
+      if (param === "" || param === "@" || param === "*") {
+        return {
+          type: "ParameterExpansion",
+          parameter: "#" + param,
+        };
+      }
       return {
         type: "ParameterExpansion",
         parameter: param,
@@ -1096,57 +1515,99 @@ export class Parser {
       };
     }
 
-    // Find parameter name and modifier
-    const modifiers: Array<{ pattern: RegExp; modifier: AST.ParameterModifier }> = [
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*):-(.*)/s, modifier: ":-" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)-(.*)/s, modifier: "-" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*):=(.*)/s, modifier: ":=" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)=(.*)/s, modifier: "=" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*):\?(.*)/s, modifier: ":?" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\?(.*)/s, modifier: "?" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*):\+(.*)/s, modifier: ":+" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\+(.*)/s, modifier: "+" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)##(.*)/s, modifier: "##" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)#(.*)/s, modifier: "#" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)%%(.*)/s, modifier: "%%" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)%(.*)/s, modifier: "%" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\^\^(.*)/s, modifier: "^^" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\^(.*)/s, modifier: "^" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*),,(.*)/s, modifier: ",," },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*),(.*)/s, modifier: "," },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\/\/(.*)/s, modifier: "//" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)\/(.*)/s, modifier: "/" },
-      { pattern: /^([a-zA-Z_][a-zA-Z0-9_]*)@(.*)/s, modifier: "@" },
+    // Extract parameter name (supports arrays like var[@] or var[0])
+    let paramName = "";
+    const startPos = pos;
+
+    // Handle special single-char parameters: $, ?, !, @, *, -, 0-9
+    if (/^[?$!@*\-0-9]$/.test(content[pos] ?? "")) {
+      paramName = content[pos]!;
+      pos++;
+    } else {
+      // Regular identifier
+      while (pos < content.length && /[a-zA-Z0-9_]/.test(content[pos]!)) {
+        paramName += content[pos]!;
+        pos++;
+      }
+
+      // Handle array subscript: var[subscript]
+      if (content[pos] === "[") {
+        const subscriptStart = pos;
+        let depth = 1;
+        pos++;
+        while (pos < content.length && depth > 0) {
+          if (content[pos] === "[") depth++;
+          else if (content[pos] === "]") depth--;
+          pos++;
+        }
+        paramName += content.slice(subscriptStart, pos);
+      }
+    }
+
+    if (isIndirect) {
+      paramName = "!" + paramName;
+    }
+
+    // If we've consumed all content, it's a simple expansion
+    if (pos >= content.length) {
+      return {
+        type: "ParameterExpansion",
+        parameter: paramName,
+      };
+    }
+
+    // Parse modifier
+    const remaining = content.slice(pos);
+    const modifierArg = (arg: string): AST.Word => ({
+      type: "Word",
+      value: arg,
+      quoted: false,
+      singleQuoted: false,
+      parts: this.parseWordParts(arg, false),
+    });
+
+    // Two-character modifiers (check first)
+    const twoCharModifiers: Array<[string, AST.ParameterModifier]> = [
+      [":-", ":-"], [":=", ":="], [":?", ":?"], [":+", ":+"],
+      ["##", "##"], ["%%", "%%"], ["^^", "^^"], [",,", ",,"],
+      ["//", "//"], ["/#", "/#"], ["/%", "/%"],
     ];
 
-    for (const { pattern, modifier } of modifiers) {
-      const match = content.match(pattern);
-      if (match) {
+    for (const [pattern, modifier] of twoCharModifiers) {
+      if (remaining.startsWith(pattern)) {
+        const arg = remaining.slice(pattern.length);
         const result: AST.ParameterExpansion = {
           type: "ParameterExpansion",
-          parameter: match[1]!,
+          parameter: paramName,
           modifier,
         };
-        if (match[2]) {
-          result.modifierArg = {
-            type: "Word",
-            value: match[2],
-            quoted: false,
-            singleQuoted: false,
-            parts: this.parseWordParts(match[2], false),
-          };
+        if (arg) {
+          result.modifierArg = modifierArg(arg);
         }
         return result;
       }
     }
 
-    // Simple ${VAR}
-    const simpleMatch = content.match(/^([a-zA-Z_][a-zA-Z0-9_]*|\d+|[#?$!@*\-])$/);
-    if (simpleMatch) {
-      return {
+    // Single-character modifiers
+    const singleCharModifiers: Record<string, AST.ParameterModifier> = {
+      "-": "-", "=": "=", "?": "?", "+": "+",
+      "#": "#", "%": "%", "^": "^", ",": ",",
+      "/": "/", "@": "@",
+    };
+
+    const firstChar = remaining[0] ?? "";
+    if (singleCharModifiers[firstChar]) {
+      const modifier = singleCharModifiers[firstChar]!;
+      const arg = remaining.slice(1);
+      const result: AST.ParameterExpansion = {
         type: "ParameterExpansion",
-        parameter: simpleMatch[1]!,
+        parameter: paramName,
+        modifier,
       };
+      if (arg) {
+        result.modifierArg = modifierArg(arg);
+      }
+      return result;
     }
 
     // Fallback: treat entire content as parameter name
@@ -1180,7 +1641,7 @@ export class Parser {
   private parseArithmeticContent(content: string): AST.ArithmeticExpansion {
     return {
       type: "ArithmeticExpansion",
-      expression: this.parseArithmeticExpression(content.trim()),
+      expression: parseArithmetic(content.trim()),
     };
   }
 
@@ -1199,79 +1660,6 @@ export class Parser {
       operator,
       command: innerProgram.body,
     };
-  }
-
-  /**
-   * Parse arithmetic expression (basic implementation)
-   * Full Pratt parser will be added in Phase 2
-   */
-  private parseArithmeticExpression(expr: string): AST.ArithmeticExpression {
-    expr = expr.trim();
-
-    // Try to parse as number
-    const numMatch = expr.match(/^-?\d+$/);
-    if (numMatch) {
-      return {
-        type: "NumberLiteral",
-        value: parseInt(expr, 10),
-      };
-    }
-
-    // Try to parse as variable reference
-    const varMatch = expr.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/);
-    if (varMatch) {
-      return {
-        type: "VariableReference",
-        name: expr,
-      };
-    }
-
-    // Basic binary operator parsing (will be enhanced in Phase 2)
-    const binaryOps = [
-      "**", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
-      "+=", "-=", "*=", "/=", "%=",
-      "+", "-", "*", "/", "%", "&", "|", "^", "<", ">", "=",
-    ];
-
-    for (const op of binaryOps) {
-      const idx = this.findOperator(expr, op);
-      if (idx > 0 && idx < expr.length - op.length) {
-        const left = expr.slice(0, idx).trim();
-        const right = expr.slice(idx + op.length).trim();
-        return {
-          type: "BinaryArithmeticExpression",
-          operator: op as AST.BinaryArithmeticExpression["operator"],
-          left: this.parseArithmeticExpression(left),
-          right: this.parseArithmeticExpression(right),
-        };
-      }
-    }
-
-    // Handle parenthesized expressions
-    if (expr.startsWith("(") && expr.endsWith(")")) {
-      return this.parseArithmeticExpression(expr.slice(1, -1));
-    }
-
-    // Fallback: treat as variable reference
-    return {
-      type: "VariableReference",
-      name: expr,
-    };
-  }
-
-  /**
-   * Find operator position, respecting parentheses
-   */
-  private findOperator(expr: string, op: string): number {
-    let depth = 0;
-    for (let i = 0; i <= expr.length - op.length; i++) {
-      if (expr[i] === "(") depth++;
-      else if (expr[i] === ")") depth--;
-      else if (depth === 0 && expr.slice(i, i + op.length) === op) {
-        return i;
-      }
-    }
-    return -1;
   }
 
   // ===========================================================================
