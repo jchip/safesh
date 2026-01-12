@@ -587,7 +587,7 @@ describe("Transpiler2 - Integration", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'const NAME = "World"');
+    assertStringIncludes(output, 'let NAME = "World"');
     assertStringIncludes(output, "$.cmd`echo Hello`");
   });
 

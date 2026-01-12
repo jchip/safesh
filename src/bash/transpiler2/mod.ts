@@ -98,6 +98,9 @@ export class BashTranspiler2 {
       dedent: () => ctx.dedent(),
       getTempVar: (prefix?: string) => ctx.getTempVar(prefix),
       getOptions: () => ctx.getOptions(),
+      isDeclared: (name: string) => ctx.isDeclared(name),
+      declareVariable: (name: string, type?: "const" | "let") =>
+        ctx.declareVariable(name, type),
 
       visitStatement(stmt: AST.Statement): StatementResult {
         return self.visitStatement(stmt, this);

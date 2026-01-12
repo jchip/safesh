@@ -53,7 +53,8 @@ export function visitNumberLiteral(node: AST.NumberLiteral): string {
 // =============================================================================
 
 export function visitVariableReference(node: AST.VariableReference): string {
-  return `Number(${node.name})`;
+  // Use ?? 0 to match Bash behavior: unset variables in arithmetic evaluate to 0
+  return `Number(${node.name} ?? 0)`;
 }
 
 // =============================================================================
