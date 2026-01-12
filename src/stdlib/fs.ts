@@ -597,3 +597,230 @@ export async function find(
 
   return results;
 }
+
+/**
+ * Options for tree operation
+ */
+export interface TreeOptions {
+  /** Maximum depth to traverse (default: Infinity) */
+  maxDepth?: number;
+  /** Show only directories (default: false) */
+  dirsOnly?: boolean;
+  /** Show hidden files (starting with .) (default: false) */
+  showHidden?: boolean;
+  /** Pattern to match files (regex) */
+  pattern?: RegExp;
+  /** Follow symlinks (default: false) */
+  followSymlinks?: boolean;
+}
+
+/**
+ * Tree entry with formatting info
+ */
+export interface TreeEntry {
+  /** Entry name */
+  name: string;
+  /** Absolute path */
+  path: string;
+  /** Is directory */
+  isDirectory: boolean;
+  /** Depth level (0 = root) */
+  depth: number;
+  /** Formatted line with ASCII art prefix */
+  line: string;
+}
+
+/**
+ * Display directory tree structure
+ *
+ * @param rootPath - Root directory to display
+ * @param treeOptions - Tree display options
+ * @param sandboxOptions - Sandbox options
+ * @returns AsyncGenerator yielding TreeEntry for each item
+ *
+ * @example
+ * ```ts
+ * // Print tree to console
+ * for await (const entry of tree("src")) {
+ *   console.log(entry.line);
+ * }
+ *
+ * // Get tree as array of lines
+ * const lines = [];
+ * for await (const entry of tree(".", { maxDepth: 2 })) {
+ *   lines.push(entry.line);
+ * }
+ *
+ * // Show only directories
+ * for await (const entry of tree(".", { dirsOnly: true })) {
+ *   console.log(entry.line);
+ * }
+ * ```
+ */
+export async function* tree(
+  rootPath: string,
+  treeOptions: TreeOptions = {},
+  sandboxOptions: SandboxOptions = {},
+): AsyncGenerator<TreeEntry> {
+  const validPath = await validateRead(rootPath, sandboxOptions);
+  const maxDepth = treeOptions.maxDepth ?? Infinity;
+  const dirsOnly = treeOptions.dirsOnly ?? false;
+  const showHidden = treeOptions.showHidden ?? false;
+  const pattern = treeOptions.pattern;
+  const followSymlinks = treeOptions.followSymlinks ?? false;
+
+  // Yield the root directory first
+  const rootName = basename(validPath) || validPath;
+  yield {
+    name: rootName,
+    path: validPath,
+    isDirectory: true,
+    depth: 0,
+    line: rootName,
+  };
+
+  // Recursive helper to build tree
+  async function* walkTree(
+    dirPath: string,
+    depth: number,
+    prefix: string,
+  ): AsyncGenerator<TreeEntry> {
+    if (depth > maxDepth) return;
+
+    // Read directory entries
+    const entries: Deno.DirEntry[] = [];
+    try {
+      for await (const entry of Deno.readDir(dirPath)) {
+        // Skip hidden files unless showHidden
+        if (!showHidden && entry.name.startsWith(".")) continue;
+
+        // Skip files if dirsOnly
+        if (dirsOnly && !entry.isDirectory) continue;
+
+        // Apply pattern filter
+        if (pattern && !entry.isDirectory && !pattern.test(entry.name)) continue;
+
+        entries.push(entry);
+      }
+    } catch {
+      // Permission denied or not a directory
+      return;
+    }
+
+    // Sort: directories first, then alphabetically
+    entries.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) {
+        return a.isDirectory ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    // Process each entry
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]!;
+      const isLast = i === entries.length - 1;
+      const entryPath = join(dirPath, entry.name);
+
+      // ASCII tree characters
+      const connector = isLast ? "└── " : "├── ";
+      const line = prefix + connector + entry.name;
+
+      yield {
+        name: entry.name,
+        path: entryPath,
+        isDirectory: entry.isDirectory,
+        depth,
+        line,
+      };
+
+      // Recurse into directories
+      if (entry.isDirectory) {
+        const newPrefix = prefix + (isLast ? "    " : "│   ");
+
+        // Handle symlinks
+        if (entry.isSymlink && !followSymlinks) continue;
+
+        yield* walkTree(entryPath, depth + 1, newPrefix);
+      }
+    }
+  }
+
+  yield* walkTree(validPath, 1, "");
+}
+
+/**
+ * Get tree output as an array of formatted lines
+ *
+ * @param rootPath - Root directory
+ * @param options - Tree options
+ * @param sandboxOptions - Sandbox options
+ * @returns Array of formatted tree lines
+ *
+ * @example
+ * ```ts
+ * const lines = await treeLines("src", { maxDepth: 2 });
+ * console.log(lines.join("\n"));
+ * ```
+ */
+export async function treeLines(
+  rootPath: string,
+  options: TreeOptions = {},
+  sandboxOptions: SandboxOptions = {},
+): Promise<string[]> {
+  const lines: string[] = [];
+  for await (const entry of tree(rootPath, options, sandboxOptions)) {
+    lines.push(entry.line);
+  }
+  return lines;
+}
+
+/**
+ * Print tree to console and return summary
+ *
+ * @param rootPath - Root directory
+ * @param options - Tree options
+ * @param sandboxOptions - Sandbox options
+ * @returns Summary with directory and file counts
+ *
+ * @example
+ * ```ts
+ * const summary = await printTree("src");
+ * // Output:
+ * // src
+ * // ├── index.ts
+ * // ├── lib
+ * // │   ├── utils.ts
+ * // │   └── helpers.ts
+ * // └── types.ts
+ * //
+ * // 1 directory, 3 files
+ * console.log(`${summary.directories} directories, ${summary.files} files`);
+ * ```
+ */
+export async function printTree(
+  rootPath: string,
+  options: TreeOptions = {},
+  sandboxOptions: SandboxOptions = {},
+): Promise<{ directories: number; files: number }> {
+  let directories = 0;
+  let files = 0;
+
+  for await (const entry of tree(rootPath, options, sandboxOptions)) {
+    console.log(entry.line);
+    if (entry.depth > 0) {
+      if (entry.isDirectory) {
+        directories++;
+      } else {
+        files++;
+      }
+    }
+  }
+
+  // Print summary
+  const dirWord = directories === 1 ? "directory" : "directories";
+  const fileWord = files === 1 ? "file" : "files";
+  console.log("");
+  console.log(`${directories} ${dirWord}, ${files} ${fileWord}`);
+
+  return { directories, files };
+}

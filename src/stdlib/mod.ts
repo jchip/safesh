@@ -93,7 +93,10 @@ export {
 } from "./shelljs/mod.ts";
 
 // Re-export commonly used types
-export type { SandboxOptions, WalkOptions, WalkEntry } from "./fs.ts";
+export type { SandboxOptions, WalkOptions, WalkEntry, TreeOptions, TreeEntry } from "./fs.ts";
+
+// Re-export tree functions for direct access
+export { tree, treeLines, printTree } from "./fs.ts";
 export type { GlobOptions } from "./glob.ts";
 export type { GrepMatch, GrepOptions, CountResult, DiffLine } from "./text.ts";
 
@@ -107,6 +110,7 @@ import { stdout, stderr, tee } from "./io.ts";
 import { cat, glob, src, dest } from "./fs-streams.ts";
 import { globPaths, globArray } from "./glob.ts";
 import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from "./shelljs/mod.ts";
+import { tree, treeLines, printTree } from "./fs.ts";
 
 /**
  * Unified namespace for all SafeShell exports
@@ -134,6 +138,8 @@ const _$props = {
   glob, globPaths, globArray, src, dest,
   // ShellJS commands
   echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString,
+  // Tree commands
+  tree, treeLines, printTree,
   // Timing
   sleep, delay: sleep,
   // Deno file aliases
