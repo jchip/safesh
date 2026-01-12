@@ -270,9 +270,32 @@ export function applyRedirection(
     case "<":
       return `${cmdExpr}.stdin(${target})`;
     case ">":
+      // SSH-308: Check fd field - if fd=2, redirect stderr instead of stdout
+      if (redirect.fd === 2) {
+        return `${cmdExpr}.stderr(${target})`;
+      }
       return `${cmdExpr}.stdout(${target})`;
     case ">>":
+      // SSH-308: Check fd field - if fd=2, redirect stderr instead of stdout
+      if (redirect.fd === 2) {
+        return `${cmdExpr}.stderr(${target}, { append: true })`;
+      }
       return `${cmdExpr}.stdout(${target}, { append: true })`;
+    case "<>":
+      // SSH-299: Read-Write mode
+      return `${cmdExpr}.stdin(${target}).stdout(${target})`;
+    case ">|":
+      // SSH-299: Force overwrite (clobber)
+      if (redirect.fd === 2) {
+        return `${cmdExpr}.stderr(${target}, { force: true })`;
+      }
+      return `${cmdExpr}.stdout(${target}, { force: true })`;
+    case "<<":
+      // SSH-299: Here-document
+      return `${cmdExpr}.stdin(${target})`;
+    case "<<-":
+      // SSH-299: Here-document with tab stripping
+      return `${cmdExpr}.stdin(${target}, { stripTabs: true })`;
     case ">&":
     case "<&":
       return `${cmdExpr}.stderr(${target})`;
@@ -444,6 +467,19 @@ export function buildVariableAssignment(
     value = ctx.visitArithmetic(stmt.value.expression);
   } else {
     value = escapeForQuotes(ctx.visitWord(stmt.value as AST.Word));
+  }
+
+  // SSH-306: Handle exported variables
+  if (stmt.exported) {
+    // Exported variables need to be set in both local scope and environment
+    if (ctx.isDeclared(stmt.name)) {
+      // Already declared, just update value and export
+      return `${stmt.name} = "${value}"; Deno.env.set("${stmt.name}", ${stmt.name})`;
+    } else {
+      // First assignment - declare, set value, and export
+      ctx.declareVariable(stmt.name, "let");
+      return `let ${stmt.name} = "${value}"; Deno.env.set("${stmt.name}", ${stmt.name})`;
+    }
   }
 
   // Check if variable is already declared

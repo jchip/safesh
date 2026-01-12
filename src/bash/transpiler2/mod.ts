@@ -101,6 +101,8 @@ export class BashTranspiler2 {
       isDeclared: (name: string) => ctx.isDeclared(name),
       declareVariable: (name: string, type?: "const" | "let") =>
         ctx.declareVariable(name, type),
+      pushScope: () => ctx.pushScope(),
+      popScope: () => ctx.popScope(),
 
       visitStatement(stmt: AST.Statement): StatementResult {
         return self.visitStatement(stmt, this);

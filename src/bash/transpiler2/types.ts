@@ -114,6 +114,12 @@ export interface VisitorContext {
   /** Declare a variable in current scope */
   declareVariable(name: string, type?: "const" | "let"): void;
 
+  /** Push a new variable scope */
+  pushScope(): void;
+
+  /** Pop current variable scope */
+  popScope(): void;
+
   /** Visit a statement node */
   visitStatement(stmt: AST.Statement): StatementResult;
 

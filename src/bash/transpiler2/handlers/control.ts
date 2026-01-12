@@ -82,13 +82,15 @@ export function visitForStatement(
 
   lines.push(`${indent}for (const ${stmt.variable} of ${itemsExpr}) {`);
 
-  // Body
+  // Push a new scope for loop body (loop variable is scoped by JS `const`)
+  ctx.pushScope();
   ctx.indent();
   for (const s of stmt.body) {
     const result = ctx.visitStatement(s);
     lines.push(...result.lines);
   }
   ctx.dedent();
+  ctx.popScope();
 
   lines.push(`${indent}}`);
   return { lines };
@@ -242,12 +244,15 @@ export function visitFunctionDeclaration(
 
   lines.push(`${indent}async function ${stmt.name}() {`);
 
+  // Push a new scope for function variables
+  ctx.pushScope();
   ctx.indent();
   for (const s of stmt.body) {
     const result = ctx.visitStatement(s);
     lines.push(...result.lines);
   }
   ctx.dedent();
+  ctx.popScope();
 
   lines.push(`${indent}}`);
   return { lines };

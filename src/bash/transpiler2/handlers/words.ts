@@ -14,6 +14,25 @@ import {
 } from "../utils/escape.ts";
 
 // =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Find the first unescaped slash in a string.
+ * Returns the index of the first unescaped '/', or -1 if not found.
+ */
+function findFirstUnescapedSlash(s: string): number {
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && i + 1 < s.length) {
+      i++; // Skip escaped char
+    } else if (s[i] === '/') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// =============================================================================
 // Word Handler
 // =============================================================================
 
@@ -57,8 +76,8 @@ export function visitWordPart(part: AST.WordPart, ctx: VisitorContext): string {
     case "ProcessSubstitution":
       return visitProcessSubstitution(part, ctx);
     case "GlobPattern":
-      // Glob patterns are passed through as literals
-      return escapeForTemplate(part.pattern);
+      // Expand glob patterns at runtime
+      return `\${(await $.fs.glob("${escapeForQuotes(part.pattern)}")).join(" ")}`;
     default: {
       const _exhaustive: never = part;
       return "";
@@ -96,11 +115,11 @@ export function visitParameterExpansion(
       return `\${${param}.length}`;
 
     case ":-":
-      // ${VAR:-default} - use default if unset or null
-      return `\${${param} ?? "${escapeForQuotes(modifierArg)}"}`;
+      // ${VAR:-default} - use default if unset OR empty
+      return `\${(${param} === undefined || ${param} === "") ? "${escapeForQuotes(modifierArg)}" : ${param}}`;
 
     case "-":
-      // ${VAR-default} - use default if unset
+      // ${VAR-default} - use default only if unset
       return `\${${param} !== undefined ? ${param} : "${escapeForQuotes(modifierArg)}"}`;
 
     case ":=":
@@ -152,14 +171,36 @@ export function visitParameterExpansion(
 
     case "/": {
       // ${VAR/pattern/replacement} - replace first
-      const [pattern, replacement] = modifierArg.split("/");
-      return `\${${param}.replace("${escapeForQuotes(pattern || "")}", "${escapeForQuotes(replacement || "")}")}`;
+      // Find first unescaped / to split pattern from replacement
+      const idx = findFirstUnescapedSlash(modifierArg);
+      const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
+      const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
+      return `\${${param}.replace("${escapeForQuotes(pattern)}", "${escapeForQuotes(replacement)}")}`;
     }
 
     case "//": {
       // ${VAR//pattern/replacement} - replace all
-      const [pat, rep] = modifierArg.split("/");
-      return `\${${param}.replaceAll("${escapeForQuotes(pat || "")}", "${escapeForQuotes(rep || "")}")}`;
+      // Find first unescaped / to split pattern from replacement
+      const idx = findFirstUnescapedSlash(modifierArg);
+      const pat = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
+      const rep = idx >= 0 ? modifierArg.slice(idx + 1) : "";
+      return `\${${param}.replaceAll("${escapeForQuotes(pat)}", "${escapeForQuotes(rep)}")}`;
+    }
+
+    case "/#": {
+      // ${VAR/#pattern/replacement} - replace pattern only at start
+      const idx = findFirstUnescapedSlash(modifierArg);
+      const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
+      const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
+      return `\${${param}.replace(/^${escapeRegex(pattern)}/, "${escapeForQuotes(replacement)}")}`;
+    }
+
+    case "/%": {
+      // ${VAR/%pattern/replacement} - replace pattern only at end
+      const idx = findFirstUnescapedSlash(modifierArg);
+      const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
+      const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
+      return `\${${param}.replace(/${escapeRegex(pattern)}$/, "${escapeForQuotes(replacement)}")}`;
     }
 
     default:
@@ -193,7 +234,8 @@ export function visitCommandSubstitution(
   // Build inline command substitution that captures stdout
   const innerCode = innerLines.join(" ").replace(/^await /, "").replace(/;$/, "");
 
-  return `\${await (async () => { const __result = ${innerCode}; return (await __result.text()).trim(); })()}`;
+  // Only strip trailing newlines, not all whitespace (Bash behavior)
+  return `\${await (async () => { const __result = ${innerCode}; return (await __result.text()).replace(/\\n+$/, ""); })()}`;
 }
 
 // =============================================================================
@@ -237,7 +279,16 @@ export function visitProcessSubstitution(
     // Input process substitution: command writes to temp file, return path
     return `\${await (async () => { const __tmpFile = await Deno.makeTempFile(); const __cmd = ${innerCode}; await Deno.writeTextFile(__tmpFile, await __cmd.text()); return __tmpFile; })()}`;
   } else {
-    // Output process substitution: return temp file path
-    return `\${await (async () => { const __tmpFile = await Deno.makeTempFile(); return __tmpFile; })()}`;
+    // Output process substitution >(cmd) - starts background process
+    return `\${await (async () => {
+      const __tmpFile = await Deno.makeTempFile();
+      // Background: read from tmpFile and pipe to command
+      (async () => {
+        await new Promise(r => setTimeout(r, 100));  // Let parent write first
+        const __content = await Deno.readTextFile(__tmpFile);
+        ${innerCode}.stdin(__content);
+      })();
+      return __tmpFile;
+    })()}`;
   }
 }
