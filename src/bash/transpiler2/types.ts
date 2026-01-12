@@ -5,6 +5,10 @@
  */
 
 import type * as AST from "../ast.ts";
+import type { Diagnostic } from "./context.ts";
+
+// Re-export Diagnostic for convenience
+export type { Diagnostic };
 
 // =============================================================================
 // Transpiler Options
@@ -119,6 +123,12 @@ export interface VisitorContext {
 
   /** Pop current variable scope */
   popScope(): void;
+
+  /** Add a diagnostic message */
+  addDiagnostic(diagnostic: Diagnostic): void;
+
+  /** Get all diagnostics */
+  getDiagnostics(): Diagnostic[];
 
   /** Visit a statement node */
   visitStatement(stmt: AST.Statement): StatementResult;

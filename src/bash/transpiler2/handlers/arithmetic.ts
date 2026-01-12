@@ -35,6 +35,7 @@ export function visitArithmeticExpression(
       return visitGroupedArithmetic(expr, _ctx);
     default: {
       const _exhaustive: never = expr;
+      _ctx.addDiagnostic({ level: 'warning', message: `Unsupported arithmetic expression type: ${(expr as any).type}` });
       return "0";
     }
   }

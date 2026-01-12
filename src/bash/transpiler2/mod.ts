@@ -103,6 +103,8 @@ export class BashTranspiler2 {
         ctx.declareVariable(name, type),
       pushScope: () => ctx.pushScope(),
       popScope: () => ctx.popScope(),
+      addDiagnostic: (diagnostic) => ctx.addDiagnostic(diagnostic),
+      getDiagnostics: () => ctx.getDiagnostics(),
 
       visitStatement(stmt: AST.Statement): StatementResult {
         return self.visitStatement(stmt, this);

@@ -32,6 +32,61 @@ function findFirstUnescapedSlash(s: string): number {
   return -1;
 }
 
+/**
+ * Detect and expand brace patterns like {a,b,c} or {1..10}
+ * Returns array of expanded strings or null if not a brace pattern
+ */
+function expandBraces(s: string): string[] | null {
+  // Check for simple comma-separated braces: {a,b,c}
+  const commaMatch = s.match(/^\{([^{}]+(?:,[^{}]+)+)\}$/);
+  if (commaMatch && commaMatch[1]) {
+    return commaMatch[1].split(',');
+  }
+
+  // Check for range braces: {start..end} or {start..end..step}
+  const rangeMatch = s.match(/^\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}$/);
+  if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
+    const start = parseInt(rangeMatch[1]);
+    const end = parseInt(rangeMatch[2]);
+    const step = rangeMatch[3] ? parseInt(rangeMatch[3]) : 1;
+
+    if (step === 0) return null; // Invalid step
+
+    const result: string[] = [];
+    if (step > 0) {
+      for (let i = start; i <= end; i += step) {
+        result.push(i.toString());
+      }
+    } else {
+      for (let i = start; i >= end; i += step) {
+        result.push(i.toString());
+      }
+    }
+    return result;
+  }
+
+  // Check for character range: {a..z}
+  const charRangeMatch = s.match(/^\{([a-zA-Z])\.\.([a-zA-Z])\}$/);
+  if (charRangeMatch && charRangeMatch[1] && charRangeMatch[2]) {
+    const start = charRangeMatch[1].charCodeAt(0);
+    const end = charRangeMatch[2].charCodeAt(0);
+    const result: string[] = [];
+
+    if (start <= end) {
+      for (let i = start; i <= end; i++) {
+        result.push(String.fromCharCode(i));
+      }
+    } else {
+      for (let i = start; i >= end; i--) {
+        result.push(String.fromCharCode(i));
+      }
+    }
+    return result;
+  }
+
+  return null;
+}
+
 // =============================================================================
 // Word Handler
 // =============================================================================
@@ -66,7 +121,7 @@ export function visitWord(
 export function visitWordPart(part: AST.WordPart, ctx: VisitorContext): string {
   switch (part.type) {
     case "LiteralPart":
-      return escapeForTemplate(part.value);
+      return visitLiteralPart(part, ctx);
     case "ParameterExpansion":
       return visitParameterExpansion(part, ctx);
     case "CommandSubstitution":
@@ -86,6 +141,55 @@ export function visitWordPart(part: AST.WordPart, ctx: VisitorContext): string {
 }
 
 // =============================================================================
+// Literal Part Handler (with Tilde and Brace Expansion)
+// =============================================================================
+
+/**
+ * Visit a LiteralPart node with support for tilde and brace expansion
+ */
+export function visitLiteralPart(part: AST.LiteralPart, ctx: VisitorContext): string {
+  let value = part.value;
+
+  // SSH-301: Tilde Expansion
+  // Handle ~ or ~/path at the start of the literal
+  if (value === "~" || value.startsWith("~/")) {
+    const rest = value.slice(1); // Remove the ~
+    return `\${Deno.env.get("HOME") || "~"}${escapeForTemplate(rest)}`;
+  }
+
+  // Handle ~user form (basic support - just pass through for now)
+  // Full ~user expansion would require runtime user lookup
+  if (value.startsWith("~") && value.length > 1 && value[1] !== "/") {
+    // For now, we don't expand ~user - would need getpwnam() equivalent
+    return escapeForTemplate(value);
+  }
+
+  // SSH-302: Brace Expansion
+  // Check if the entire literal is a brace pattern
+  const braceExpansion = expandBraces(value);
+  if (braceExpansion) {
+    // Static expansion at transpile time
+    return braceExpansion.map(s => escapeForTemplate(s)).join(" ");
+  }
+
+  // Check for braces embedded in the string (e.g., "file{1,2,3}.txt")
+  const braceMatch = value.match(/^([^{]*)\{([^{}]+)\}(.*)$/);
+  if (braceMatch) {
+    const [, prefix, braceContent, suffix] = braceMatch;
+    const expanded = expandBraces(`{${braceContent}}`);
+    if (expanded) {
+      // Expand and concatenate with prefix/suffix
+      return expanded
+        .map(s => escapeForTemplate(prefix + s + suffix))
+        .join(" ");
+    }
+  }
+
+  // No special expansion needed
+  return escapeForTemplate(value);
+}
+
+// =============================================================================
 // Parameter Expansion Handler
 // =============================================================================
 
@@ -98,6 +202,29 @@ export function visitParameterExpansion(
 ): string {
   const param = expansion.parameter;
   const modifier = expansion.modifier;
+  const subscript = expansion.subscript;
+  const indirection = expansion.indirection;
+
+  // SSH-303: Handle array indirection ${!arr[@]} for array indices
+  if (indirection && subscript) {
+    if (subscript === "@" || subscript === "*") {
+      // ${!arr[@]} - get array indices/keys
+      return `\${Object.keys(${param}).join(" ")}`;
+    }
+  }
+
+  // SSH-303: Handle array subscripts
+  if (subscript !== undefined) {
+    if (subscript === "@" || subscript === "*") {
+      // ${arr[@]} or ${arr[*]} - all elements
+      // In bash, @ and * differ in quoting behavior, but we'll treat them similarly
+      // Array should be joined with space
+      return `\${Array.isArray(${param}) ? ${param}.join(" ") : ${param}}`;
+    } else {
+      // ${arr[0]} - specific index
+      return `\${${param}[${subscript}]}`;
+    }
+  }
 
   if (!modifier) {
     // Simple expansion: ${VAR} or $VAR
@@ -112,6 +239,10 @@ export function visitParameterExpansion(
   switch (modifier) {
     case "length":
       // ${#VAR} - length of variable
+      // SSH-303: Handle array length ${#arr[@]}
+      if (subscript === "@" || subscript === "*") {
+        return `\${Array.isArray(${param}) ? ${param}.length : 0}`;
+      }
       return `\${${param}.length}`;
 
     case ":-":
@@ -204,7 +335,8 @@ export function visitParameterExpansion(
     }
 
     default:
-      // Unknown modifier, just use simple expansion
+      // Unknown modifier, emit warning and use simple expansion
+      ctx.addDiagnostic({ level: 'warning', message: `Unsupported parameter modifier: ${modifier}` });
       return `\${${param}}`;
   }
 }
