@@ -5,7 +5,7 @@
 import { loadState, isPidRunning } from "../lib/state.ts";
 import { getStateFilePath } from "../../runtime/state-persistence.ts";
 import type { PersistedState } from "../../runtime/state-persistence.ts";
-import { colors } from "@std/fmt/colors";
+import { bold, yellow, green, red } from "@std/fmt/colors";
 
 export async function cleanCommand(): Promise<void> {
   const state = await loadState();
@@ -15,7 +15,7 @@ export async function cleanCommand(): Promise<void> {
     return;
   }
 
-  console.log(colors.bold("Cleaning stale state...\n"));
+  console.log(bold("Cleaning stale state...\n"));
 
   let cleaned = 0;
 
@@ -23,7 +23,7 @@ export async function cleanCommand(): Promise<void> {
   for (const [scriptId, script] of Object.entries(state.scripts)) {
     if (script.status === "running" && script.pid) {
       if (!isPidRunning(script.pid)) {
-        console.log(colors.yellow(`  ⚠ Script ${scriptId} (PID ${script.pid}) is dead - marking as failed`));
+        console.log(yellow(`  ⚠ Script ${scriptId} (PID ${script.pid}) is dead - marking as failed`));
         script.status = "failed";
         script.completedAt = new Date().toISOString();
         cleaned++;
@@ -32,7 +32,7 @@ export async function cleanCommand(): Promise<void> {
   }
 
   if (cleaned === 0) {
-    console.log(colors.green("✓ No stale scripts found"));
+    console.log(green("✓ No stale scripts found"));
     return;
   }
 
@@ -42,9 +42,9 @@ export async function cleanCommand(): Promise<void> {
     state.updatedAt = new Date().toISOString();
     await Deno.writeTextFile(stateFile, JSON.stringify(state, null, 2));
     console.log("");
-    console.log(colors.green(`✓ Cleaned ${cleaned} stale script(s)`));
+    console.log(green(`✓ Cleaned ${cleaned} stale script(s)`));
   } catch (error) {
-    console.error(colors.red(`Failed to save cleaned state: ${error instanceof Error ? error.message : String(error)}`));
+    console.error(red(`Failed to save cleaned state: ${error instanceof Error ? error.message : String(error)}`));
     Deno.exit(1);
   }
 }

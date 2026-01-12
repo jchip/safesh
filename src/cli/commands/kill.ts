@@ -3,7 +3,7 @@
  */
 
 import { loadState, isPidRunning } from "../lib/state.ts";
-import { colors } from "@std/fmt/colors";
+import { yellow, green, dim, red } from "@std/fmt/colors";
 
 export async function killCommand(scriptId: string): Promise<void> {
   const state = await loadState();
@@ -32,7 +32,7 @@ export async function killCommand(scriptId: string): Promise<void> {
 
   // Check if process is actually alive
   if (!isPidRunning(script.pid)) {
-    console.log(colors.yellow(`⚠ Process ${script.pid} is already dead`));
+    console.log(yellow(`⚠ Process ${script.pid} is already dead`));
     console.log("State may be stale. Run 'safesh clean' to update.");
     Deno.exit(1);
   }
@@ -40,13 +40,13 @@ export async function killCommand(scriptId: string): Promise<void> {
   // Send SIGTERM
   try {
     Deno.kill(script.pid, "SIGTERM");
-    console.log(colors.green(`✓ Sent SIGTERM to script ${scriptId} (PID ${script.pid})`));
+    console.log(green(`✓ Sent SIGTERM to script ${scriptId} (PID ${script.pid})`));
     console.log("");
     console.log("The script should terminate gracefully.");
     console.log("If it doesn't, you can use system tools to force kill:");
-    console.log(colors.dim(`  kill -9 ${script.pid}`));
+    console.log(dim(`  kill -9 ${script.pid}`));
   } catch (error) {
-    console.error(colors.red(`Failed to kill script: ${error instanceof Error ? error.message : String(error)}`));
+    console.error(red(`Failed to kill script: ${error instanceof Error ? error.message : String(error)}`));
     Deno.exit(1);
   }
 }

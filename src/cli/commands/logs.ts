@@ -3,7 +3,7 @@
  */
 
 import { loadState } from "../lib/state.ts";
-import { colors } from "@std/fmt/colors";
+import { yellow, dim, bold } from "@std/fmt/colors";
 
 export async function logsCommand(scriptId: string): Promise<void> {
   const state = await loadState();
@@ -22,14 +22,14 @@ export async function logsCommand(scriptId: string): Promise<void> {
 
   // Current limitation: logs are stored in memory during MCP server runtime
   // They are not persisted to disk
-  console.log(colors.yellow("\n⚠ Log Limitation:"));
+  console.log(yellow("\n⚠ Log Limitation:"));
   console.log("Script output is currently stored in memory during MCP server runtime.");
   console.log("Logs are not persisted to disk and cannot be retrieved after server restart.");
   console.log("");
-  console.log(colors.dim("Future enhancement: Persist logs to .local/state/safesh/logs/\n"));
+  console.log(dim("Future enhancement: Persist logs to .local/state/safesh/logs/\n"));
 
   // Show what we know from state
-  console.log(colors.bold(`Script: ${scriptId}\n`));
+  console.log(bold(`Script: ${scriptId}\n`));
   console.log(`  Status:   ${script.status}`);
   console.log(`  Shell:    ${script.shellId}`);
   console.log(`  Started:  ${new Date(script.startedAt).toISOString()}`);
@@ -47,6 +47,6 @@ export async function logsCommand(scriptId: string): Promise<void> {
   }
 
   console.log("");
-  console.log(colors.dim("To view live output, use the MCP 'getScriptOutput' tool while server is running."));
+  console.log(dim("To view live output, use the MCP 'getScriptOutput' tool while server is running."));
   console.log("");
 }

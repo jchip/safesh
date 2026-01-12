@@ -24,30 +24,42 @@ const testConfig: SafeShellConfig = {
 // createServer Tests
 // ============================================================================
 
-Deno.test("createServer - creates server with correct name", () => {
-  const server = createServer(testConfig, "/project");
-  // Server is created - basic smoke test
-  assertEquals(typeof server, "object");
+Deno.test({
+  name: "createServer - creates server with correct name",
+  // Server creates background timers and file readers for persistence
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn() {
+    const server = createServer(testConfig, Deno.cwd());
+    // Server is created - basic smoke test
+    assertEquals(typeof server, "object");
+  },
 });
 
 // ============================================================================
 // Tool Description Tests (verify descriptions are informative)
 // ============================================================================
 
-Deno.test("MCP exec tool - description includes permission info", async () => {
-  // We can't easily test the full MCP server without a transport,
-  // but we can verify the server creates successfully with config
-  const config: SafeShellConfig = {
-    permissions: {
-      read: ["/tmp", "/project"],
-      write: ["/tmp"],
-      net: ["example.com"],
-      run: ["git"],
-    },
-  };
+Deno.test({
+  name: "MCP exec tool - description includes permission info",
+  // Server creates background timers and file readers for persistence
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn() {
+    // We can't easily test the full MCP server without a transport,
+    // but we can verify the server creates successfully with config
+    const config: SafeShellConfig = {
+      permissions: {
+        read: ["/tmp", Deno.cwd()],
+        write: ["/tmp"],
+        net: ["example.com"],
+        run: ["git"],
+      },
+    };
 
-  const server = createServer(config, "/project");
-  assertEquals(typeof server, "object");
+    const server = createServer(config, Deno.cwd());
+    assertEquals(typeof server, "object");
+  },
 });
 
 // ============================================================================
@@ -160,7 +172,7 @@ Deno.test({
       ["status"],
       registry,
       testConfig,
-      "/project",
+      Deno.cwd(),
     );
     assertEquals(result.valid, true);
 
@@ -170,7 +182,7 @@ Deno.test({
       ["-rf", "/"],
       registry,
       testConfig,
-      "/project",
+      Deno.cwd(),
     );
     assertEquals(result.valid, false);
     assertEquals(result.error?.code, "COMMAND_NOT_WHITELISTED");
@@ -190,7 +202,7 @@ Deno.test({
       ["push", "--force"],
       registry,
       testConfig,
-      "/project",
+      Deno.cwd(),
     );
 
     assertEquals(result.valid, false);

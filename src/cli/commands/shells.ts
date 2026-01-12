@@ -3,7 +3,7 @@
  */
 
 import { loadState, formatRelativeTime } from "../lib/state.ts";
-import { colors } from "@std/fmt/colors";
+import { bold, cyan, dim } from "@std/fmt/colors";
 
 export async function shellsCommand(): Promise<void> {
   const state = await loadState();
@@ -20,7 +20,7 @@ export async function shellsCommand(): Promise<void> {
     return;
   }
 
-  console.log(colors.bold(`\nShells (${shells.length}):\n`));
+  console.log(bold(`\nShells (${shells.length}):\n`));
 
   // Sort by creation time (newest first)
   shells.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -29,7 +29,7 @@ export async function shellsCommand(): Promise<void> {
     const created = formatRelativeTime(shell.createdAt);
     const activity = formatRelativeTime(shell.lastActivityAt);
 
-    console.log(colors.cyan(`  ${shell.id}`));
+    console.log(cyan(`  ${shell.id}`));
     console.log(`    CWD:      ${shell.cwd}`);
     console.log(`    Created:  ${created}`);
     console.log(`    Activity: ${activity}`);
@@ -49,5 +49,5 @@ export async function shellsCommand(): Promise<void> {
     console.log("");
   }
 
-  console.log(colors.dim(`  State updated: ${formatRelativeTime(state.updatedAt)}\n`));
+  console.log(dim(`  State updated: ${formatRelativeTime(state.updatedAt)}\n`));
 }
