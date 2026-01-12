@@ -792,19 +792,7 @@ export class Parser {
       this.skipNewlines();
     }
 
-    // Parse function body (can be a brace group or subshell)
-    let body: AST.Statement[];
-
-    if (this.is(TokenType.LBRACE)) {
-      const group = this.parseBraceGroup();
-      body = group.body;
-    } else if (this.is(TokenType.LPAREN)) {
-      const subshell = this.parseSubshell();
-      body = subshell.body;
-    } else {
-      throw this.error("Expected function body");
-    }
-
+    const body = this.parseFunctionBody();
     this.popContext();
 
     return {
@@ -831,19 +819,7 @@ export class Parser {
     this.expect(TokenType.RPAREN);
     this.skipNewlines();
 
-    // Parse function body (can be a brace group or subshell)
-    let body: AST.Statement[];
-
-    if (this.is(TokenType.LBRACE)) {
-      const group = this.parseBraceGroup();
-      body = group.body;
-    } else if (this.is(TokenType.LPAREN)) {
-      const subshell = this.parseSubshell();
-      body = subshell.body;
-    } else {
-      throw this.error("Expected function body ('{' or '(')");
-    }
-
+    const body = this.parseFunctionBody();
     this.popContext();
 
     return {
@@ -851,6 +827,18 @@ export class Parser {
       name,
       body,
     };
+  }
+
+  /**
+   * Parse function body - can be a brace group or subshell
+   */
+  private parseFunctionBody(): AST.Statement[] {
+    if (this.is(TokenType.LBRACE)) {
+      return this.parseBraceGroup().body;
+    } else if (this.is(TokenType.LPAREN)) {
+      return this.parseSubshell().body;
+    }
+    throw this.error("Expected function body ('{' or '(')");
   }
 
   // ===========================================================================

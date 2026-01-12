@@ -16,6 +16,48 @@ import { isFluentCommand } from "../types.ts";
 import { escapeForQuotes } from "../utils/escape.ts";
 
 // =============================================================================
+// Helpers
+// =============================================================================
+
+/**
+ * Parse the -n count argument from head/tail style commands.
+ * Supports: -n 20, -n20, -20
+ * @returns The parsed count, or the default value if not found
+ */
+function parseCountArg(args: string[], defaultValue = 10): number {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "-n" && args[i + 1]) {
+      // -n 20 (with space)
+      return parseInt(args[i + 1] ?? "") || defaultValue;
+    } else if (arg?.startsWith("-n")) {
+      // -n20 (without space)
+      return parseInt(arg.slice(2)) || defaultValue;
+    } else if (arg?.startsWith("-") && /^-\d+$/.test(arg)) {
+      // -20 shorthand
+      return parseInt(arg.slice(1)) || defaultValue;
+    }
+  }
+  return defaultValue;
+}
+
+/**
+ * Collect boolean flag options from command arguments.
+ * @param args - Command arguments
+ * @param flagMap - Map of flag to option string (e.g., { "-n": "numeric: true" })
+ * @returns Array of option strings
+ */
+function collectFlagOptions(args: string[], flagMap: Record<string, string>): string[] {
+  const options: string[] = [];
+  for (const arg of args) {
+    if (arg && flagMap[arg]) {
+      options.push(flagMap[arg]);
+    }
+  }
+  return options;
+}
+
+// =============================================================================
 // Command Handler
 // =============================================================================
 
@@ -126,84 +168,44 @@ function buildFluentCommand(
 
     case "head": {
       // $.head(n) as transform
-      let n = 10; // default
-      for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg === "-n" && args[i + 1]) {
-          // -n 20 (with space)
-          n = parseInt(args[i + 1] ?? "") || 10;
-          i++;
-        } else if (arg?.startsWith("-n")) {
-          // -n20 (without space)
-          n = parseInt(arg.slice(2)) || 10;
-        } else if (arg?.startsWith("-") && /^-\d+$/.test(arg)) {
-          // -20 shorthand
-          n = parseInt(arg.slice(1)) || 10;
-        }
-      }
+      const n = parseCountArg(args);
       return `$.head(${n})`;
     }
 
     case "tail": {
       // $.tail(n) as transform
-      let n = 10; // default
-      for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg === "-n" && args[i + 1]) {
-          // -n 20 (with space)
-          n = parseInt(args[i + 1] ?? "") || 10;
-          i++;
-        } else if (arg?.startsWith("-n")) {
-          // -n20 (without space)
-          n = parseInt(arg.slice(2)) || 10;
-        } else if (arg?.startsWith("-") && /^-\d+$/.test(arg)) {
-          // -20 shorthand
-          n = parseInt(arg.slice(1)) || 10;
-        }
-      }
+      const n = parseCountArg(args);
       return `$.tail(${n})`;
     }
 
     case "sort": {
       // $.sort(options) as transform
-      const options: string[] = [];
-      for (const arg of args) {
-        if (arg === "-n") options.push("numeric: true");
-        if (arg === "-r") options.push("reverse: true");
-        if (arg === "-u") options.push("unique: true");
-      }
-      if (options.length > 0) {
-        return `$.sort({ ${options.join(", ")} })`;
-      }
-      return "$.sort()";
+      const options = collectFlagOptions(args, {
+        "-n": "numeric: true",
+        "-r": "reverse: true",
+        "-u": "unique: true",
+      });
+      return options.length > 0 ? `$.sort({ ${options.join(", ")} })` : "$.sort()";
     }
 
     case "uniq": {
       // $.uniq(options) as transform
-      const options: string[] = [];
-      for (const arg of args) {
-        if (arg === "-c") options.push("count: true");
-        if (arg === "-i") options.push("ignoreCase: true");
-      }
-      if (options.length > 0) {
-        return `$.uniq({ ${options.join(", ")} })`;
-      }
-      return "$.uniq()";
+      const options = collectFlagOptions(args, {
+        "-c": "count: true",
+        "-i": "ignoreCase: true",
+      });
+      return options.length > 0 ? `$.uniq({ ${options.join(", ")} })` : "$.uniq()";
     }
 
     case "wc": {
       // $.wc() or $.wc(options)
-      const options: string[] = [];
-      for (const arg of args) {
-        if (arg === "-l") options.push("lines: true");
-        if (arg === "-w") options.push("words: true");
-        if (arg === "-c") options.push("bytes: true");
-        if (arg === "-m") options.push("chars: true");
-      }
-      if (options.length > 0) {
-        return `$.wc({ ${options.join(", ")} })`;
-      }
-      return "$.wc()";
+      const options = collectFlagOptions(args, {
+        "-l": "lines: true",
+        "-w": "words: true",
+        "-c": "bytes: true",
+        "-m": "chars: true",
+      });
+      return options.length > 0 ? `$.wc({ ${options.join(", ")} })` : "$.wc()";
     }
 
     case "tee": {
