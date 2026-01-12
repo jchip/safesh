@@ -31,10 +31,10 @@ function str(value: unknown): string {
  * All functions accept ShellString or any string-like value
  */
 export const path = {
-  resolve: (...paths: unknown[]) => stdResolve(...paths.map(str)),
+  resolve: (...paths: unknown[]) => stdResolve(...(paths.map(str) as [string, ...string[]])),
   dirname: (p: unknown) => stdDirname(str(p)),
   basename: (p: unknown, suffix?: string) => stdBasename(str(p), suffix),
-  join: (...paths: unknown[]) => stdJoin(...paths.map(str)),
+  join: (...paths: unknown[]) => stdJoin(...(paths.map(str) as [string, ...string[]])),
   extname: (p: unknown) => stdExtname(str(p)),
   relative: (from: unknown, to: unknown) => stdRelative(str(from), str(to)),
   normalize: (p: unknown) => stdNormalize(str(p)),
