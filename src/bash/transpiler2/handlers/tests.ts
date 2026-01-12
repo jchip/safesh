@@ -29,6 +29,7 @@ export function visitTestCondition(
       return visitStringTest(test, ctx);
     default: {
       const _exhaustive: never = test;
+      ctx.addDiagnostic({ level: 'warning', message: `Unsupported test condition type: ${(test as any).type}` });
       return "false";
     }
   }
@@ -101,6 +102,7 @@ export function visitUnaryTest(
 
     default: {
       const _exhaustive: never = test.operator;
+      ctx.addDiagnostic({ level: 'warning', message: `Unsupported unary test operator: ${test.operator}` });
       return "false";
     }
   }
@@ -160,6 +162,7 @@ export function visitBinaryTest(
 
     default: {
       const _exhaustive: never = test.operator;
+      ctx.addDiagnostic({ level: 'warning', message: `Unsupported binary test operator: ${test.operator}` });
       return "false";
     }
   }

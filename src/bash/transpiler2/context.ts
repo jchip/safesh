@@ -8,6 +8,16 @@
 import type { ResolvedOptions } from "./types.ts";
 
 // =============================================================================
+// Diagnostic Interface
+// =============================================================================
+
+export interface Diagnostic {
+  level: 'error' | 'warning' | 'info';
+  message: string;
+  location?: { line?: number; column?: number };
+}
+
+// =============================================================================
 // Variable Scope
 // =============================================================================
 
@@ -27,6 +37,7 @@ export class TranspilerContext {
   private indentLevel = 0;
   private tempVarCounter = 0;
   private currentScope: VariableScope;
+  private diagnostics: Diagnostic[] = [];
 
   constructor(options: ResolvedOptions) {
     this.options = options;
@@ -143,6 +154,25 @@ export class TranspilerContext {
   /** Check if variable is in current scope (not parent) */
   isInCurrentScope(name: string): boolean {
     return this.currentScope.variables.has(name);
+  }
+
+  // ===========================================================================
+  // Diagnostics
+  // ===========================================================================
+
+  /** Add a diagnostic message */
+  addDiagnostic(diagnostic: Diagnostic): void {
+    this.diagnostics.push(diagnostic);
+  }
+
+  /** Get all diagnostics */
+  getDiagnostics(): Diagnostic[] {
+    return [...this.diagnostics];
+  }
+
+  /** Clear all diagnostics */
+  clearDiagnostics(): void {
+    this.diagnostics = [];
   }
 
   // ===========================================================================
