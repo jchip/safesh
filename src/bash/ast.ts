@@ -214,6 +214,9 @@ export interface ParameterExpansion extends BaseNode {
   parameter: string;
   modifier?: ParameterModifier;
   modifierArg?: Word | ParameterExpansion;
+  // SSH-303: Array support
+  subscript?: string | "@" | "*"; // Array subscript: ${arr[0]}, ${arr[@]}, ${arr[*]}
+  indirection?: boolean; // ${!arr[@]} for array indices
 }
 
 export type ParameterModifier =

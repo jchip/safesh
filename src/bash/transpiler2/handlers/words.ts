@@ -48,7 +48,8 @@ function expandBraces(s: string): string[] | null {
   if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
     const start = parseInt(rangeMatch[1]);
     const end = parseInt(rangeMatch[2]);
-    const step = rangeMatch[3] ? parseInt(rangeMatch[3]) : 1;
+    // Auto-detect direction if step not provided
+    const step = rangeMatch[3] ? parseInt(rangeMatch[3]) : (start <= end ? 1 : -1);
 
     if (step === 0) return null; // Invalid step
 
