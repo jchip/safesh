@@ -8,6 +8,19 @@
 import { Lexer, Token, TokenType } from "./lexer.ts";
 import type * as AST from "./ast.ts";
 import { parseArithmetic } from "./arithmetic-parser.ts";
+import {
+  UNARY_TEST_OPERATORS,
+  BINARY_TEST_OPERATORS,
+  REDIRECTION_TOKEN_TYPES,
+  FD_PREFIXABLE_REDIRECTIONS,
+  REDIRECTION_OPERATOR_MAP,
+  TWO_CHAR_PARAM_MODIFIERS,
+  SINGLE_CHAR_PARAM_MODIFIERS,
+  isFdPrefixableRedirection,
+  isUnaryTestOperator,
+  getBinaryTestOperator,
+  getRedirectionOperator,
+} from "./operators.ts";
 
 // =============================================================================
 // Parser Context (for better error messages)
@@ -911,21 +924,15 @@ export class Parser {
 
   private parseTestPrimary(): AST.TestCondition {
     // Check for unary file/string test operators
-    const unaryOps: AST.UnaryTestOperator[] = [
-      "-e", "-f", "-d", "-L", "-h", "-b", "-c", "-p", "-S", "-t",
-      "-r", "-w", "-x", "-s", "-g", "-u", "-k", "-O", "-G", "-N",
-      "-z", "-n",
-    ];
-
     if (this.is(TokenType.WORD) || this.is(TokenType.NAME)) {
       const value = this.currentToken.value;
-      if (unaryOps.includes(value as AST.UnaryTestOperator)) {
+      if (isUnaryTestOperator(value)) {
         this.advance();
         this.skipNewlines();
         const argument = this.parseTestWord();
         return {
           type: "UnaryTest",
-          operator: value as AST.UnaryTestOperator,
+          operator: value,
           argument,
         };
       }
@@ -946,26 +953,8 @@ export class Parser {
     }
 
     // Binary operators
-    const binaryOps: Record<string, AST.BinaryTestOperator> = {
-      "=": "=",
-      "==": "==",
-      "!=": "!=",
-      "<": "<",
-      ">": ">",
-      "-eq": "-eq",
-      "-ne": "-ne",
-      "-lt": "-lt",
-      "-le": "-le",
-      "-gt": "-gt",
-      "-ge": "-ge",
-      "-nt": "-nt",
-      "-ot": "-ot",
-      "-ef": "-ef",
-      "=~": "=~",
-    };
-
     const opToken = this.currentToken;
-    const op = binaryOps[opToken.value];
+    const op = getBinaryTestOperator(opToken.value);
     if (op) {
       this.advance();
       this.skipNewlines();
@@ -1064,44 +1053,16 @@ export class Parser {
 
   private isRedirectionOperator(): boolean {
     // Direct redirection operators
-    if (this.isAny(
-      TokenType.LESS,
-      TokenType.GREAT,
-      TokenType.DGREAT,
-      TokenType.LESSAND,
-      TokenType.GREATAND,
-      TokenType.LESSGREAT,
-      TokenType.CLOBBER,
-      TokenType.DLESS,
-      TokenType.DLESSDASH,
-      TokenType.TLESS,
-      TokenType.AND_GREAT,
-      TokenType.AND_DGREAT,
-    )) {
+    if (this.isAny(...REDIRECTION_TOKEN_TYPES)) {
       return true;
     }
 
     // Number followed by redirection operator (e.g., 2> or 10>&)
     if (this.is(TokenType.NUMBER)) {
-      return this.isNextTokenRedirect();
+      return isFdPrefixableRedirection(this.peekToken.type);
     }
 
     return false;
-  }
-
-  /**
-   * Check if the peek token is a redirection operator
-   */
-  private isNextTokenRedirect(): boolean {
-    return [
-      TokenType.LESS,
-      TokenType.GREAT,
-      TokenType.DGREAT,
-      TokenType.LESSAND,
-      TokenType.GREATAND,
-      TokenType.LESSGREAT,
-      TokenType.CLOBBER,
-    ].includes(this.peekToken.type);
   }
 
   /**
@@ -1120,89 +1081,41 @@ export class Parser {
     }
 
     // Check if next token is a redirection operator
-    const nextType = this.peekToken.type;
-    return [
-      TokenType.LESS,
-      TokenType.GREAT,
-      TokenType.DGREAT,
-      TokenType.LESSAND,
-      TokenType.GREATAND,
-      TokenType.LESSGREAT,
-      TokenType.CLOBBER,
-    ].includes(nextType);
+    return isFdPrefixableRedirection(this.peekToken.type);
   }
 
-  private parseRedirection(): AST.Redirection {
-    let fd: number | undefined;
-    let fdVar: string | undefined;
-
+  /**
+   * Try to parse an FD prefix (number or {var}) before a redirection operator
+   * Returns { fd, fdVar } with one or neither set
+   */
+  private tryParseFdPrefix(): { fd?: number; fdVar?: string } {
     // Check for fd number (e.g., "2>")
-    if (this.is(TokenType.NUMBER)) {
-      fd = parseInt(this.advance().value, 10);
+    if (this.is(TokenType.NUMBER) && isFdPrefixableRedirection(this.peekToken.type)) {
+      return { fd: parseInt(this.advance().value, 10) };
     }
+
     // Check for fd variable (e.g., "{fd}>") - Bash 4.1+ syntax
-    else if (this.is(TokenType.WORD) || this.is(TokenType.NAME)) {
+    if (this.isAny(TokenType.WORD, TokenType.NAME)) {
       const value = this.currentToken.value;
       const fdVarMatch = value.match(/^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/);
-      if (fdVarMatch) {
-        // Check if NEXT token is a redirection operator
-        const nextIsRedirect = [
-          TokenType.LESS, TokenType.GREAT, TokenType.DGREAT,
-          TokenType.LESSAND, TokenType.GREATAND, TokenType.LESSGREAT,
-          TokenType.CLOBBER,
-        ].includes(this.peekToken.type);
-
-        if (nextIsRedirect) {
-          // This is a {var} prefix for FD variable allocation
-          fdVar = fdVarMatch[1];
-          this.advance();
-        }
+      if (fdVarMatch && isFdPrefixableRedirection(this.peekToken.type)) {
+        this.advance();
+        return { fdVar: fdVarMatch[1] };
       }
     }
 
+    return {};
+  }
+
+  private parseRedirection(): AST.Redirection {
+    const { fd, fdVar } = this.tryParseFdPrefix();
+
     // Parse operator
     const operatorToken = this.advance();
-    let operator: AST.RedirectionOperator;
+    const operator = getRedirectionOperator(operatorToken.type);
 
-    switch (operatorToken.type) {
-      case TokenType.LESS:
-        operator = "<";
-        break;
-      case TokenType.GREAT:
-        operator = ">";
-        break;
-      case TokenType.DGREAT:
-        operator = ">>";
-        break;
-      case TokenType.LESSAND:
-        operator = "<&";
-        break;
-      case TokenType.GREATAND:
-        operator = ">&";
-        break;
-      case TokenType.LESSGREAT:
-        operator = "<>";
-        break;
-      case TokenType.CLOBBER:
-        operator = ">|";
-        break;
-      case TokenType.DLESS:
-        operator = "<<";
-        break;
-      case TokenType.DLESSDASH:
-        operator = "<<-";
-        break;
-      case TokenType.TLESS:
-        operator = "<<<";
-        break;
-      case TokenType.AND_GREAT:
-        operator = "&>";
-        break;
-      case TokenType.AND_DGREAT:
-        operator = "&>>";
-        break;
-      default:
-        throw this.error(`Invalid redirection operator: ${operatorToken.type}`);
+    if (!operator) {
+      throw this.error(`Invalid redirection operator: ${operatorToken.type}`);
     }
 
     // Parse target (word or fd number)
@@ -1287,7 +1200,7 @@ export class Parser {
     };
   }
 
-  private parseWordParts(value: string, quoted: boolean): AST.WordPart[] {
+  private parseWordParts(value: string, _quoted: boolean): AST.WordPart[] {
     const parts: AST.WordPart[] = [];
     let pos = 0;
     let literal = "";
@@ -1302,73 +1215,27 @@ export class Parser {
     while (pos < value.length) {
       const char = value[pos];
 
+      // Handle $ expansions
       if (char === "$") {
-        const next = value[pos + 1];
-
-        // $((arithmetic))
-        if (next === "(" && value[pos + 2] === "(") {
+        const result = this.tryParseDollarExpansion(value, pos);
+        if (result) {
           flushLiteral();
-          // startPos should be position of first '(' (pos + 1)
-          const result = this.extractBalancedDouble(value, pos + 1, "(", ")");
-          parts.push(this.parseArithmeticContent(result.content));
-          pos = result.end + 1;
+          parts.push(result.part);
+          pos = result.newPos;
           continue;
         }
-
-        // $(command)
-        if (next === "(") {
-          flushLiteral();
-          const result = this.extractBalanced(value, pos + 1, "(", ")");
-          parts.push(this.parseCommandSubstitutionContent(result.content, false));
-          pos = result.end + 1;
-          continue;
-        }
-
-        // ${parameter}
-        if (next === "{") {
-          flushLiteral();
-          const result = this.extractBalanced(value, pos + 1, "{", "}");
-          parts.push(this.parseParameterExpansionContent(result.content));
-          pos = result.end + 1;
-          continue;
-        }
-
-        // Special variables: $#, $?, $$, $!, $@, $*, $-, $0-$9
-        if (next && /^[#?$!@*\-0-9]$/.test(next)) {
-          flushLiteral();
-          parts.push({
-            type: "ParameterExpansion",
-            parameter: next,
-          });
-          pos += 2;
-          continue;
-        }
-
-        // Simple $VAR
-        const varMatch = value.slice(pos + 1).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
-        if (varMatch) {
-          flushLiteral();
-          parts.push({
-            type: "ParameterExpansion",
-            parameter: varMatch[0],
-          });
-          pos += 1 + varMatch[0].length;
-          continue;
-        }
-
         // Just a literal $
         literal += char;
         pos++;
         continue;
       }
 
-      // Backtick command substitution (only outside double quotes or when explicitly in double quotes)
+      // Handle backtick command substitution
       if (char === "`") {
+        const result = this.tryParseBacktickSubstitution(value, pos);
         flushLiteral();
-        const endIdx = this.findMatchingBacktick(value, pos + 1);
-        const content = value.slice(pos + 1, endIdx);
-        parts.push(this.parseCommandSubstitutionContent(content, true));
-        pos = endIdx + 1;
+        parts.push(result.part);
+        pos = result.newPos;
         continue;
       }
 
@@ -1382,6 +1249,79 @@ export class Parser {
     flushLiteral();
 
     return parts.length > 0 ? parts : [{ type: "LiteralPart", value }];
+  }
+
+  /**
+   * Try to parse a $ expansion starting at pos
+   * Returns the parsed part and new position, or null if just a literal $
+   */
+  private tryParseDollarExpansion(
+    value: string,
+    pos: number
+  ): { part: AST.WordPart; newPos: number } | null {
+    const next = value[pos + 1];
+
+    // $((arithmetic))
+    if (next === "(" && value[pos + 2] === "(") {
+      const result = this.extractBalancedDouble(value, pos + 1, "(", ")");
+      return {
+        part: this.parseArithmeticContent(result.content),
+        newPos: result.end + 1,
+      };
+    }
+
+    // $(command)
+    if (next === "(") {
+      const result = this.extractBalanced(value, pos + 1, "(", ")");
+      return {
+        part: this.parseCommandSubstitutionContent(result.content, false),
+        newPos: result.end + 1,
+      };
+    }
+
+    // ${parameter}
+    if (next === "{") {
+      const result = this.extractBalanced(value, pos + 1, "{", "}");
+      return {
+        part: this.parseParameterExpansionContent(result.content),
+        newPos: result.end + 1,
+      };
+    }
+
+    // Special variables: $#, $?, $$, $!, $@, $*, $-, $0-$9
+    if (next && /^[#?$!@*\-0-9]$/.test(next)) {
+      return {
+        part: { type: "ParameterExpansion", parameter: next },
+        newPos: pos + 2,
+      };
+    }
+
+    // Simple $VAR
+    const varMatch = value.slice(pos + 1).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
+    if (varMatch) {
+      return {
+        part: { type: "ParameterExpansion", parameter: varMatch[0] },
+        newPos: pos + 1 + varMatch[0].length,
+      };
+    }
+
+    // Not an expansion, just a literal $
+    return null;
+  }
+
+  /**
+   * Parse backtick command substitution starting at pos
+   */
+  private tryParseBacktickSubstitution(
+    value: string,
+    pos: number
+  ): { part: AST.CommandSubstitution; newPos: number } {
+    const endIdx = this.findMatchingBacktick(value, pos + 1);
+    const content = value.slice(pos + 1, endIdx);
+    return {
+      part: this.parseCommandSubstitutionContent(content, true),
+      newPos: endIdx + 1,
+    };
   }
 
   // ===========================================================================
@@ -1567,13 +1507,7 @@ export class Parser {
     });
 
     // Two-character modifiers (check first)
-    const twoCharModifiers: Array<[string, AST.ParameterModifier]> = [
-      [":-", ":-"], [":=", ":="], [":?", ":?"], [":+", ":+"],
-      ["##", "##"], ["%%", "%%"], ["^^", "^^"], [",,", ",,"],
-      ["//", "//"], ["/#", "/#"], ["/%", "/%"],
-    ];
-
-    for (const [pattern, modifier] of twoCharModifiers) {
+    for (const [pattern, modifier] of TWO_CHAR_PARAM_MODIFIERS) {
       if (remaining.startsWith(pattern)) {
         const arg = remaining.slice(pattern.length);
         const result: AST.ParameterExpansion = {
@@ -1589,20 +1523,14 @@ export class Parser {
     }
 
     // Single-character modifiers
-    const singleCharModifiers: Record<string, AST.ParameterModifier> = {
-      "-": "-", "=": "=", "?": "?", "+": "+",
-      "#": "#", "%": "%", "^": "^", ",": ",",
-      "/": "/", "@": "@",
-    };
-
     const firstChar = remaining[0] ?? "";
-    if (singleCharModifiers[firstChar]) {
-      const modifier = singleCharModifiers[firstChar]!;
+    const singleCharModifier = SINGLE_CHAR_PARAM_MODIFIERS[firstChar];
+    if (singleCharModifier) {
       const arg = remaining.slice(1);
       const result: AST.ParameterExpansion = {
         type: "ParameterExpansion",
         parameter: paramName,
-        modifier,
+        modifier: singleCharModifier,
       };
       if (arg) {
         result.modifierArg = modifierArg(arg);

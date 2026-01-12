@@ -240,7 +240,7 @@ class SedParser {
     const flags = token.flags || "";
     let nthOccurrence: number | undefined;
     const numMatch = flags.match(/(\d+)/);
-    if (numMatch) {
+    if (numMatch?.[1]) {
       nthOccurrence = parseInt(numMatch[1], 10);
     }
 
@@ -401,7 +401,7 @@ class SedParser {
     if (!this.isAtEnd()) {
       this.pos++;
     }
-    return this.tokens[this.pos - 1];
+    return this.tokens[this.pos - 1]!;
   }
 
   private check(type: SedTokenType): boolean {
