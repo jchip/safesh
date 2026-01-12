@@ -2,7 +2,7 @@
  * Tests for runtime/shell.ts
  */
 
-import { assertEquals, assertNotEquals } from "@std/assert";
+import { assertEquals, assertNotEquals, assertObjectMatch } from "@std/assert";
 import { describe, it, beforeEach } from "@std/testing/bdd";
 import { ShellManager, createShellManager } from "../src/runtime/shell.ts";
 
@@ -19,7 +19,8 @@ describe("ShellManager", () => {
 
       assertNotEquals(shell.id, "");
       assertEquals(shell.cwd, "/tmp/test");
-      assertEquals(shell.env, {});
+      // Shell inherits env from Deno.env, so it's not empty
+      assertEquals(typeof shell.env, "object");
       assertEquals(shell.vars, {});
       assertEquals(shell.scripts.size, 0);
       assertEquals(shell.jobs.size, 0);
@@ -34,7 +35,8 @@ describe("ShellManager", () => {
     it("creates shell with initial env", () => {
       const shell = manager.create({ env: { FOO: "bar", BAZ: "qux" } });
 
-      assertEquals(shell.env, { FOO: "bar", BAZ: "qux" });
+      // Provided env vars are merged with inherited Deno.env
+      assertObjectMatch(shell.env, { FOO: "bar", BAZ: "qux" });
     });
   });
 
@@ -109,7 +111,8 @@ describe("ShellManager", () => {
       const shell = manager.create({ env: { A: "1" } });
       manager.update(shell.id, { env: { B: "2" } });
 
-      assertEquals(shell.env, { A: "1", B: "2" });
+      // Merged env vars on top of inherited Deno.env
+      assertObjectMatch(shell.env, { A: "1", B: "2" });
     });
 
     it("merges vars", () => {
@@ -373,7 +376,8 @@ describe("ShellManager", () => {
 
       assertEquals(serialized.shellId, shell.id);
       assertEquals(serialized.cwd, "/my/dir");
-      assertEquals(serialized.env, { FOO: "bar" });
+      // Env includes inherited Deno.env plus provided vars
+      assertObjectMatch(serialized.env, { FOO: "bar" });
       assertEquals(serialized.vars, { count: 5 });
       assertEquals(serialized.scripts.length, 1);
       assertEquals(serialized.scripts[0]!.id, "script-1");

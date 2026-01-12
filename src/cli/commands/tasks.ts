@@ -3,7 +3,7 @@
  */
 
 import { loadState, formatDuration, formatRelativeTime, isPidRunning } from "../lib/state.ts";
-import { colors } from "@std/fmt/colors";
+import { green, blue, red, dim, yellow, cyan, bold } from "@std/fmt/colors";
 import type { PersistedScript } from "../../runtime/state-persistence.ts";
 
 export interface TasksOptions {
@@ -15,13 +15,13 @@ export interface TasksOptions {
 function getStatusColor(status: string): (str: string) => string {
   switch (status) {
     case "running":
-      return colors.green;
+      return green;
     case "completed":
-      return colors.blue;
+      return blue;
     case "failed":
-      return colors.red;
+      return red;
     default:
-      return colors.dim;
+      return dim;
   }
 }
 
@@ -29,14 +29,14 @@ function getStatusSymbol(script: PersistedScript): string {
   if (script.status === "running") {
     // Check if PID is actually alive
     if (script.pid && !isPidRunning(script.pid)) {
-      return colors.yellow("⚠");
+      return yellow("⚠");
     }
-    return colors.green("▶");
+    return green("▶");
   }
   if (script.status === "completed") {
-    return colors.blue("✓");
+    return blue("✓");
   }
-  return colors.red("✗");
+  return red("✗");
 }
 
 export async function tasksCommand(options: TasksOptions = {}): Promise<void> {
@@ -79,21 +79,21 @@ export async function tasksCommand(options: TasksOptions = {}): Promise<void> {
   if (options.status) filterDesc.push(`status:${options.status}`);
   const filterStr = filterDesc.length > 0 ? ` (${filterDesc.join(", ")})` : "";
 
-  console.log(colors.bold(`\nTasks (${scripts.length})${filterStr}:\n`));
+  console.log(bold(`\nTasks (${scripts.length})${filterStr}:\n`));
 
   for (const script of scripts) {
     const symbol = getStatusSymbol(script);
     const statusColor = getStatusColor(script.status);
     const started = formatRelativeTime(script.startedAt);
 
-    console.log(`${symbol} ${colors.cyan(script.id)}`);
+    console.log(`${symbol} ${cyan(script.id)}`);
     console.log(`    Status:  ${statusColor(script.status.toUpperCase())}`);
     console.log(`    Shell:   ${script.shellId}`);
     console.log(`    Started: ${started}`);
 
     if (script.pid) {
       const alive = isPidRunning(script.pid);
-      const pidStr = alive ? `${script.pid}` : `${script.pid} ${colors.yellow("(dead)")}`;
+      const pidStr = alive ? `${script.pid}` : `${script.pid} ${yellow("(dead)")}`;
       console.log(`    PID:     ${pidStr}`);
     }
 
@@ -106,20 +106,20 @@ export async function tasksCommand(options: TasksOptions = {}): Promise<void> {
     }
 
     if (script.exitCode !== undefined) {
-      const exitColor = script.exitCode === 0 ? colors.green : colors.red;
+      const exitColor = script.exitCode === 0 ? green : red;
       console.log(`    Exit:    ${exitColor(script.exitCode.toString())}`);
     }
 
     if (script.command) {
-      console.log(`    Command: ${colors.dim(script.command)}`);
+      console.log(`    Command: ${dim(script.command)}`);
     }
 
     if (script.background) {
-      console.log(`    Mode:    ${colors.yellow("background")}`);
+      console.log(`    Mode:    ${yellow("background")}`);
     }
 
     console.log("");
   }
 
-  console.log(colors.dim(`  State updated: ${formatRelativeTime(state.updatedAt)}\n`));
+  console.log(dim(`  State updated: ${formatRelativeTime(state.updatedAt)}\n`));
 }
