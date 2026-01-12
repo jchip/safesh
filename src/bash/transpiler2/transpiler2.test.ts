@@ -404,6 +404,31 @@ describe("Transpiler2 - Control Flow", () => {
     assertStringIncludes(output, "async function myfunc()");
     assertStringIncludes(output, "$.cmd`echo hello`");
   });
+
+  it("should handle scoping in functions (SSH-304)", () => {
+    const ast = parse(`
+      function myfunc {
+        x=10
+        echo $x
+      }
+    `);
+    const output = transpile(ast);
+
+    assertStringIncludes(output, "async function myfunc()");
+    assertStringIncludes(output, "let x = ");
+  });
+
+  it("should handle scoping in for loops (SSH-304)", () => {
+    const ast = parse(`
+      for i in a b c
+      do
+        y=val
+      done
+    `);
+    const output = transpile(ast);
+
+    assertStringIncludes(output, "for (const i of");
+  });
 });
 
 // =============================================================================
@@ -422,7 +447,8 @@ describe("Transpiler2 - Variable Expansion", () => {
     const ast = parse('echo "${VAR:-default}"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "VAR ??");
+    // SSH-296: :- should check for both undefined AND empty string
+    assertStringIncludes(output, "VAR === undefined || VAR === \"\"");
   });
 
   it("should transpile length expansion", () => {

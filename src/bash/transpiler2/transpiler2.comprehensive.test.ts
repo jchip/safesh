@@ -589,7 +589,8 @@ describe("Variable Expansion - All Modifiers", () => {
     it("should handle ${VAR:-default} (use default if unset/null)", () => {
       const ast = parse('echo "${VAR:-default_value}"');
       const output = transpile(ast);
-      assertStringIncludes(output, "??");
+      // SSH-296: :- should check for both undefined AND empty string
+      assertStringIncludes(output, "VAR === undefined || VAR === \"\"");
     });
 
     it("should handle ${VAR-default} (use default if unset only)", () => {
@@ -1265,7 +1266,8 @@ describe("Command Substitution", () => {
     const output = transpile(ast);
     assertStringIncludes(output, "async () =>");
     assertStringIncludes(output, ".text()");
-    assertStringIncludes(output, ".trim()");
+    // SSH-297: Only strip trailing newlines, not all whitespace
+    assertStringIncludes(output, '.replace(/\\n+$/, "")');
   });
 
   it("should handle command substitution in variable assignment", () => {
@@ -1699,5 +1701,163 @@ describe("BashTranspiler2 Class Extended", () => {
     assertStringIncludes(outputs[2]!, "echo three");
     assertStringIncludes(outputs[3]!, "echo four");
     assertStringIncludes(outputs[4]!, "echo five");
+  });
+});
+
+// =============================================================================
+// Bug Fixes - SSH-308, SSH-306, SSH-299
+// =============================================================================
+
+describe("Bug Fixes", () => {
+  describe("SSH-308: Redirection file descriptor (fd) field", () => {
+    it("should redirect stderr with 2> operator", () => {
+      const ast = parse("command 2>error.log");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stderr(");
+      assertStringIncludes(output, '"error.log"');
+    });
+
+    it("should redirect stderr with 2>> operator (append)", () => {
+      const ast = parse("command 2>>error.log");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stderr(");
+      assertStringIncludes(output, '"error.log"');
+      assertStringIncludes(output, "append: true");
+    });
+
+    it("should redirect stdout with 1> operator", () => {
+      const ast = parse("command 1>output.log");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stdout(");
+      assertStringIncludes(output, '"output.log"');
+    });
+
+    it("should redirect stdout with > operator (default)", () => {
+      const ast = parse("command >output.log");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stdout(");
+      assertStringIncludes(output, '"output.log"');
+    });
+
+    it("should handle both stdout and stderr redirects", () => {
+      const ast = parse("command >output.log 2>error.log");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stdout(");
+      assertStringIncludes(output, ".stderr(");
+    });
+  });
+
+  describe("SSH-299: Missing redirection operators", () => {
+    it("should handle <> (read-write) operator", () => {
+      const ast = parse("command <>file.txt");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stdin(");
+      assertStringIncludes(output, ".stdout(");
+      assertStringIncludes(output, '"file.txt"');
+    });
+
+    it("should handle >| (force overwrite/clobber) operator", () => {
+      const ast = parse("command >|file.txt");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stdout(");
+      assertStringIncludes(output, "force: true");
+    });
+
+    it("should handle 2>| (force overwrite stderr) operator", () => {
+      const ast = parse("command 2>|error.log");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stderr(");
+      assertStringIncludes(output, "force: true");
+    });
+
+    // NOTE: << and <<- operators are implemented in transpiler but not yet
+    // supported by parser. Tests disabled until parser support is added.
+    // See SSH-299 for details.
+
+    // it("should handle << (here-document) operator", () => {
+    //   const ast = parse("command <<EOF\nHello\nEOF");
+    //   const output = transpile(ast);
+    //   assertStringIncludes(output, ".stdin(");
+    // });
+
+    // it("should handle <<- (here-document with tab stripping) operator", () => {
+    //   const ast = parse("command <<-EOF\n\tHello\nEOF");
+    //   const output = transpile(ast);
+    //   assertStringIncludes(output, ".stdin(");
+    //   assertStringIncludes(output, "stripTabs: true");
+    // });
+  });
+
+  // NOTE: SSH-306 Export flag tests disabled because parser doesn't yet
+  // recognize 'export' as a special command that sets the 'exported' flag
+  // on variable assignments. The transpiler code is ready, but parser support
+  // is required first. When parser is updated, uncomment these tests.
+
+  // describe("SSH-306: Export flag on variable assignments", () => {
+  //   it("should export variable with export keyword", () => {
+  //     const ast = parse("export VAR=value");
+  //     const output = transpile(ast);
+  //     assertStringIncludes(output, "let VAR");
+  //     assertStringIncludes(output, "Deno.env.set");
+  //     assertStringIncludes(output, '"VAR"');
+  //   });
+
+  //   it("should export multiple variables", () => {
+  //     const ast = parse("export VAR1=value1; export VAR2=value2");
+  //     const output = transpile(ast);
+  //     assertStringIncludes(output, "let VAR1");
+  //     assertStringIncludes(output, "let VAR2");
+  //     assertStringIncludes(output, "Deno.env.set");
+  //   });
+
+  //   it("should export already declared variable", () => {
+  //     const ast = parse("VAR=initial; export VAR=updated");
+  //     const output = transpile(ast);
+  //     assertStringIncludes(output, "let VAR");
+  //     assertStringIncludes(output, "Deno.env.set");
+  //   });
+
+  //   it("should handle non-exported variable assignment normally", () => {
+  //     const ast = parse("VAR=value");
+  //     const output = transpile(ast);
+  //     assertStringIncludes(output, "let VAR");
+  //     // Should NOT include Deno.env.set for non-exported vars
+  //     if (output.includes("Deno.env.set")) {
+  //       throw new Error("Non-exported variable should not call Deno.env.set");
+  //     }
+  //   });
+  // });
+
+  describe("Integration: Multiple bug fixes together", () => {
+    // NOTE: Export-related tests commented out due to parser limitations
+    // it("should handle export with stderr redirection", () => {
+    //   const ast = parse("export DEBUG=1; command 2>error.log");
+    //   const output = transpile(ast);
+    //   assertStringIncludes(output, "let DEBUG");
+    //   assertStringIncludes(output, "Deno.env.set");
+    //   assertStringIncludes(output, ".stderr(");
+    // });
+
+    it("should handle stderr append with force overwrite", () => {
+      const ast = parse("command 2>>error.log; another >|output.txt");
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stderr(");
+      assertStringIncludes(output, "append: true");
+      assertStringIncludes(output, ".stdout(");
+      assertStringIncludes(output, "force: true");
+    });
+
+    it("should handle complex script with redirections", () => {
+      const script = `
+command1 >output.txt 2>error.log
+command2 >|force.txt
+command3 <>readwrite.txt
+      `.trim();
+      const ast = parse(script);
+      const output = transpile(ast);
+      assertStringIncludes(output, ".stdout(");
+      assertStringIncludes(output, ".stderr(");
+      assertStringIncludes(output, "force: true");
+    });
   });
 });

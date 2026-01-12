@@ -91,7 +91,7 @@ export function visitUnaryTest(
     case "-G":
       return `(await $.fs.stat(\`${arg}\`))?.gid === Deno.gid()`;
     case "-N":
-      return `(await $.fs.stat(\`${arg}\`))?.mtime > (await $.fs.stat(\`${arg}\`))?.atime`;
+      return `(await (async () => { const _s = await $.fs.stat(\`${arg}\`); return _s?.mtime > _s?.atime; })())`;
 
     // String tests
     case "-z":
