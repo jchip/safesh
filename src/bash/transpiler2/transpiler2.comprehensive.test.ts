@@ -113,9 +113,9 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle multiple variable assignments", () => {
     const ast = parse("A=1 B=2 C=3");
     const output = transpile(ast);
-    assertStringIncludes(output, "const A");
-    assertStringIncludes(output, "const B");
-    assertStringIncludes(output, "const C");
+    assertStringIncludes(output, "let A");
+    assertStringIncludes(output, "let B");
+    assertStringIncludes(output, "let C");
   });
 
   it("should handle variable assignment with command", () => {
@@ -1271,13 +1271,13 @@ describe("Command Substitution", () => {
   it("should handle command substitution in variable assignment", () => {
     const ast = parse('CURRENT_DIR=$(pwd)');
     const output = transpile(ast);
-    assertStringIncludes(output, "const CURRENT_DIR");
+    assertStringIncludes(output, "let CURRENT_DIR");
   });
 
   it("should handle command substitution with pipeline", () => {
     const ast = parse('COUNT=$(ls | wc -l)');
     const output = transpile(ast);
-    assertStringIncludes(output, "const COUNT");
+    assertStringIncludes(output, "let COUNT");
   });
 });
 
@@ -1344,8 +1344,8 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'const BACKUP_DIR');
-    assertStringIncludes(output, 'const DATE');
+    assertStringIncludes(output, 'let BACKUP_DIR');
+    assertStringIncludes(output, 'let DATE');
     assertStringIncludes(output, 'if (');
     assertStringIncludes(output, 'for (const file of');
     assertStringIncludes(output, '$.cmd`cp');
@@ -1363,8 +1363,9 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    // grep with file produces $.cat().grep() pipeline
-    assertStringIncludes(output, '.grep(');
+    // grep with dynamic file arg falls back to generic command style
+    // (fluent style can't parse dynamic args at transpile-time)
+    assertStringIncludes(output, '$.cmd`grep');
     assertStringIncludes(output, '.pipe(');
   });
 
@@ -1408,7 +1409,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'while (true)');
-    assertStringIncludes(output, 'const COUNTER');
+    assertStringIncludes(output, 'let COUNTER');
   });
 
   it("should transpile a for loop with variable iteration", () => {
@@ -1483,7 +1484,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'const BRANCH');
+    assertStringIncludes(output, 'let BRANCH');
     assertStringIncludes(output, 'if (');
     assertStringIncludes(output, '$.cmd`git');
   });
@@ -1529,7 +1530,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'const DB_NAME');
+    assertStringIncludes(output, 'let DB_NAME');
     assertStringIncludes(output, 'pg_dump');
     assertStringIncludes(output, '.pipe(');
   });

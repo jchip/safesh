@@ -108,6 +108,12 @@ export interface VisitorContext {
   /** Get resolved options */
   getOptions(): ResolvedOptions;
 
+  /** Check if a variable is declared */
+  isDeclared(name: string): boolean;
+
+  /** Declare a variable in current scope */
+  declareVariable(name: string, type?: "const" | "let"): void;
+
   /** Visit a statement node */
   visitStatement(stmt: AST.Statement): StatementResult;
 

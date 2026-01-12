@@ -42,8 +42,12 @@ export function buildCommand(
   let cmdExpr: string;
   let isAsync = true;
 
-  // Use fluent style for common text processing commands
-  if (isFluentCommand(name)) {
+  // Check if any args contain dynamic values (template literals with ${)
+  // If so, fluent command handlers can't parse them correctly at transpile-time
+  const hasDynamicArgs = args.some((arg) => arg.includes("${"));
+
+  // Use fluent style for common text processing commands (only with static args)
+  if (isFluentCommand(name) && !hasDynamicArgs) {
     cmdExpr = buildFluentCommand(name, args, ctx);
   } else {
     // Use explicit $.cmd`` style
@@ -441,7 +445,16 @@ export function buildVariableAssignment(
   } else {
     value = escapeForQuotes(ctx.visitWord(stmt.value as AST.Word));
   }
-  return `const ${stmt.name} = "${value}"`;
+
+  // Check if variable is already declared
+  if (ctx.isDeclared(stmt.name)) {
+    // Reassignment - no declaration keyword needed
+    return `${stmt.name} = "${value}"`;
+  } else {
+    // First assignment - declare with let (bash variables are mutable)
+    ctx.declareVariable(stmt.name, "let");
+    return `let ${stmt.name} = "${value}"`;
+  }
 }
 
 /**
