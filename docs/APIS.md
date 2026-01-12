@@ -148,24 +148,77 @@ Async file I/O operations that respect sandbox permissions.
 **API:**
 
 ```typescript
+// Text file operations
 $.fs.read(path: string): Promise<string>
 $.fs.write(path: string, content: string): Promise<void>
+$.fs.append(path: string, content: string): Promise<void>
+
+// Binary file operations
+$.fs.readBytes(path: string): Promise<Uint8Array>
+$.fs.writeBytes(path: string, data: Uint8Array): Promise<void>
+
+// JSON operations
+$.fs.readJson<T>(path: string): Promise<T>
+$.fs.writeJson(path: string, data: unknown, options?: { spaces?: number }): Promise<void>
+
+// File info
+$.fs.exists(path: string): Promise<boolean>
+$.fs.stat(path: string): Promise<Deno.FileInfo | null>
+
+// File management
+$.fs.remove(path: string, options?: { recursive?: boolean }): Promise<void>
+$.fs.mkdir(path: string, options?: { recursive?: boolean }): Promise<void>
+$.fs.ensureDir(path: string): Promise<void>
+$.fs.copy(src: string, dest: string, options?: { overwrite?: boolean }): Promise<void>
+$.fs.move(src: string, dest: string): Promise<void>
+$.fs.touch(path: string): Promise<void>
+$.fs.symlink(target: string, link: string): Promise<void>
+
+// Directory operations
+$.fs.readDir(path: string): Promise<Deno.DirEntry[]>
+$.fs.walk(root: string, options?: WalkOptions): AsyncIterable<WalkEntry>
+$.fs.find(pattern: string): Promise<string[]>
 ```
 
 **Examples:**
 
 ```javascript
-// Read file
+// Read/write text files
 const content = await $.fs.read("config.json");
-const data = JSON.parse(content);
-
-// Write file
 await $.fs.write("output.txt", "Hello, world!");
+await $.fs.append("log.txt", "New entry\n");
 
-// Process and write
-const logs = await $.fs.read("app.log");
-const errors = logs.split("\n").filter((line) => line.includes("ERROR"));
-await $.fs.write("errors.log", errors.join("\n"));
+// JSON operations
+const config = await $.fs.readJson("config.json");
+await $.fs.writeJson("data.json", { name: "test" }, { spaces: 2 });
+
+// Binary files
+const bytes = await $.fs.readBytes("image.png");
+await $.fs.writeBytes("copy.png", bytes);
+
+// File checks
+if (await $.fs.exists("file.txt")) {
+  const stat = await $.fs.stat("file.txt");
+  console.log("Size:", stat?.size);
+}
+
+// Directory operations
+await $.fs.ensureDir("logs/2024");
+await $.fs.mkdir("temp/nested/dirs", { recursive: true });
+
+// Copy/move
+await $.fs.copy("src.txt", "dest.txt");
+await $.fs.move("old.txt", "new.txt");
+
+// Walk directory tree
+for await (const entry of $.fs.walk("src")) {
+  if (entry.isFile && entry.name.endsWith(".ts")) {
+    console.log(entry.path);
+  }
+}
+
+// Find files by pattern
+const logs = await $.fs.find("logs/**/*.log");
 ```
 
 ---
@@ -224,16 +277,28 @@ Line-oriented text processing utilities.
 **API:**
 
 ```typescript
+// String operations
 $.text.trim(input: string | string[], mode?: 'both' | 'left' | 'right'): string | string[]
 $.text.lines(input: string): string[]
+$.text.joinLines(lines: string[], separator?: string): string
 $.text.head(input: string, n?: number): string[]
 $.text.tail(input: string, n?: number): string[]
 $.text.grep(pattern: RegExp | string, input: string): GrepMatch[]
 $.text.replace(input: string, pattern: RegExp | string, replacement: string): string
-$.text.sort(input: string | string[], options?): string[]
-$.text.uniq(input: string | string[], options?): string[] | {line, count}[]
-$.text.count(input: string): {lines, words, chars, bytes}
-$.text.cut(input: string | string[], options?): string[]
+$.text.sort(input: string | string[], options?: SortOptions): string[]
+$.text.uniq(input: string | string[], options?: UniqOptions): string[] | {line, count}[]
+$.text.count(input: string): TextStats
+$.text.cut(input: string | string[], options?: CutOptions): string[]
+$.text.filter(input: string | string[], predicate: (line: string, idx: number) => boolean): string[]
+$.text.map(input: string | string[], mapper: (line: string, idx: number) => string): string[]
+
+// File-based operations (read file, process, return result)
+$.text.grepFiles(pattern: RegExp | string, path: string, options?: GrepOptions): Promise<GrepMatch[]>
+$.text.headFile(path: string, n?: number): Promise<string[]>
+$.text.tailFile(path: string, n?: number): Promise<string[]>
+$.text.countFile(path: string): Promise<TextStats>
+$.text.replaceFile(path: string, pattern: RegExp | string, replacement: string): Promise<string>
+$.text.diffFiles(oldPath: string, newPath: string): Promise<DiffLine[]>
 ```
 
 **Examples:**
@@ -244,9 +309,10 @@ $.text.trim("  hello  "); // → 'hello' (string)
 $.text.trim("  a  \n  b  "); // → ['a', 'b'] (array)
 $.text.trim("  hello  ", "left"); // → 'hello  '
 
-// Split into lines
+// Split and join lines
 const lines = $.text.lines("line1\nline2\nline3");
 // → ['line1', 'line2', 'line3']
+const joined = $.text.joinLines(lines, "\n");
 
 // Head and tail
 const preview = $.text.head(content, 10); // First 10 lines
@@ -271,6 +337,17 @@ const stats = $.text.count(content);
 const csv = "a,b,c\nd,e,f";
 const cols = $.text.cut(csv, { delimiter: ",", fields: [1, 3] });
 // → ['a,c', 'd,f']
+
+// Filter and map
+const nonEmpty = $.text.filter(lines, line => line.trim().length > 0);
+const upper = $.text.map(lines, line => line.toUpperCase());
+
+// File-based operations
+const matches = await $.text.grepFiles(/ERROR/, "app.log");
+const first10 = await $.text.headFile("data.txt", 10);
+const last20 = await $.text.tailFile("log.txt", 20);
+const fileStats = await $.text.countFile("document.md");
+const diff = await $.text.diffFiles("old.txt", "new.txt");
 ```
 
 ---
@@ -656,16 +733,24 @@ Direct transform functions available on `$.*` for use with `.pipe()`.
 **Available Transforms:**
 
 ```typescript
+// Collection transforms
 $.filter(predicate): Transform<T, T>
 $.map(fn): Transform<T, U>
 $.flatMap(fn): Transform<T, U>
 $.take(n): Transform<T, T>
 $.head(n): Transform<T, T>
 $.tail(n): Transform<T, T>
+
+// String/text transforms
 $.lines(): Transform<string, string>
 $.grep(pattern): Transform<string, string>
+
+// Command transforms
 $.toCmd(cmd, args): Transform<string, string>
 $.toCmdLines(cmd, args): Transform<string, string>
+
+// JSON transforms
+$.jq(query: string, options?: JqOptions): Transform<string, string>
 ```
 
 **Examples:**
@@ -686,6 +771,16 @@ await $.cmd("git", "log", "--oneline")
   .stdout()
   .pipe($.toCmdLines("head", ["-5"]))
   .forEach((line) => console.log(line));
+
+// Parse JSON with jq-like queries
+const names = await $.cat("data.json")
+  .pipe($.jq(".users[].name"))
+  .collect();
+
+// jq with options
+const compact = await $.cat("data.json")
+  .pipe($.jq(".items", { compact: true }))
+  .collect();
 ```
 
 ---
@@ -933,6 +1028,133 @@ const userFile = $.path.join("~", "Documents", "file.txt");
 
 ---
 
+## Deno File Aliases
+
+Direct aliases for Deno file operations, available on the `$` object.
+
+**API:**
+
+```typescript
+// Async file operations
+$.writeFile(path: string, data: Uint8Array): Promise<void>
+$.writeTextFile(path: string, data: string): Promise<void>
+$.readFile(path: string): Promise<Uint8Array>
+$.readTextFile(path: string): Promise<string>
+$.readDir(path: string): AsyncIterable<Deno.DirEntry>
+$.readLink(path: string): Promise<string>
+
+// Sync file operations
+$.writeFileSync(path: string, data: Uint8Array): void
+$.writeTextFileSync(path: string, data: string): void
+$.readFileSync(path: string): Uint8Array
+$.readTextFileSync(path: string): string
+$.readDirSync(path: string): Iterable<Deno.DirEntry>
+$.readLinkSync(path: string): string
+```
+
+**Examples:**
+
+```javascript
+// Async operations
+const content = await $.readTextFile("file.txt");
+await $.writeTextFile("output.txt", "Hello");
+
+// Binary files
+const bytes = await $.readFile("image.png");
+await $.writeFile("copy.png", bytes);
+
+// Iterate directory
+for await (const entry of $.readDir("src")) {
+  console.log(entry.name, entry.isFile);
+}
+
+// Sync operations (use sparingly)
+const data = $.readTextFileSync("config.json");
+```
+
+---
+
+## Advanced Glob Utilities
+
+Additional glob utility functions beyond the streaming API.
+
+**API:**
+
+```typescript
+$.globPaths(pattern: string): Promise<string[]>
+$.globArray(pattern: string): Promise<GlobEntry[]>
+$.getGlobBase(pattern: string): string
+$.hasMatch(pattern: string): Promise<boolean>
+$.countMatches(pattern: string): Promise<number>
+$.findFirst(pattern: string): Promise<string | undefined>
+```
+
+**Examples:**
+
+```javascript
+// Get paths directly (no streaming)
+const paths = await $.globPaths("src/**/*.ts");
+// → ['/project/src/main.ts', ...]
+
+// Get full entries with metadata
+const entries = await $.globArray("*.json");
+// → [{path: '...', name: '...', isFile: true, ...}]
+
+// Get the base directory of a glob pattern
+const base = $.getGlobBase("src/**/*.ts");
+// → 'src'
+
+// Check if any files match
+if (await $.hasMatch("logs/*.error")) {
+  console.log("Error logs exist");
+}
+
+// Count matches
+const count = await $.countMatches("**/*.test.ts");
+console.log(`Found ${count} test files`);
+
+// Get first match
+const first = await $.findFirst("config.*.json");
+```
+
+---
+
+## Environment Helpers
+
+Helper functions for managing environment variables.
+
+**API:**
+
+```typescript
+$.getEnv(name: string): string | undefined
+$.setEnv(name: string, value: string): void
+$.deleteEnv(name: string): void
+$.getAllEnv(): Record<string, string>
+```
+
+**Examples:**
+
+```javascript
+// Get environment variable
+const nodeEnv = $.getEnv("NODE_ENV");
+
+// Set environment variable
+$.setEnv("MY_VAR", "value");
+
+// Delete environment variable
+$.deleteEnv("TEMP_VAR");
+
+// Get all environment variables
+const env = $.getAllEnv();
+console.log(env.HOME);
+
+// These are also accessible via $.ENV proxy
+$.ENV.MY_VAR = "value";  // Same as $.setEnv
+delete $.ENV.MY_VAR;     // Same as $.deleteEnv
+```
+
+---
+
 ## Quick Reference
 
 ### Common Patterns
@@ -986,5 +1208,5 @@ if (!build.success) {
 
 ---
 
-**Version:** 1.0.0
-**Last Updated:** 2026-01-03
+**Version:** 1.1.0
+**Last Updated:** 2026-01-12
