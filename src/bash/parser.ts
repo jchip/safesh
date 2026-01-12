@@ -107,7 +107,7 @@ export class Parser {
   }
 
   private skipNewlines(): void {
-    while (this.is(TokenType.NEWLINE)) {
+    while (this.is(TokenType.NEWLINE) || this.is(TokenType.COMMENT)) {
       this.advance();
     }
   }
@@ -350,12 +350,22 @@ export class Parser {
           break;
       }
 
-      left = {
-        type: "Pipeline",
-        commands: [left, right],
-        operator: op,
-        background: false,
-      };
+      // Flatten pipelines with the same operator
+      if (left.type === "Pipeline" && left.operator === op) {
+        left = {
+          type: "Pipeline",
+          commands: [...left.commands, right],
+          operator: op,
+          background: false,
+        };
+      } else {
+        left = {
+          type: "Pipeline",
+          commands: [left, right],
+          operator: op,
+          background: false,
+        };
+      }
     }
 
     // Check for trailing & for background
@@ -489,7 +499,14 @@ export class Parser {
     const startColumn = this.currentToken.column;
     this.pushContext({ type: "if", startLine, startColumn });
 
-    this.expect(TokenType.IF);
+    // Accept either IF or ELIF (for recursive elif handling)
+    if (this.is(TokenType.IF)) {
+      this.advance();
+    } else if (this.is(TokenType.ELIF)) {
+      this.advance();
+    } else {
+      throw this.error(`Expected IF or ELIF, got ${this.currentToken.type}`);
+    }
     this.skipNewlines();
 
     const test = this.parsePipeline();
@@ -1080,7 +1097,19 @@ export class Parser {
     const token = this.expect(TokenType.ASSIGNMENT_WORD);
     const parts = token.value.split("=");
     const name = parts[0] ?? "";
-    const value = parts.slice(1).join("=");
+    let value = parts.slice(1).join("=");
+
+    // Strip surrounding quotes from value if present
+    let quoted = false;
+    let singleQuoted = false;
+    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+      value = value.slice(1, -1);
+      quoted = true;
+    } else if (value.startsWith("'") && value.endsWith("'") && value.length >= 2) {
+      value = value.slice(1, -1);
+      singleQuoted = true;
+      quoted = true;
+    }
 
     return {
       type: "VariableAssignment",
@@ -1088,9 +1117,9 @@ export class Parser {
       value: {
         type: "Word",
         value,
-        quoted: token.quoted || false,
-        singleQuoted: token.singleQuoted || false,
-        parts: [{ type: "LiteralPart", value }],
+        quoted,
+        singleQuoted,
+        parts: this.parseWordParts(value, quoted),
       },
     };
   }

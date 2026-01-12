@@ -28,8 +28,12 @@ export { Parser, parse, parseWithRecovery } from "./parser.ts";
 // Arithmetic Expression Parser
 export { ArithmeticParser, parseArithmetic } from "./arithmetic-parser.ts";
 
-// Transpiler
-export { Transpiler, transpile, type TranspilerOptions } from "./transpiler.ts";
+// Transpiler (v2)
+export {
+  BashTranspiler2 as Transpiler,
+  transpile,
+  type TranspilerOptions,
+} from "./transpiler2/mod.ts";
 
 // =============================================================================
 // Shell Command Parser (Compatibility API)
@@ -37,7 +41,7 @@ export { Transpiler, transpile, type TranspilerOptions } from "./transpiler.ts";
 
 import type * as AST from "./ast.ts";
 import { parse } from "./parser.ts";
-import { transpile } from "./transpiler.ts";
+import { transpile } from "./transpiler2/mod.ts";
 
 /**
  * Result from parsing a shell command
