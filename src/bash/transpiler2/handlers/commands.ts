@@ -123,10 +123,17 @@ function buildFluentCommand(
     case "head": {
       // $.head(n) as transform
       let n = 10; // default
-      for (const arg of args) {
-        if (arg?.startsWith("-n")) {
+      for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === "-n" && args[i + 1]) {
+          // -n 20 (with space)
+          n = parseInt(args[i + 1] ?? "") || 10;
+          i++;
+        } else if (arg?.startsWith("-n")) {
+          // -n20 (without space)
           n = parseInt(arg.slice(2)) || 10;
-        } else if (arg?.startsWith("-")) {
+        } else if (arg?.startsWith("-") && /^-\d+$/.test(arg)) {
+          // -20 shorthand
           n = parseInt(arg.slice(1)) || 10;
         }
       }
@@ -136,10 +143,17 @@ function buildFluentCommand(
     case "tail": {
       // $.tail(n) as transform
       let n = 10; // default
-      for (const arg of args) {
-        if (arg?.startsWith("-n")) {
+      for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === "-n" && args[i + 1]) {
+          // -n 20 (with space)
+          n = parseInt(args[i + 1] ?? "") || 10;
+          i++;
+        } else if (arg?.startsWith("-n")) {
+          // -n20 (without space)
           n = parseInt(arg.slice(2)) || 10;
-        } else if (arg?.startsWith("-")) {
+        } else if (arg?.startsWith("-") && /^-\d+$/.test(arg)) {
+          // -20 shorthand
           n = parseInt(arg.slice(1)) || 10;
         }
       }
@@ -291,6 +305,98 @@ export function visitCommand(
 // =============================================================================
 
 /**
+ * Build a pipeline expression (without await/semicolon)
+ */
+export function buildPipeline(
+  pipeline: AST.Pipeline,
+  ctx: VisitorContext,
+): ExpressionResult {
+  // Single command, no pipeline
+  if (pipeline.commands.length === 1 && !pipeline.background) {
+    const cmd = pipeline.commands[0];
+    if (!cmd) return { code: "", async: false };
+
+    if (cmd.type === "Command") {
+      return buildCommand(cmd, ctx);
+    } else if (cmd.type === "Pipeline") {
+      return buildPipeline(cmd, ctx);
+    }
+    // For other statement types, we need to wrap them
+    return { code: "/* unsupported statement in pipeline */", async: true };
+  }
+
+  // Build pipeline chain by flattening nested pipelines
+  const parts: string[] = [];
+  const operators: (string | null)[] = [];
+
+  // Flatten the pipeline tree into a list
+  flattenPipeline(pipeline, parts, operators, ctx);
+
+  // Build the chained expression
+  if (parts.length === 0) return { code: "", async: false };
+
+  let result = parts[0] ?? "";
+  for (let i = 1; i < parts.length; i++) {
+    const op = operators[i - 1];
+    const part = parts[i];
+    if (!part) continue;
+
+    if (op === "&&") {
+      result = `${result}.then(() => ${part})`;
+    } else if (op === "||") {
+      result = `${result}.catch(() => ${part})`;
+    } else if (op === "|") {
+      result = `${result}.pipe(${part})`;
+    } else if (op === ";") {
+      // Sequential execution - wrap in async IIFE
+      result = `(async () => { await ${result}; return ${part}; })()`;
+    } else {
+      // Default: pipe
+      result = `${result}.pipe(${part})`;
+    }
+  }
+
+  return { code: result, async: true };
+}
+
+/**
+ * Flatten a nested pipeline tree into arrays of commands and operators
+ * For "cmd1 && cmd2 || cmd3" which parses as Pipeline(Pipeline(cmd1 && cmd2) || cmd3),
+ * we want: parts=[cmd1, cmd2, cmd3], operators=[&&, ||]
+ */
+function flattenPipeline(
+  pipeline: AST.Pipeline,
+  parts: string[],
+  operators: (string | null)[],
+  ctx: VisitorContext,
+): void {
+  // Process left side (first command)
+  const left = pipeline.commands[0];
+  if (left) {
+    if (left.type === "Command") {
+      parts.push(buildCommand(left, ctx).code);
+    } else if (left.type === "Pipeline") {
+      flattenPipeline(left, parts, operators, ctx);
+    }
+  }
+
+  // For each subsequent command, add operator then command
+  for (let i = 1; i < pipeline.commands.length; i++) {
+    // Add the operator that connects to this command
+    operators.push(pipeline.operator);
+
+    const cmd = pipeline.commands[i];
+    if (!cmd) continue;
+
+    if (cmd.type === "Command") {
+      parts.push(buildCommand(cmd, ctx).code);
+    } else if (cmd.type === "Pipeline") {
+      flattenPipeline(cmd, parts, operators, ctx);
+    }
+  }
+}
+
+/**
  * Visit a pipeline statement
  */
 export function visitPipeline(
@@ -310,40 +416,12 @@ export function visitPipeline(
     return ctx.visitStatement(cmd);
   }
 
-  // Build pipeline chain
-  const parts: string[] = [];
-
-  for (let i = 0; i < pipeline.commands.length; i++) {
-    const cmd = pipeline.commands[i];
-    if (!cmd) continue;
-
-    if (cmd.type === "Command") {
-      const cmdResult = buildCommand(cmd, ctx);
-
-      if (i === 0) {
-        parts.push(cmdResult.code);
-      } else if (pipeline.operator === "&&") {
-        parts.push(`.then(() => ${cmdResult.code})`);
-      } else if (pipeline.operator === "||") {
-        parts.push(`.catch(() => ${cmdResult.code})`);
-      } else {
-        // Pipe operator |
-        parts.push(`.pipe(${cmdResult.code})`);
-      }
-    } else if (cmd.type === "Pipeline") {
-      // Nested pipeline - recursively process
-      const nested = visitPipeline(cmd, ctx);
-      // Extract the expression from nested (this is a simplification)
-      parts.push(`/* nested pipeline */`);
-    }
-  }
-
-  const pipelineExpr = parts.join("");
+  const result = buildPipeline(pipeline, ctx);
 
   if (pipeline.background) {
-    return { lines: [`${indent}${pipelineExpr}; // background`] };
+    return { lines: [`${indent}${result.code}; // background`] };
   }
-  return { lines: [`${indent}await ${pipelineExpr};`] };
+  return { lines: [`${indent}await ${result.code};`] };
 }
 
 // =============================================================================

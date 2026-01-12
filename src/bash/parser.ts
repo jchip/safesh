@@ -284,6 +284,12 @@ export class Parser {
       return this.parseFunctionDeclaration();
     }
 
+    // Check for function shorthand syntax: name() { ... }
+    // Pattern: NAME followed by LPAREN
+    if (this.is(TokenType.NAME) && this.peekToken.type === TokenType.LPAREN) {
+      return this.parseFunctionShorthand();
+    }
+
     // Test expression [[ ... ]]
     if (this.is(TokenType.DBRACK_START)) {
       return this.parseTestCommand();
@@ -313,14 +319,14 @@ export class Parser {
   private parsePipeline(): AST.Pipeline {
     let left: AST.Command | AST.Pipeline = this.parseCommand();
 
+    // Only handle pipe and logical operators (|, |&, &&, ||)
+    // Do NOT handle ; or & here - those are statement separators/terminators
     while (
       this.isAny(
         TokenType.PIPE,
         TokenType.PIPE_AMP,
         TokenType.AND_AND,
         TokenType.OR_OR,
-        TokenType.AMP,
-        TokenType.SEMICOLON,
       )
     ) {
       const operator = this.advance();
@@ -328,9 +334,8 @@ export class Parser {
 
       const right = this.parseCommand();
 
-      // Determine operator and background flag
+      // Determine operator
       let op: AST.Pipeline["operator"] = null;
-      let background = false;
 
       switch (operator.type) {
         case TokenType.PIPE:
@@ -343,20 +348,13 @@ export class Parser {
         case TokenType.OR_OR:
           op = "||";
           break;
-        case TokenType.SEMICOLON:
-          op = ";";
-          break;
-        case TokenType.AMP:
-          op = "&";
-          background = true;
-          break;
       }
 
       left = {
         type: "Pipeline",
         commands: [left, right],
         operator: op,
-        background,
+        background: false,
       };
     }
 
@@ -432,6 +430,7 @@ export class Parser {
         TokenType.WORD,
         TokenType.NAME,
         TokenType.NUMBER,
+        TokenType.BANG, // Allow ! as argument for test/[ commands
         TokenType.LESS,
         TokenType.GREAT,
         TokenType.DGREAT,
@@ -457,6 +456,16 @@ export class Parser {
       } else if (this.isFdVarRedirection()) {
         // Check for {var}>file FD variable redirection
         redirects.push(this.parseRedirection());
+      } else if (this.is(TokenType.BANG)) {
+        // Handle ! as a word argument (for test/[ commands)
+        this.advance();
+        args.push({
+          type: "Word",
+          value: "!",
+          quoted: false,
+          singleQuoted: false,
+          parts: [{ type: "LiteralPart", value: "!" }],
+        });
       } else {
         args.push(this.parseWord());
       }
@@ -777,6 +786,45 @@ export class Parser {
       body = subshell.body;
     } else {
       throw this.error("Expected function body");
+    }
+
+    this.popContext();
+
+    return {
+      type: "FunctionDeclaration",
+      name,
+      body,
+    };
+  }
+
+  /**
+   * Parse function shorthand syntax: name() { ... } or name() (...)
+   * This is the POSIX-style function definition without the 'function' keyword
+   */
+  private parseFunctionShorthand(): AST.FunctionDeclaration {
+    const startLine = this.currentToken.line;
+    const startColumn = this.currentToken.column;
+
+    const name = this.expect(TokenType.NAME).value;
+
+    this.pushContext({ type: "function", name, startLine, startColumn });
+
+    // Expect ()
+    this.expect(TokenType.LPAREN);
+    this.expect(TokenType.RPAREN);
+    this.skipNewlines();
+
+    // Parse function body (can be a brace group or subshell)
+    let body: AST.Statement[];
+
+    if (this.is(TokenType.LBRACE)) {
+      const group = this.parseBraceGroup();
+      body = group.body;
+    } else if (this.is(TokenType.LPAREN)) {
+      const subshell = this.parseSubshell();
+      body = subshell.body;
+    } else {
+      throw this.error("Expected function body ('{' or '(')");
     }
 
     this.popContext();
