@@ -389,7 +389,8 @@ describe("Transpiler2 - Control Flow", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'if (');
-    assertStringIncludes(output, '=== "a"');
+    assertStringIncludes(output, '/^a');
+    assertStringIncludes(output, '.test(');
     assertStringIncludes(output, '} else if (');
   });
 
