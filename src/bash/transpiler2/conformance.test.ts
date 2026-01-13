@@ -317,6 +317,38 @@ describe("Conformance - Control Flow", () => {
     assertEquals(tsResult.stdout, bashResult.stdout);
   });
 
+  it("should handle elif chain with multiple conditions", async () => {
+    const script = `
+      x="b"
+      if test "$x" = "a"
+      then
+        echo a
+      elif test "$x" = "b"
+      then
+        echo b
+      fi
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+  });
+
+  it("should handle elif chain with else fallback", async () => {
+    const script = `
+      x="c"
+      if test "$x" = "a"
+      then
+        echo a
+      elif test "$x" = "b"
+      then
+        echo b
+      else
+        echo other
+      fi
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+  });
+
   it("should handle for loop", async () => {
     const script = `
       for i in a b c
