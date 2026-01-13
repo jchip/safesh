@@ -257,6 +257,7 @@ export class Lexer {
     stripTabs: boolean;
     quoted: boolean;
   }[] = [];
+  private lastTokenType: TokenType | null = null;
 
   constructor(input: string) {
     this.input = input;
@@ -314,7 +315,11 @@ export class Lexer {
    */
   next(): Token | null {
     if (this.tokens.length > 0) {
-      return this.tokens.shift() ?? null;
+      const token = this.tokens.shift() ?? null;
+      if (token) {
+        this.lastTokenType = token.type;
+      }
+      return token;
     }
 
     const input = this.input;
@@ -323,7 +328,7 @@ export class Lexer {
     this.skipWhitespace();
 
     if (this.pos >= len) {
-      return {
+      const token = {
         type: TokenType.EOF,
         value: "",
         start: this.pos,
@@ -331,19 +336,27 @@ export class Lexer {
         line: this.line,
         column: this.column,
       };
+      this.lastTokenType = token.type;
+      return token;
     }
 
-    if (this.pendingHeredocs.length > 0) {
-      const prevChar = this.pos > 0 ? input[this.pos - 1] : "";
-      if (prevChar === "\n") {
-        this.readHeredocContent();
-        if (this.tokens.length > 0) {
-          return this.tokens.shift() ?? null;
+    // Check for pending here-documents after newline
+    if (this.pendingHeredocs.length > 0 && this.lastTokenType === TokenType.NEWLINE) {
+      this.readHeredocContent();
+      if (this.tokens.length > 0) {
+        const token = this.tokens.shift() ?? null;
+        if (token) {
+          this.lastTokenType = token.type;
         }
+        return token;
       }
     }
 
-    return this.nextToken();
+    const token = this.nextToken();
+    if (token) {
+      this.lastTokenType = token.type;
+    }
+    return token;
   }
 
   /**
@@ -1221,8 +1234,11 @@ export class Lexer {
           this.column++;
         }
 
-        const lineToCheck = heredoc.stripTabs ? line.replace(/^\t+/, "") : line;
-        if (lineToCheck === heredoc.delimiter) {
+        // Strip leading tabs if <<- was used
+        const processedLine = heredoc.stripTabs ? line.replace(/^\t+/, "") : line;
+
+        // Check if this line is the delimiter
+        if (processedLine === heredoc.delimiter) {
           if (this.pos < this.input.length && this.input[this.pos] === "\n") {
             this.pos++;
             this.line++;
@@ -1231,7 +1247,8 @@ export class Lexer {
           break;
         }
 
-        content += line;
+        // Add processed line to content
+        content += processedLine;
         if (this.pos < this.input.length && this.input[this.pos] === "\n") {
           content += "\n";
           this.pos++;
