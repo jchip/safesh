@@ -4,6 +4,7 @@
  * Transpiles control flow statements (if, for, while, case, etc.)
  */
 
+import { globToRegExp } from "@std/path";
 import type * as AST from "../../ast.ts";
 import type { StatementResult, VisitorContext } from "../types.ts";
 
@@ -45,15 +46,12 @@ export function visitIfStatement(
       lines.push(`${indent}}`);
     } else {
       // else-if chain
-      lines.push(`${indent}} else `);
+      lines.push(`${indent}} else {`);
       ctx.indent();
       const elseIf = visitIfStatement(stmt.alternate, ctx);
-      // Remove indent from first line since we're inlining
-      if (elseIf.lines[0]) {
-        elseIf.lines[0] = elseIf.lines[0].trimStart();
-      }
       lines.push(...elseIf.lines);
       ctx.dedent();
+      lines.push(`${indent}}`);
     }
   } else {
     lines.push(`${indent}}`);
@@ -205,7 +203,10 @@ export function visitCaseStatement(
     const patterns = caseClause.patterns
       .map((p) => {
         const pattern = ctx.visitWord(p);
-        return `${wordVar} === "${pattern}"`;
+        // Convert glob pattern to regex at transpile time
+        const regex = globToRegExp(pattern);
+        // Serialize regex to string that can be used in generated code
+        return `${regex}.test(${wordVar})`;
       })
       .join(" || ");
 
@@ -242,6 +243,9 @@ export function visitFunctionDeclaration(
   const lines: string[] = [];
   const indent = ctx.getIndent();
 
+  // Register the function so calls to it are transpiled as direct calls
+  ctx.declareFunction(stmt.name);
+
   lines.push(`${indent}async function ${stmt.name}() {`);
 
   // Push a new scope for function variables
@@ -269,7 +273,7 @@ export function visitSubshell(
   const lines: string[] = [];
   const indent = ctx.getIndent();
 
-  lines.push(`${indent}(async () => {`);
+  lines.push(`${indent}await (async () => {`);
 
   ctx.indent();
   for (const s of stmt.body) {
