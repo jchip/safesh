@@ -206,7 +206,27 @@ export function visitParameterExpansion(
   const subscript = expansion.subscript;
   const indirection = expansion.indirection;
 
-  // SSH-303: Handle array indirection ${!arr[@]} for array indices
+  // SSH-330: Handle indirect variable reference ${!ref}
+  // The parser prefixes the parameter name with '!' for indirection
+  // BUT: Special variable $! (last background PID) should be treated as-is
+  if (param.startsWith("!") && param !== "!") {
+    const refVar = param.slice(1); // Remove the '!' prefix
+
+    // SSH-303: Handle array indirection ${!arr[@]} for array indices
+    if (subscript) {
+      if (subscript === "@" || subscript === "*") {
+        // ${!arr[@]} - get array indices/keys
+        return `\${Object.keys(${refVar}).join(" ")}`;
+      }
+    }
+
+    // Simple indirect reference: ${!ref}
+    // Evaluate the reference variable, then use its value as a variable name
+    // We use eval() because variables are in function scope, not globalThis
+    return `\${eval(${refVar})}`;
+  }
+
+  // SSH-303: Handle array indirection ${!arr[@]} for array indices (legacy check)
   if (indirection && subscript) {
     if (subscript === "@" || subscript === "*") {
       // ${!arr[@]} - get array indices/keys

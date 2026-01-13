@@ -172,6 +172,35 @@ describe("SSH-303: Array Variable Support", () => {
   });
 });
 
+describe("SSH-330: Indirect Variable Reference", () => {
+  it("should transpile ${!ref} to eval(ref)", () => {
+    const code = transpileBash('echo ${!ref}');
+    // Should generate eval(ref) to look up the variable name stored in ref
+    assertStringIncludes(code, 'eval(ref)');
+  });
+
+  it("should handle indirect reference in variable assignment", () => {
+    const code = transpileBash('value=${!varname}');
+    assertStringIncludes(code, 'eval(varname)');
+  });
+
+  it("should support indirect reference with longer variable names", () => {
+    const code = transpileBash('echo ${!my_variable_ref}');
+    assertStringIncludes(code, 'eval(my_variable_ref)');
+  });
+
+  it("should handle multiple indirect references in one command", () => {
+    const code = transpileBash('echo ${!ref1} ${!ref2}');
+    assertStringIncludes(code, 'eval(ref1)');
+    assertStringIncludes(code, 'eval(ref2)');
+  });
+
+  it("should work within double quotes", () => {
+    const code = transpileBash('echo "Value: ${!ref}"');
+    assertStringIncludes(code, 'eval(ref)');
+  });
+});
+
 describe("Integration tests", () => {
   it("should handle tilde in command with args", () => {
     const code = transpileBash('ls ~/Downloads ~/Documents');
