@@ -180,6 +180,45 @@ describe("Bash Parser", () => {
       assertEquals(cmd.redirects[2]?.operator, ">");
       assertEquals(cmd.redirects[2]?.fd, 2);
     });
+
+    it("should parse here-document (<<)", () => {
+      const ast = parse("cat <<EOF\nHello World\nEOF");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects.length, 1);
+      assertEquals(cmd.redirects[0]?.operator, "<<");
+      assertEquals((cmd.redirects[0]?.target as AST.Word).value, "Hello World\n");
+    });
+
+    it("should parse here-document with tab stripping (<<-)", () => {
+      const ast = parse("cat <<-EOF\n\tHello World\n\tWith Tabs\nEOF");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects.length, 1);
+      assertEquals(cmd.redirects[0]?.operator, "<<-");
+      assertEquals((cmd.redirects[0]?.target as AST.Word).value, "Hello World\nWith Tabs\n");
+    });
+
+    it("should parse here-document with empty content", () => {
+      const ast = parse("cat <<EOF\nEOF");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects.length, 1);
+      assertEquals(cmd.redirects[0]?.operator, "<<");
+      assertEquals((cmd.redirects[0]?.target as AST.Word).value, "");
+    });
+
+    it("should parse here-document with multiple lines", () => {
+      const ast = parse("cat <<EOF\nLine 1\nLine 2\nLine 3\nEOF");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects[0]?.operator, "<<");
+      assertEquals((cmd.redirects[0]?.target as AST.Word).value, "Line 1\nLine 2\nLine 3\n");
+    });
   });
 
   describe("Variable Assignments", () => {
@@ -233,6 +272,66 @@ describe("Bash Parser", () => {
       assertEquals(cmd.assignments[0]?.name, "VAR");
       assertEquals((cmd.name as AST.Word).value, "cmd");
       assertEquals((cmd.args[0] as AST.Word).value, "arg");
+    });
+
+    // SSH-327: Array assignment tests
+    it("should parse simple array assignment", () => {
+      const ast = parse("arr=(one two three)");
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals(cmd.assignments.length, 1);
+      assertEquals(cmd.assignments[0]?.name, "arr");
+      assertEquals(cmd.assignments[0]?.value.type, "ArrayLiteral");
+
+      const arrayValue = cmd.assignments[0]?.value as AST.ArrayLiteral;
+      assertEquals(arrayValue.elements.length, 3);
+      assertEquals((arrayValue.elements[0] as AST.Word).value, "one");
+      assertEquals((arrayValue.elements[1] as AST.Word).value, "two");
+      assertEquals((arrayValue.elements[2] as AST.Word).value, "three");
+    });
+
+    it("should parse empty array assignment", () => {
+      const ast = parse("arr=()");
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals(cmd.assignments[0]?.name, "arr");
+      assertEquals(cmd.assignments[0]?.value.type, "ArrayLiteral");
+
+      const arrayValue = cmd.assignments[0]?.value as AST.ArrayLiteral;
+      assertEquals(arrayValue.elements.length, 0);
+    });
+
+    it("should parse array assignment with quoted elements", () => {
+      const ast = parse('arr=("hello world" foo "bar baz")');
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      const arrayValue = cmd.assignments[0]?.value as AST.ArrayLiteral;
+      assertEquals(arrayValue.elements.length, 3);
+      assertEquals((arrayValue.elements[0] as AST.Word).value, "hello world");
+      assertEquals((arrayValue.elements[0] as AST.Word).quoted, true);
+      assertEquals((arrayValue.elements[1] as AST.Word).value, "foo");
+      assertEquals((arrayValue.elements[2] as AST.Word).value, "bar baz");
+      assertEquals((arrayValue.elements[2] as AST.Word).quoted, true);
+    });
+
+    it("should parse array assignment with variable expansion", () => {
+      const ast = parse("arr=(one $VAR three)");
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      const arrayValue = cmd.assignments[0]?.value as AST.ArrayLiteral;
+      assertEquals(arrayValue.elements.length, 3);
+      assertEquals((arrayValue.elements[0] as AST.Word).value, "one");
+
+      const secondElement = arrayValue.elements[1] as AST.Word;
+      assertEquals(secondElement.parts.length, 1);
+      assertEquals(secondElement.parts[0]?.type, "ParameterExpansion");
+      assertEquals((secondElement.parts[0] as AST.ParameterExpansion).parameter, "VAR");
+
+      assertEquals((arrayValue.elements[2] as AST.Word).value, "three");
     });
   });
 
@@ -792,6 +891,144 @@ describe("Bash Parser", () => {
       assertEquals(arg.parts[0]?.type, "ProcessSubstitution");
       const ps = arg.parts[0] as AST.ProcessSubstitution;
       assertEquals(ps.operator, ">(");
+    });
+  });
+
+  describe("Test Commands [[ ]]", () => {
+    it("should parse [[ ]] in if statement", () => {
+      const ast = parse(`if [[ $x -gt 3 ]]
+then
+  echo yes
+fi`);
+      const ifStmt = ast.body[0] as AST.IfStatement;
+      assertEquals(ifStmt.type, "IfStatement");
+
+      const testPipeline = ifStmt.test as AST.Pipeline;
+      assertEquals(testPipeline.type, "Pipeline");
+
+      const testCmd = testPipeline.commands[0] as AST.TestCommand;
+      assertEquals(testCmd.type, "TestCommand");
+
+      const expr = testCmd.expression as AST.BinaryTest;
+      assertEquals(expr.type, "BinaryTest");
+      assertEquals(expr.operator, "-gt");
+    });
+
+    it("should parse [[ ]] in while statement", () => {
+      const ast = parse(`while [[ $x -lt 10 ]]
+do
+  x=$((x + 1))
+done`);
+      const whileStmt = ast.body[0] as AST.WhileStatement;
+      assertEquals(whileStmt.type, "WhileStatement");
+
+      const testPipeline = whileStmt.test as AST.Pipeline;
+      const testCmd = testPipeline.commands[0] as AST.TestCommand;
+      assertEquals(testCmd.type, "TestCommand");
+    });
+
+    it("should parse [[ ]] in until statement", () => {
+      const ast = parse(`until [[ $x -eq 5 ]]
+do
+  x=$((x + 1))
+done`);
+      const untilStmt = ast.body[0] as AST.UntilStatement;
+      assertEquals(untilStmt.type, "UntilStatement");
+
+      const testPipeline = untilStmt.test as AST.Pipeline;
+      const testCmd = testPipeline.commands[0] as AST.TestCommand;
+      assertEquals(testCmd.type, "TestCommand");
+    });
+
+    it("should parse [[ ]] with string comparison", () => {
+      const ast = parse(`[[ "$name" == "John" ]]`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const testCmd = pipeline.commands[0] as AST.TestCommand;
+
+      const expr = testCmd.expression as AST.BinaryTest;
+      assertEquals(expr.operator, "==");
+    });
+
+    it("should parse [[ ]] with file test operators", () => {
+      const ast = parse(`[[ -f /etc/passwd ]]`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const testCmd = pipeline.commands[0] as AST.TestCommand;
+
+      const expr = testCmd.expression as AST.UnaryTest;
+      assertEquals(expr.type, "UnaryTest");
+      assertEquals(expr.operator, "-f");
+    });
+
+    it("should parse [[ ]] with logical AND", () => {
+      const ast = parse(`[[ $x -gt 3 && $x -lt 10 ]]`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const testCmd = pipeline.commands[0] as AST.TestCommand;
+
+      const expr = testCmd.expression as AST.LogicalTest;
+      assertEquals(expr.type, "LogicalTest");
+      assertEquals(expr.operator, "&&");
+    });
+
+    it("should parse [[ ]] with logical OR", () => {
+      const ast = parse(`[[ $x -eq 1 || $x -eq 2 ]]`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const testCmd = pipeline.commands[0] as AST.TestCommand;
+
+      const expr = testCmd.expression as AST.LogicalTest;
+      assertEquals(expr.type, "LogicalTest");
+      assertEquals(expr.operator, "||");
+    });
+
+    it("should parse [[ ]] with negation", () => {
+      const ast = parse(`[[ ! -f /nonexistent ]]`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const testCmd = pipeline.commands[0] as AST.TestCommand;
+
+      const expr = testCmd.expression as AST.LogicalTest;
+      assertEquals(expr.type, "LogicalTest");
+      assertEquals(expr.operator, "!");
+    });
+
+    it("should parse [[ ]] in pipeline with &&", () => {
+      const ast = parse(`[[ $x -eq 1 ]] && echo "yes"`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+
+      assertEquals(pipeline.operator, "&&");
+      assertEquals(pipeline.commands.length, 2);
+      assertEquals(pipeline.commands[0]?.type, "TestCommand");
+      assertEquals(pipeline.commands[1]?.type, "Command");
+    });
+
+    it("should parse [[ ]] in pipeline with ||", () => {
+      const ast = parse(`[[ $x -eq 1 ]] || [[ $x -eq 2 ]]`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+
+      assertEquals(pipeline.operator, "||");
+      assertEquals(pipeline.commands.length, 2);
+      assertEquals(pipeline.commands[0]?.type, "TestCommand");
+      assertEquals(pipeline.commands[1]?.type, "TestCommand");
+    });
+
+    it("should parse (( )) arithmetic command in if", () => {
+      const ast = parse(`if (( x > 3 ))
+then
+  echo yes
+fi`);
+      const ifStmt = ast.body[0] as AST.IfStatement;
+      const testPipeline = ifStmt.test as AST.Pipeline;
+      const arithCmd = testPipeline.commands[0] as AST.ArithmeticCommand;
+
+      assertEquals(arithCmd.type, "ArithmeticCommand");
+      assertExists(arithCmd.expression);
+    });
+
+    it("should parse mixed [[ ]] and (( )) in pipeline", () => {
+      const ast = parse(`[[ -f /tmp/file ]] && (( x > 5 ))`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+
+      assertEquals(pipeline.commands.length, 2);
+      assertEquals(pipeline.commands[0]?.type, "TestCommand");
+      assertEquals(pipeline.commands[1]?.type, "ArithmeticCommand");
     });
   });
 

@@ -62,7 +62,7 @@ export interface Command extends BaseNode {
 
 export interface Pipeline extends BaseNode {
   type: "Pipeline";
-  commands: (Command | Pipeline)[];
+  commands: (Command | Pipeline | TestCommand | ArithmeticCommand)[];
   operator: "&&" | "||" | "|" | ";" | "&" | null;
   background: boolean;
 }
@@ -73,7 +73,7 @@ export interface Pipeline extends BaseNode {
 
 export interface IfStatement extends BaseNode {
   type: "IfStatement";
-  test: Pipeline | Command;
+  test: Pipeline | Command | TestCommand | ArithmeticCommand;
   consequent: Statement[];
   alternate: Statement[] | IfStatement | null;
 }
@@ -95,13 +95,13 @@ export interface CStyleForStatement extends BaseNode {
 
 export interface WhileStatement extends BaseNode {
   type: "WhileStatement";
-  test: Pipeline | Command;
+  test: Pipeline | Command | TestCommand | ArithmeticCommand;
   body: Statement[];
 }
 
 export interface UntilStatement extends BaseNode {
   type: "UntilStatement";
-  test: Pipeline | Command;
+  test: Pipeline | Command | TestCommand | ArithmeticCommand;
   body: Statement[];
 }
 
@@ -151,10 +151,15 @@ export interface ArithmeticCommand extends BaseNode {
 // Variables
 // =============================================================================
 
+export interface ArrayLiteral extends BaseNode {
+  type: "ArrayLiteral";
+  elements: (Word | ParameterExpansion | CommandSubstitution)[];
+}
+
 export interface VariableAssignment extends BaseNode {
   type: "VariableAssignment";
   name: string;
-  value: Word | ParameterExpansion | CommandSubstitution | ArithmeticExpansion;
+  value: Word | ParameterExpansion | CommandSubstitution | ArithmeticExpansion | ArrayLiteral;
   exported?: boolean;
 }
 

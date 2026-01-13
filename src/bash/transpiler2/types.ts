@@ -124,6 +124,12 @@ export interface VisitorContext {
   /** Pop current variable scope */
   popScope(): void;
 
+  /** Register a user-defined function */
+  declareFunction(name: string): void;
+
+  /** Check if a name is a declared user-defined function */
+  isFunction(name: string): boolean;
+
   /** Add a diagnostic message */
   addDiagnostic(diagnostic: Diagnostic): void;
 
@@ -148,5 +154,5 @@ export interface VisitorContext {
   buildCommand(cmd: AST.Command): ExpressionResult;
 
   /** Build test expression for if/while conditions */
-  buildTestExpression(test: AST.Pipeline | AST.Command): ExpressionResult;
+  buildTestExpression(test: AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand): ExpressionResult;
 }

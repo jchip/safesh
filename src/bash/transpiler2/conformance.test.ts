@@ -376,6 +376,86 @@ describe("Conformance - Control Flow", () => {
     const { bashResult, tsResult } = await compareExecution(script);
     assertEquals(tsResult.stdout, bashResult.stdout);
   });
+
+  it("should handle case statement with glob patterns (*.txt)", async () => {
+    const script = `
+      case "file.txt" in
+        *.txt)
+          echo "text file"
+          ;;
+        *.sh)
+          echo "shell script"
+          ;;
+        *)
+          echo "other"
+          ;;
+      esac
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "text file");
+  });
+
+  it("should handle case statement with *.tar.gz pattern", async () => {
+    const script = `
+      case "archive.tar.gz" in
+        *.tar.gz)
+          echo "tarball"
+          ;;
+        *)
+          echo "not a tarball"
+          ;;
+      esac
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "tarball");
+  });
+
+  it("should handle case statement with question mark pattern", async () => {
+    const script = `
+      case "a" in
+        ?)
+          echo "single character"
+          ;;
+        *)
+          echo "multiple characters"
+          ;;
+      esac
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "single character");
+  });
+
+  it("should handle case statement with character class pattern", async () => {
+    const script = `
+      case "abc.txt" in
+        [abc]*.txt)
+          echo "starts with a, b, or c"
+          ;;
+        *)
+          echo "other"
+          ;;
+      esac
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "starts with a, b, or c");
+  });
+
+  it("should handle case statement with wildcard pattern (*)", async () => {
+    const script = `
+      case "anything" in
+        *)
+          echo "matches everything"
+          ;;
+      esac
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "matches everything");
+  });
 });
 
 // =============================================================================
@@ -525,6 +605,44 @@ describe("Conformance - Complex Scripts", () => {
     `;
     const { bashResult, tsResult } = await compareExecution(script);
     assertEquals(tsResult.stdout, bashResult.stdout);
+  });
+});
+
+describe("Conformance - Indirect Variable Reference (SSH-330)", () => {
+  it("should handle simple indirect reference ${!ref}", async () => {
+    const script = `
+      ref="name"
+      name="John"
+      echo "\${!ref}"
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "John");
+  });
+
+  it("should handle indirect reference with assignment", async () => {
+    const script = `
+      var1="greeting"
+      greeting="Hello World"
+      result="\${!var1}"
+      echo "$result"
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "Hello World");
+  });
+
+  it("should handle multiple indirect references", async () => {
+    const script = `
+      first="one"
+      second="two"
+      one="First Value"
+      two="Second Value"
+      echo "\${!first} - \${!second}"
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "First Value - Second Value");
   });
 });
 
