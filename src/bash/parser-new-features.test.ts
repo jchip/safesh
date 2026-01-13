@@ -18,7 +18,8 @@ describe("New Parser Features", () => {
   describe("SSH-253: [[ ... ]] test expressions", () => {
     it("should parse unary file test -f", () => {
       const ast = parse("[[ -f /etc/passwd ]]");
-      const stmt = ast.body[0] as AST.TestCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.TestCommand;
 
       assertEquals(stmt.type, "TestCommand");
       assertEquals(stmt.expression.type, "UnaryTest");
@@ -29,7 +30,8 @@ describe("New Parser Features", () => {
 
     it("should parse binary string equality ==", () => {
       const ast = parse('[[ $var == "value" ]]');
-      const stmt = ast.body[0] as AST.TestCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.TestCommand;
 
       assertEquals(stmt.type, "TestCommand");
       assertEquals(stmt.expression.type, "BinaryTest");
@@ -39,7 +41,8 @@ describe("New Parser Features", () => {
 
     it("should parse binary numeric comparison -eq", () => {
       const ast = parse("[[ $a -eq $b ]]");
-      const stmt = ast.body[0] as AST.TestCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.TestCommand;
       const expr = stmt.expression as AST.BinaryTest;
 
       assertEquals(expr.operator, "-eq");
@@ -47,7 +50,8 @@ describe("New Parser Features", () => {
 
     it("should parse logical AND inside test", () => {
       const ast = parse("[[ -f /etc/passwd && -r /etc/passwd ]]");
-      const stmt = ast.body[0] as AST.TestCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.TestCommand;
 
       assertEquals(stmt.expression.type, "LogicalTest");
       const expr = stmt.expression as AST.LogicalTest;
@@ -56,7 +60,8 @@ describe("New Parser Features", () => {
 
     it("should parse logical OR inside test", () => {
       const ast = parse("[[ -z $var || $var == default ]]");
-      const stmt = ast.body[0] as AST.TestCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.TestCommand;
 
       assertEquals(stmt.expression.type, "LogicalTest");
       const expr = stmt.expression as AST.LogicalTest;
@@ -65,7 +70,8 @@ describe("New Parser Features", () => {
 
     it("should parse negation with !", () => {
       const ast = parse("[[ ! -f /tmp/file ]]");
-      const stmt = ast.body[0] as AST.TestCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.TestCommand;
 
       assertEquals(stmt.expression.type, "LogicalTest");
       const expr = stmt.expression as AST.LogicalTest;
@@ -74,7 +80,8 @@ describe("New Parser Features", () => {
 
     it("should parse regex match =~", () => {
       const ast = parse('[[ $str =~ ^[0-9]+$ ]]');
-      const stmt = ast.body[0] as AST.TestCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.TestCommand;
       const expr = stmt.expression as AST.BinaryTest;
 
       assertEquals(expr.operator, "=~");
@@ -84,7 +91,8 @@ describe("New Parser Features", () => {
   describe("SSH-254: (( ... )) arithmetic commands", () => {
     it("should parse simple arithmetic command", () => {
       const ast = parse("(( x = 5 ))");
-      const stmt = ast.body[0] as AST.ArithmeticCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.ArithmeticCommand;
 
       assertEquals(stmt.type, "ArithmeticCommand");
       assertEquals(stmt.expression.type, "AssignmentExpression");
@@ -92,7 +100,8 @@ describe("New Parser Features", () => {
 
     it("should parse postfix increment", () => {
       const ast = parse("(( count++ ))");
-      const stmt = ast.body[0] as AST.ArithmeticCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.ArithmeticCommand;
 
       assertEquals(stmt.expression.type, "UnaryArithmeticExpression");
       const expr = stmt.expression as AST.UnaryArithmeticExpression;
@@ -102,7 +111,8 @@ describe("New Parser Features", () => {
 
     it("should parse prefix decrement", () => {
       const ast = parse("(( --count ))");
-      const stmt = ast.body[0] as AST.ArithmeticCommand;
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const stmt = pipeline.commands[0] as AST.ArithmeticCommand;
 
       assertEquals(stmt.expression.type, "UnaryArithmeticExpression");
       const expr = stmt.expression as AST.UnaryArithmeticExpression;
