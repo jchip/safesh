@@ -423,6 +423,77 @@ describe("Conformance - Complex Scripts", () => {
     const { bashResult, tsResult } = await compareExecution(script);
     assertEquals(tsResult.stdout, bashResult.stdout);
   });
+
+  it("should handle database backup script pattern", async () => {
+    const script = `
+      DB_NAME="mydb"
+      BACKUP_PATH="/tmp/mydb.bak"
+
+      echo "Backing up database: $DB_NAME"
+      echo "Would backup to: $BACKUP_PATH"
+      echo "Backup complete"
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+  });
+
+  it("should handle health check script with for loop and conditionals", async () => {
+    const script = `
+      FAILED=""
+      response="500"
+
+      for service in api worker
+      do
+        echo "Checking $service"
+        if test "$response" != "200"
+        then
+          FAILED="$FAILED $service"
+          echo "FAIL: $service"
+        else
+          echo "OK: $service"
+        fi
+      done
+      echo "Check complete"
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+  });
+
+  it("should handle branch check conditional - feature branch", async () => {
+    const script = `
+      BRANCH="feature"
+
+      if test "$BRANCH" = "main"
+      then
+        echo "Cannot run on main branch"
+      else
+        echo "On branch: $BRANCH"
+        echo "Safe to proceed"
+      fi
+
+      echo "Check complete"
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+  });
+
+  it("should handle branch check conditional - main branch", async () => {
+    const script = `
+      BRANCH="main"
+
+      if test "$BRANCH" = "main"
+      then
+        echo "Cannot run on main branch"
+      else
+        echo "On branch: $BRANCH"
+        echo "Safe to proceed"
+      fi
+
+      echo "Check complete"
+    `;
+    const { bashResult, tsResult } = await compareExecution(script);
+    assertEquals(tsResult.stdout, bashResult.stdout);
+  });
 });
 
 // =============================================================================
