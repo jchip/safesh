@@ -103,6 +103,8 @@ export class BashTranspiler2 {
         ctx.declareVariable(name, type),
       pushScope: () => ctx.pushScope(),
       popScope: () => ctx.popScope(),
+      declareFunction: (name: string) => ctx.declareFunction(name),
+      isFunction: (name: string) => ctx.isFunction(name),
       addDiagnostic: (diagnostic) => ctx.addDiagnostic(diagnostic),
       getDiagnostics: () => ctx.getDiagnostics(),
 
@@ -128,13 +130,30 @@ export class BashTranspiler2 {
         return handlers.buildCommand(cmd, this);
       },
 
-      buildTestExpression(test: AST.Pipeline | AST.Command): ExpressionResult {
+      buildTestExpression(test: AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand): ExpressionResult {
+        if (test.type === "TestCommand") {
+          // For [[ ... ]] test commands, return the expression result directly
+          const expr = handlers.visitTestCondition(test.expression, this);
+          return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: true };
+        }
+        if (test.type === "ArithmeticCommand") {
+          // For (( ... )) arithmetic commands, evaluate and return result
+          const expr = this.visitArithmetic(test.expression);
+          return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: false };
+        }
         if (test.type === "Pipeline") {
-          // For now, build the first command
-          if (test.commands[0]?.type === "Command") {
-            return handlers.buildCommand(test.commands[0], this);
+          // For pipelines, check the first command
+          const firstCmd = test.commands[0];
+          if (firstCmd?.type === "TestCommand") {
+            const expr = handlers.visitTestCondition(firstCmd.expression, this);
+            return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: true };
+          } else if (firstCmd?.type === "ArithmeticCommand") {
+            const expr = this.visitArithmetic(firstCmd.expression);
+            return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: false };
+          } else if (firstCmd?.type === "Command") {
+            return handlers.buildCommand(firstCmd, this);
           }
-        } else {
+        } else if (test.type === "Command") {
           return handlers.buildCommand(test, this);
         }
         throw new Error("Invalid test expression");

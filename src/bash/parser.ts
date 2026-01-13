@@ -290,16 +290,6 @@ export class Parser {
       return this.parseFunctionShorthand();
     }
 
-    // Test expression [[ ... ]]
-    if (this.is(TokenType.DBRACK_START)) {
-      return this.parseTestCommand();
-    }
-
-    // Arithmetic command (( ... ))
-    if (this.is(TokenType.DPAREN_START)) {
-      return this.parseArithmeticCommand();
-    }
-
     // Grouping
     if (this.is(TokenType.LPAREN)) {
       return this.parseSubshell();
@@ -317,7 +307,7 @@ export class Parser {
   // ===========================================================================
 
   private parsePipeline(): AST.Pipeline {
-    let left: AST.Command | AST.Pipeline = this.parseCommand();
+    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand = this.parseCommand();
 
     // Only handle pipe and logical operators (|, |&, &&, ||)
     // Do NOT handle ; or & here - those are statement separators/terminators
@@ -400,13 +390,23 @@ export class Parser {
   // Commands
   // ===========================================================================
 
-  private parseCommand(): AST.Command {
+  private parseCommand(): AST.Command | AST.TestCommand | AST.ArithmeticCommand {
     const assignments: AST.VariableAssignment[] = [];
     const redirects: AST.Redirection[] = [];
 
     // Parse leading assignments (VAR=value)
     while (this.is(TokenType.ASSIGNMENT_WORD)) {
       assignments.push(this.parseVariableAssignment());
+    }
+
+    // Check for test command [[ ... ]]
+    if (this.is(TokenType.DBRACK_START)) {
+      return this.parseTestCommand();
+    }
+
+    // Check for arithmetic command (( ... ))
+    if (this.is(TokenType.DPAREN_START)) {
+      return this.parseArithmeticCommand();
     }
 
     // Parse command name
@@ -1231,6 +1231,30 @@ export class Parser {
                (operator === ">&" || operator === "<&")) {
       // Handle close FD syntax: >&- or <&-
       target = this.parseWord();
+    } else if (operator === "<<" || operator === "<<-") {
+      // Here-document: parse delimiter, then skip newlines and consume heredoc content
+      const delimiter = this.parseWord();
+
+      // Skip newlines and comments until we find HEREDOC_CONTENT
+      while (this.is(TokenType.NEWLINE) || this.is(TokenType.COMMENT)) {
+        this.advance();
+      }
+
+      // Consume the heredoc content
+      if (this.is(TokenType.HEREDOC_CONTENT)) {
+        const contentToken = this.advance();
+        target = {
+          type: "Word",
+          value: contentToken.value,
+          quoted: false,
+          singleQuoted: false,
+          parts: [{ type: "LiteralPart", value: contentToken.value }],
+        };
+      } else {
+        // If no HEREDOC_CONTENT token found, use the delimiter as placeholder
+        // This can happen if the heredoc is incomplete
+        target = delimiter;
+      }
     } else {
       target = this.parseWord();
     }

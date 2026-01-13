@@ -2,7 +2,7 @@
  * Comprehensive unit tests for transpiler2
  */
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
 import { transpile, BashTranspiler2 } from "./mod.ts";
@@ -429,6 +429,40 @@ describe("Transpiler2 - Control Flow", () => {
 
     assertStringIncludes(output, "for (const i of");
   });
+
+  it("should call user-defined functions directly (SSH-324)", () => {
+    const ast = parse(`
+      function foo {
+        echo hello
+      }
+      foo
+    `);
+    const output = transpile(ast);
+
+    assertStringIncludes(output, "async function foo()");
+    assertStringIncludes(output, "await foo()");
+    // Should NOT transpile as $.cmd`foo`
+    assertEquals(output.includes("$.cmd`foo`"), false);
+  });
+
+  it("should call multiple user-defined functions (SSH-324)", () => {
+    const ast = parse(`
+      function greet {
+        echo hello
+      }
+      function goodbye {
+        echo bye
+      }
+      greet
+      goodbye
+    `);
+    const output = transpile(ast);
+
+    assertStringIncludes(output, "async function greet()");
+    assertStringIncludes(output, "async function goodbye()");
+    assertStringIncludes(output, "await greet()");
+    assertStringIncludes(output, "await goodbye()");
+  });
 });
 
 // =============================================================================
@@ -474,6 +508,50 @@ describe("Transpiler2 - Variable Expansion", () => {
 });
 
 // =============================================================================
+// Array Assignment Tests (SSH-327)
+// =============================================================================
+
+describe("Transpiler2 - Array Assignments", () => {
+  it("should transpile simple array assignment", () => {
+    const ast = parse("arr=(one two three)");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, 'let arr = ["one", "two", "three"]');
+  });
+
+  it("should transpile empty array assignment", () => {
+    const ast = parse("arr=()");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, "let arr = []");
+  });
+
+  it("should transpile array with quoted elements", () => {
+    const ast = parse('arr=("hello world" foo "bar baz")');
+    const output = transpile(ast);
+
+    assertStringIncludes(output, 'let arr = ["hello world", "foo", "bar baz"]');
+  });
+
+  it("should transpile array with variable expansion", () => {
+    const ast = parse("arr=(one $VAR three)");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, 'let arr = ["one", "${VAR}", "three"]');
+  });
+
+  it("should transpile array reassignment", () => {
+    const ast = parse("arr=(a b); arr=(c d)");
+    const output = transpile(ast);
+
+    // First assignment should declare with let
+    assertStringIncludes(output, 'let arr = ["a", "b"]');
+    // Second assignment should not use let
+    assertStringIncludes(output, 'arr = ["c", "d"]');
+  });
+});
+
+// =============================================================================
 // Arithmetic Tests
 // =============================================================================
 
@@ -495,6 +573,55 @@ describe("Transpiler2 - Arithmetic", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "for (");
+    // Verify increment is valid JS (SSH-322)
+    assertStringIncludes(output, "i++)");
+    // Should NOT contain invalid Number() wrapping in increment
+    assert(!output.includes("Number(i ?? 0)++)"), "Should not have Number() wrapper in increment");
+  });
+
+  it("should transpile C-style for loop with postfix increment (SSH-322)", () => {
+    const ast = parse(`
+      for ((i=0; i<5; i++))
+      do
+        echo $i
+      done
+    `);
+    const output = transpile(ast);
+
+    // Check that we generate valid JavaScript increment
+    assertStringIncludes(output, "for (");
+    assertStringIncludes(output, "i++)");
+    // Ensure the increment is NOT wrapped in Number()
+    assert(!output.includes("Number(i ?? 0)++)"), "Increment should not be wrapped in Number()");
+  });
+
+  it("should transpile C-style for loop with prefix increment", () => {
+    const ast = parse(`
+      for ((i=0; i<5; ++i))
+      do
+        echo $i
+      done
+    `);
+    const output = transpile(ast);
+
+    assertStringIncludes(output, "for (");
+    assertStringIncludes(output, "++i)");
+    // Ensure the increment is NOT wrapped in Number()
+    assert(!output.includes("Number(i ?? 0))"), "Increment should not be wrapped in Number()");
+  });
+
+  it("should transpile C-style for loop with decrement", () => {
+    const ast = parse(`
+      for ((i=10; i>0; i--))
+      do
+        echo $i
+      done
+    `);
+    const output = transpile(ast);
+
+    assertStringIncludes(output, "for (");
+    assertStringIncludes(output, "i--)");
+    assert(!output.includes("Number(i ?? 0)--)"), "Decrement should not be wrapped in Number()");
   });
 
   it("should transpile arithmetic command", () => {
@@ -541,7 +668,17 @@ describe("Transpiler2 - Grouping", () => {
     const ast = parse("(echo hello)");
     const output = transpile(ast);
 
-    assertStringIncludes(output, "(async () => {");
+    assertStringIncludes(output, "await (async () => {");
+    assertStringIncludes(output, "})();");
+  });
+
+  it("should await subshell IIFE with multiple commands", () => {
+    const ast = parse("(cd /tmp && ls)");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, "await (async () => {");
+    assertStringIncludes(output, "$.cmd`cd /tmp`");
+    assertStringIncludes(output, "$.cmd`ls`");
     assertStringIncludes(output, "})();");
   });
 

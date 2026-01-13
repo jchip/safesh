@@ -5,7 +5,7 @@
  * to ensure robust transpilation from Bash to TypeScript/SafeShell.
  */
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
 import { transpile, BashTranspiler2 } from "./mod.ts";
@@ -517,8 +517,8 @@ done`;
       const output = transpile(ast);
       assertStringIncludes(output, "if (");
       assertStringIncludes(output, "} else if (");
-      assertStringIncludes(output, '=== "-h"');
-      assertStringIncludes(output, '=== "--help"');
+      // Should use regex test instead of string equality
+      assertStringIncludes(output, ".test(_tmp");
     });
 
     it("should handle case with glob patterns", () => {
@@ -535,6 +535,50 @@ done`;
       const ast = parse(script);
       const output = transpile(ast);
       assertStringIncludes(output, "if (");
+      // Should use regex test instead of string equality
+      assertStringIncludes(output, ".test(_tmp");
+    });
+
+    it("should handle case with *.tar.gz pattern", () => {
+      const script = `
+        case "$file" in
+          *.tar.gz)
+            echo "tarball"
+            ;;
+        esac
+      `;
+      const ast = parse(script);
+      const output = transpile(ast);
+      // Should use regex test, not string equality
+      assertStringIncludes(output, ".test(_tmp");
+      // Should NOT contain string equality
+      assert(!output.includes('=== "*.tar.gz"'));
+    });
+
+    it("should handle case with question mark pattern", () => {
+      const script = `
+        case "$char" in
+          ?)
+            echo "single character"
+            ;;
+        esac
+      `;
+      const ast = parse(script);
+      const output = transpile(ast);
+      assertStringIncludes(output, ".test(_tmp");
+    });
+
+    it("should handle case with character class pattern", () => {
+      const script = `
+        case "$file" in
+          [abc]*.txt)
+            echo "starts with a, b, or c"
+            ;;
+        esac
+      `;
+      const ast = parse(script);
+      const output = transpile(ast);
+      assertStringIncludes(output, ".test(_tmp");
     });
   });
 
@@ -709,6 +753,27 @@ describe("Variable Expansion - All Modifiers", () => {
       assertStringIncludes(output, "${!}");
       assertStringIncludes(output, "${$}");
       assertStringIncludes(output, "${#}");
+    });
+  });
+
+  describe("Indirect Variable Reference (SSH-330)", () => {
+    it("should transpile ${!ref} to eval(ref)", () => {
+      const ast = parse('echo "${!ref}"');
+      const output = transpile(ast);
+      assertStringIncludes(output, "eval(ref)");
+    });
+
+    it("should handle indirect reference in assignment", () => {
+      const ast = parse('value=${!varname}');
+      const output = transpile(ast);
+      assertStringIncludes(output, "eval(varname)");
+    });
+
+    it("should handle multiple indirect references", () => {
+      const ast = parse('echo ${!var1} ${!var2}');
+      const output = transpile(ast);
+      assertStringIncludes(output, "eval(var1)");
+      assertStringIncludes(output, "eval(var2)");
     });
   });
 });

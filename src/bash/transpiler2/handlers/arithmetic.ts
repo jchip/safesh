@@ -85,7 +85,18 @@ export function visitUnaryArithmetic(
   node: AST.UnaryArithmeticExpression,
   ctx: VisitorContext,
 ): string {
-  const arg = visitArithmeticExpression(node.argument, ctx);
+  // For increment/decrement operators, we need the raw variable name
+  // because Number(i ?? 0)++ is invalid JavaScript
+  const isIncrementDecrement = node.operator === "++" || node.operator === "--";
+
+  let arg: string;
+  if (isIncrementDecrement && node.argument.type === "VariableReference") {
+    // Use the variable name directly for ++/-- operators
+    arg = node.argument.name;
+  } else {
+    // For other unary operators or complex expressions, use the full expression
+    arg = visitArithmeticExpression(node.argument, ctx);
+  }
 
   if (node.prefix) {
     return `(${node.operator}${arg})`;
