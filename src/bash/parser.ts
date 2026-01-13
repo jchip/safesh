@@ -565,7 +565,7 @@ export class Parser {
       this.skipNewlines();
 
       // Parse word list
-      while (this.is(TokenType.WORD) || this.is(TokenType.NAME)) {
+      while (this.is(TokenType.WORD) || this.is(TokenType.NAME) || this.is(TokenType.NUMBER)) {
         iterable.push(this.parseWord());
       }
 
@@ -1087,6 +1087,16 @@ export class Parser {
     const name = parts[0] ?? "";
     let value = parts.slice(1).join("=");
 
+    // Check if this is an array assignment: arr=(...)
+    // Array assignment has empty value after = and is followed by LPAREN
+    if (value === "" && this.is(TokenType.LPAREN)) {
+      return {
+        type: "VariableAssignment",
+        name,
+        value: this.parseArrayLiteral(),
+      };
+    }
+
     // Strip surrounding quotes from value if present
     let quoted = false;
     let singleQuoted = false;
@@ -1109,6 +1119,35 @@ export class Parser {
         singleQuoted,
         parts: this.parseWordParts(value, quoted),
       },
+    };
+  }
+
+  /**
+   * Parse array literal: (element1 element2 element3)
+   * Used in array assignments like: arr=(one two three)
+   */
+  private parseArrayLiteral(): AST.ArrayLiteral {
+    this.expect(TokenType.LPAREN);
+    this.skipNewlines();
+
+    const elements: (AST.Word | AST.ParameterExpansion | AST.CommandSubstitution)[] = [];
+
+    // Parse array elements (words separated by whitespace)
+    while (!this.is(TokenType.RPAREN) && !this.is(TokenType.EOF)) {
+      if (this.is(TokenType.NEWLINE)) {
+        this.advance();
+        continue;
+      }
+
+      elements.push(this.parseWord());
+      this.skipNewlines();
+    }
+
+    this.expect(TokenType.RPAREN);
+
+    return {
+      type: "ArrayLiteral",
+      elements,
     };
   }
 

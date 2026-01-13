@@ -332,6 +332,24 @@ describe("Bash Parser", () => {
       const stmt = ast.body[0] as AST.ForStatement;
       assertEquals((stmt.iterable[0] as AST.Word).value, "*.ts");
     });
+
+    it("should parse for loop with numeric literals", () => {
+      const ast = parse(`
+        for i in 1 2 3
+        do
+          echo $i
+        done
+      `);
+
+      const stmt = ast.body[0] as AST.ForStatement;
+      assertEquals(stmt.type, "ForStatement");
+      assertEquals(stmt.variable, "i");
+      assertEquals(stmt.iterable.length, 3);
+      assertEquals((stmt.iterable[0] as AST.Word).value, "1");
+      assertEquals((stmt.iterable[1] as AST.Word).value, "2");
+      assertEquals((stmt.iterable[2] as AST.Word).value, "3");
+      assertEquals(stmt.body.length, 1);
+    });
   });
 
   describe("While Loops", () => {
