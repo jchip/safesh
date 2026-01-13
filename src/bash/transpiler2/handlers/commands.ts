@@ -487,7 +487,21 @@ export function buildVariableAssignment(
   } else if (stmt.value.type === "ArithmeticExpansion") {
     value = ctx.visitArithmetic(stmt.value.expression);
   } else {
-    value = `"${escapeForQuotes(ctx.visitWord(stmt.value as AST.Word))}"`;
+    // SSH-330: Handle assignments with expansions
+    // If the value contains expansions (like ${!ref}), we need to use template literals (backticks)
+    // instead of regular strings (double quotes) so the expansions are evaluated
+    const word = stmt.value as AST.Word;
+    const wordValue = ctx.visitWord(word);
+
+    // Check if the word has expansions (parts) and is not single-quoted
+    // Single-quoted strings should remain literal
+    if (word.type === "Word" && word.parts.length > 0 && !word.singleQuoted) {
+      // Use template literal syntax (backticks) for expansion evaluation
+      value = `\`${wordValue}\``;
+    } else {
+      // Use double quotes for literal values
+      value = `"${escapeForQuotes(wordValue)}"`;
+    }
   }
 
   // SSH-306: Handle exported variables
