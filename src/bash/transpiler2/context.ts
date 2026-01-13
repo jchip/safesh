@@ -28,6 +28,11 @@ interface VariableScope {
   parent: VariableScope | null;
 }
 
+interface FunctionRegistry {
+  /** Set of user-defined function names */
+  functions: Set<string>;
+}
+
 // =============================================================================
 // Transpiler Context
 // =============================================================================
@@ -38,10 +43,12 @@ export class TranspilerContext {
   private tempVarCounter = 0;
   private currentScope: VariableScope;
   private diagnostics: Diagnostic[] = [];
+  private functionRegistry: FunctionRegistry;
 
   constructor(options: ResolvedOptions) {
     this.options = options;
     this.currentScope = { variables: new Map(), parent: null };
+    this.functionRegistry = { functions: new Set() };
   }
 
   // ===========================================================================
@@ -154,6 +161,20 @@ export class TranspilerContext {
   /** Check if variable is in current scope (not parent) */
   isInCurrentScope(name: string): boolean {
     return this.currentScope.variables.has(name);
+  }
+
+  // ===========================================================================
+  // Function Registry
+  // ===========================================================================
+
+  /** Register a user-defined function */
+  declareFunction(name: string): void {
+    this.functionRegistry.functions.add(name);
+  }
+
+  /** Check if a name is a declared user-defined function */
+  isFunction(name: string): boolean {
+    return this.functionRegistry.functions.has(name);
   }
 
   // ===========================================================================

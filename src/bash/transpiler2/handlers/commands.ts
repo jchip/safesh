@@ -84,17 +84,24 @@ export function buildCommand(
   let cmdExpr: string;
   let isAsync = true;
 
-  // Check if any args contain dynamic values (template literals with ${)
-  // If so, fluent command handlers can't parse them correctly at transpile-time
-  const hasDynamicArgs = args.some((arg) => arg.includes("${"));
-
-  // Use fluent style for common text processing commands (only with static args)
-  if (isFluentCommand(name) && !hasDynamicArgs) {
-    cmdExpr = buildFluentCommand(name, args, ctx);
+  // Check if this is a user-defined function call
+  if (ctx.isFunction(name)) {
+    // Call the function directly
+    cmdExpr = `${name}()`;
+    isAsync = true;
   } else {
-    // Use explicit $.cmd`` style
-    const argsStr = args.length > 0 ? " " + args.join(" ") : "";
-    cmdExpr = `$.cmd\`${name}${argsStr}\``;
+    // Check if any args contain dynamic values (template literals with ${)
+    // If so, fluent command handlers can't parse them correctly at transpile-time
+    const hasDynamicArgs = args.some((arg) => arg.includes("${"));
+
+    // Use fluent style for common text processing commands (only with static args)
+    if (isFluentCommand(name) && !hasDynamicArgs) {
+      cmdExpr = buildFluentCommand(name, args, ctx);
+    } else {
+      // Use explicit $.cmd`` style
+      const argsStr = args.length > 0 ? " " + args.join(" ") : "";
+      cmdExpr = `$.cmd\`${name}${argsStr}\``;
+    }
   }
 
   // Apply redirections
@@ -465,10 +472,22 @@ export function buildVariableAssignment(
   ctx: VisitorContext,
 ): string {
   let value: string;
-  if (stmt.value.type === "ArithmeticExpansion") {
+  let isArray = false;
+
+  // SSH-327: Handle array assignments
+  if (stmt.value.type === "ArrayLiteral") {
+    isArray = true;
+    const elements = stmt.value.elements
+      .map((el) => {
+        const elementValue = ctx.visitWord(el as AST.Word);
+        return `"${escapeForQuotes(elementValue)}"`;
+      })
+      .join(", ");
+    value = `[${elements}]`;
+  } else if (stmt.value.type === "ArithmeticExpansion") {
     value = ctx.visitArithmetic(stmt.value.expression);
   } else {
-    value = escapeForQuotes(ctx.visitWord(stmt.value as AST.Word));
+    value = `"${escapeForQuotes(ctx.visitWord(stmt.value as AST.Word))}"`;
   }
 
   // SSH-306: Handle exported variables
@@ -476,22 +495,22 @@ export function buildVariableAssignment(
     // Exported variables need to be set in both local scope and environment
     if (ctx.isDeclared(stmt.name)) {
       // Already declared, just update value and export
-      return `${stmt.name} = "${value}"; Deno.env.set("${stmt.name}", ${stmt.name})`;
+      return `${stmt.name} = ${value}; Deno.env.set("${stmt.name}", ${stmt.name})`;
     } else {
       // First assignment - declare, set value, and export
       ctx.declareVariable(stmt.name, "let");
-      return `let ${stmt.name} = "${value}"; Deno.env.set("${stmt.name}", ${stmt.name})`;
+      return `let ${stmt.name} = ${value}; Deno.env.set("${stmt.name}", ${stmt.name})`;
     }
   }
 
   // Check if variable is already declared
   if (ctx.isDeclared(stmt.name)) {
     // Reassignment - no declaration keyword needed
-    return `${stmt.name} = "${value}"`;
+    return `${stmt.name} = ${value}`;
   } else {
     // First assignment - declare with let (bash variables are mutable)
     ctx.declareVariable(stmt.name, "let");
-    return `let ${stmt.name} = "${value}"`;
+    return `let ${stmt.name} = ${value}`;
   }
 }
 
