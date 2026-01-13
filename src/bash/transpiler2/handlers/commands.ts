@@ -493,9 +493,13 @@ export function buildVariableAssignment(
     const word = stmt.value as AST.Word;
     const wordValue = ctx.visitWord(word);
 
-    // Check if the word has expansions (parts) and is not single-quoted
+    // Check if the word has expansions (not just literal parts) and is not single-quoted
     // Single-quoted strings should remain literal
-    if (word.type === "Word" && word.parts.length > 0 && !word.singleQuoted) {
+    const hasExpansions = word.type === "Word" && word.parts.some(part =>
+      part.type !== "LiteralPart"
+    );
+
+    if (hasExpansions && !word.singleQuoted) {
       // Use template literal syntax (backticks) for expansion evaluation
       value = `\`${wordValue}\``;
     } else {
