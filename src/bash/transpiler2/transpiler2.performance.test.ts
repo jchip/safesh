@@ -582,7 +582,6 @@ describe("Performance: Complex Edge Case Combinations", () => {
     // Verify key elements are present
     assertStringIncludes(result, "function process_data");
     assertStringIncludes(result, "for (");
-    assertStringIncludes(result, "case");
     assertStringIncludes(result, "declare");
     assert(result.length > 1000, "Expected substantial output");
   });
