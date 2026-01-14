@@ -65,6 +65,7 @@ export interface Pipeline extends BaseNode {
   commands: (Command | Pipeline | TestCommand | ArithmeticCommand)[];
   operator: "&&" | "||" | "|" | ";" | "&" | null;
   background: boolean;
+  negated?: boolean; // True if preceded by '!'
 }
 
 // =============================================================================

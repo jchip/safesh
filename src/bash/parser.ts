@@ -307,6 +307,9 @@ export class Parser {
   // ===========================================================================
 
   private parsePipeline(): AST.Pipeline {
+    // Handle negation operator (!)
+    const negated = this.skip(TokenType.BANG);
+
     let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand = this.parseCommand();
 
     // Only handle pipe and logical operators (|, |&, &&, ||)
@@ -347,6 +350,7 @@ export class Parser {
           commands: [...left.commands, right],
           operator: op,
           background: false,
+          negated: left.negated,
         };
       } else {
         left = {
@@ -354,6 +358,7 @@ export class Parser {
           commands: [left, right],
           operator: op,
           background: false,
+          negated: negated,
         };
       }
     }
@@ -369,6 +374,7 @@ export class Parser {
           commands: [left],
           operator: "&",
           background: true,
+          negated: negated,
         };
       }
     }
@@ -380,6 +386,7 @@ export class Parser {
         commands: [left],
         operator: null,
         background: false,
+        negated: negated,
       };
     }
 
@@ -510,6 +517,8 @@ export class Parser {
     this.skipNewlines();
 
     const test = this.parsePipeline();
+    this.skipNewlines();
+    this.skip(TokenType.SEMICOLON); // Optional semicolon before 'then'
     this.skipNewlines();
     this.expect(TokenType.THEN);
     this.skipNewlines();
