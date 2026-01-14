@@ -62,7 +62,7 @@ export interface Command extends BaseNode {
 
 export interface Pipeline extends BaseNode {
   type: "Pipeline";
-  commands: (Command | Pipeline | TestCommand | ArithmeticCommand)[];
+  commands: Statement[];
   operator: "&&" | "||" | "|" | ";" | "&" | null;
   background: boolean;
   negated?: boolean; // True if preceded by '!'
@@ -277,7 +277,8 @@ export type ArithmeticExpression =
   | UnaryArithmeticExpression
   | ConditionalArithmeticExpression
   | AssignmentExpression
-  | GroupedArithmeticExpression;
+  | GroupedArithmeticExpression
+  | ParameterExpansion;
 
 export interface NumberLiteral extends BaseNode {
   type: "NumberLiteral";

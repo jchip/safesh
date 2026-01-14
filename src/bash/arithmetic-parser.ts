@@ -23,6 +23,7 @@ import type * as AST from "./ast.ts";
 enum ArithTokenType {
   NUMBER,
   IDENTIFIER,
+  PARAM_EXPANSION, // ${...}
   PLUS,
   MINUS,
   STAR,
@@ -199,6 +200,25 @@ class ArithmeticLexer {
       return { type: singleCharMap[c]!, value: c, pos: startPos };
     }
 
+    // Parameter expansion: ${...}
+    if (c === "$" && c2 === "{") {
+      let value = this.advance() + this.advance(); // "${"
+      let braceDepth = 1;
+
+      while (braceDepth > 0 && this.pos < this.input.length) {
+        const ch = this.peek();
+        value += this.advance();
+
+        if (ch === "{") {
+          braceDepth++;
+        } else if (ch === "}") {
+          braceDepth--;
+        }
+      }
+
+      return { type: ArithTokenType.PARAM_EXPANSION, value, pos: startPos };
+    }
+
     // Numbers (decimal, octal, hex)
     if (/[0-9]/.test(c)) {
       let value = "";
@@ -334,6 +354,11 @@ export class ArithmeticParser {
           };
         }
         return { type: "VariableReference", name: token.value };
+      }
+
+      case ArithTokenType.PARAM_EXPANSION: {
+        this.advance();
+        return this.parseParameterExpansionToken(token.value);
       }
 
       case ArithTokenType.LPAREN: {
@@ -560,6 +585,169 @@ export class ArithmeticParser {
     }
     // Decimal
     return parseInt(value, 10);
+  }
+
+  /**
+   * Parse parameter expansion token ${...} into AST node
+   * @param value - The full ${...} string including braces
+   */
+  private parseParameterExpansionToken(value: string): AST.ParameterExpansion {
+    // Strip ${ and }
+    const content = value.slice(2, -1);
+    let pos = 0;
+
+    // Handle ${!var} indirect expansion
+    const isIndirect = content[0] === "!";
+    if (isIndirect) {
+      pos = 1;
+    }
+
+    // Handle ${#var} - length
+    if (content[0] === "#" && !isIndirect) {
+      const param = content.slice(1);
+      // Check if it's ${#} (number of positional params) vs ${#var} (length of var)
+      if (param === "" || param === "@" || param === "*") {
+        return {
+          type: "ParameterExpansion",
+          parameter: "#" + param,
+        };
+      }
+      return {
+        type: "ParameterExpansion",
+        parameter: param,
+        modifier: "length",
+      };
+    }
+
+    // Extract parameter name (supports arrays like var[@] or var[0])
+    let paramName = "";
+
+    // Handle special single-char parameters: $, ?, !, @, *, -, 0-9
+    if (/^[?$!@*\-0-9]$/.test(content[pos] ?? "")) {
+      paramName = content[pos]!;
+      pos++;
+    } else {
+      // Regular identifier
+      while (pos < content.length && /[a-zA-Z0-9_]/.test(content[pos]!)) {
+        paramName += content[pos]!;
+        pos++;
+      }
+
+      // Handle array subscript: var[subscript]
+      if (content[pos] === "[") {
+        const subscriptStart = pos;
+        let depth = 1;
+        pos++;
+        while (pos < content.length && depth > 0) {
+          if (content[pos] === "[") depth++;
+          else if (content[pos] === "]") depth--;
+          pos++;
+        }
+        const subscriptContent = content.slice(subscriptStart + 1, pos - 1);
+        // Store subscript
+        const result: AST.ParameterExpansion = {
+          type: "ParameterExpansion",
+          parameter: paramName,
+          subscript: subscriptContent,
+        };
+        if (isIndirect) {
+          result.indirection = true;
+        }
+        // Check for modifiers after subscript
+        if (pos < content.length) {
+          this.applyModifier(result, content.slice(pos));
+        }
+        return result;
+      }
+    }
+
+    if (isIndirect) {
+      paramName = "!" + paramName;
+    }
+
+    // If we've consumed all content, it's a simple expansion
+    if (pos >= content.length) {
+      return {
+        type: "ParameterExpansion",
+        parameter: paramName,
+      };
+    }
+
+    // Parse modifier
+    const remaining = content.slice(pos);
+    const result: AST.ParameterExpansion = {
+      type: "ParameterExpansion",
+      parameter: paramName,
+    };
+
+    this.applyModifier(result, remaining);
+    return result;
+  }
+
+  /**
+   * Apply parameter expansion modifier to the result
+   */
+  private applyModifier(result: AST.ParameterExpansion, remaining: string): void {
+    // Two-character modifiers
+    const twoCharModifiers: Record<string, AST.ParameterModifier> = {
+      ":-": ":-",
+      ":=": ":=",
+      ":?": ":?",
+      ":+": ":+",
+      "##": "##",
+      "%%": "%%",
+      "^^": "^^",
+      ",,": ",,",
+      "//": "//",
+      "/#": "/#",
+      "/%": "/%",
+    };
+
+    for (const [pattern, modifier] of Object.entries(twoCharModifiers)) {
+      if (remaining.startsWith(pattern)) {
+        const arg = remaining.slice(pattern.length);
+        result.modifier = modifier;
+        if (arg) {
+          result.modifierArg = {
+            type: "Word",
+            value: arg,
+            quoted: false,
+            singleQuoted: false,
+            parts: [{ type: "LiteralPart", value: arg }],
+          };
+        }
+        return;
+      }
+    }
+
+    // Single-character modifiers
+    const singleCharModifiers: Record<string, AST.ParameterModifier> = {
+      "-": "-",
+      "=": "=",
+      "?": "?",
+      "+": "+",
+      "#": "#",
+      "%": "%",
+      "^": "^",
+      ",": ",",
+      "/": "/",
+    };
+
+    const firstChar = remaining[0] ?? "";
+    const modifier = singleCharModifiers[firstChar];
+    if (modifier) {
+      const arg = remaining.slice(1);
+      result.modifier = modifier;
+      if (arg) {
+        result.modifierArg = {
+          type: "Word",
+          value: arg,
+          quoted: false,
+          singleQuoted: false,
+          parts: [{ type: "LiteralPart", value: arg }],
+        };
+      }
+    }
   }
 }
 

@@ -6,6 +6,7 @@
 
 import type * as AST from "../../ast.ts";
 import type { VisitorContext } from "../types.ts";
+import { visitParameterExpansion } from "./words.ts";
 
 // =============================================================================
 // Arithmetic Expression Dispatcher
@@ -33,6 +34,8 @@ export function visitArithmeticExpression(
       return visitAssignmentExpression(expr, _ctx);
     case "GroupedArithmeticExpression":
       return visitGroupedArithmetic(expr, _ctx);
+    case "ParameterExpansion":
+      return visitParameterExpansionInArithmetic(expr, _ctx);
     default: {
       const _exhaustive: never = expr;
       _ctx.addDiagnostic({ level: 'warning', message: `Unsupported arithmetic expression type: ${(expr as any).type}` });
@@ -141,4 +144,25 @@ export function visitGroupedArithmetic(
   ctx: VisitorContext,
 ): string {
   return `(${visitArithmeticExpression(node.expression, ctx)})`;
+}
+
+// =============================================================================
+// Parameter Expansion Handler (for arithmetic context)
+// =============================================================================
+
+/**
+ * Visit a ParameterExpansion node in arithmetic context
+ * Note: Full parameter expansion support is in words.ts, but we reuse
+ * that handler to maintain consistent behavior
+ */
+export function visitParameterExpansionInArithmetic(
+  node: AST.ParameterExpansion,
+  ctx: VisitorContext,
+): string {
+  // Use the full parameter expansion handler from words.ts
+  const expansion = visitParameterExpansion(node, ctx);
+
+  // In arithmetic context, wrap the result with Number() and default to 0
+  // to match Bash behavior where unset/empty variables evaluate to 0
+  return `Number(${expansion} ?? 0)`;
 }
