@@ -84,6 +84,13 @@ export function buildCommand(
   let cmdExpr: string;
   let isAsync = true;
 
+  // Build environment variable prefix for commands with assignments
+  const envPrefix = command.assignments.length > 0 && !hasNoCommand
+    ? command.assignments
+        .map((a) => `${a.name}=${ctx.visitWord(a.value as AST.Word)}`)
+        .join(" ") + " "
+    : "";
+
   // Check if this is a user-defined function call
   if (ctx.isFunction(name)) {
     // Call the function directly
@@ -95,12 +102,13 @@ export function buildCommand(
     const hasDynamicArgs = args.some((arg) => arg.includes("${"));
 
     // Use fluent style for common text processing commands (only with static args)
-    if (isFluentCommand(name) && !hasDynamicArgs) {
+    // BUT: env prefix forces explicit $.cmd`` style since fluent commands don't support it
+    if (isFluentCommand(name) && !hasDynamicArgs && !envPrefix) {
       cmdExpr = buildFluentCommand(name, args, ctx);
     } else {
       // Use explicit $.cmd`` style
       const argsStr = args.length > 0 ? " " + args.join(" ") : "";
-      cmdExpr = `$.cmd\`${name}${argsStr}\``;
+      cmdExpr = `$.cmd\`${envPrefix}${name}${argsStr}\``;
     }
   }
 
@@ -390,6 +398,11 @@ export function buildPipeline(
       // Default: pipe
       result = `${result}.pipe(${part})`;
     }
+  }
+
+  // Handle negation (! operator)
+  if (pipeline.negated) {
+    result = `${result}.negate()`;
   }
 
   return { code: result, async: true };
