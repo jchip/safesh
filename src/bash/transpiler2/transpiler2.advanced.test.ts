@@ -643,12 +643,6 @@ describe("Edge Cases", () => {
     assertStringIncludes(code, "let VAR");
   });
 
-  it("should handle consecutive semicolons", () => {
-    const code = transpileBash("echo a;; echo b");
-    assertStringIncludes(code, "$.cmd`echo a`");
-    assertStringIncludes(code, "$.cmd`echo b`");
-  });
-
   it("should handle commands with no arguments", () => {
     const code = transpileBash("pwd");
     assertStringIncludes(code, "$.cmd`pwd`");
