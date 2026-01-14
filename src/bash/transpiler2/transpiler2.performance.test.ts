@@ -228,7 +228,7 @@ describe("Performance: Large Script Handling", () => {
     const result = transpile(ast);
 
     // Verify structure
-    assertStringIncludes(result, "async function main");
+    assertStringIncludes(result, "(async () => {");
     assertStringIncludes(result, "Processing line");
     assert(result.split('\n').length > 20);
   });
