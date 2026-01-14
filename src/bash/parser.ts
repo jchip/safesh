@@ -310,7 +310,7 @@ export class Parser {
     // Handle negation operator (!)
     const negated = this.skip(TokenType.BANG);
 
-    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand = this.parseCommand();
+    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement = this.parseCommand();
 
     // Only handle pipe and logical operators (|, |&, &&, ||)
     // Do NOT handle ; or & here - those are statement separators/terminators
@@ -397,13 +397,28 @@ export class Parser {
   // Commands
   // ===========================================================================
 
-  private parseCommand(): AST.Command | AST.TestCommand | AST.ArithmeticCommand {
+  private parseCommand(): AST.Command | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement {
     const assignments: AST.VariableAssignment[] = [];
     const redirects: AST.Redirection[] = [];
 
     // Parse leading assignments (VAR=value)
     while (this.is(TokenType.ASSIGNMENT_WORD)) {
       assignments.push(this.parseVariableAssignment());
+    }
+
+    // Check for loop keywords in pipeline context (e.g., "cmd | while read line")
+    // Delegate to specific loop parsers for proper handling
+    if (this.is(TokenType.WHILE)) {
+      return this.parseWhileStatement();
+    }
+    if (this.is(TokenType.UNTIL)) {
+      return this.parseUntilStatement();
+    }
+    if (this.is(TokenType.FOR)) {
+      return this.parseForStatement();
+    }
+    if (this.is(TokenType.IF)) {
+      return this.parseIfStatement();
     }
 
     // Check for test command [[ ... ]]
@@ -414,6 +429,16 @@ export class Parser {
     // Check for arithmetic command (( ... ))
     if (this.is(TokenType.DPAREN_START)) {
       return this.parseArithmeticCommand();
+    }
+
+    // Check for brace group { ... }
+    if (this.is(TokenType.LBRACE)) {
+      return this.parseBraceGroup();
+    }
+
+    // Check for subshell ( ... )
+    if (this.is(TokenType.LPAREN)) {
+      return this.parseSubshell();
     }
 
     // Parse command name
@@ -708,6 +733,7 @@ export class Parser {
     this.skipNewlines();
 
     const test = this.parsePipeline();
+    this.skip(TokenType.SEMICOLON); // Allow optional semicolon
     this.skipNewlines();
     this.expect(TokenType.DO);
     this.skipNewlines();
@@ -1735,7 +1761,7 @@ export class Parser {
     const statements: AST.Statement[] = [];
 
     while (!this.isAny(...terminators) && !this.is(TokenType.EOF)) {
-      if (this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON)) {
+      if (this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON) || this.is(TokenType.COMMENT)) {
         this.advance();
         continue;
       }
