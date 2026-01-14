@@ -365,8 +365,8 @@ export function buildPipeline(
     } else if (cmd.type === "Pipeline") {
       return buildPipeline(cmd, ctx);
     }
-    // For other statement types, we need to wrap them
-    return { code: "/* unsupported statement in pipeline */", async: true };
+    // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
+    return { code: buildStatementAsExpression(cmd, ctx), async: true };
   }
 
   // Build pipeline chain by flattening nested pipelines
@@ -426,6 +426,9 @@ function flattenPipeline(
       parts.push(buildCommand(left, ctx).code);
     } else if (left.type === "Pipeline") {
       flattenPipeline(left, parts, operators, ctx);
+    } else {
+      // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
+      parts.push(buildStatementAsExpression(left, ctx));
     }
   }
 
@@ -441,8 +444,24 @@ function flattenPipeline(
       parts.push(buildCommand(cmd, ctx).code);
     } else if (cmd.type === "Pipeline") {
       flattenPipeline(cmd, parts, operators, ctx);
+    } else {
+      // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
+      parts.push(buildStatementAsExpression(cmd, ctx));
     }
   }
+}
+
+/**
+ * Convert a statement (like BraceGroup, Subshell, etc.) into an expression that can be used in a pipeline
+ * Wraps the statement in an async IIFE that returns a result object
+ */
+function buildStatementAsExpression(stmt: AST.Statement, ctx: VisitorContext): string {
+  // Visit the statement to get its lines
+  const result = ctx.visitStatement(stmt);
+  const lines = result.lines.map(l => l.trim()).filter(l => l.length > 0);
+
+  // Wrap in async IIFE that executes the statements and returns success
+  return `(async () => { ${lines.join('; ')}; return { code: 0, stdout: '', stderr: '' }; })()`;
 }
 
 /**
