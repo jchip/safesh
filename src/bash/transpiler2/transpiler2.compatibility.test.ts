@@ -52,8 +52,8 @@ describe("Package Manager Scripts", () => {
       const code = transpileBash(`
         NODE_ENV=production npm run build
       `);
-      assertStringIncludes(code, "NODE_ENV");
-      assertStringIncludes(code, "npm run build");
+      assertStringIncludes(code, 'NODE_ENV: "production"');
+      assertStringIncludes(code, '"npm", "run", "build"');
     });
 
     it("should handle package.json script pattern", () => {
@@ -79,8 +79,8 @@ describe("Package Manager Scripts", () => {
       const code = transpileBash(`
         DEBIAN_FRONTEND=noninteractive apt-get install -y package
       `);
-      assertStringIncludes(code, "DEBIAN_FRONTEND");
-      assertStringIncludes(code, "apt-get install");
+      assertStringIncludes(code, 'DEBIAN_FRONTEND: "noninteractive"');
+      assertStringIncludes(code, '"apt-get", "install"');
     });
 
     it("should handle apt cleanup pattern", () => {
@@ -223,7 +223,9 @@ describe("Init Scripts", () => {
             ;;
         esac
       `);
-      assertStringIncludes(code, "case");
+      // Transpiler converts case to if/else if chains
+      assertStringIncludes(code, "if (");
+      assertStringIncludes(code, "else if (");
       assertStringIncludes(code, "start");
       assertStringIncludes(code, "stop");
       assertStringIncludes(code, "restart");
@@ -282,7 +284,8 @@ describe("Docker Entrypoint Scripts", () => {
       done
       echo "Database is ready!"
     `);
-    assertStringIncludes(code, "until");
+    // Transpiler converts until to while loops
+    assertStringIncludes(code, "while (");
     assertStringIncludes(code, "nc");
     assertStringIncludes(code, "sleep");
   });
@@ -390,9 +393,9 @@ describe("AWS CLI Scripts", () => {
     const code = transpileBash(`
       AWS_PROFILE=production AWS_REGION=us-west-2 aws ec2 describe-instances
     `);
-    assertStringIncludes(code, "AWS_PROFILE");
-    assertStringIncludes(code, "AWS_REGION");
-    assertStringIncludes(code, "aws ec2");
+    assertStringIncludes(code, 'AWS_PROFILE: "production"');
+    assertStringIncludes(code, 'AWS_REGION: "us-west-2"');
+    assertStringIncludes(code, '"aws", "ec2"');
   });
 
   it("should handle aws ecr login", () => {
@@ -654,7 +657,9 @@ describe("Common Utility Patterns", () => {
         done
       `);
       assertStringIncludes(code, "getopts");
-      assertStringIncludes(code, "case");
+      // Transpiler converts case to if/else if chains
+      assertStringIncludes(code, "if (");
+      assertStringIncludes(code, "else if (");
     });
 
     it("should handle positional argument parsing", () => {
