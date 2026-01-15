@@ -84,12 +84,8 @@ export function buildCommand(
   let cmdExpr: string;
   let isAsync = true;
 
-  // Build environment variable prefix for commands with assignments
-  const envPrefix = command.assignments.length > 0 && !hasNoCommand
-    ? command.assignments
-        .map((a) => `${a.name}=${ctx.visitWord(a.value as AST.Word)}`)
-        .join(" ") + " "
-    : "";
+  // Check if command has environment variable assignments
+  const hasAssignments = command.assignments.length > 0 && !hasNoCommand;
 
   // Check if this is a user-defined function call
   if (ctx.isFunction(name)) {
@@ -102,13 +98,25 @@ export function buildCommand(
     const hasDynamicArgs = args.some((arg) => arg.includes("${"));
 
     // Use fluent style for common text processing commands (only with static args)
-    // BUT: env prefix forces explicit $.cmd`` style since fluent commands don't support it
-    if (isFluentCommand(name) && !hasDynamicArgs && !envPrefix) {
+    // BUT: env assignments force explicit $.cmd() style since fluent commands don't support it
+    if (isFluentCommand(name) && !hasDynamicArgs && !hasAssignments) {
       cmdExpr = buildFluentCommand(name, args, ctx);
+    } else if (hasAssignments) {
+      // Use function call style with env options when there are assignments
+      const envEntries = command.assignments
+        .map((a) => {
+          const value = ctx.visitWord(a.value as AST.Word);
+          // Escape quotes in the value
+          const escapedValue = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+          return `${a.name}: "${escapedValue}"`;
+        })
+        .join(", ");
+      const argsArray = args.map(a => `"${escapeForQuotes(a)}"`).join(", ");
+      cmdExpr = `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
     } else {
-      // Use explicit $.cmd`` style
+      // Use explicit $.cmd`` template literal style
       const argsStr = args.length > 0 ? " " + args.join(" ") : "";
-      cmdExpr = `$.cmd\`${envPrefix}${name}${argsStr}\``;
+      cmdExpr = `$.cmd\`${name}${argsStr}\``;
     }
   }
 
