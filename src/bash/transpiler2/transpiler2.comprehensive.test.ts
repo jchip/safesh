@@ -121,7 +121,7 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle variable assignment with command", () => {
     const ast = parse("VAR=value command arg");
     const output = transpile(ast);
-    assertStringIncludes(output, "$.cmd`command");
+    assertStringIncludes(output, '$.cmd({ env: { VAR: "value" } }, "command", "arg")');
   });
 
   it("should handle command with escaped quotes", () => {
