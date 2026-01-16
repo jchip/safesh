@@ -350,6 +350,15 @@ export function visitCommand(
 // =============================================================================
 
 /**
+ * Represents a part in a flattened pipeline with metadata
+ */
+interface PipelinePart {
+  code: string;
+  /** Whether this part produces command output that should be printed */
+  isPrintable: boolean;
+}
+
+/**
  * Build a pipeline expression (without await/semicolon)
  */
 export function buildPipeline(
@@ -371,7 +380,7 @@ export function buildPipeline(
   }
 
   // Build pipeline chain by flattening nested pipelines
-  const parts: string[] = [];
+  const parts: PipelinePart[] = [];
   const operators: (string | null)[] = [];
 
   // Flatten the pipeline tree into a list
@@ -380,26 +389,46 @@ export function buildPipeline(
   // Build the chained expression
   if (parts.length === 0) return { code: "", async: false };
 
-  let result = parts[0] ?? "";
+  let result = parts[0]?.code ?? "";
+  let resultIsPrintable = parts[0]?.isPrintable ?? false;
+
   for (let i = 1; i < parts.length; i++) {
     const op = operators[i - 1];
     const part = parts[i];
     if (!part) continue;
 
     if (op === "&&") {
-      // For logical operators, wrap in async IIFE that prints each command
-      result = `(async () => { await __printCmd(${result}); return ${part}; })()`;
+      // SSH-361: Only wrap with __printCmd if the part produces command output
+      // Variable assignments (isPrintable: false) should just be executed
+      if (resultIsPrintable) {
+        result = `(async () => { await __printCmd(${result}); return ${part.code}; })()`;
+      } else {
+        result = `(async () => { ${result}; return ${part.code}; })()`;
+      }
+      resultIsPrintable = part.isPrintable;
     } else if (op === "||") {
-      // For ||, print the first command, and if it fails, run the second
-      result = `(async () => { try { await __printCmd(${result}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part}; } })()`;
+      // SSH-361: Only wrap with __printCmd if the part produces command output
+      if (resultIsPrintable) {
+        result = `(async () => { try { await __printCmd(${result}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+      } else {
+        result = `(async () => { try { ${result}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+      }
+      resultIsPrintable = part.isPrintable;
     } else if (op === "|") {
-      result = `${result}.pipe(${part})`;
+      result = `${result}.pipe(${part.code})`;
+      resultIsPrintable = true; // Pipes always produce output
     } else if (op === ";") {
       // Sequential execution - wrap in async IIFE
-      result = `(async () => { await __printCmd(${result}); return ${part}; })()`;
+      if (resultIsPrintable) {
+        result = `(async () => { await __printCmd(${result}); return ${part.code}; })()`;
+      } else {
+        result = `(async () => { ${result}; return ${part.code}; })()`;
+      }
+      resultIsPrintable = part.isPrintable;
     } else {
       // Default: pipe
-      result = `${result}.pipe(${part})`;
+      result = `${result}.pipe(${part.code})`;
+      resultIsPrintable = true;
     }
   }
 
@@ -418,7 +447,7 @@ export function buildPipeline(
  */
 function flattenPipeline(
   pipeline: AST.Pipeline,
-  parts: string[],
+  parts: PipelinePart[],
   operators: (string | null)[],
   ctx: VisitorContext,
 ): void {
@@ -426,12 +455,16 @@ function flattenPipeline(
   const left = pipeline.commands[0];
   if (left) {
     if (left.type === "Command") {
-      parts.push(buildCommand(left, ctx).code);
+      const result = buildCommand(left, ctx);
+      // SSH-361: Track whether the command produces output that should be printed
+      // async: true means it's a command that returns CommandResult
+      // async: false means it's a variable assignment (no output to print)
+      parts.push({ code: result.code, isPrintable: result.async });
     } else if (left.type === "Pipeline") {
       flattenPipeline(left, parts, operators, ctx);
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      parts.push(buildStatementAsExpression(left, ctx));
+      parts.push({ code: buildStatementAsExpression(left, ctx), isPrintable: true });
     }
   }
 
@@ -444,12 +477,14 @@ function flattenPipeline(
     if (!cmd) continue;
 
     if (cmd.type === "Command") {
-      parts.push(buildCommand(cmd, ctx).code);
+      const result = buildCommand(cmd, ctx);
+      // SSH-361: Track whether the command produces output that should be printed
+      parts.push({ code: result.code, isPrintable: result.async });
     } else if (cmd.type === "Pipeline") {
       flattenPipeline(cmd, parts, operators, ctx);
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      parts.push(buildStatementAsExpression(cmd, ctx));
+      parts.push({ code: buildStatementAsExpression(cmd, ctx), isPrintable: true });
     }
   }
 }
