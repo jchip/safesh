@@ -329,6 +329,20 @@ describe("Transpiler2 - Pipelines", () => {
     // The echo command should be present
     assertStringIncludes(output, '(await $.cmd("echo"))');
   });
+
+  it("should handle multiple variable assignments in && chain (SSH-362)", () => {
+    const ast = parse('A=1 && B=2 && echo "$A + $B"');
+    const output = transpile(ast);
+
+    // Should NOT generate "return let" which is invalid syntax
+    assertEquals(output.includes("return let"), false, "Should not have 'return let' in output");
+
+    // Both variable assignments should be present
+    assertStringIncludes(output, 'let A = "1"');
+    assertStringIncludes(output, 'let B = "2"');
+    // The echo command should be present
+    assertStringIncludes(output, '(await $.cmd("echo"))');
+  });
 });
 
 // =============================================================================

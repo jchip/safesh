@@ -398,17 +398,25 @@ export function buildPipeline(
     if (!part) continue;
 
     if (op === "&&") {
-      // SSH-361: Only wrap with __printCmd if the part produces command output
-      // Variable assignments (isPrintable: false) should just be executed
-      if (resultIsPrintable) {
+      // SSH-361/362: Handle printable vs non-printable parts correctly
+      // Variable assignments (isPrintable: false) should just be executed, not returned
+      if (!resultIsPrintable && !part.isPrintable) {
+        // SSH-362: Both are non-printable (e.g., consecutive variable assignments)
+        // Just sequence them without IIFE wrapping
+        result = `${result}; ${part.code}`;
+      } else if (resultIsPrintable) {
         result = `(async () => { await __printCmd(${result}); return ${part.code}; })()`;
       } else {
+        // result is non-printable, part is printable - wrap in IIFE
         result = `(async () => { ${result}; return ${part.code}; })()`;
       }
       resultIsPrintable = part.isPrintable;
     } else if (op === "||") {
-      // SSH-361: Only wrap with __printCmd if the part produces command output
-      if (resultIsPrintable) {
+      // SSH-361/362: Handle printable vs non-printable parts correctly
+      if (!resultIsPrintable && !part.isPrintable) {
+        // Both non-printable - sequence with try/catch for || semantics
+        result = `(async () => { try { ${result}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${part.code}; return { code: 0, stdout: '', stderr: '', success: true }; } })()`;
+      } else if (resultIsPrintable) {
         result = `(async () => { try { await __printCmd(${result}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
       } else {
         result = `(async () => { try { ${result}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
@@ -418,8 +426,12 @@ export function buildPipeline(
       result = `${result}.pipe(${part.code})`;
       resultIsPrintable = true; // Pipes always produce output
     } else if (op === ";") {
-      // Sequential execution - wrap in async IIFE
-      if (resultIsPrintable) {
+      // Sequential execution
+      // SSH-362: Handle non-printable parts correctly
+      if (!resultIsPrintable && !part.isPrintable) {
+        // Both non-printable - just sequence them
+        result = `${result}; ${part.code}`;
+      } else if (resultIsPrintable) {
         result = `(async () => { await __printCmd(${result}); return ${part.code}; })()`;
       } else {
         result = `(async () => { ${result}; return ${part.code}; })()`;
