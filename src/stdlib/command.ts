@@ -316,6 +316,27 @@ export class Command implements PromiseLike<CommandResult> {
   }
 
   /**
+   * Execute command and return stdout as string
+   *
+   * Convenience method for command substitution $(...)
+   * Executes the command and returns just the stdout content.
+   *
+   * @returns Promise with stdout string
+   *
+   * @example
+   * ```ts
+   * // Get command output as string
+   * const branch = await cmd("git", ["branch", "--show-current"]).text();
+   *
+   * // Used in command substitution: $(git branch --show-current)
+   * ```
+   */
+  async text(): Promise<string> {
+    const result = await this.exec();
+    return result.stdout;
+  }
+
+  /**
    * Execute command and buffer output
    *
    * @returns Promise with command result
