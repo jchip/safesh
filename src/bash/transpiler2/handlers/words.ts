@@ -368,24 +368,37 @@ export function visitParameterExpansion(
 
 /**
  * Visit a CommandSubstitution node
+ *
+ * Command substitution $(...) captures stdout from inner commands.
+ * Unlike statement context (which uses __printCmd to print output),
+ * we need the raw command expression to call .text() on it.
  */
 export function visitCommandSubstitution(
   cs: AST.CommandSubstitution,
   ctx: VisitorContext,
 ): string {
-  // Collect inner statements
-  const innerLines: string[] = [];
+  // For command substitution, we need the raw command expression (not wrapped in __printCmd)
+  // Build the inner command expression directly
+  const innerExprs: string[] = [];
 
   for (const stmt of cs.command) {
-    const result = ctx.visitStatement(stmt);
-    // Strip indent from inner lines for inline use
-    for (const line of result.lines) {
-      innerLines.push(line.trim());
+    // For simple commands/pipelines, get the expression directly
+    // For other statements, fall back to visitStatement (may need refinement)
+    if (stmt.type === "Command" || stmt.type === "Pipeline") {
+      const expr = ctx.buildCommandExpression(stmt);
+      innerExprs.push(expr.code);
+    } else {
+      // For complex statements (if, for, etc.), use visitStatement
+      // These may not work correctly with .text() - needs SSH-360 refactor
+      const result = ctx.visitStatement(stmt);
+      for (const line of result.lines) {
+        innerExprs.push(line.trim());
+      }
     }
   }
 
   // Build inline command substitution that captures stdout
-  const innerCode = innerLines.join(" ").replace(/^await /, "").replace(/;$/, "");
+  const innerCode = innerExprs.join("; ").replace(/^await /, "").replace(/;$/, "");
 
   // Only strip trailing newlines, not all whitespace (Bash behavior)
   return `\${await (async () => { const __result = ${innerCode}; return (await __result.text()).replace(/\\n+$/, ""); })()}`;
