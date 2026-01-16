@@ -584,8 +584,7 @@ describe("Transpiler2 - Variable Expansion", () => {
     const output = transpile(ast);
 
     // SSH-296: :- should check for both undefined AND empty string
-    // The condition is within a string literal, so quotes are escaped
-    assertStringIncludes(output, 'VAR === undefined || VAR === \\"\\"');
+    assertStringIncludes(output, 'VAR === undefined || VAR === ""');
   });
 
   it("should transpile length expansion", () => {
@@ -1078,8 +1077,7 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "if (");
-    assertStringIncludes(output, '$.cmd("test")');
-    assertStringIncludes(output, '"-f", "file"');
+    assertStringIncludes(output, '$.cmd("test", "-f", "file")');
   });
 
   it("should handle standalone TestCommand statement", () => {
@@ -1216,16 +1214,14 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
     const script = "(echo subshell)";
     const ast = parse(script);
     const output = transpile(ast);
-    assertStringIncludes(output, '$.cmd("echo")');
-    assertStringIncludes(output, "subshell");
+    assertStringIncludes(output, '$.cmd("echo", "subshell")');
   });
 
   it("should handle BraceGroup", () => {
     const script = "{ echo group; }";
     const ast = parse(script);
     const output = transpile(ast);
-    assertStringIncludes(output, '$.cmd("echo")');
-    assertStringIncludes(output, "group");
+    assertStringIncludes(output, '$.cmd("echo", "group")');
   });
 
   it("should handle TestCommand", () => {

@@ -23,7 +23,7 @@ function transpileBash(bash: string): string {
 describe("Background Jobs", () => {
   it("should handle simple background job with &", () => {
     const code = transpileBash("sleep 10 &");
-    assertStringIncludes(code, "sleep 10");
+    assertStringIncludes(code, '"sleep", "10"');
     // Background job handling may vary based on implementation
   });
 
@@ -62,42 +62,42 @@ describe("Background Jobs", () => {
 describe("Complex Quoting Scenarios", () => {
   it("should handle mixed single and double quotes", () => {
     const code = transpileBash(`echo 'single' "double" 'more'`);
-    assertStringIncludes(code, '$.cmd("echo")');
+    assertStringIncludes(code, '$.cmd("echo"');
   });
 
   it("should handle escaped quotes inside double quotes", () => {
     const code = transpileBash(`echo "say \\"hello\\"`);
-    assertStringIncludes(code, '$.cmd("echo")');
+    assertStringIncludes(code, '$.cmd("echo"');
   });
 
   it("should handle escaped single quotes", () => {
     const code = transpileBash(`echo 'it\\'s working'`);
-    assertStringIncludes(code, '$.cmd("echo")');
+    assertStringIncludes(code, '$.cmd("echo"');
   });
 
   it("should handle backslash escaping", () => {
     const code = transpileBash(`echo "path\\to\\file"`);
-    assertStringIncludes(code, '$.cmd("echo")');
+    assertStringIncludes(code, '$.cmd("echo"');
   });
 
   it("should handle newline escaping", () => {
     const code = transpileBash(`echo "line1\\nline2"`);
-    assertStringIncludes(code, '$.cmd("echo")');
+    assertStringIncludes(code, '$.cmd("echo"');
   });
 
   it("should handle tab escaping", () => {
     const code = transpileBash(`echo "col1\\tcol2"`);
-    assertStringIncludes(code, '$.cmd("echo")');
+    assertStringIncludes(code, '$.cmd("echo"');
   });
 
   it("should handle ANSI-C quoting with $'...'", () => {
     const code = transpileBash(`echo $'line1\\nline2\\ttab'`);
-    assertStringIncludes(code, '$.cmd("echo")');
+    assertStringIncludes(code, '$.cmd("echo"');
   });
 
   it("should handle empty quotes", () => {
     const code = transpileBash(`echo "" '' ""`);
-    assertStringIncludes(code, '$.cmd("echo")');
+    assertStringIncludes(code, '$.cmd("echo"');
   });
 });
 
@@ -212,8 +212,8 @@ describe("Real-World CI/CD Scripts", () => {
     const code = transpileBash(script);
     assertStringIncludes(code, "let IMAGE_NAME");
     assertStringIncludes(code, "let VERSION");
-    assertStringIncludes(code, "docker build");
-    assertStringIncludes(code, "docker push");
+    assertStringIncludes(code, '"docker", "build"');
+    assertStringIncludes(code, '"docker", "push"');
   });
 
   it("should transpile a Git tag and release script", () => {
@@ -235,8 +235,8 @@ describe("Real-World CI/CD Scripts", () => {
     const code = transpileBash(script);
     assertStringIncludes(code, "let VERSION");
     assertStringIncludes(code, "let BRANCH");
-    assertStringIncludes(code, "git tag");
-    assertStringIncludes(code, "git push");
+    assertStringIncludes(code, '"git", "tag"');
+    assertStringIncludes(code, '"git", "push"');
   });
 
   it("should transpile a dependency check script", () => {
@@ -262,7 +262,7 @@ describe("Real-World CI/CD Scripts", () => {
     `;
     const code = transpileBash(script);
     assertStringIncludes(code, "for (const cmd of");
-    assertStringIncludes(code, "command -v");
+    assertStringIncludes(code, '"command", "-v"');
   });
 
   it("should transpile a test runner script", () => {
@@ -298,7 +298,7 @@ describe("Real-World CI/CD Scripts", () => {
     `;
     const code = transpileBash(script);
     assertStringIncludes(code, "for (const dir of");
-    assertStringIncludes(code, "npm test");
+    assertStringIncludes(code, '"npm", "test"');
   });
 });
 
@@ -645,7 +645,7 @@ describe("Edge Cases", () => {
 
   it("should handle commands with no arguments", () => {
     const code = transpileBash("pwd");
-    assertStringIncludes(code, '$.cmd("pwd")');
+    assertStringIncludes(code, '$.cmd("pwd"');
   });
 
   it("should handle multiple redirections", () => {

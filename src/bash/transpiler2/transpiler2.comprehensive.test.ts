@@ -100,7 +100,7 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle command with special characters in arguments", () => {
     const ast = parse("echo 'hello world'");
     const output = transpile(ast);
-    assertStringIncludes(output, '$.cmd("echo")');
+    assertStringIncludes(output, '$.cmd("echo"');
   });
 
   it("should handle command with variable in name", () => {
@@ -127,7 +127,7 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle command with escaped quotes", () => {
     const ast = parse('echo "say \\"hello\\""');
     const output = transpile(ast);
-    assertStringIncludes(output, '$.cmd("echo")');
+    assertStringIncludes(output, '$.cmd("echo"');
   });
 
   it("should handle empty command gracefully", () => {
@@ -190,14 +190,14 @@ describe("Fluent Commands - Comprehensive", () => {
       const ast = parse("cut -d: -f1,2");
       const output = transpile(ast);
       // cut is not a fluent command, should use $.cmd()
-      assertStringIncludes(output, 'await $.cmd("cut")');
+      assertStringIncludes(output, '$.cmd("cut"');
     });
 
     it("should handle cut with separated -d option (uses $.cmd())", () => {
       const ast = parse("cut -d , -f 1");
       const output = transpile(ast);
       // cut is not a fluent command, should use $.cmd()
-      assertStringIncludes(output, 'await $.cmd("cut")');
+      assertStringIncludes(output, '$.cmd("cut"');
     });
   });
 
@@ -206,14 +206,14 @@ describe("Fluent Commands - Comprehensive", () => {
       const ast = parse("tr a-z A-Z");
       const output = transpile(ast);
       // tr is not a fluent command, should use $.cmd()
-      assertStringIncludes(output, 'await $.cmd("tr")');
+      assertStringIncludes(output, '$.cmd("tr"');
     });
 
     it("should handle tr with special characters (uses $.cmd())", () => {
       const ast = parse("tr '\\n' ' '");
       const output = transpile(ast);
       // tr is not a fluent command, should use $.cmd()
-      assertStringIncludes(output, 'await $.cmd("tr")');
+      assertStringIncludes(output, '$.cmd("tr"');
     });
   });
 
@@ -286,13 +286,13 @@ describe("Fluent Commands - Comprehensive", () => {
     it("should use explicit style for sed", () => {
       const ast = parse("sed 's/old/new/g'");
       const output = transpile(ast);
-      assertStringIncludes(output, '$.cmd("sed")');
+      assertStringIncludes(output, '$.cmd("sed"');
     });
 
     it("should use explicit style for awk", () => {
       const ast = parse("awk '{print $1}'");
       const output = transpile(ast);
-      assertStringIncludes(output, '$.cmd("awk")');
+      assertStringIncludes(output, '$.cmd("awk"');
     });
   });
 });
@@ -311,13 +311,18 @@ describe("Pipelines - Complex Scenarios", () => {
   it("should handle AND pipeline", () => {
     const ast = parse("cmd1 && cmd2");
     const output = transpile(ast);
-    assertStringIncludes(output, ".then(");
+    // && generates async IIFE, not .then()
+    assertStringIncludes(output, "(async () =>");
+    assertStringIncludes(output, "__printCmd");
   });
 
   it("should handle OR pipeline", () => {
     const ast = parse("cmd1 || cmd2");
     const output = transpile(ast);
-    assertStringIncludes(output, ".catch(");
+    // || generates async IIFE with try/catch, not .catch()
+    assertStringIncludes(output, "(async () =>");
+    assertStringIncludes(output, "try {");
+    assertStringIncludes(output, "} catch {");
   });
 
   it("should handle pipeline with redirections", () => {
@@ -336,13 +341,17 @@ describe("Pipelines - Complex Scenarios", () => {
   it("should handle two-command AND chain", () => {
     const ast = parse("mkdir -p dir && cd dir");
     const output = transpile(ast);
-    assertStringIncludes(output, ".then(");
+    // && generates async IIFE, not .then()
+    assertStringIncludes(output, "(async () =>");
+    assertStringIncludes(output, "__printCmd");
   });
 
   it("should handle two-command OR chain", () => {
     const ast = parse("cmd1 || cmd2");
     const output = transpile(ast);
-    assertStringIncludes(output, ".catch(");
+    // || generates async IIFE with try/catch, not .catch()
+    assertStringIncludes(output, "(async () =>");
+    assertStringIncludes(output, "try {");
   });
 });
 
@@ -1330,16 +1339,16 @@ describe("Command Substitution", () => {
   it("should handle simple command substitution", () => {
     const ast = parse('echo "Today is $(date)"');
     const output = transpile(ast);
-    assertStringIncludes(output, "async () =>");
-    assertStringIncludes(output, ".text()");
-    // SSH-297: Only strip trailing newlines, not all whitespace
-    assertStringIncludes(output, '.replace(/\\n+$/, "")');
+    // Command substitution uses __cmdSubText helper
+    assertStringIncludes(output, "await __cmdSubText");
+    assertStringIncludes(output, '$.cmd("date")');
   });
 
   it("should handle command substitution in variable assignment", () => {
     const ast = parse('CURRENT_DIR=$(pwd)');
     const output = transpile(ast);
     assertStringIncludes(output, "let CURRENT_DIR");
+    assertStringIncludes(output, "await __cmdSubText");
   });
 
   it("should handle command substitution with pipeline", () => {
@@ -1352,11 +1361,10 @@ describe("Command Substitution", () => {
   it("should handle command substitution as argument to non-fluent command", () => {
     const ast = parse('git commit -m "$(cat README.md)"');
     const output = transpile(ast);
-    // The arg containing command substitution should use backticks, not double quotes
-    // This ensures the template interpolation is evaluated at runtime
-    assertStringIncludes(output, '`${await (async ()');
+    // The arg containing command substitution should use backticks for template literal evaluation
+    assertStringIncludes(output, '`${await __cmdSubText');
     // Should NOT have the command substitution wrapped in double quotes
-    assert(!output.includes('"${await (async ()'), "Command substitution should not be in double quotes");
+    assert(!output.includes('"${await __cmdSubText'), "Command substitution should not be in double quotes");
   });
 
   it("should handle heredoc in command substitution", () => {
@@ -1370,7 +1378,7 @@ EOF
     assertStringIncludes(output, ".stdin(");
     assertStringIncludes(output, "SSH-356: Fix something");
     // The arg should use backticks for template literal evaluation
-    assertStringIncludes(output, '`${await (async ()');
+    assertStringIncludes(output, '`${await __cmdSubText');
   });
 
   // SSH-359: Heredoc should generate valid code (not $.cat().stdin() which doesn't exist)
@@ -1380,11 +1388,10 @@ hello world
 EOF`;
     const ast = parse(input);
     const output = transpile(ast);
-    // Should use $.str() for cat with heredoc, not $.cat("-").stdin()
-    // OR should use $.cmd style with stdin option
+    // cat with heredoc uses $.cmd style (not fluent style) with .stdin()
+    assertStringIncludes(output, '$.cmd("cat")');
+    assertStringIncludes(output, ".stdin(");
     assertStringIncludes(output, "hello world");
-    // Should NOT generate .stdin() method call on fluent cat
-    assert(!output.includes('$.cat("-").stdin('), "Should not use $.cat().stdin() pattern");
   });
 
   // SSH-358: Command substitution in variable assignment
@@ -1393,9 +1400,9 @@ EOF`;
     const output = transpile(ast);
     // Should generate valid variable assignment with command substitution
     assertStringIncludes(output, "let BRANCH");
-    assertStringIncludes(output, "await");
-    // The command substitution should be evaluable
-    assertStringIncludes(output, ".text()");
+    assertStringIncludes(output, "await __cmdSubText");
+    // The command substitution should reference git command
+    assertStringIncludes(output, '$.cmd("git"');
   });
 });
 
@@ -1433,7 +1440,7 @@ describe("Grouping Constructs", () => {
     const ast = parse("(ls)");
     const output = transpile(ast);
     assertStringIncludes(output, "(async () => {");
-    assertStringIncludes(output, '$.cmd("ls")');
+    assertStringIncludes(output, '$.cmd("ls"');
   });
 });
 
@@ -1466,7 +1473,7 @@ describe("Complex Realistic Bash Scripts", () => {
     assertStringIncludes(output, 'let DATE');
     assertStringIncludes(output, 'if (');
     assertStringIncludes(output, 'for (const file of');
-    assertStringIncludes(output, '$.cmd("cp")');
+    assertStringIncludes(output, '$.cmd("cp"');
   });
 
   it("should transpile a log analysis script", () => {
@@ -1483,7 +1490,7 @@ describe("Complex Realistic Bash Scripts", () => {
 
     // grep with dynamic file arg falls back to generic command style
     // (fluent style can't parse dynamic args at transpile-time)
-    assertStringIncludes(output, '$.cmd("grep")');
+    assertStringIncludes(output, '$.cmd("grep"');
     assertStringIncludes(output, '.pipe(');
   });
 
@@ -1545,7 +1552,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'for (const target of');
-    assertStringIncludes(output, '$.cmd("echo")');
+    assertStringIncludes(output, '$.cmd("echo"');
   });
 
   it("should transpile a case statement script", () => {
@@ -1604,7 +1611,7 @@ describe("Complex Realistic Bash Scripts", () => {
 
     assertStringIncludes(output, 'let BRANCH');
     assertStringIncludes(output, 'if (');
-    assertStringIncludes(output, '$.cmd("git")');
+    assertStringIncludes(output, '$.cmd("git"');
   });
 
   it("should transpile a health check script", () => {
@@ -1812,11 +1819,12 @@ describe("BashTranspiler2 Class Extended", () => {
 
     const outputs = scripts.map(s => transpiler.transpile(parse(s)));
 
-    assertStringIncludes(outputs[0]!, "echo one");
-    assertStringIncludes(outputs[1]!, "echo two");
-    assertStringIncludes(outputs[2]!, "echo three");
-    assertStringIncludes(outputs[3]!, "echo four");
-    assertStringIncludes(outputs[4]!, "echo five");
+    // Each transpilation should produce the correct command with its argument
+    assertStringIncludes(outputs[0]!, '$.cmd("echo", "one")');
+    assertStringIncludes(outputs[1]!, '$.cmd("echo", "two")');
+    assertStringIncludes(outputs[2]!, '$.cmd("echo", "three")');
+    assertStringIncludes(outputs[3]!, '$.cmd("echo", "four")');
+    assertStringIncludes(outputs[4]!, '$.cmd("echo", "five")');
   });
 });
 

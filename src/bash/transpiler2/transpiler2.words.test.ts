@@ -433,7 +433,8 @@ describe("Parameter Expansion - Edge Cases", () => {
     const script = "echo $(pwd)";
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "async");
+    assertStringIncludes(result, "await __cmdSubText");
+    assertStringIncludes(result, '$.cmd("pwd")');
   });
 
   it("should warn on unsupported parameter modifier", () => {
@@ -452,22 +453,23 @@ describe("Word Expansion - Command Substitution", () => {
     const script = "echo $(echo hello)";
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "async");
-    assertStringIncludes(result, "__result");
+    assertStringIncludes(result, "await __cmdSubText");
+    assertStringIncludes(result, '$.cmd("echo", "hello")');
   });
 
   it("should strip trailing newlines from command substitution", () => {
     const script = "echo $(echo -e 'line1\\nline2\\n')";
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, 'replace(/\\n+$/, "")');
+    // Command substitution should use __cmdSubText which handles newline stripping
+    assertStringIncludes(result, "await __cmdSubText");
   });
 
   it("should handle nested command substitution", () => {
     const script = "echo $(echo $(echo nested))";
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "async");
+    assertStringIncludes(result, "await __cmdSubText");
   });
 });
 
@@ -515,6 +517,8 @@ describe("Word Expansion - Mixed Scenarios", () => {
     assertStringIncludes(result, "prefix-");
     assertStringIncludes(result, "VAR");
     assertStringIncludes(result, "suffix");
+    assertStringIncludes(result, "await __cmdSubText");
+    assertStringIncludes(result, '$.cmd("date")');
   });
 
   it("should handle complex parameter expansion in word", () => {

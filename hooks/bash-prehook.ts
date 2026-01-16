@@ -23,9 +23,12 @@
  */
 
 import { parse, transpile } from "../src/bash/mod.ts";
+import type * as AST from "../src/bash/ast.ts";
 import { loadConfig, mergeConfigs } from "../src/core/config.ts";
+import { getAllowedCommands } from "../src/core/command_permission.ts";
 import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
+import type { SafeShellConfig } from "../src/core/types.ts";
 
 // =============================================================================
 // Configuration
@@ -48,6 +51,140 @@ function debug(message: string): void {
   if (DEBUG) {
     console.error(`[bash-prehook] ${message}`);
   }
+}
+
+// =============================================================================
+// Command Extraction and Permission Checking
+// =============================================================================
+
+/**
+ * Built-in shell commands that don't need external permission
+ * These are handled by the transpiler without spawning processes
+ */
+const BUILTIN_COMMANDS = new Set([
+  "echo", "printf", "cd", "pwd", "pushd", "popd", "dirs",
+  "export", "unset", "local", "declare", "readonly", "typeset",
+  "source", ".", "eval", "exec", "exit", "return", "break", "continue",
+  "true", "false", ":", "test", "[", "[[",
+  "read", "mapfile", "readarray",
+  "set", "shopt", "shift", "getopts",
+  "trap", "wait", "jobs", "fg", "bg", "kill", "disown",
+  "alias", "unalias", "type", "which", "hash", "command", "builtin",
+  "let", "expr",
+]);
+
+/**
+ * Extract command names from a statement recursively
+ */
+function extractCommandsFromStatement(stmt: AST.Statement, commands: Set<string>): void {
+  switch (stmt.type) {
+    case "Command": {
+      // Extract command name if it's a simple word
+      if (stmt.name.type === "Word") {
+        const cmdName = stmt.name.value;
+        // Skip builtins and variable assignments (empty command name)
+        if (cmdName && !BUILTIN_COMMANDS.has(cmdName)) {
+          commands.add(cmdName);
+        }
+      }
+      break;
+    }
+    case "Pipeline": {
+      for (const cmd of stmt.commands) {
+        extractCommandsFromStatement(cmd, commands);
+      }
+      break;
+    }
+    case "IfStatement": {
+      // Check test condition
+      if (stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand") {
+        extractCommandsFromStatement(stmt.test, commands);
+      }
+      // Check consequent
+      for (const s of stmt.consequent) {
+        extractCommandsFromStatement(s, commands);
+      }
+      // Check alternate
+      if (stmt.alternate) {
+        if (Array.isArray(stmt.alternate)) {
+          for (const s of stmt.alternate) {
+            extractCommandsFromStatement(s, commands);
+          }
+        } else {
+          extractCommandsFromStatement(stmt.alternate, commands);
+        }
+      }
+      break;
+    }
+    case "ForStatement":
+    case "WhileStatement":
+    case "UntilStatement": {
+      if ("test" in stmt && stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand") {
+        extractCommandsFromStatement(stmt.test as AST.Statement, commands);
+      }
+      for (const s of stmt.body) {
+        extractCommandsFromStatement(s, commands);
+      }
+      break;
+    }
+    case "CStyleForStatement": {
+      for (const s of stmt.body) {
+        extractCommandsFromStatement(s, commands);
+      }
+      break;
+    }
+    case "CaseStatement": {
+      for (const clause of stmt.cases) {
+        for (const s of clause.body) {
+          extractCommandsFromStatement(s, commands);
+        }
+      }
+      break;
+    }
+    case "FunctionDeclaration": {
+      for (const s of stmt.body) {
+        extractCommandsFromStatement(s, commands);
+      }
+      break;
+    }
+    case "Subshell":
+    case "BraceGroup": {
+      for (const s of stmt.body) {
+        extractCommandsFromStatement(s, commands);
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Extract all external command names from a parsed AST
+ */
+function extractCommands(ast: AST.Program): Set<string> {
+  const commands = new Set<string>();
+  for (const stmt of ast.body) {
+    extractCommandsFromStatement(stmt, commands);
+  }
+  return commands;
+}
+
+/**
+ * Check which commands are not in the allowed list
+ */
+function getDisallowedCommands(
+  commands: Set<string>,
+  config: SafeShellConfig,
+): string[] {
+  const allowed = getAllowedCommands(config);
+  const disallowed: string[] = [];
+
+  for (const cmd of commands) {
+    if (!allowed.has(cmd)) {
+      disallowed.push(cmd);
+    }
+  }
+
+  return disallowed;
 }
 
 /**
@@ -224,32 +361,6 @@ function detectTypeScript(command: string): string | null {
 }
 
 /**
- * Transpile bash command to TypeScript
- */
-function transpileBash(bashCommand: string): string {
-  debug(`Transpiling bash command: ${bashCommand}`);
-
-  try {
-    // Parse bash command to AST
-    const ast = parse(bashCommand);
-
-    // Transpile without imports - executeCode will add the preamble with $ namespace
-    const code = transpile(ast, {
-      imports: false,  // Don't generate import statements
-      strict: false,   // Don't add "use strict" (preamble may add it)
-    });
-
-    debug(`Transpiled successfully`);
-    debug(`Generated code:\n${code}`);
-    return code;
-  } catch (error) {
-    throw new SafeShellError(
-      `Failed to transpile bash command: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-/**
  * Execution result with captured output
  */
 interface ExecutionResult {
@@ -351,6 +462,47 @@ function outputHookResponse(deshCommand: string, options?: { timeout?: number; r
 }
 
 /**
+ * Output hook decision to ask user for permission
+ * Used when commands are not in the safesh allowlist
+ *
+ * IMPORTANT: After user approves, the prehook is NOT called again.
+ * Claude Code uses the updatedInput directly. So we must provide
+ * the transpiled desh command, not the original bash command.
+ */
+function outputAskPermission(
+  disallowedCommands: string[],
+  tsCode: string,
+  options?: { timeout?: number; runInBackground?: boolean },
+): void {
+  const cmdList = disallowedCommands.join(", ");
+
+  // Add marker and write to temp file (same as outputRewriteToDeshFile)
+  const markedCode = `console.error("# /*$*/");\n${tsCode}`;
+  const tempFile = `/tmp/safesh-${Date.now()}-${Deno.pid}.ts`;
+  Deno.writeTextFileSync(tempFile, markedCode);
+  const deshCommand = `${DESH_CMD} -q -f ${tempFile}`;
+
+  // Build updatedInput with the desh command (not original bash)
+  const updatedInput: Record<string, unknown> = { command: deshCommand };
+  if (options?.timeout !== undefined) {
+    updatedInput.timeout = options.timeout;
+  }
+  if (options?.runInBackground !== undefined) {
+    updatedInput.run_in_background = options.runInBackground;
+  }
+
+  const output = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "ask",
+      permissionDecisionReason: `Command(s) not in safesh allowlist: ${cmdList}`,
+      updatedInput,
+    },
+  };
+  console.log(JSON.stringify(output));
+}
+
+/**
  * Output hook decision to rewrite command to desh
  * Uses file mode by default, heredoc if configured
  */
@@ -429,15 +581,44 @@ async function main() {
     const config = mergeConfigs(baseConfig, { projectDir });
     debug(`Config loaded. ProjectDir: ${projectDir}`);
 
-    // Check if command is already TypeScript (skip transpilation)
+    // Check if command is already TypeScript (skip transpilation and permission check)
     let tsCode = detectTypeScript(parsed.command);
     if (tsCode) {
       debug("TypeScript detected, rewriting to desh");
-    } else {
-      // Transpile bash to TypeScript
-      tsCode = transpileBash(parsed.command);
-      debug("Bash transpiled to TypeScript, rewriting to desh");
+      outputRewriteToDesh(tsCode, {
+        timeout: parsed.timeout,
+        runInBackground: parsed.runInBackground,
+      });
+      Deno.exit(0);
     }
+
+    // Parse bash command to AST
+    const ast = parse(parsed.command);
+
+    // Extract commands for permission checking
+    const commands = extractCommands(ast);
+    debug(`Extracted commands: ${[...commands].join(", ") || "(none)"}`);
+
+    // Transpile AST to TypeScript (needed for both ask and allow)
+    tsCode = transpile(ast, {
+      imports: false,
+      strict: false,
+    });
+    debug("Bash transpiled to TypeScript");
+
+    // Check which commands are not allowed
+    const disallowed = getDisallowedCommands(commands, config);
+    if (disallowed.length > 0) {
+      debug(`Disallowed commands: ${disallowed.join(", ")}`);
+      // Ask user for permission - provide transpiled code so it runs through safesh if approved
+      outputAskPermission(disallowed, tsCode, {
+        timeout: parsed.timeout,
+        runInBackground: parsed.runInBackground,
+      });
+      Deno.exit(0);
+    }
+
+    debug("All commands allowed, rewriting to desh");
 
     // Rewrite command to use desh with heredoc
     // Pass through timeout and run_in_background options
