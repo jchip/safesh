@@ -314,6 +314,21 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, "cmd1");
     assertStringIncludes(output, "cmd2");
   });
+
+  it("should not wrap variable assignment in __printCmd in && chain (SSH-361)", () => {
+    const ast = parse("BRANCH=$(git branch) && echo $BRANCH");
+    const output = transpile(ast);
+
+    // Variable assignment should NOT be wrapped in __printCmd
+    // Invalid: await __printCmd(let BRANCH = ...)
+    // Valid: let BRANCH = ...; then use the var
+    assertEquals(output.includes("__printCmd(let"), false, "Variable assignment should not be wrapped in __printCmd");
+
+    // The variable assignment should still be present
+    assertStringIncludes(output, "let BRANCH");
+    // The echo command should be present
+    assertStringIncludes(output, '(await $.cmd("echo"))');
+  });
 });
 
 // =============================================================================
