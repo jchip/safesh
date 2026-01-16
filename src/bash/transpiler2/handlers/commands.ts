@@ -79,7 +79,7 @@ function formatArg(arg: string): string {
 export function buildCommand(
   command: AST.Command,
   ctx: VisitorContext,
-): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean } {
+): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean; isStream?: boolean } {
   // Handle pure variable assignments (no command name)
   const hasNoCommand =
     command.name.type === "Word" && command.name.value === "";
@@ -97,6 +97,7 @@ export function buildCommand(
   let isAsync = true;
   let isUserFunction = false;
   let isTransform = false;
+  let isStream = false;
 
   // Check if command has environment variable assignments
   const hasAssignments = command.assignments.length > 0 && !hasNoCommand;
@@ -124,6 +125,7 @@ export function buildCommand(
       const fluentResult = buildFluentCommand(name, args, ctx);
       cmdExpr = fluentResult.code;
       isTransform = fluentResult.isTransform;
+      isStream = fluentResult.isStream;
     } else if (hasAssignments) {
       // Use function call style with env options when there are assignments
       const envEntries = command.assignments
@@ -149,7 +151,7 @@ export function buildCommand(
     cmdExpr = applyRedirection(cmdExpr, redirect, ctx);
   }
 
-  return { code: cmdExpr, async: isAsync, isUserFunction, isTransform };
+  return { code: cmdExpr, async: isAsync, isUserFunction, isTransform, isStream };
 }
 
 /**
@@ -159,6 +161,8 @@ interface FluentCommandResult {
   code: string;
   /** True if this is a transform function (like $.head, $.grep), false if it's a data source (like $.cat) */
   isTransform: boolean;
+  /** True if this produces a stream (like $.cat), false if it's a Command */
+  isStream: boolean;
 }
 
 /**
@@ -172,12 +176,12 @@ function buildFluentCommand(
   switch (name) {
     case "cat": {
       // $.cat(file) or $.cat(file1, file2, ...)
-      // cat is a data source, not a transform
+      // cat is a stream producer, not a transform
       if (args.length === 0) {
-        return { code: '$.cat("-")', isTransform: false }; // Read from stdin
+        return { code: '$.cat("-")', isTransform: false, isStream: true }; // Read from stdin
       }
       const files = args.map((a) => `"${escapeForQuotes(a)}"`).join(", ");
-      return { code: `$.cat(${files})`, isTransform: false };
+      return { code: `$.cat(${files})`, isTransform: false, isStream: true };
     }
 
     case "grep": {
@@ -211,28 +215,28 @@ function buildFluentCommand(
       const regexPattern = `/${escapedPattern}/${flags}`;
 
       if (files.length > 0) {
-        // grep pattern file -> $.cat(file).grep(pattern) - this is a data source chain
+        // grep pattern file -> $.cat(file).grep(pattern) - this is a stream chain
         const file = `"${escapeForQuotes(files[0] ?? "")}"`;
         let result = `$.cat(${file}).grep(${regexPattern})`;
         if (invert) result += ".filter(x => !x.match)";
         if (lineNumber) result += '.map(m => `${m.line}:${m.content}`)';
-        return { code: result, isTransform: false };
+        return { code: result, isTransform: false, isStream: true };
       }
 
       // grep as a transform
-      return { code: `$.grep(${regexPattern})`, isTransform: true };
+      return { code: `$.grep(${regexPattern})`, isTransform: true, isStream: false };
     }
 
     case "head": {
       // $.head(n) as transform
       const n = parseCountArg(args);
-      return { code: `$.head(${n})`, isTransform: true };
+      return { code: `$.head(${n})`, isTransform: true, isStream: false };
     }
 
     case "tail": {
       // $.tail(n) as transform
       const n = parseCountArg(args);
-      return { code: `$.tail(${n})`, isTransform: true };
+      return { code: `$.tail(${n})`, isTransform: true, isStream: false };
     }
 
     case "sort": {
@@ -243,7 +247,7 @@ function buildFluentCommand(
         "-u": "unique: true",
       });
       const code = options.length > 0 ? `$.sort({ ${options.join(", ")} })` : "$.sort()";
-      return { code, isTransform: true };
+      return { code, isTransform: true, isStream: false };
     }
 
     case "uniq": {
@@ -253,7 +257,7 @@ function buildFluentCommand(
         "-i": "ignoreCase: true",
       });
       const code = options.length > 0 ? `$.uniq({ ${options.join(", ")} })` : "$.uniq()";
-      return { code, isTransform: true };
+      return { code, isTransform: true, isStream: false };
     }
 
     case "wc": {
@@ -265,19 +269,19 @@ function buildFluentCommand(
         "-m": "chars: true",
       });
       const code = options.length > 0 ? `$.wc({ ${options.join(", ")} })` : "$.wc()";
-      return { code, isTransform: true };
+      return { code, isTransform: true, isStream: false };
     }
 
     case "tee": {
       // $.tee(file) as transform
       const file = args[0] ?? "-";
-      return { code: `$.tee("${escapeForQuotes(file)}")`, isTransform: true };
+      return { code: `$.tee("${escapeForQuotes(file)}")`, isTransform: true, isStream: false };
     }
 
     // tr, cut, sed, awk are not fluent commands - they fall through to default
     default: {
       const argsArray = args.length > 0 ? args.map(a => `"${escapeForQuotes(a)}"`).join(", ") : "";
-      return { code: `(await $.cmd("${escapeForQuotes(name)}"))(${argsArray})`, isTransform: false };
+      return { code: `(await $.cmd("${escapeForQuotes(name)}"))(${argsArray})`, isTransform: false, isStream: false };
     }
   }
 }
@@ -374,6 +378,8 @@ interface PipelinePart {
   isPrintable: boolean;
   /** Whether this part is a transform function (like $.head, $.grep) vs a command/stream */
   isTransform: boolean;
+  /** Whether this part produces a stream (like $.cat) vs a Command */
+  isStreamProducer: boolean;
 }
 
 /**
@@ -409,7 +415,8 @@ export function buildPipeline(
 
   let result = parts[0]?.code ?? "";
   let resultIsPrintable = parts[0]?.isPrintable ?? false;
-  let resultIsStream = false; // Track if result becomes a stream (from .trans())
+  // Track if result is a stream - either a stream producer ($.cat) or from .stdout().lines()
+  let resultIsStream = parts[0]?.isStreamProducer ?? false;
 
   for (let i = 1; i < parts.length; i++) {
     const op = operators[i - 1];
@@ -448,15 +455,19 @@ export function buildPipeline(
       // Transforms (like $.head, $.grep) need the output split into lines first
       if (part.isTransform) {
         if (resultIsStream) {
-          // Already a stream - just pipe the transform
-          result = `${result}.pipe(${part.code})`;
+          // Stream producer (like $.cat) - need .lines() to split content into lines
+          result = `${result}.lines().pipe(${part.code})`;
         } else {
           // Command - convert to line stream first, then apply transform
           result = `${result}.stdout().lines().pipe(${part.code})`;
         }
         resultIsStream = true; // Result is now a stream
+      } else if (part.isStreamProducer) {
+        // Part is a stream producer (like $.cat) - it can receive piped input
+        result = `${result}.pipe(${part.code})`;
+        resultIsStream = true;
       } else {
-        // Part is a command or data source - pipe it
+        // Part is a command - pipe to it
         result = `${result}.pipe(${part.code})`;
         resultIsStream = false;
       }
@@ -509,13 +520,18 @@ function flattenPipeline(
       // SSH-361: Track whether the command produces output that should be printed
       // async: true means it's a command that returns CommandResult
       // async: false means it's a variable assignment (no output to print)
-      // SSH-364: Track if it's a transform for proper pipeline handling
-      parts.push({ code: result.code, isPrintable: result.async, isTransform: result.isTransform ?? false });
+      // SSH-364: Track if it's a transform or stream producer for proper pipeline handling
+      parts.push({
+        code: result.code,
+        isPrintable: result.async,
+        isTransform: result.isTransform ?? false,
+        isStreamProducer: result.isStream ?? false,
+      });
     } else if (left.type === "Pipeline") {
       flattenPipeline(left, parts, operators, ctx);
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      parts.push({ code: buildStatementAsExpression(left, ctx), isPrintable: true, isTransform: false });
+      parts.push({ code: buildStatementAsExpression(left, ctx), isPrintable: true, isTransform: false, isStreamProducer: false });
     }
   }
 
@@ -530,13 +546,18 @@ function flattenPipeline(
     if (cmd.type === "Command") {
       const result = buildCommand(cmd, ctx);
       // SSH-361: Track whether the command produces output that should be printed
-      // SSH-364: Track if it's a transform for proper pipeline handling
-      parts.push({ code: result.code, isPrintable: result.async, isTransform: result.isTransform ?? false });
+      // SSH-364: Track if it's a transform or stream producer for proper pipeline handling
+      parts.push({
+        code: result.code,
+        isPrintable: result.async,
+        isTransform: result.isTransform ?? false,
+        isStreamProducer: result.isStream ?? false,
+      });
     } else if (cmd.type === "Pipeline") {
       flattenPipeline(cmd, parts, operators, ctx);
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      parts.push({ code: buildStatementAsExpression(cmd, ctx), isPrintable: true, isTransform: false });
+      parts.push({ code: buildStatementAsExpression(cmd, ctx), isPrintable: true, isTransform: false, isStreamProducer: false });
     }
   }
 }
