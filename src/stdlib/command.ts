@@ -290,6 +290,32 @@ export class Command implements PromiseLike<CommandResult> {
   }
 
   /**
+   * Set stdin for this command (for heredocs and here-strings)
+   *
+   * Creates a new Command with the same cmd/args but with stdin set.
+   * This enables heredoc syntax like: cat <<EOF ... EOF
+   *
+   * @param content - String content to provide as stdin
+   * @param _options - Optional settings (reserved for stripTabs support)
+   * @returns New Command instance with stdin configured
+   *
+   * @example
+   * ```ts
+   * // Heredoc style
+   * await cmd("cat", []).stdin("hello world").exec();
+   *
+   * // Equivalent to: cat <<EOF
+   * //                hello world
+   * //                EOF
+   * ```
+   */
+  stdin(content: string, _options?: { stripTabs?: boolean }): Command {
+    // Create new command with stdin set
+    // Note: stripTabs is handled at transpile time, not runtime
+    return new Command(this.cmd, this.args, { ...this.options, stdin: content });
+  }
+
+  /**
    * Execute command and buffer output
    *
    * @returns Promise with command result
