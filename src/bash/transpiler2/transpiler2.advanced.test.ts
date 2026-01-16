@@ -645,7 +645,7 @@ describe("Edge Cases", () => {
 
   it("should handle commands with no arguments", () => {
     const code = transpileBash("pwd");
-    assertStringIncludes(code, '(await $.cmd("pwd"))()');
+    assertStringIncludes(code, '$.cmd("pwd")');
   });
 
   it("should handle multiple redirections", () => {

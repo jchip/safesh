@@ -185,7 +185,7 @@ describe("Transpiler Error Handling", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, '(await $.cmd("echo"))("hello")');
+    assertStringIncludes(output, '$.cmd("echo", "hello")');
   });
 
   it("should handle special characters in strings", () => {

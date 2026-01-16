@@ -1433,7 +1433,7 @@ describe("Grouping Constructs", () => {
     const ast = parse("(ls)");
     const output = transpile(ast);
     assertStringIncludes(output, "(async () => {");
-    assertStringIncludes(output, '(await $.cmd("ls"))()');
+    assertStringIncludes(output, '$.cmd("ls")');
   });
 });
 
