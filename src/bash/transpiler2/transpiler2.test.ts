@@ -281,6 +281,52 @@ describe("Transpiler2 - Fluent Commands", () => {
     assertStringIncludes(output, "$.wc(");
     assertStringIncludes(output, "lines: true");
   });
+
+  // SSH-367: Fluent commands with file arguments
+  it("should handle head with file argument", () => {
+    const ast = parse("head -5 file.txt");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, '$.cat("file.txt")');
+    assertStringIncludes(output, ".lines()");
+    assertStringIncludes(output, ".pipe($.head(5))");
+  });
+
+  it("should handle tail with file argument", () => {
+    const ast = parse("tail -n20 data.log");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, '$.cat("data.log")');
+    assertStringIncludes(output, ".lines()");
+    assertStringIncludes(output, ".pipe($.tail(20))");
+  });
+
+  it("should handle wc with file argument", () => {
+    const ast = parse("wc -l src/mod.ts");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, '$.cat("src/mod.ts")');
+    assertStringIncludes(output, ".lines()");
+    assertStringIncludes(output, ".pipe($.wc({ lines: true }))");
+  });
+
+  it("should handle sort with file argument", () => {
+    const ast = parse("sort -n numbers.txt");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, '$.cat("numbers.txt")');
+    assertStringIncludes(output, ".lines()");
+    assertStringIncludes(output, ".pipe($.sort({ numeric: true }))");
+  });
+
+  it("should handle uniq with file argument", () => {
+    const ast = parse("uniq -c items.txt");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, '$.cat("items.txt")');
+    assertStringIncludes(output, ".lines()");
+    assertStringIncludes(output, ".pipe($.uniq({ count: true }))");
+  });
 });
 
 // =============================================================================

@@ -22,23 +22,30 @@ import { escapeForQuotes } from "../utils/escape.ts";
 /**
  * Parse the -n count argument from head/tail style commands.
  * Supports: -n 20, -n20, -20
- * @returns The parsed count, or the default value if not found
+ * @returns The parsed count and remaining non-flag arguments (files)
  */
-function parseCountArg(args: string[], defaultValue = 10): number {
+function parseCountArg(args: string[], defaultValue = 10): { count: number; files: string[] } {
+  let count = defaultValue;
+  const files: string[] = [];
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "-n" && args[i + 1]) {
       // -n 20 (with space)
-      return parseInt(args[i + 1] ?? "") || defaultValue;
+      count = parseInt(args[i + 1] ?? "") || defaultValue;
+      i++; // Skip the next arg (the number)
     } else if (arg?.startsWith("-n")) {
       // -n20 (without space)
-      return parseInt(arg.slice(2)) || defaultValue;
+      count = parseInt(arg.slice(2)) || defaultValue;
     } else if (arg?.startsWith("-") && /^-\d+$/.test(arg)) {
       // -20 shorthand
-      return parseInt(arg.slice(1)) || defaultValue;
+      count = parseInt(arg.slice(1)) || defaultValue;
+    } else if (arg && !arg.startsWith("-")) {
+      // Non-flag argument - it's a file
+      files.push(arg);
     }
   }
-  return defaultValue;
+  return { count, files };
 }
 
 /**
@@ -55,6 +62,28 @@ function collectFlagOptions(args: string[], flagMap: Record<string, string>): st
     }
   }
   return options;
+}
+
+/**
+ * Collect boolean flag options and file arguments from command arguments.
+ * @param args - Command arguments
+ * @param flagMap - Map of flag to option string (e.g., { "-l": "lines: true" })
+ * @returns Object with options array and files array
+ */
+function collectFlagOptionsAndFiles(
+  args: string[],
+  flagMap: Record<string, string>,
+): { options: string[]; files: string[] } {
+  const options: string[] = [];
+  const files: string[] = [];
+  for (const arg of args) {
+    if (arg && flagMap[arg]) {
+      options.push(flagMap[arg]);
+    } else if (arg && !arg.startsWith("-")) {
+      files.push(arg);
+    }
+  }
+  return { options, files };
 }
 
 /**
@@ -228,48 +257,68 @@ function buildFluentCommand(
     }
 
     case "head": {
-      // $.head(n) as transform
-      const n = parseCountArg(args);
-      return { code: `$.head(${n})`, isTransform: true, isStream: false };
+      // $.head(n) as transform, or $.cat(file).lines().pipe($.head(n)) with file
+      const { count, files } = parseCountArg(args);
+      if (files.length > 0) {
+        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+        return { code: `$.cat(${file}).lines().pipe($.head(${count}))`, isTransform: false, isStream: true };
+      }
+      return { code: `$.head(${count})`, isTransform: true, isStream: false };
     }
 
     case "tail": {
-      // $.tail(n) as transform
-      const n = parseCountArg(args);
-      return { code: `$.tail(${n})`, isTransform: true, isStream: false };
+      // $.tail(n) as transform, or $.cat(file).lines().pipe($.tail(n)) with file
+      const { count, files } = parseCountArg(args);
+      if (files.length > 0) {
+        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+        return { code: `$.cat(${file}).lines().pipe($.tail(${count}))`, isTransform: false, isStream: true };
+      }
+      return { code: `$.tail(${count})`, isTransform: true, isStream: false };
     }
 
     case "sort": {
-      // $.sort(options) as transform
-      const options = collectFlagOptions(args, {
+      // $.sort(options) as transform, or $.cat(file).lines().pipe($.sort(options)) with file
+      const { options, files } = collectFlagOptionsAndFiles(args, {
         "-n": "numeric: true",
         "-r": "reverse: true",
         "-u": "unique: true",
       });
-      const code = options.length > 0 ? `$.sort({ ${options.join(", ")} })` : "$.sort()";
-      return { code, isTransform: true, isStream: false };
+      const sortCode = options.length > 0 ? `$.sort({ ${options.join(", ")} })` : "$.sort()";
+      if (files.length > 0) {
+        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+        return { code: `$.cat(${file}).lines().pipe(${sortCode})`, isTransform: false, isStream: true };
+      }
+      return { code: sortCode, isTransform: true, isStream: false };
     }
 
     case "uniq": {
-      // $.uniq(options) as transform
-      const options = collectFlagOptions(args, {
+      // $.uniq(options) as transform, or $.cat(file).lines().pipe($.uniq(options)) with file
+      const { options, files } = collectFlagOptionsAndFiles(args, {
         "-c": "count: true",
         "-i": "ignoreCase: true",
       });
-      const code = options.length > 0 ? `$.uniq({ ${options.join(", ")} })` : "$.uniq()";
-      return { code, isTransform: true, isStream: false };
+      const uniqCode = options.length > 0 ? `$.uniq({ ${options.join(", ")} })` : "$.uniq()";
+      if (files.length > 0) {
+        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+        return { code: `$.cat(${file}).lines().pipe(${uniqCode})`, isTransform: false, isStream: true };
+      }
+      return { code: uniqCode, isTransform: true, isStream: false };
     }
 
     case "wc": {
-      // $.wc() or $.wc(options) as transform
-      const options = collectFlagOptions(args, {
+      // $.wc() or $.wc(options) as transform, or $.cat(file).lines().pipe($.wc(options)) with file
+      const { options, files } = collectFlagOptionsAndFiles(args, {
         "-l": "lines: true",
         "-w": "words: true",
         "-c": "bytes: true",
         "-m": "chars: true",
       });
-      const code = options.length > 0 ? `$.wc({ ${options.join(", ")} })` : "$.wc()";
-      return { code, isTransform: true, isStream: false };
+      const wcCode = options.length > 0 ? `$.wc({ ${options.join(", ")} })` : "$.wc()";
+      if (files.length > 0) {
+        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+        return { code: `$.cat(${file}).lines().pipe(${wcCode})`, isTransform: false, isStream: true };
+      }
+      return { code: wcCode, isTransform: true, isStream: false };
     }
 
     case "tee": {
