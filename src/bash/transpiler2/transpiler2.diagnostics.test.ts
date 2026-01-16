@@ -185,7 +185,7 @@ describe("Transpiler Error Handling", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "$.cmd`echo hello`");
+    assertStringIncludes(output, '(await $.cmd("echo"))("hello")');
   });
 
   it("should handle special characters in strings", () => {
@@ -194,7 +194,7 @@ describe("Transpiler Error Handling", () => {
     const output = transpile(ast);
 
     // Should produce valid JS
-    assertStringIncludes(output, "$.cmd`echo");
+    assertStringIncludes(output, '$.cmd("echo")');
   });
 
   it("should handle unset variables gracefully", () => {
@@ -787,7 +787,7 @@ describe("Edge Cases and Boundary Conditions", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "$.cmd`echo");
+    assertStringIncludes(output, '$.cmd("echo")');
   });
 
   it("should handle deeply nested parentheses", () => {

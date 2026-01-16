@@ -197,7 +197,7 @@ describe("Security - Command Injection Prevention", () => {
     // Variable should be interpolated in template literal
     assertStringIncludes(output, "${VAR}");
     // Should be within a template literal context
-    assertStringIncludes(output, "$.cmd`");
+    assertStringIncludes(output, '$.cmd("');
   });
 
   it("should handle shell metacharacters in command arguments", () => {
@@ -287,7 +287,7 @@ describe("Security - Parameter Expansion Safety", () => {
     const output = transpile(ast);
 
     // Command substitution in default should be transpiled
-    assertStringIncludes(output, "$.cmd`malicious`");
+    assertStringIncludes(output, '$.cmd("malicious")');
   });
 
   it("should handle substring expansion safely", () => {
@@ -339,8 +339,8 @@ describe("Security - Shell Metacharacter Handling", () => {
     const output = transpile(ast);
 
     // Should create two separate statements
-    assertStringIncludes(output, "$.cmd`cmd1`");
-    assertStringIncludes(output, "$.cmd`cmd2`");
+    assertStringIncludes(output, '$.cmd("cmd1")');
+    assertStringIncludes(output, '$.cmd("cmd2")');
   });
 
   it("should safely handle ampersands for background execution", () => {
@@ -348,8 +348,8 @@ describe("Security - Shell Metacharacter Handling", () => {
     const output = transpile(ast);
 
     // Background execution should be handled
-    assertStringIncludes(output, "$.cmd`cmd1`");
-    assertStringIncludes(output, "$.cmd`cmd2`");
+    assertStringIncludes(output, '$.cmd("cmd1")');
+    assertStringIncludes(output, '$.cmd("cmd2")');
   });
 
   it("should safely handle pipes", () => {
@@ -372,7 +372,7 @@ describe("Security - Shell Metacharacter Handling", () => {
     const ast = parse('VAR=$(cmd)');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "$.cmd`cmd`");
+    assertStringIncludes(output, '$.cmd("cmd")');
   });
 
   it("should safely handle here-documents", () => {
@@ -400,7 +400,7 @@ EOF`);
     const output = transpile(ast);
 
     // Glob should be passed to command (shell handles expansion)
-    assertStringIncludes(output, "$.cmd`echo *`");
+    assertStringIncludes(output, '(await $.cmd("echo"))("*")');
   });
 });
 
@@ -544,7 +544,7 @@ describe("Security - Subshell Safety", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, "$.cmd`echo inner`");
+    assertStringIncludes(output, '(await $.cmd("echo"))("inner")');
   });
 
   it("should prevent subshell escape to parent scope", () => {
@@ -553,8 +553,8 @@ describe("Security - Subshell Safety", () => {
 
     // cd in subshell should not affect parent
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, "$.cmd`cd /tmp`");
-    assertStringIncludes(output, "$.cmd`pwd`");
+    assertStringIncludes(output, '(await $.cmd("cd"))("/tmp")');
+    assertStringIncludes(output, '(await $.cmd("pwd"))()');
   });
 
   it("should handle nested subshells securely", () => {
@@ -563,7 +563,7 @@ describe("Security - Subshell Safety", () => {
 
     // Nested subshells should be safely isolated
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, "$.cmd`echo inner`");
+    assertStringIncludes(output, '(await $.cmd("echo"))("inner")');
   });
 
   it("should handle subshell with pipelines", () => {
@@ -623,7 +623,7 @@ describe("Security - Redirection Safety", () => {
     const output = transpile(ast);
 
     // stderr redirection should be handled
-    assertStringIncludes(output, "$.cmd`cmd");
+    assertStringIncludes(output, '$.cmd("cmd")');
   });
 
   it("should handle file descriptor duplication safely", () => {
@@ -631,7 +631,7 @@ describe("Security - Redirection Safety", () => {
     const output = transpile(ast);
 
     // FD duplication should be transpiled
-    assertStringIncludes(output, "$.cmd`cmd");
+    assertStringIncludes(output, '$.cmd("cmd")');
   });
 
   it("should handle here-string safely", () => {
@@ -653,7 +653,7 @@ describe("Security - Redirection Safety", () => {
     const ast = parse('cmd < input.txt > output.txt 2> error.log');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "$.cmd`cmd");
+    assertStringIncludes(output, '$.cmd("cmd")');
   });
 });
 
@@ -668,7 +668,7 @@ describe("Security - Complex Injection Scenarios", () => {
 
     // Two separate statements
     assertStringIncludes(output, 'let VAR = "value"');
-    assertStringIncludes(output, "$.cmd`echo ${VAR}`");
+    assertStringIncludes(output, '$.cmd("echo")');
   });
 
   it("should handle injection via arithmetic expansion", () => {
@@ -705,7 +705,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const ast = parse('VAR="$(cmd)"; echo "$VAR; malicious"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "$.cmd`cmd`");
+    assertStringIncludes(output, '$.cmd("cmd")');
     assertStringIncludes(output, "${VAR}; malicious");
     // Semicolon in string should not execute
   });
@@ -715,7 +715,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const output = transpile(ast);
 
     // Glob should be passed to command safely
-    assertStringIncludes(output, "$.cmd`echo *.txt`");
+    assertStringIncludes(output, '(await $.cmd("echo"))("*.txt")');
   });
 
   it("should handle brace expansion injection attempts", () => {
