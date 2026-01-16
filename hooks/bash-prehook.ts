@@ -34,6 +34,8 @@ import { SafeShellError } from "../src/core/errors.ts";
 const DEBUG = Deno.env.get("BASH_PREHOOK_DEBUG") === "1";
 const MODE = Deno.env.get("BASH_PREHOOK_MODE") || "streaming";
 const OVERRIDE_CWD = Deno.env.get("BASH_PREHOOK_CWD");
+// Path to desh executable - absolute path to safesh project
+const DESH_CMD = "/Users/jc/dev/safesh/src/cli/desh.ts";
 
 // =============================================================================
 // Helpers
@@ -304,7 +306,7 @@ function outputRewriteToDeshFile(tsCode: string, options?: { timeout?: number; r
   Deno.writeTextFileSync(tempFile, markedCode);
 
   // Create desh command with file path
-  const deshCommand = `./src/cli/desh.ts -q -f ${tempFile}`;
+  const deshCommand = `${DESH_CMD} -q -f ${tempFile}`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -318,7 +320,7 @@ function outputRewriteToDeshHeredoc(tsCode: string, options?: { timeout?: number
   const markedCode = `console.error("# /*$*/");\n${tsCode}`;
 
   // Create desh heredoc command
-  const deshCommand = `./src/cli/desh.ts -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
+  const deshCommand = `${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
 
   outputHookResponse(deshCommand, options);
 }

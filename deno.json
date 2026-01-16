@@ -13,6 +13,7 @@
     "dev": "deno run --watch src/cli/main.ts",
     "desh": "deno run --allow-all src/cli/desh.ts",
     "install:desh": "deno install --global --allow-all --name desh src/cli/desh.ts",
+    "compile:desh": "deno compile --allow-all --output desh src/cli/desh.ts",
     "test": "deno test --allow-read --allow-write --allow-run --allow-env --allow-sys",
     "check": "deno check src/**/*.ts",
     "lint": "deno lint",
