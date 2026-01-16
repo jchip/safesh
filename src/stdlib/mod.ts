@@ -111,6 +111,10 @@ import { cat, glob, src, dest } from "./fs-streams.ts";
 import { globPaths, globArray } from "./glob.ts";
 import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from "./shelljs/mod.ts";
 import { tree, treeLines, printTree } from "./fs.ts";
+// Import command transforms (used by transpiler as $.wc(), $.sort(), $.uniq())
+import { default as wc } from "../commands/wc.ts";
+import { default as sort } from "../commands/sort.ts";
+import { default as uniq } from "../commands/uniq.ts";
 
 /**
  * Unified namespace for all SafeShell exports
@@ -132,6 +136,8 @@ const _$props = {
   createStream, fromArray, empty,
   // Stream transforms
   filter, map, flatMap, take, head, tail, lines, grep,
+  // Command transforms (wc, sort, uniq - used by transpiler)
+  wc, sort, uniq,
   // I/O streams
   stdout, stderr, tee,
   // File streaming (glob, src, dest - streaming cat is global only)
