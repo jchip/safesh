@@ -257,12 +257,13 @@ export class Command implements PromiseLike<CommandResult> {
    * Creates a pipeline where this command's stdout becomes the next
    * command's stdin. Can be chained for multi-stage pipelines.
    *
-   * NOTE: Only accepts CommandFn from initCmds() to enforce permission checks.
-   * Raw string command names are not allowed.
+   * Accepts either:
+   * - CommandFn from initCmds() with args
+   * - Command object directly (for transpiler-generated pipelines)
    *
-   * @param command - CommandFn from initCmds()
-   * @param args - Arguments for the target command
-   * @param options - Options for the target command
+   * @param command - CommandFn from initCmds() or Command object
+   * @param args - Arguments for the target command (only used with CommandFn)
+   * @param options - Options for the target command (only used with CommandFn)
    * @returns New Command instance configured with this command as upstream
    *
    * @example
@@ -271,6 +272,9 @@ export class Command implements PromiseLike<CommandResult> {
    * const [grep, sort, uniq] = await initCmds(["grep", "sort", "uniq"]);
    * await str("hello\nworld").pipe(grep, ["hello"]).exec();
    *
+   * // With Command object (transpiler-generated)
+   * await cmd("echo", ["hello"]).pipe(cmd("tr", ["a-z", "A-Z"])).exec();
+   *
    * // Multi-stage pipeline
    * await $.cat("file.txt").stdout()
    *   .pipe(toCmd(grep, ["pattern"]))
@@ -278,10 +282,16 @@ export class Command implements PromiseLike<CommandResult> {
    *   .collect();
    * ```
    */
-  pipe(command: CommandFn, args: string[] = [], options?: CommandOptions): Command {
+  pipe(command: CommandFn | Command, args: string[] = [], options?: CommandOptions): Command {
+    // Handle Command object directly (SSH-365: command-to-command pipelines)
+    if (command instanceof Command) {
+      command.upstream = this;
+      return command;
+    }
+
     const cmdName = command[CMD_NAME_SYMBOL];
     if (!cmdName) {
-      throw new Error("pipe() requires a CommandFn from initCmds(). Raw string command names are not allowed.");
+      throw new Error("pipe() requires a CommandFn from initCmds() or a Command object.");
     }
 
     const next = new Command(cmdName, args, options ?? {});

@@ -370,8 +370,11 @@ export function visitParameterExpansion(
  * Visit a CommandSubstitution node
  *
  * Command substitution $(...) captures stdout from inner commands.
- * Unlike statement context (which uses __printCmd to print output),
- * we need the raw command expression to call .text() on it.
+ * SSH-360: Uses __cmdSubText helper (defined in preamble) to handle multiple result types:
+ * - Command objects with .text() method
+ * - FluentStream/FluentShell with .collect() method
+ * - undefined/null from variable assignments
+ * - String results
  */
 export function visitCommandSubstitution(
   cs: AST.CommandSubstitution,
@@ -383,13 +386,12 @@ export function visitCommandSubstitution(
 
   for (const stmt of cs.command) {
     // For simple commands/pipelines, get the expression directly
-    // For other statements, fall back to visitStatement (may need refinement)
+    // For other statements, fall back to visitStatement
     if (stmt.type === "Command" || stmt.type === "Pipeline") {
       const expr = ctx.buildCommandExpression(stmt);
       innerExprs.push(expr.code);
     } else {
       // For complex statements (if, for, etc.), use visitStatement
-      // These may not work correctly with .text() - needs SSH-360 refactor
       const result = ctx.visitStatement(stmt);
       for (const line of result.lines) {
         innerExprs.push(line.trim());
@@ -400,8 +402,8 @@ export function visitCommandSubstitution(
   // Build inline command substitution that captures stdout
   const innerCode = innerExprs.join("; ").replace(/^await /, "").replace(/;$/, "");
 
-  // Only strip trailing newlines, not all whitespace (Bash behavior)
-  return `\${await (async () => { const __result = ${innerCode}; return (await __result.text()).replace(/\\n+$/, ""); })()}`;
+  // Use __cmdSubText helper (defined in preamble) to extract text from result
+  return `\${await __cmdSubText(${innerCode})}`;
 }
 
 // =============================================================================
