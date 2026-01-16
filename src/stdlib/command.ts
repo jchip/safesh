@@ -111,6 +111,16 @@ export interface StreamChunk {
 }
 
 /**
+ * Options for file redirection
+ */
+export interface RedirectOptions {
+  /** Append to file instead of overwriting */
+  append?: boolean;
+  /** Force overwrite even if noclobber is set */
+  force?: boolean;
+}
+
+/**
  * Options for command execution
  */
 export interface CommandOptions {
@@ -131,6 +141,12 @@ export interface CommandOptions {
 
   /** Standard input data to write to the command */
   stdin?: string | Uint8Array | ReadableStream<Uint8Array>;
+
+  /** Redirect stdout to file */
+  stdoutFile?: { path: string; options?: RedirectOptions };
+
+  /** Redirect stderr to file */
+  stderrFile?: { path: string; options?: RedirectOptions };
 }
 
 /**
@@ -409,12 +425,47 @@ export class Command implements PromiseLike<CommandResult> {
     // Emit job end event
     emitJobEnd(jobId, status.code, startTime);
 
+    const stdoutStr = decoder.decode(stdoutBytes);
+    const stderrStr = decoder.decode(stderrBytes);
+
+    // Handle file redirections
+    if (this.options.stdoutFile) {
+      await this.writeToFile(
+        this.options.stdoutFile.path,
+        stdoutStr,
+        this.options.stdoutFile.options,
+      );
+    }
+    if (this.options.stderrFile) {
+      await this.writeToFile(
+        this.options.stderrFile.path,
+        stderrStr,
+        this.options.stderrFile.options,
+      );
+    }
+
     return {
-      stdout: decoder.decode(stdoutBytes),
-      stderr: decoder.decode(stderrBytes),
+      stdout: stdoutStr,
+      stderr: stderrStr,
       code: status.code,
       success: status.success,
     };
+  }
+
+  /**
+   * Write content to a file (for redirections)
+   */
+  private async writeToFile(
+    path: string,
+    content: string,
+    options?: RedirectOptions,
+  ): Promise<void> {
+    const writeOptions: Deno.WriteFileOptions = {};
+    if (options?.append) {
+      writeOptions.append = true;
+    }
+    // Note: 'force' option is for noclobber override - not currently enforced
+    await Deno.writeTextFile(path, content, writeOptions);
   }
 
   /**
@@ -561,47 +612,80 @@ export class Command implements PromiseLike<CommandResult> {
   }
 
   /**
-   * Get stdout as a Stream
+   * Get stdout as a Stream (no arguments) or redirect to file (with file path)
    *
-   * Spawns the process and streams only stdout data.
-   * Each call to stdout() spawns a new process.
+   * Without arguments: Spawns the process and streams only stdout data.
+   * With file path: Returns a new Command with stdout redirected to the file.
    *
-   * @returns Stream of stdout chunks
+   * @param file - Optional file path to redirect stdout to
+   * @param options - Optional redirect options (append, force)
+   * @returns FluentStream when no args, Command when file specified
    *
    * @example
    * ```ts
-   * // Pipe stdout through transforms
+   * // Stream stdout
    * await cmd("git", ["log"])
    *   .stdout()
    *   .pipe(lines())
-   *   .pipe(grep(/fix:/))
-   *   .pipe(stdout())
    *   .forEach(() => {});
+   *
+   * // Redirect to file
+   * await cmd("echo", ["hello"]).stdout("output.txt").exec();
+   * await cmd("echo", ["more"]).stdout("output.txt", { append: true }).exec();
    * ```
    */
-  stdout(): FluentStream<string> {
+  stdout(): FluentStream<string>;
+  stdout(file: string, options?: RedirectOptions): Command;
+  stdout(file?: string, options?: RedirectOptions): FluentStream<string> | Command {
+    if (file !== undefined) {
+      // File redirection mode - return new Command with stdoutFile set
+      const next = new Command(this.cmd, this.args, {
+        ...this.options,
+        stdoutFile: { path: file, options },
+      });
+      next.upstream = this.upstream;
+      return next;
+    }
+    // Stream mode
     return new FluentStream(this.streamOne("stdout"));
   }
 
   /**
-   * Get stderr as a FluentStream
+   * Get stderr as a FluentStream (no arguments) or redirect to file (with file path)
    *
-   * Spawns the process and streams only stderr data.
-   * Each call to stderr() spawns a new process.
+   * Without arguments: Spawns the process and streams only stderr data.
+   * With file path: Returns a new Command with stderr redirected to the file.
    *
-   * @returns FluentStream of stderr chunks
+   * @param file - Optional file path to redirect stderr to
+   * @param options - Optional redirect options (append, force)
+   * @returns FluentStream when no args, Command when file specified
    *
    * @example
    * ```ts
-   * // Process stderr separately
+   * // Stream stderr
    * await cmd("git", ["status"])
    *   .stderr()
    *   .pipe(lines())
-   *   .pipe(stderr())
    *   .forEach(() => {});
+   *
+   * // Redirect to file
+   * await cmd("npm", ["install"]).stderr("errors.log").exec();
+   * await cmd("npm", ["test"]).stderr("errors.log", { append: true }).exec();
    * ```
    */
-  stderr(): FluentStream<string> {
+  stderr(): FluentStream<string>;
+  stderr(file: string, options?: RedirectOptions): Command;
+  stderr(file?: string, options?: RedirectOptions): FluentStream<string> | Command {
+    if (file !== undefined) {
+      // File redirection mode - return new Command with stderrFile set
+      const next = new Command(this.cmd, this.args, {
+        ...this.options,
+        stderrFile: { path: file, options },
+      });
+      next.upstream = this.upstream;
+      return next;
+    }
+    // Stream mode
     return new FluentStream(this.streamOne("stderr"));
   }
 
