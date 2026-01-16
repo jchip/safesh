@@ -59,10 +59,10 @@ export const FLUENT_COMMANDS = new Set([
   "uniq",
   "wc",
   "tee",
-  "tr",
-  "cut",
-  "sed",
-  "awk",
+  // Note: tr, cut, sed, awk are NOT in this list because:
+  // - tr: doesn't exist in runtime
+  // - cut: exists only as $.text.cut(), not as $.cut()
+  // - sed, awk: fall back to $.cmd`` (external commands)
 ]);
 
 /** Check if a command should use fluent style */

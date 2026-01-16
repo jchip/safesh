@@ -100,7 +100,7 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle command with special characters in arguments", () => {
     const ast = parse("echo 'hello world'");
     const output = transpile(ast);
-    assertStringIncludes(output, "$.cmd`echo");
+    assertStringIncludes(output, '$.cmd("echo")');
   });
 
   it("should handle command with variable in name", () => {
@@ -127,21 +127,21 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle command with escaped quotes", () => {
     const ast = parse('echo "say \\"hello\\""');
     const output = transpile(ast);
-    assertStringIncludes(output, "$.cmd`echo");
+    assertStringIncludes(output, '$.cmd("echo")');
   });
 
   it("should handle empty command gracefully", () => {
     const ast = parse(":");
     const output = transpile(ast);
     // Colon is a noop command
-    assertStringIncludes(output, "$.cmd`:`");
+    assertStringIncludes(output, '$.cmd(":")');
   });
 
   it("should handle true and false builtins", () => {
     const ast1 = parse("true");
     const ast2 = parse("false");
-    assertStringIncludes(transpile(ast1), "$.cmd`true`");
-    assertStringIncludes(transpile(ast2), "$.cmd`false`");
+    assertStringIncludes(transpile(ast1), '$.cmd("true")');
+    assertStringIncludes(transpile(ast2), '$.cmd("false")');
   });
 });
 
@@ -185,34 +185,35 @@ describe("Fluent Commands - Comprehensive", () => {
     });
   });
 
-  describe("cut options", () => {
-    it("should handle cut with -d and -f", () => {
+  describe("cut command", () => {
+    it("should handle cut with -d and -f (uses $.cmd())", () => {
       const ast = parse("cut -d: -f1,2");
       const output = transpile(ast);
-      assertStringIncludes(output, '$.cut(');
-      assertStringIncludes(output, 'delimiter: ":"');
-      assertStringIncludes(output, "fields:");
+      // cut is not a fluent command, should use $.cmd()
+      assertStringIncludes(output, 'await $.cmd("cut")');
     });
 
-    it("should handle cut with separated -d option", () => {
+    it("should handle cut with separated -d option (uses $.cmd())", () => {
       const ast = parse("cut -d , -f 1");
       const output = transpile(ast);
-      assertStringIncludes(output, "$.cut(");
-      assertStringIncludes(output, "delimiter");
+      // cut is not a fluent command, should use $.cmd()
+      assertStringIncludes(output, 'await $.cmd("cut")');
     });
   });
 
   describe("tr command", () => {
-    it("should handle tr with character classes", () => {
+    it("should handle tr with character classes (uses $.cmd())", () => {
       const ast = parse("tr a-z A-Z");
       const output = transpile(ast);
-      assertStringIncludes(output, '$.tr("a-z", "A-Z")');
+      // tr is not a fluent command, should use $.cmd()
+      assertStringIncludes(output, 'await $.cmd("tr")');
     });
 
-    it("should handle tr with special characters", () => {
+    it("should handle tr with special characters (uses $.cmd())", () => {
       const ast = parse("tr '\\n' ' '");
       const output = transpile(ast);
-      assertStringIncludes(output, "$.tr(");
+      // tr is not a fluent command, should use $.cmd()
+      assertStringIncludes(output, 'await $.cmd("tr")');
     });
   });
 
@@ -285,13 +286,13 @@ describe("Fluent Commands - Comprehensive", () => {
     it("should use explicit style for sed", () => {
       const ast = parse("sed 's/old/new/g'");
       const output = transpile(ast);
-      assertStringIncludes(output, "$.cmd`sed");
+      assertStringIncludes(output, '$.cmd("sed")');
     });
 
     it("should use explicit style for awk", () => {
       const ast = parse("awk '{print $1}'");
       const output = transpile(ast);
-      assertStringIncludes(output, "$.cmd`awk");
+      assertStringIncludes(output, '$.cmd("awk")');
     });
   });
 });
@@ -1382,7 +1383,7 @@ describe("Grouping Constructs", () => {
     const ast = parse("(ls)");
     const output = transpile(ast);
     assertStringIncludes(output, "(async () => {");
-    assertStringIncludes(output, "$.cmd`ls`");
+    assertStringIncludes(output, '(await $.cmd("ls"))()');
   });
 });
 
@@ -1415,7 +1416,7 @@ describe("Complex Realistic Bash Scripts", () => {
     assertStringIncludes(output, 'let DATE');
     assertStringIncludes(output, 'if (');
     assertStringIncludes(output, 'for (const file of');
-    assertStringIncludes(output, '$.cmd`cp');
+    assertStringIncludes(output, '$.cmd("cp")');
   });
 
   it("should transpile a log analysis script", () => {
@@ -1432,7 +1433,7 @@ describe("Complex Realistic Bash Scripts", () => {
 
     // grep with dynamic file arg falls back to generic command style
     // (fluent style can't parse dynamic args at transpile-time)
-    assertStringIncludes(output, '$.cmd`grep');
+    assertStringIncludes(output, '$.cmd("grep")');
     assertStringIncludes(output, '.pipe(');
   });
 
@@ -1494,7 +1495,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'for (const target of');
-    assertStringIncludes(output, '$.cmd`echo');
+    assertStringIncludes(output, '$.cmd("echo")');
   });
 
   it("should transpile a case statement script", () => {
@@ -1553,7 +1554,7 @@ describe("Complex Realistic Bash Scripts", () => {
 
     assertStringIncludes(output, 'let BRANCH');
     assertStringIncludes(output, 'if (');
-    assertStringIncludes(output, '$.cmd`git');
+    assertStringIncludes(output, '$.cmd("git")');
   });
 
   it("should transpile a health check script", () => {

@@ -3,7 +3,7 @@
  *
  * Transpiles Command and Pipeline AST nodes to TypeScript.
  * Uses fluent style for common text processing commands,
- * explicit $.cmd`` style for everything else.
+ * explicit $.cmd() function call style for everything else.
  */
 
 import type * as AST from "../../ast.ts";
@@ -67,7 +67,7 @@ function collectFlagOptions(args: string[], flagMap: Record<string, string>): st
 export function buildCommand(
   command: AST.Command,
   ctx: VisitorContext,
-): ExpressionResult {
+): ExpressionResult & { isUserFunction?: boolean } {
   // Handle pure variable assignments (no command name)
   const hasNoCommand =
     command.name.type === "Word" && command.name.value === "";
@@ -83,6 +83,7 @@ export function buildCommand(
 
   let cmdExpr: string;
   let isAsync = true;
+  let isUserFunction = false;
 
   // Check if command has environment variable assignments
   const hasAssignments = command.assignments.length > 0 && !hasNoCommand;
@@ -92,6 +93,7 @@ export function buildCommand(
     // Call the function directly
     cmdExpr = `${name}()`;
     isAsync = true;
+    isUserFunction = true;
   } else {
     // Check if any args contain dynamic values (template literals with ${)
     // If so, fluent command handlers can't parse them correctly at transpile-time
@@ -114,9 +116,10 @@ export function buildCommand(
       const argsArray = args.map(a => `"${escapeForQuotes(a)}"`).join(", ");
       cmdExpr = `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
     } else {
-      // Use explicit $.cmd`` template literal style
-      const argsStr = args.length > 0 ? " " + args.join(" ") : "";
-      cmdExpr = `$.cmd\`${name}${argsStr}\``;
+      // Use explicit $.cmd() function call style
+      // $.cmd() returns a CommandFn that needs to be called to get a Command
+      const argsArray = args.length > 0 ? args.map(a => `"${escapeForQuotes(a)}"`).join(", ") : "";
+      cmdExpr = `(await $.cmd("${escapeForQuotes(name)}"))(${argsArray})`;
     }
   }
 
@@ -125,7 +128,7 @@ export function buildCommand(
     cmdExpr = applyRedirection(cmdExpr, redirect, ctx);
   }
 
-  return { code: cmdExpr, async: isAsync };
+  return { code: cmdExpr, async: isAsync, isUserFunction };
 }
 
 /**
@@ -237,43 +240,10 @@ function buildFluentCommand(
       return `$.tee("${escapeForQuotes(file)}")`;
     }
 
-    case "tr": {
-      // $.tr(from, to)
-      const from = args[0] ?? "";
-      const to = args[1] ?? "";
-      return `$.tr("${escapeForQuotes(from)}", "${escapeForQuotes(to)}")`;
-    }
-
-    case "cut": {
-      // $.cut(options)
-      const options: string[] = [];
-      for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg === "-d" && args[i + 1]) {
-          options.push(`delimiter: "${escapeForQuotes(args[i + 1] ?? "")}"`);
-          i++;
-        } else if (arg?.startsWith("-d")) {
-          options.push(`delimiter: "${escapeForQuotes(arg.slice(2))}"`);
-        } else if (arg === "-f" && args[i + 1]) {
-          options.push(`fields: [${args[i + 1]}]`);
-          i++;
-        } else if (arg?.startsWith("-f")) {
-          options.push(`fields: [${arg.slice(2)}]`);
-        }
-      }
-      return `$.cut({ ${options.join(", ")} })`;
-    }
-
-    case "sed":
-    case "awk": {
-      // Fall back to explicit style for complex commands
-      const argsStr = args.length > 0 ? " " + args.join(" ") : "";
-      return `$.cmd\`${name}${argsStr}\``;
-    }
-
+    // tr, cut, sed, awk are not fluent commands - they fall through to default
     default: {
-      const argsStr = args.length > 0 ? " " + args.join(" ") : "";
-      return `$.cmd\`${name}${argsStr}\``;
+      const argsArray = args.length > 0 ? args.map(a => `"${escapeForQuotes(a)}"`).join(", ") : "";
+      return `(await $.cmd("${escapeForQuotes(name)}"))(${argsArray})`;
     }
   }
 }
@@ -346,7 +316,12 @@ export function visitCommand(
   const result = buildCommand(command, ctx);
   const indent = ctx.getIndent();
 
-  if (result.async) {
+  // Wrap command execution with __printCmd to print output
+  // This only applies to standalone commands (statements), not commands in pipelines/expressions
+  // Don't wrap user-defined functions as they don't return CommandResult
+  if (result.async && !result.isUserFunction) {
+    return { lines: [`${indent}await __printCmd(${result.code});`] };
+  } else if (result.async) {
     return { lines: [`${indent}await ${result.code};`] };
   }
   return { lines: [`${indent}${result.code};`] };
@@ -394,14 +369,16 @@ export function buildPipeline(
     if (!part) continue;
 
     if (op === "&&") {
-      result = `${result}.then(() => ${part})`;
+      // For logical operators, wrap in async IIFE that prints each command
+      result = `(async () => { await __printCmd(${result}); return ${part}; })()`;
     } else if (op === "||") {
-      result = `${result}.catch(() => ${part})`;
+      // For ||, print the first command, and if it fails, run the second
+      result = `(async () => { try { await __printCmd(${result}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part}; } })()`;
     } else if (op === "|") {
       result = `${result}.pipe(${part})`;
     } else if (op === ";") {
       // Sequential execution - wrap in async IIFE
-      result = `(async () => { await ${result}; return ${part}; })()`;
+      result = `(async () => { await __printCmd(${result}); return ${part}; })()`;
     } else {
       // Default: pipe
       result = `${result}.pipe(${part})`;
@@ -497,7 +474,8 @@ export function visitPipeline(
   if (pipeline.background) {
     return { lines: [`${indent}${result.code}; // background`] };
   }
-  return { lines: [`${indent}await ${result.code};`] };
+  // Wrap pipeline execution with __printCmd to print output
+  return { lines: [`${indent}await __printCmd(${result.code});`] };
 }
 
 // =============================================================================
