@@ -51,33 +51,57 @@ async function executeTranspiled(bashScript: string): Promise<ExecutionResult> {
   tsCode = tsCode.replace(/^\(async \(\) => \{/, "await (async () => {");
   tsCode = tsCode.replace(/\}\)\(\);$/, "})();");
 
-  // Wrap in SafeShell mock runtime that forwards stdout
+  // Wrap in SafeShell mock runtime that captures and prints stdout
   const fullCode = `
+// Helper function to execute commands and print their output (matches preamble)
+async function __printCmd(cmd: any): Promise<number> {
+  const result = await cmd;
+  if (result.stdout) {
+    await Deno.stdout.write(new TextEncoder().encode(result.stdout));
+  }
+  if (result.stderr) {
+    await Deno.stderr.write(new TextEncoder().encode(result.stderr));
+  }
+  return result.code;
+}
+
+// Helper for command substitution text extraction
+async function __cmdSubText(cmd: any): Promise<string> {
+  const result = await cmd;
+  // Strip trailing newlines like bash does for command substitution
+  return (result.stdout || '').replace(/\\n+$/, '');
+}
+
 // Mock SafeShell runtime for conformance testing
 const $ = {
-  cmd: (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const cmd = strings.reduce((acc, str, i) => acc + str + (values[i] ?? ''), '');
+  cmd: (command: string, ...args: string[]) => {
+    // Build command string from function call args
+    const cmdStr = args.length > 0 ? command + ' ' + args.join(' ') : command;
     const cmdObj = {
-      _cmd: cmd,
+      _cmd: cmdStr,
+      _stdout: '' as string,
+      _stderr: '' as string,
       code: 0,
-      async run() {
+      async exec() {
         const proc = new Deno.Command("bash", {
           args: ["-c", this._cmd],
-          stdout: "inherit",  // Forward stdout to parent process
-          stderr: "inherit",  // Forward stderr to parent process
+          stdout: "piped",
+          stderr: "piped",
         });
         const result = await proc.output();
         this.code = result.code;
+        this._stdout = new TextDecoder().decode(result.stdout);
+        this._stderr = new TextDecoder().decode(result.stderr);
         return {
           code: result.code,
-          stdout: "",
-          stderr: "",
-          async text() { return ""; }
+          stdout: this._stdout,
+          stderr: this._stderr,
+          success: result.code === 0,
         };
       },
       async then(onFulfill: (v: unknown) => unknown, onReject?: (e: unknown) => unknown) {
         try {
-          const result = await this.run();
+          const result = await this.exec();
           return onFulfill ? onFulfill(result) : result;
         } catch (e) {
           if (onReject) return onReject(e);
@@ -86,7 +110,7 @@ const $ = {
       },
       async catch(onReject: (e: unknown) => unknown) {
         try {
-          return await this.run();
+          return await this.exec();
         } catch (e) {
           return onReject(e);
         }
@@ -98,7 +122,7 @@ const $ = {
     };
     return cmdObj;
   },
-  cat: (...files: string[]) => $.cmd\`cat \${files.join(' ')}\`,
+  cat: (...files: string[]) => $.cmd("cat", ...files),
   grep: (pattern: RegExp) => ({ pipe: () => ({ run: async () => ({ code: 0, stdout: '', stderr: '' }) }) }),
   head: (n: number) => ({ pipe: () => ({ run: async () => ({ code: 0, stdout: '', stderr: '' }) }) }),
   tail: (n: number) => ({ pipe: () => ({ run: async () => ({ code: 0, stdout: '', stderr: '' }) }) }),
@@ -504,7 +528,9 @@ describe("Conformance - Functions", () => {
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
     assertStringIncludes(output, "async function say_hello()");
-    assertStringIncludes(output, "echo Hello");
+    // Transpiler outputs $.cmd("echo", "Hello") not literal "echo Hello"
+    assertStringIncludes(output, '$.cmd("echo"');
+    assertStringIncludes(output, '"Hello"');
   });
 });
 

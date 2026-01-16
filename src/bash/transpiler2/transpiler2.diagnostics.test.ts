@@ -193,8 +193,8 @@ describe("Transpiler Error Handling", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    // Should produce valid JS
-    assertStringIncludes(output, '$.cmd("echo")');
+    // Should produce valid JS with argument
+    assertStringIncludes(output, '$.cmd("echo",');
   });
 
   it("should handle unset variables gracefully", () => {
@@ -306,7 +306,7 @@ describe("Unsupported Feature Handling", () => {
 
     // Should handle brace group
     assertStringIncludes(output, "{");
-    assertStringIncludes(output, "echo one");
+    assertStringIncludes(output, '$.cmd("echo", "one")');
   });
 });
 
@@ -378,9 +378,9 @@ describe("Error Recovery", () => {
     const output = transpile(ast);
 
     // All commands should be present
-    assertStringIncludes(output, "echo one");
-    assertStringIncludes(output, "echo two");
-    assertStringIncludes(output, "echo three");
+    assertStringIncludes(output, '$.cmd("echo", "one")');
+    assertStringIncludes(output, '$.cmd("echo", "two")');
+    assertStringIncludes(output, '$.cmd("echo", "three")');
   });
 
   it("should continue transpiling after recoverable parse errors", () => {
@@ -401,9 +401,9 @@ describe("Error Recovery", () => {
     const output = transpile(ast);
 
     // Valid statements should be transpiled
-    assertStringIncludes(output, "echo start");
+    assertStringIncludes(output, '$.cmd("echo", "start")');
     assertStringIncludes(output, "let VAR");
-    assertStringIncludes(output, "echo end");
+    assertStringIncludes(output, '$.cmd("echo", "end")');
   });
 });
 
@@ -676,7 +676,7 @@ describe("Integration - Real-World Error Scenarios", () => {
     const output = transpile(ast);
 
     // Valid parts should be transpiled correctly
-    assertStringIncludes(output, "echo Starting");
+    assertStringIncludes(output, '$.cmd("echo", "Starting...")');
     assertStringIncludes(output, "let VAR");
   });
 
@@ -770,8 +770,8 @@ describe("BashTranspiler2 - Diagnostic Integration", () => {
     const output = transpiler.transpile(ast);
 
     // Should produce valid output even with potential warnings
-    assertStringIncludes(output, "echo Start");
-    assertStringIncludes(output, "echo End");
+    assertStringIncludes(output, '$.cmd("echo", "Start")');
+    assertStringIncludes(output, '$.cmd("echo", "End")');
   });
 });
 
@@ -787,7 +787,7 @@ describe("Edge Cases and Boundary Conditions", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, '$.cmd("echo")');
+    assertStringIncludes(output, '$.cmd("echo",');
   });
 
   it("should handle deeply nested parentheses", () => {
@@ -803,8 +803,8 @@ describe("Edge Cases and Boundary Conditions", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, ".then(");
-    assertStringIncludes(output, ".catch(");
+    // && and || use async IIFE pattern, not .then()/.catch()
+    assertStringIncludes(output, "(async () =>");
   });
 
   it("should handle empty strings in various contexts", () => {
@@ -890,6 +890,6 @@ describe("Performance and Stress Tests", () => {
     const output = transpile(ast);
 
     // Should handle deep nesting
-    assertStringIncludes(output, "echo deep");
+    assertStringIncludes(output, '$.cmd("echo", "deep")');
   });
 });

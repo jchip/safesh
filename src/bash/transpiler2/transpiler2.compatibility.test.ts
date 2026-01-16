@@ -35,7 +35,7 @@ describe("Package Manager Scripts", () => {
       const code = transpileBash(`
         npm install || npm install --force
       `);
-      assertStringIncludes(code, "npm install");
+      assertStringIncludes(code, '"npm", "install"');
     });
 
     it("should handle npm version check and conditional install", () => {
@@ -45,7 +45,7 @@ describe("Package Manager Scripts", () => {
         fi
       `);
       assertStringIncludes(code, "node_modules");
-      assertStringIncludes(code, "npm install");
+      assertStringIncludes(code, '"npm", "install"');
     });
 
     it("should handle npm run with environment variables", () => {
@@ -60,9 +60,9 @@ describe("Package Manager Scripts", () => {
       const code = transpileBash(`
         npm run clean && npm run build && npm test
       `);
-      assertStringIncludes(code, "npm run clean");
-      assertStringIncludes(code, "npm run build");
-      assertStringIncludes(code, "npm test");
+      assertStringIncludes(code, '"npm", "run", "clean"');
+      assertStringIncludes(code, '"npm", "run", "build"');
+      assertStringIncludes(code, '"npm", "test"');
     });
   });
 
@@ -71,8 +71,8 @@ describe("Package Manager Scripts", () => {
       const code = transpileBash(`
         apt-get update && apt-get install -y curl wget
       `);
-      assertStringIncludes(code, "apt-get update");
-      assertStringIncludes(code, "apt-get install");
+      assertStringIncludes(code, '"apt-get", "update"');
+      assertStringIncludes(code, '"apt-get", "install"');
     });
 
     it("should handle apt with DEBIAN_FRONTEND", () => {
@@ -87,8 +87,8 @@ describe("Package Manager Scripts", () => {
       const code = transpileBash(`
         apt-get clean && rm -rf /var/lib/apt/lists/*
       `);
-      assertStringIncludes(code, "apt-get clean");
-      assertStringIncludes(code, "rm");
+      assertStringIncludes(code, '"apt-get", "clean"');
+      assertStringIncludes(code, '"rm"');
     });
   });
 
@@ -97,15 +97,15 @@ describe("Package Manager Scripts", () => {
       const code = transpileBash(`
         yum install -y epel-release && yum update -y
       `);
-      assertStringIncludes(code, "yum install");
-      assertStringIncludes(code, "yum update");
+      assertStringIncludes(code, '"yum", "install"');
+      assertStringIncludes(code, '"yum", "update"');
     });
 
     it("should handle yum with package groups", () => {
       const code = transpileBash(`
         yum groupinstall -y "Development Tools"
       `);
-      assertStringIncludes(code, "yum groupinstall");
+      assertStringIncludes(code, '"yum", "groupinstall"');
     });
   });
 });
@@ -120,24 +120,24 @@ describe("Build Scripts", () => {
       const code = transpileBash(`
         make clean && make all && make install
       `);
-      assertStringIncludes(code, "make clean");
-      assertStringIncludes(code, "make all");
-      assertStringIncludes(code, "make install");
+      assertStringIncludes(code, '"make", "clean"');
+      assertStringIncludes(code, '"make", "all"');
+      assertStringIncludes(code, '"make", "install"');
     });
 
     it("should handle make with variables", () => {
       const code = transpileBash(`
         make CC=gcc PREFIX=/usr/local install
       `);
-      assertStringIncludes(code, "make");
+      assertStringIncludes(code, '"make"');
     });
 
     it("should handle parallel make", () => {
       const code = transpileBash(`
         make -j$(nproc)
       `);
-      assertStringIncludes(code, "make");
-      assertStringIncludes(code, "nproc");
+      assertStringIncludes(code, '"make"');
+      assertStringIncludes(code, '"nproc"');
     });
   });
 
@@ -146,14 +146,14 @@ describe("Build Scripts", () => {
       const code = transpileBash(`
         ./gradlew clean build
       `);
-      assertStringIncludes(code, "gradlew clean build");
+      assertStringIncludes(code, '"./gradlew", "clean", "build"');
     });
 
     it("should handle gradle with test skip", () => {
       const code = transpileBash(`
         ./gradlew build -x test
       `);
-      assertStringIncludes(code, "gradlew build");
+      assertStringIncludes(code, '"./gradlew", "build"');
     });
   });
 
@@ -162,14 +162,14 @@ describe("Build Scripts", () => {
       const code = transpileBash(`
         mvn clean install -DskipTests
       `);
-      assertStringIncludes(code, "mvn clean install");
+      assertStringIncludes(code, '"mvn", "clean", "install"');
     });
 
     it("should handle maven with profiles", () => {
       const code = transpileBash(`
         mvn clean package -P production
       `);
-      assertStringIncludes(code, "mvn clean package");
+      assertStringIncludes(code, '"mvn", "clean", "package"');
     });
   });
 });
@@ -186,9 +186,9 @@ describe("Init Scripts", () => {
         systemctl enable myservice
         systemctl status myservice
       `);
-      assertStringIncludes(code, "systemctl start");
-      assertStringIncludes(code, "systemctl enable");
-      assertStringIncludes(code, "systemctl status");
+      assertStringIncludes(code, '"systemctl", "start"');
+      assertStringIncludes(code, '"systemctl", "enable"');
+      assertStringIncludes(code, '"systemctl", "status"');
     });
 
     it("should handle service restart with check", () => {
@@ -199,8 +199,8 @@ describe("Init Scripts", () => {
           systemctl start myservice
         fi
       `);
-      assertStringIncludes(code, "systemctl is-active");
-      assertStringIncludes(code, "systemctl restart");
+      assertStringIncludes(code, '"systemctl", "is-active"');
+      assertStringIncludes(code, '"systemctl", "restart"');
     });
   });
 
@@ -240,7 +240,7 @@ describe("Init Scripts", () => {
         fi
       `);
       assertStringIncludes(code, "PIDFILE");
-      assertStringIncludes(code, "kill");
+      assertStringIncludes(code, '"kill"');
     });
   });
 });
@@ -261,8 +261,8 @@ describe("Docker Entrypoint Scripts", () => {
 
       exec "$@"
     `);
-    assertStringIncludes(code, "set");
-    assertStringIncludes(code, "exec");
+    assertStringIncludes(code, '"set"');
+    assertStringIncludes(code, '"exec"');
   });
 
   it("should handle environment variable defaults", () => {
@@ -286,8 +286,8 @@ describe("Docker Entrypoint Scripts", () => {
     `);
     // Transpiler converts until to while loops
     assertStringIncludes(code, "while (");
-    assertStringIncludes(code, "nc");
-    assertStringIncludes(code, "sleep");
+    assertStringIncludes(code, '"nc"');
+    assertStringIncludes(code, '"sleep"');
   });
 
   it("should handle signal handling", () => {
@@ -297,8 +297,8 @@ describe("Docker Entrypoint Scripts", () => {
       PID=$!
       wait $PID
     `);
-    assertStringIncludes(code, "trap");
-    assertStringIncludes(code, "wait");
+    assertStringIncludes(code, '"trap"');
+    assertStringIncludes(code, '"wait"');
   });
 
   it("should handle file permission setup", () => {
@@ -306,8 +306,8 @@ describe("Docker Entrypoint Scripts", () => {
       chown -R myuser:mygroup /app/data
       chmod 755 /app/bin/*
     `);
-    assertStringIncludes(code, "chown");
-    assertStringIncludes(code, "chmod");
+    assertStringIncludes(code, '"chown"');
+    assertStringIncludes(code, '"chmod"');
   });
 });
 
@@ -322,8 +322,8 @@ describe("Kubernetes Scripts", () => {
         kubectl apply -f deployment.yaml
         kubectl rollout status deployment/myapp
       `);
-      assertStringIncludes(code, "kubectl apply");
-      assertStringIncludes(code, "kubectl rollout");
+      assertStringIncludes(code, '"kubectl", "apply"');
+      assertStringIncludes(code, '"kubectl", "rollout"');
     });
 
     it("should handle kubectl with namespace", () => {
@@ -332,21 +332,21 @@ describe("Kubernetes Scripts", () => {
         kubectl get pods -n $NAMESPACE
       `);
       assertStringIncludes(code, "NAMESPACE");
-      assertStringIncludes(code, "kubectl get pods");
+      assertStringIncludes(code, '"kubectl", "get", "pods"');
     });
 
     it("should handle kubectl wait pattern", () => {
       const code = transpileBash(`
         kubectl wait --for=condition=ready pod -l app=myapp --timeout=300s
       `);
-      assertStringIncludes(code, "kubectl wait");
+      assertStringIncludes(code, '"kubectl", "wait"');
     });
 
     it("should handle kubectl logs with follow", () => {
       const code = transpileBash(`
         kubectl logs -f deployment/myapp | grep ERROR
       `);
-      assertStringIncludes(code, "kubectl logs");
+      assertStringIncludes(code, '"kubectl", "logs"');
       assertStringIncludes(code, ".pipe(");
     });
   });
@@ -356,22 +356,22 @@ describe("Kubernetes Scripts", () => {
       const code = transpileBash(`
         helm install myapp ./chart --values values.yaml
       `);
-      assertStringIncludes(code, "helm install");
+      assertStringIncludes(code, '"helm", "install"');
     });
 
     it("should handle helm upgrade with rollback", () => {
       const code = transpileBash(`
         helm upgrade myapp ./chart || helm rollback myapp
       `);
-      assertStringIncludes(code, "helm upgrade");
-      assertStringIncludes(code, "helm rollback");
+      assertStringIncludes(code, '"helm", "upgrade"');
+      assertStringIncludes(code, '"helm", "rollback"');
     });
 
     it("should handle helm template validation", () => {
       const code = transpileBash(`
         helm template myapp ./chart | kubectl apply --dry-run=client -f -
       `);
-      assertStringIncludes(code, "helm template");
+      assertStringIncludes(code, '"helm", "template"');
       assertStringIncludes(code, ".pipe(");
     });
   });
@@ -386,7 +386,7 @@ describe("AWS CLI Scripts", () => {
     const code = transpileBash(`
       aws s3 sync ./build s3://my-bucket/path --delete
     `);
-    assertStringIncludes(code, "aws s3 sync");
+    assertStringIncludes(code, '"aws", "s3", "sync"');
   });
 
   it("should handle aws with profile and region", () => {
@@ -402,16 +402,16 @@ describe("AWS CLI Scripts", () => {
     const code = transpileBash(`
       aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 123456789.dkr.ecr.us-west-2.amazonaws.com
     `);
-    assertStringIncludes(code, "aws ecr");
+    assertStringIncludes(code, '"aws", "ecr"');
     assertStringIncludes(code, ".pipe(");
-    assertStringIncludes(code, "docker login");
+    assertStringIncludes(code, '"docker", "login"');
   });
 
   it("should handle aws with jq processing", () => {
     const code = transpileBash(`
       aws ec2 describe-instances | jq '.Reservations[].Instances[].InstanceId'
     `);
-    assertStringIncludes(code, "aws ec2");
+    assertStringIncludes(code, '"aws", "ec2"');
     assertStringIncludes(code, ".pipe(");
   });
 
@@ -422,7 +422,7 @@ describe("AWS CLI Scripts", () => {
         --stack-name my-stack \\
         --capabilities CAPABILITY_IAM
     `);
-    assertStringIncludes(code, "aws cloudformation");
+    assertStringIncludes(code, '"aws", "cloudformation"');
   });
 
   it("should handle aws parameter store", () => {
@@ -430,7 +430,7 @@ describe("AWS CLI Scripts", () => {
       SECRET=$(aws ssm get-parameter --name /prod/db/password --with-decryption --query Parameter.Value --output text)
     `);
     assertStringIncludes(code, "SECRET");
-    assertStringIncludes(code, "aws ssm");
+    assertStringIncludes(code, '"aws", "ssm"');
   });
 });
 
@@ -448,8 +448,8 @@ describe("Git Hooks", () => {
         fi
       `);
       assertStringIncludes(code, "FILES");
-      assertStringIncludes(code, "git diff");
-      assertStringIncludes(code, "eslint");
+      assertStringIncludes(code, '"git", "diff"');
+      assertStringIncludes(code, '"eslint"');
     });
 
     it("should handle test runner in pre-commit", () => {
@@ -459,8 +459,8 @@ describe("Git Hooks", () => {
           exit 1
         }
       `);
-      assertStringIncludes(code, "npm test");
-      assertStringIncludes(code, "exit");
+      assertStringIncludes(code, '"npm", "test"');
+      assertStringIncludes(code, '"exit"');
     });
   });
 
@@ -478,8 +478,8 @@ describe("Git Hooks", () => {
         done
       `);
       assertStringIncludes(code, "while");
-      assertStringIncludes(code, "read");
-      assertStringIncludes(code, "git pull");
+      assertStringIncludes(code, '"read"');
+      assertStringIncludes(code, '"git", "pull"');
     });
   });
 
@@ -493,7 +493,7 @@ describe("Git Hooks", () => {
         fi
       `);
       assertStringIncludes(code, "BRANCH");
-      assertStringIncludes(code, "git rev-parse");
+      assertStringIncludes(code, '"git", "rev-parse"');
     });
   });
 });
@@ -507,7 +507,7 @@ describe("Cron Job Scripts", () => {
     const code = transpileBash(`
       find /var/log/myapp -name "*.log" -mtime +7 -delete
     `);
-    assertStringIncludes(code, "find");
+    assertStringIncludes(code, '"find"');
   });
 
   it("should handle backup script pattern", () => {
@@ -518,9 +518,9 @@ describe("Cron Job Scripts", () => {
       gzip $BACKUP_FILE
     `);
     assertStringIncludes(code, "DATE");
-    assertStringIncludes(code, "date");
-    assertStringIncludes(code, "pg_dump");
-    assertStringIncludes(code, "gzip");
+    assertStringIncludes(code, '"date"');
+    assertStringIncludes(code, '"pg_dump"');
+    assertStringIncludes(code, '"gzip"');
   });
 
   it("should handle cron with locking", () => {
@@ -535,7 +535,7 @@ describe("Cron Job Scripts", () => {
       # do work here
     `);
     assertStringIncludes(code, "LOCKFILE");
-    assertStringIncludes(code, "trap");
+    assertStringIncludes(code, '"trap"');
   });
 
   it("should handle maintenance window check", () => {
@@ -547,7 +547,7 @@ describe("Cron Job Scripts", () => {
       fi
     `);
     assertStringIncludes(code, "HOUR");
-    assertStringIncludes(code, "date");
+    assertStringIncludes(code, '"date"');
   });
 
   it("should handle cleanup with retention", () => {
@@ -555,7 +555,7 @@ describe("Cron Job Scripts", () => {
       find /tmp/cache -type f -mtime +1 -delete
       find /var/log/app -name "*.log.gz" -mtime +30 -delete
     `);
-    assertStringIncludes(code, "find");
+    assertStringIncludes(code, '"find"');
   });
 });
 
@@ -578,7 +578,7 @@ describe("Shell RC Files", () => {
       alias gs='git status'
       alias gp='git pull'
     `);
-    assertStringIncludes(code, "alias");
+    assertStringIncludes(code, '"alias"');
   });
 
   it("should handle shell options", () => {
@@ -586,7 +586,7 @@ describe("Shell RC Files", () => {
       shopt -s histappend
       shopt -s checkwinsize
     `);
-    assertStringIncludes(code, "shopt");
+    assertStringIncludes(code, '"shopt"');
   });
 
   it("should handle prompt customization", () => {
@@ -602,7 +602,7 @@ describe("Shell RC Files", () => {
         source ~/.bash_aliases
       fi
     `);
-    assertStringIncludes(code, "source");
+    assertStringIncludes(code, '"source"');
   });
 
   it("should handle environment detection", () => {
@@ -628,7 +628,7 @@ describe("Common Utility Patterns", () => {
         set -u
         set -o pipefail
       `);
-      assertStringIncludes(code, "set");
+      assertStringIncludes(code, '"set"');
     });
 
     it("should handle error function pattern", () => {
@@ -641,7 +641,7 @@ describe("Common Utility Patterns", () => {
         [ -f required_file ] || error "File not found"
       `);
       assertStringIncludes(code, "function error");
-      assertStringIncludes(code, "exit");
+      assertStringIncludes(code, '"exit"');
     });
   });
 
@@ -656,7 +656,7 @@ describe("Common Utility Patterns", () => {
           esac
         done
       `);
-      assertStringIncludes(code, "getopts");
+      assertStringIncludes(code, '"getopts"');
       // Transpiler converts case to if/else if chains
       assertStringIncludes(code, "if (");
       assertStringIncludes(code, "else if (");
@@ -734,7 +734,7 @@ describe("Common Utility Patterns", () => {
       const code = transpileBash(`
         [ -d "/path/to/dir" ] || mkdir -p /path/to/dir
       `);
-      assertStringIncludes(code, "mkdir");
+      assertStringIncludes(code, '"mkdir"');
     });
 
     it("should handle file copying with backup", () => {
@@ -744,14 +744,14 @@ describe("Common Utility Patterns", () => {
         fi
         cp source target
       `);
-      assertStringIncludes(code, "cp");
+      assertStringIncludes(code, '"cp"');
     });
 
     it("should handle recursive file processing", () => {
       const code = transpileBash(`
         find . -name "*.js" -type f -exec sed -i 's/var /let /g' {} \\;
       `);
-      assertStringIncludes(code, "find");
+      assertStringIncludes(code, '"find"');
     });
   });
 
@@ -763,7 +763,7 @@ describe("Common Utility Patterns", () => {
           /usr/bin/myapp &
         fi
       `);
-      assertStringIncludes(code, "pgrep");
+      assertStringIncludes(code, '"pgrep"');
     });
 
     it("should handle wait for process completion", () => {
@@ -774,7 +774,7 @@ describe("Common Utility Patterns", () => {
         echo "Task completed with status $?"
       `);
       assertStringIncludes(code, "PID");
-      assertStringIncludes(code, "wait");
+      assertStringIncludes(code, '"wait"');
     });
   });
 
@@ -783,14 +783,14 @@ describe("Common Utility Patterns", () => {
       const code = transpileBash(`
         curl --retry 3 --retry-delay 5 https://api.example.com/data
       `);
-      assertStringIncludes(code, "curl");
+      assertStringIncludes(code, '"curl"');
     });
 
     it("should handle wget with output", () => {
       const code = transpileBash(`
         wget -O /tmp/file.tar.gz https://example.com/file.tar.gz
       `);
-      assertStringIncludes(code, "wget");
+      assertStringIncludes(code, '"wget"');
     });
 
     it("should handle health check loop", () => {
@@ -803,8 +803,8 @@ describe("Common Utility Patterns", () => {
           sleep 2
         done
       `);
-      assertStringIncludes(code, "curl");
-      assertStringIncludes(code, "sleep");
+      assertStringIncludes(code, '"curl"');
+      assertStringIncludes(code, '"sleep"');
     });
   });
 
@@ -818,21 +818,21 @@ describe("Common Utility Patterns", () => {
         log "Application started"
       `);
       assertStringIncludes(code, "function log");
-      assertStringIncludes(code, "date");
+      assertStringIncludes(code, '"date"');
     });
 
     it("should handle stdout and stderr redirection", () => {
       const code = transpileBash(`
         command > output.log 2> error.log
       `);
-      assertStringIncludes(code, "command");
+      assertStringIncludes(code, '"command"');
     });
 
     it("should handle combined output redirection", () => {
       const code = transpileBash(`
         command &> combined.log
       `);
-      assertStringIncludes(code, "command");
+      assertStringIncludes(code, '"command"');
     });
   });
 
@@ -848,7 +848,7 @@ describe("Common Utility Patterns", () => {
         fi
       `);
       assertStringIncludes(code, "CONFIG_FILE");
-      assertStringIncludes(code, "source");
+      assertStringIncludes(code, '"source"');
     });
 
     it("should handle environment defaults", () => {
@@ -871,8 +871,8 @@ describe("Common Utility Patterns", () => {
         echo "data" > $TMPFILE
       `);
       assertStringIncludes(code, "TMPFILE");
-      assertStringIncludes(code, "mktemp");
-      assertStringIncludes(code, "trap");
+      assertStringIncludes(code, '"mktemp"');
+      assertStringIncludes(code, '"trap"');
     });
 
     it("should handle temporary directory", () => {
@@ -881,7 +881,7 @@ describe("Common Utility Patterns", () => {
         trap "rm -rf $TMPDIR" EXIT
       `);
       assertStringIncludes(code, "TMPDIR");
-      assertStringIncludes(code, "mktemp");
+      assertStringIncludes(code, '"mktemp"');
     });
   });
 
@@ -894,7 +894,7 @@ describe("Common Utility Patterns", () => {
           echo "Confirmed"
         fi
       `);
-      assertStringIncludes(code, "read");
+      assertStringIncludes(code, '"read"');
       assertStringIncludes(code, "REPLY");
     });
 
@@ -903,7 +903,7 @@ describe("Common Utility Patterns", () => {
         read -sp "Enter password: " PASSWORD
         echo
       `);
-      assertStringIncludes(code, "read");
+      assertStringIncludes(code, '"read"');
       assertStringIncludes(code, "PASSWORD");
     });
   });
@@ -917,10 +917,10 @@ describe("Common Utility Patterns", () => {
         wait
         echo "All tasks completed"
       `);
-      assertStringIncludes(code, "task1");
-      assertStringIncludes(code, "task2");
-      assertStringIncludes(code, "task3");
-      assertStringIncludes(code, "wait");
+      assertStringIncludes(code, '"task1"');
+      assertStringIncludes(code, '"task2"');
+      assertStringIncludes(code, '"task3"');
+      assertStringIncludes(code, '"wait"');
     });
 
     it("should handle xargs parallel", () => {
@@ -928,7 +928,7 @@ describe("Common Utility Patterns", () => {
         cat urls.txt | xargs -P 4 -I {} curl -O {}
       `);
       assertStringIncludes(code, ".pipe(");
-      assertStringIncludes(code, "xargs");
+      assertStringIncludes(code, '"xargs"');
     });
   });
 
@@ -941,7 +941,7 @@ describe("Common Utility Patterns", () => {
           exit 1
         fi
       `);
-      assertStringIncludes(code, "command");
+      assertStringIncludes(code, '"command"');
     });
 
     it("should handle PIPESTATUS", () => {
@@ -994,11 +994,11 @@ describe("Integration Tests - Complete Scripts", () => {
 
       log "Deployment completed successfully"
     `);
-    assertStringIncludes(code, "set");
+    assertStringIncludes(code, '"set"');
     assertStringIncludes(code, "function log");
-    assertStringIncludes(code, "npm run build");
-    assertStringIncludes(code, "npm test");
-    assertStringIncludes(code, "aws s3 sync");
+    assertStringIncludes(code, '"npm", "run", "build"');
+    assertStringIncludes(code, '"npm", "test"');
+    assertStringIncludes(code, '"aws", "s3", "sync"');
   });
 
   it("should handle complete backup script", () => {
@@ -1022,10 +1022,10 @@ describe("Integration Tests - Complete Scripts", () => {
       find $BACKUP_DIR -name "db_*.sql.gz" -mtime +7 -delete
     `);
     assertStringIncludes(code, "DATE");
-    assertStringIncludes(code, "pg_dump");
-    assertStringIncludes(code, "gzip");
-    assertStringIncludes(code, "aws s3");
-    assertStringIncludes(code, "find");
+    assertStringIncludes(code, '"pg_dump"');
+    assertStringIncludes(code, '"gzip"');
+    assertStringIncludes(code, '"aws", "s3"');
+    assertStringIncludes(code, '"find"');
   });
 
   it("should handle complete monitoring script", () => {
@@ -1059,6 +1059,6 @@ describe("Integration Tests - Complete Scripts", () => {
     `);
     assertStringIncludes(code, "SERVICE_NAME");
     assertStringIncludes(code, "function check_service");
-    assertStringIncludes(code, "systemctl");
+    assertStringIncludes(code, '"systemctl"');
   });
 });
