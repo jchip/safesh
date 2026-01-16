@@ -270,6 +270,25 @@ export class FluentShell {
   }
 
   /**
+   * Collect all content as a single string
+   *
+   * Terminal operation - executes the pipeline and joins all items.
+   * Used for command substitution $(...)
+   *
+   * @returns Promise resolving to concatenated string content
+   *
+   * @example
+   * ```ts
+   * const content = await $('file.txt').text();
+   * // or for command substitution: $(cat file.txt)
+   * ```
+   */
+  async text(): Promise<string> {
+    const items = await this._stream.collect();
+    return items.join("\n");
+  }
+
+  /**
    * Get the first item
    *
    * Terminal operation - executes pipeline until first item.
