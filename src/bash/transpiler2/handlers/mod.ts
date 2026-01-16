@@ -7,6 +7,7 @@
 // Command handlers
 export {
   buildCommand,
+  buildPipeline,
   visitCommand,
   visitPipeline,
   buildVariableAssignment,

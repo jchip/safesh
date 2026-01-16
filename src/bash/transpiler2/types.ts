@@ -153,6 +153,9 @@ export interface VisitorContext {
   /** Build a command expression (without await) */
   buildCommand(cmd: AST.Command): ExpressionResult;
 
+  /** Build a command or pipeline expression (for command substitution) */
+  buildCommandExpression(stmt: AST.Command | AST.Pipeline): ExpressionResult;
+
   /** Build test expression for if/while conditions */
   buildTestExpression(test: AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand): ExpressionResult;
 }

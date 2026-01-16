@@ -130,6 +130,14 @@ export class BashTranspiler2 {
         return handlers.buildCommand(cmd, this);
       },
 
+      buildCommandExpression(stmt: AST.Command | AST.Pipeline): ExpressionResult {
+        if (stmt.type === "Command") {
+          return handlers.buildCommand(stmt, this);
+        } else {
+          return handlers.buildPipeline(stmt, this);
+        }
+      },
+
       buildTestExpression(test: AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand): ExpressionResult {
         if (test.type === "TestCommand") {
           // For [[ ... ]] test commands, return the expression result directly
