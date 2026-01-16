@@ -1372,6 +1372,31 @@ EOF
     // The arg should use backticks for template literal evaluation
     assertStringIncludes(output, '`${await (async ()');
   });
+
+  // SSH-359: Heredoc should generate valid code (not $.cat().stdin() which doesn't exist)
+  it("should handle standalone heredoc with cat", () => {
+    const input = `cat <<'EOF'
+hello world
+EOF`;
+    const ast = parse(input);
+    const output = transpile(ast);
+    // Should use $.str() for cat with heredoc, not $.cat("-").stdin()
+    // OR should use $.cmd style with stdin option
+    assertStringIncludes(output, "hello world");
+    // Should NOT generate .stdin() method call on fluent cat
+    assert(!output.includes('$.cat("-").stdin('), "Should not use $.cat().stdin() pattern");
+  });
+
+  // SSH-358: Command substitution in variable assignment
+  it("should handle command substitution in variable assignment correctly", () => {
+    const ast = parse('BRANCH=$(git branch --show-current)');
+    const output = transpile(ast);
+    // Should generate valid variable assignment with command substitution
+    assertStringIncludes(output, "let BRANCH");
+    assertStringIncludes(output, "await");
+    // The command substitution should be evaluable
+    assertStringIncludes(output, ".text()");
+  });
 });
 
 // =============================================================================

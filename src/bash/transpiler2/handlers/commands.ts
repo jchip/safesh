@@ -111,9 +111,15 @@ export function buildCommand(
     // If so, fluent command handlers can't parse them correctly at transpile-time
     const hasDynamicArgs = args.some((arg) => arg.includes("${"));
 
+    // SSH-359: Check if command has heredoc redirections
+    // Fluent API ($.cat, etc.) doesn't support .stdin() method, so use $.cmd() style
+    const hasHeredoc = command.redirects.some(
+      (r) => r.operator === "<<" || r.operator === "<<-"
+    );
+
     // Use fluent style for common text processing commands (only with static args)
-    // BUT: env assignments force explicit $.cmd() style since fluent commands don't support it
-    if (isFluentCommand(name) && !hasDynamicArgs && !hasAssignments) {
+    // BUT: env assignments and heredocs force explicit $.cmd() style
+    if (isFluentCommand(name) && !hasDynamicArgs && !hasAssignments && !hasHeredoc) {
       cmdExpr = buildFluentCommand(name, args, ctx);
     } else if (hasAssignments) {
       // Use function call style with env options when there are assignments
