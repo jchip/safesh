@@ -343,6 +343,26 @@ describe("Transpiler2 - Pipelines", () => {
     // The echo command should be present
     assertStringIncludes(output, '(await $.cmd("echo"))');
   });
+
+  it("should use .stdout().lines().pipe() for command-to-transform pipelines (SSH-364)", () => {
+    const ast = parse("ls | head -5");
+    const output = transpile(ast);
+
+    // Should convert command stdout to lines, then pipe to transform
+    assertStringIncludes(output, ".stdout().lines().pipe($.head(5))");
+    // Should iterate the stream for output
+    assertStringIncludes(output, "for await");
+  });
+
+  it("should chain transforms correctly in pipelines (SSH-364)", () => {
+    const ast = parse("ls | head -5 | tail -2");
+    const output = transpile(ast);
+
+    // First transform converts to stream
+    assertStringIncludes(output, ".stdout().lines().pipe($.head(5))");
+    // Second transform continues the stream
+    assertStringIncludes(output, ".pipe($.tail(2))");
+  });
 });
 
 // =============================================================================
