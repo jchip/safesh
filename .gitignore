@@ -31,3 +31,5 @@ dist/
 # Local config (user's own)
 /.config/**/*.local.*
 .local
+
+.coverage

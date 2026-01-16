@@ -57,6 +57,18 @@ function collectFlagOptions(args: string[], flagMap: Record<string, string>): st
   return options;
 }
 
+/**
+ * Format argument for TypeScript output.
+ * Args containing ${} are template interpolations and need backticks, not double quotes.
+ */
+function formatArg(arg: string): string {
+  if (arg.includes("${")) {
+    // Template interpolation - use backticks to evaluate
+    return `\`${arg}\``;
+  }
+  return `"${escapeForQuotes(arg)}"`;
+}
+
 // =============================================================================
 // Command Handler
 // =============================================================================
@@ -113,12 +125,12 @@ export function buildCommand(
           return `${a.name}: "${escapedValue}"`;
         })
         .join(", ");
-      const argsArray = args.map(a => `"${escapeForQuotes(a)}"`).join(", ");
+      const argsArray = args.map(formatArg).join(", ");
       cmdExpr = `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
     } else {
       // Use explicit $.cmd() function call style
       // $.cmd() returns a CommandFn that needs to be called to get a Command
-      const argsArray = args.length > 0 ? args.map(a => `"${escapeForQuotes(a)}"`).join(", ") : "";
+      const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
       cmdExpr = `(await $.cmd("${escapeForQuotes(name)}"))(${argsArray})`;
     }
   }

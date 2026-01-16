@@ -1347,6 +1347,31 @@ describe("Command Substitution", () => {
     const output = transpile(ast);
     assertStringIncludes(output, "let COUNT");
   });
+
+  // SSH-357: Command substitution in args should use template literals
+  it("should handle command substitution as argument to non-fluent command", () => {
+    const ast = parse('git commit -m "$(cat README.md)"');
+    const output = transpile(ast);
+    // The arg containing command substitution should use backticks, not double quotes
+    // This ensures the template interpolation is evaluated at runtime
+    assertStringIncludes(output, '`${await (async ()');
+    // Should NOT have the command substitution wrapped in double quotes
+    assert(!output.includes('"${await (async ()'), "Command substitution should not be in double quotes");
+  });
+
+  it("should handle heredoc in command substitution", () => {
+    const input = `git commit -m "$(cat <<'EOF'
+SSH-356: Fix something
+EOF
+)"`;
+    const ast = parse(input);
+    const output = transpile(ast);
+    // The heredoc content should be in the .stdin() call
+    assertStringIncludes(output, ".stdin(");
+    assertStringIncludes(output, "SSH-356: Fix something");
+    // The arg should use backticks for template literal evaluation
+    assertStringIncludes(output, '`${await (async ()');
+  });
 });
 
 // =============================================================================
