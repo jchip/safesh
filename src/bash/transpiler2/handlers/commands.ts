@@ -140,9 +140,9 @@ export function buildCommand(
       cmdExpr = `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
     } else {
       // Use explicit $.cmd() function call style
-      // $.cmd() returns a CommandFn that needs to be called to get a Command
+      // $.cmd(name, ...args) returns a Command directly
       const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
-      cmdExpr = `(await $.cmd("${escapeForQuotes(name)}"))(${argsArray})`;
+      cmdExpr = `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
     }
   }
 
@@ -281,7 +281,7 @@ function buildFluentCommand(
     // tr, cut, sed, awk are not fluent commands - they fall through to default
     default: {
       const argsArray = args.length > 0 ? args.map(a => `"${escapeForQuotes(a)}"`).join(", ") : "";
-      return { code: `(await $.cmd("${escapeForQuotes(name)}"))(${argsArray})`, isTransform: false, isStream: false };
+      return { code: `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`, isTransform: false, isStream: false };
     }
   }
 }

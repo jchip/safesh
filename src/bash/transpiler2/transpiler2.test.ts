@@ -196,7 +196,7 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("ls");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '(await $.cmd("ls"))()');
+    assertStringIncludes(output, '$.cmd("ls")');
     assertStringIncludes(output, "await");
   });
 
@@ -204,7 +204,7 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("ls -la /tmp");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '(await $.cmd("ls"))("-la", "/tmp")');
+    assertStringIncludes(output, '$.cmd("ls", "-la", "/tmp")');
   });
 
   it("should wrap in async IIFE", () => {
@@ -327,7 +327,7 @@ describe("Transpiler2 - Pipelines", () => {
     // The variable assignment should still be present
     assertStringIncludes(output, "let BRANCH");
     // The echo command should be present
-    assertStringIncludes(output, '(await $.cmd("echo"))');
+    assertStringIncludes(output, '$.cmd("echo"');
   });
 
   it("should handle multiple variable assignments in && chain (SSH-362)", () => {
@@ -341,7 +341,7 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, 'let A = "1"');
     assertStringIncludes(output, 'let B = "2"');
     // The echo command should be present
-    assertStringIncludes(output, '(await $.cmd("echo"))');
+    assertStringIncludes(output, '$.cmd("echo"');
   });
 
   it("should use .stdout().lines().pipe() for command-to-transform pipelines (SSH-364)", () => {
@@ -381,7 +381,7 @@ describe("Transpiler2 - Control Flow", () => {
 
     assertStringIncludes(output, "if (");
     assertStringIncludes(output, ".code === 0)");
-    assertStringIncludes(output, '(await $.cmd("echo"))("exists")');
+    assertStringIncludes(output, '$.cmd("echo", "exists")');
   });
 
   it("should transpile if-else statement", () => {
@@ -396,7 +396,7 @@ describe("Transpiler2 - Control Flow", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "} else {");
-    assertStringIncludes(output, '(await $.cmd("echo"))("no")');
+    assertStringIncludes(output, '$.cmd("echo", "no")');
   });
 
   it("should transpile for loop", () => {
@@ -458,7 +458,7 @@ describe("Transpiler2 - Control Flow", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "async function myfunc()");
-    assertStringIncludes(output, '(await $.cmd("echo"))("hello")');
+    assertStringIncludes(output, '$.cmd("echo", "hello")');
   });
 
   it("should handle scoping in functions (SSH-304)", () => {
@@ -498,7 +498,7 @@ describe("Transpiler2 - Control Flow", () => {
     assertStringIncludes(output, "async function foo()");
     assertStringIncludes(output, "await foo()");
     // Should NOT transpile as (await $.cmd("foo"))()
-    assertEquals(output.includes('(await $.cmd("foo"))()'), false);
+    assertEquals(output.includes('$.cmd("foo")'), false);
   });
 
   it("should call multiple user-defined functions (SSH-324)", () => {
@@ -734,8 +734,8 @@ describe("Transpiler2 - Grouping", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, '(await $.cmd("cd"))("/tmp")');
-    assertStringIncludes(output, '(await $.cmd("ls"))()');
+    assertStringIncludes(output, '$.cmd("cd", "/tmp")');
+    assertStringIncludes(output, '$.cmd("ls")');
     assertStringIncludes(output, "})();");
   });
 
@@ -746,7 +746,7 @@ describe("Transpiler2 - Grouping", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "{");
-    assertStringIncludes(output, '(await $.cmd("echo"))("hello")');
+    assertStringIncludes(output, '$.cmd("echo", "hello")');
   });
 });
 
@@ -808,7 +808,7 @@ describe("Transpiler2 - Integration", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'let NAME = "World"');
-    assertStringIncludes(output, '(await $.cmd("echo"))("Hello")');
+    assertStringIncludes(output, '$.cmd("echo", "Hello")');
   });
 
   it("should handle simple pipeline", () => {
@@ -856,8 +856,8 @@ describe("BashTranspiler2 Class", () => {
     const output1 = transpiler.transpile(parse("echo one"));
     const output2 = transpiler.transpile(parse("echo two"));
 
-    assertStringIncludes(output1, '(await $.cmd("echo"))("one")');
-    assertStringIncludes(output2, '(await $.cmd("echo"))("two")');
+    assertStringIncludes(output1, '$.cmd("echo", "one")');
+    assertStringIncludes(output2, '$.cmd("echo", "two")');
   });
 });
 
@@ -966,7 +966,7 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, '(await $.cmd("ls"))("-la")');
+    assertStringIncludes(output, '$.cmd("ls", "-la")');
   });
 
   it("should handle simple variable assignment", () => {
@@ -1021,7 +1021,7 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, '(await $.cmd("test"))("-f", "file")');
+    assertStringIncludes(output, '$.cmd("test", "-f", "file")');
     // SSH-356: Uses async IIFE with __printCmd to ensure output is printed
     assertStringIncludes(output, "__printCmd");
   });
@@ -1106,7 +1106,7 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
     const script = "echo hello";
     const ast = parse(script);
     const output = transpile(ast);
-    assertStringIncludes(output, '(await $.cmd("echo"))("hello")');
+    assertStringIncludes(output, '$.cmd("echo", "hello")');
   });
 
   it("should handle IfStatement", () => {

@@ -400,7 +400,7 @@ EOF`);
     const output = transpile(ast);
 
     // Glob should be passed to command (shell handles expansion)
-    assertStringIncludes(output, '(await $.cmd("echo"))("*")');
+    assertStringIncludes(output, '$.cmd("echo", "*")');
   });
 });
 
@@ -544,7 +544,7 @@ describe("Security - Subshell Safety", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, '(await $.cmd("echo"))("inner")');
+    assertStringIncludes(output, '$.cmd("echo", "inner")');
   });
 
   it("should prevent subshell escape to parent scope", () => {
@@ -553,8 +553,8 @@ describe("Security - Subshell Safety", () => {
 
     // cd in subshell should not affect parent
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, '(await $.cmd("cd"))("/tmp")');
-    assertStringIncludes(output, '(await $.cmd("pwd"))()');
+    assertStringIncludes(output, '$.cmd("cd", "/tmp")');
+    assertStringIncludes(output, '$.cmd("pwd")');
   });
 
   it("should handle nested subshells securely", () => {
@@ -563,7 +563,7 @@ describe("Security - Subshell Safety", () => {
 
     // Nested subshells should be safely isolated
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, '(await $.cmd("echo"))("inner")');
+    assertStringIncludes(output, '$.cmd("echo", "inner")');
   });
 
   it("should handle subshell with pipelines", () => {
@@ -715,7 +715,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const output = transpile(ast);
 
     // Glob should be passed to command safely
-    assertStringIncludes(output, '(await $.cmd("echo"))("*.txt")');
+    assertStringIncludes(output, '$.cmd("echo", "*.txt")');
   });
 
   it("should handle brace expansion injection attempts", () => {
