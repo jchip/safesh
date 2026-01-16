@@ -726,6 +726,101 @@ const sizes = await $.glob("src/**/*.ts")
 
 ---
 
+## Pipelines and Piping
+
+Understanding how to pipe data between commands and transforms.
+
+### Pipeline Concepts
+
+There are three types of pipeline sources:
+
+1. **Commands** (`$.cmd(...)`) - Execute external programs, return `Command` objects
+2. **Stream Producers** (`$.cat(...)`) - Read files/data, return `FluentShell` streams
+3. **Transforms** (`$.head(n)`, `$.grep(...)`) - Process stream data, return transform functions
+
+### Command to Transform Pipelines
+
+When piping a command's output to a transform, you must convert the output to lines first:
+
+```javascript
+// CORRECT: Convert stdout to lines, then apply transform
+const lines = await $.cmd("ls", "-la")
+  .stdout()      // Get stdout as stream
+  .lines()       // Split into lines
+  .pipe($.head(5))  // Apply transform
+  .collect();
+
+// WRONG: .pipe() on Command expects CommandFn, not transform
+// $.cmd("ls")("-la").pipe($.head(5))  // Error!
+```
+
+### Stream Producer to Transform Pipelines
+
+Stream producers like `$.cat()` also need `.lines()` before line-based transforms:
+
+```javascript
+// CORRECT: $.cat returns content as stream, need .lines() for line transforms
+const first10 = await $.cat("file.txt")
+  .lines()           // Split content into lines
+  .pipe($.head(10))  // Take first 10 lines
+  .collect();
+
+// Chaining multiple transforms
+const result = await $.cat("data.txt")
+  .lines()
+  .pipe($.grep(/ERROR/))
+  .pipe($.head(5))
+  .collect();
+```
+
+### Command to Command Pipelines
+
+To pipe between commands, use `initCmds()` to get `CommandFn` objects:
+
+```javascript
+// Initialize commands first
+const [curl, jq] = await $.initCmds(["curl", "jq"]);
+
+// Then pipe using CommandFn
+const data = await curl("-s", "https://api.example.com/data")
+  .pipe(jq, [".items"])  // .pipe(cmdFn, args)
+  .exec();
+
+// Using $.str() as data source
+const result = await $.str('{"name":"test"}')
+  .pipe(jq, [".name"])
+  .exec();
+```
+
+### FluentShell Methods
+
+`$.cat()` returns a `FluentShell` which is a specialized stream:
+
+```javascript
+// FluentShell has these methods:
+$.cat("file.txt")
+  .lines()        // Split into lines (REQUIRED before line transforms)
+  .grep(/pattern/)  // Filter lines matching pattern
+  .head(10)       // Take first N lines
+  .tail(5)        // Take last N lines
+  .filter(fn)     // Filter with predicate
+  .map(fn)        // Transform each line
+  .collect()      // Collect to array
+  .forEach(fn)    // Iterate
+  .first()        // Get first item
+  .count()        // Count items
+```
+
+### Important Notes
+
+- **`.lines()` is required**: Both commands (via `.stdout().lines()`) and stream producers (via `.lines()`) need line splitting before transforms like `$.head()`, `$.tail()`, `$.grep()`
+- **Transforms vs Commands**: Transforms (`$.head`, `$.grep`) work on streams; commands need `CommandFn` from `initCmds()`
+- **`.pipe()` signatures differ**:
+  - `FluentStream.pipe(transform)` - Apply a transform function
+  - `Command.pipe(cmdFn, args)` - Pipe to another command (requires `CommandFn`)
+
+---
+
 ## Transform Functions
 
 Direct transform functions available on `$.*` for use with `.pipe()`.
@@ -1208,5 +1303,5 @@ if (!build.success) {
 
 ---
 
-**Version:** 1.1.0
-**Last Updated:** 2026-01-12
+**Version:** 1.2.0
+**Last Updated:** 2026-01-16
