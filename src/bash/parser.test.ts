@@ -219,6 +219,42 @@ describe("Bash Parser", () => {
       assertEquals(cmd.redirects[0]?.operator, "<<");
       assertEquals((cmd.redirects[0]?.target as AST.Word).value, "Line 1\nLine 2\nLine 3\n");
     });
+
+    it("should parse here-document in pipeline", () => {
+      const ast = parse(`cat <<'EOF' | jq -r '.commits[]'
+{
+  "commits": [
+    {"id": 1}
+  ]
+}
+EOF`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+      assertEquals(pipeline.commands.length, 2);
+
+      const catCmd = pipeline.commands[0] as AST.Command;
+      assertEquals((catCmd.name as AST.Word).value, "cat");
+      assertEquals(catCmd.redirects.length, 1);
+      assertEquals(catCmd.redirects[0]?.operator, "<<");
+      const heredocContent = (catCmd.redirects[0]?.target as AST.Word).value;
+      assertEquals(heredocContent, '{\n  "commits": [\n    {"id": 1}\n  ]\n}\n');
+
+      const jqCmd = pipeline.commands[1] as AST.Command;
+      assertEquals((jqCmd.name as AST.Word).value, "jq");
+    });
+
+    it("should parse here-document with JSON content containing braces", () => {
+      const ast = parse(`cat <<'EOF'
+{
+  "key": "value"
+}
+EOF`);
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals(cmd.redirects[0]?.operator, "<<");
+      const content = (cmd.redirects[0]?.target as AST.Word).value;
+      assertEquals(content, '{\n  "key": "value"\n}\n');
+    });
   });
 
   describe("Variable Assignments", () => {
