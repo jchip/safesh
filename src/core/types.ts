@@ -102,6 +102,14 @@ export interface SafeShellConfig {
   blockProjectDirWrite?: boolean;
 
   /**
+   * Include HOME directory in default read paths.
+   * When true (default), HOME is automatically added to readable paths.
+   * Set to false for stricter sandbox testing.
+   * Default: true.
+   */
+  includeHomeInDefaultRead?: boolean;
+
+  /**
    * Allow executing any command under projectDir without explicit permission.
    * Requires projectDir to be set.
    */
