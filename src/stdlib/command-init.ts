@@ -243,7 +243,7 @@ export async function initCmds<T extends readonly string[]>(
           console.error(`Warning: Could not update pending file: ${error}`);
         }
 
-        // Output deny-with-retry message (same format as bash prehook)
+        // Output deny-with-retry message to stderr so user sees it
         const cmdList = notAllowed.join(", ");
         const message = `[SAFESH] BLOCKED: ${cmdList}
 
@@ -255,14 +255,7 @@ WAIT for user choice (1-4):
 
 DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${scriptId} --choice=<user's choice>`;
 
-        const output = {
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason: message,
-          },
-        };
-        console.log(JSON.stringify(output));
+        console.error(message);
         Deno.exit(1);
       }
 
