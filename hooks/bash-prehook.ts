@@ -1118,6 +1118,8 @@ ${tsCode}
       /const\s+\w+\s+=\s+for\s+await/,  // "const x = for await" - invalid syntax
       /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,  // "for (const x of ["${await..." - template in array
       /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,  // Alternative: for (const x of ["...await
+      /\.pipe\([^)]+\)\.lines\(\)\.pipe\([^)]+\)\.lines\(\)/,  // Double .lines() chaining - invalid
+      /\.stdout\(\)\.lines\(\)\.pipe\([^)]+\)\.pipe\([^)]+\)\.stdout\(\)/,  // Double stdout chaining - invalid
     ];
 
     for (const pattern of knownBadPatterns) {
