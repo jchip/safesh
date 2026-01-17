@@ -222,13 +222,6 @@ export async function initCmds<T extends readonly string[]>(
 
     // If any errors, check if we're running under a script ID (for retry flow)
     if (notAllowed.length > 0 || notFound.length > 0) {
-      const errorEvent = {
-        type: ERROR_COMMANDS_BLOCKED,
-        notAllowed,
-        notFound,
-      };
-      console.error(`${INIT_ERROR_MARKER}${JSON.stringify(errorEvent)}`);
-
       // Check if we're running under a script ID (TypeScript via prehook)
       const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
       if (scriptId) {
