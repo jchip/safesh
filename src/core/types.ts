@@ -348,10 +348,12 @@ export interface StreamChunk {
  * after getting user approval.
  */
 export interface PendingRetry {
-  /** Unique retry ID */
+  /** Unique retry ID (format: timestamp-pid) */
   id: string;
   /** Code that was attempted */
   code: string;
+  /** Hash of the code (for script caching) */
+  scriptHash?: string;
   /** Shell ID (if using a shell) */
   shellId?: string;
   /** Execution context */
