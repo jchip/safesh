@@ -17,10 +17,11 @@ import { hashCode, buildEnv } from "../core/utils.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { executionError } from "../core/errors.ts";
 import { buildPreamble, buildErrorHandler } from "./preamble.ts";
+import { getScriptsDir } from "../core/temp.ts";
 
 import { generateImportMap } from "../core/import_map.ts";
 
-const TEMP_DIR = "/tmp/safesh/scripts";
+const TEMP_DIR = getScriptsDir();
 
 /**
  * Truncate output to limit, keeping most recent content
