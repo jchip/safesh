@@ -1038,22 +1038,22 @@ async function main() {
       throw parseError;
     }
 
-    // Extract commands for permission checking
+    // Check command complexity
+    // Simple commands: passthrough to native bash (let Bash tool handle permissions)
+    // Complex commands: transpile to TypeScript (need SafeShell runtime)
+    if (isSimpleCommand(ast)) {
+      debug("Simple command detected - passthrough to native bash");
+      outputPassthrough();
+      Deno.exit(0);
+    }
+
+    // Complex command - extract commands for permission checking
+    debug(`Complex command detected - will transpile and check permissions`);
     const commands = extractCommands(ast);
     debug(`Extracted commands: ${[...commands].join(", ") || "(none)"}`);
 
     // Check which commands are not allowed
     const disallowed = getDisallowedCommands(commands, config, cwd);
-
-    // For simple commands with all permissions granted, pass through to native bash
-    if (isSimpleCommand(ast) && disallowed.length === 0) {
-      debug("Simple command with all permissions granted - passthrough to native bash");
-      outputPassthrough();
-      Deno.exit(0);
-    }
-
-    // Complex command or needs permission - transpile to TypeScript
-    debug(`Complex command or blocked commands detected - will transpile`);
 
     // Transpile AST to TypeScript (needed for both ask and allow)
     tsCode = transpile(ast, {
