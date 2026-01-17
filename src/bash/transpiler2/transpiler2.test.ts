@@ -429,6 +429,33 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, ".stdout().lines().pipe($.head(5))");
     assertStringIncludes(output, ".pipe($.toCmdLines(");
   });
+
+  it("should use $.cmd() for echo in pipe context", () => {
+    const ast = parse("echo test | grep test");
+    const output = transpile(ast);
+
+    // echo should use $.cmd() in pipe context, not __echo builtin
+    assertStringIncludes(output, '$.cmd("echo"');
+    assertEquals(output.includes("__echo"), false, "Should not use __echo builtin in pipeline");
+  });
+
+  it("should use $.cmd() for grep with redirections", () => {
+    const ast = parse("echo test | grep test 2>/dev/null");
+    const output = transpile(ast);
+
+    // grep with redirections should use $.cmd(), not fluent $.grep()
+    assertStringIncludes(output, '$.cmd("grep"');
+    assertStringIncludes(output, '.stderr("/dev/null")');
+  });
+
+  it("should still use __echo for standalone echo", () => {
+    const ast = parse("echo test");
+    const output = transpile(ast);
+
+    // Standalone echo (not in pipeline) should still use __echo builtin
+    assertStringIncludes(output, '__echo("test")');
+    assertEquals(output.includes('$.cmd("echo"'), false, "Standalone echo should use __echo builtin");
+  });
 });
 
 // =============================================================================
