@@ -10,8 +10,9 @@ import { timeout as timeoutError } from "../core/errors.ts";
 import type { ExecOptions, SafeShellConfig, Shell, StreamChunk } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { cleanupProcess } from "../core/utils.ts";
+import { getScriptsDir } from "../core/temp.ts";
 
-const TEMP_DIR = "/tmp/safesh/scripts";
+const TEMP_DIR = getScriptsDir();
 const DEFAULT_TIMEOUT = 30000;
 
 /**

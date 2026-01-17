@@ -85,3 +85,12 @@ export function getSessionFilePath(sessionId?: string): string {
   const id = sessionId ?? Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
   return `${dir}/session-${id}.json`;
 }
+
+/**
+ * Get the import policy directory path
+ */
+export function getImportPolicyDir(): string {
+  const dir = `${SAFESH_TMP_ROOT}/import-policy`;
+  ensureDir(dir);
+  return dir;
+}

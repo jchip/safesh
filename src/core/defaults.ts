@@ -5,6 +5,8 @@
  * to ensure consistency and make them easy to find and modify.
  */
 
+import { getScriptsDir } from "./temp.ts";
+
 // ============================================================================
 // Timeout Defaults
 // ============================================================================
@@ -48,5 +50,8 @@ export const MAX_PENDING_RETRIES = 100;
 // Temp Directories
 // ============================================================================
 
+// NOTE: Temp directory paths are managed by src/core/temp.ts
+// This re-export maintains backwards compatibility
+
 /** Default temp directory for script files */
-export const TEMP_SCRIPT_DIR = "/tmp/safesh/scripts";
+export const TEMP_SCRIPT_DIR = getScriptsDir();

@@ -14,8 +14,9 @@ import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import type { ImportPolicy } from "./types.ts";
 import { importError } from "./errors.ts";
+import { getImportPolicyDir } from "./temp.ts";
 
-const TEMP_DIR = "/tmp/safesh/import-policy";
+const TEMP_DIR = getImportPolicyDir();
 
 /**
  * Deno import map structure
