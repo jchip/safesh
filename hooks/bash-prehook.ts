@@ -53,6 +53,59 @@ function debug(message: string): void {
   }
 }
 
+/**
+ * Project root markers - only truly reliable ones
+ * Other markers like package.json can exist in subdirectories
+ */
+const PROJECT_MARKERS = [
+  ".claude",  // Claude Code project config (most reliable)
+  ".git",     // Git repository root
+];
+
+/**
+ * Find project root by walking up from cwd
+ *
+ * Priority:
+ * 1. CLAUDE_PROJECT_DIR env var
+ * 2. Walk up to find project markers
+ * 3. Fallback to cwd
+ */
+function findProjectRoot(cwd: string): string {
+  // Check env var first
+  const envProjectDir = Deno.env.get("CLAUDE_PROJECT_DIR");
+  if (envProjectDir) {
+    debug(`Project root from CLAUDE_PROJECT_DIR: ${envProjectDir}`);
+    return envProjectDir;
+  }
+
+  // Walk up looking for markers
+  let dir = cwd;
+  while (true) {
+    for (const marker of PROJECT_MARKERS) {
+      try {
+        const markerPath = `${dir}/${marker}`;
+        Deno.statSync(markerPath);
+        debug(`Project root found via ${marker}: ${dir}`);
+        return dir;
+      } catch {
+        // Marker not found, continue
+      }
+    }
+
+    // Move up one directory
+    const parent = dir.replace(/\/[^/]+$/, "");
+    if (parent === dir || parent === "") {
+      // Reached root, give up
+      break;
+    }
+    dir = parent;
+  }
+
+  // Fallback to cwd
+  debug(`Project root fallback to cwd: ${cwd}`);
+  return cwd;
+}
+
 // =============================================================================
 // Command Extraction and Permission Checking
 // =============================================================================
@@ -617,15 +670,15 @@ async function main() {
       Deno.exit(0);
     }
 
-    // Determine working directory
+    // Determine working directory and project root
     const cwd = OVERRIDE_CWD || Deno.cwd();
-    debug(`Working directory: ${cwd}`);
+    const projectDir = findProjectRoot(cwd);
+    debug(`Working directory: ${cwd}, Project root: ${projectDir}`);
 
     // Load SafeShell config
-    const projectDir = Deno.env.get("CLAUDE_PROJECT_DIR") || cwd;
     const baseConfig = await loadConfig(cwd, { logWarnings: false });
     const config = mergeConfigs(baseConfig, { projectDir });
-    debug(`Config loaded. ProjectDir: ${projectDir}`);
+    debug(`Config loaded`);
 
     // Check if command is already TypeScript (skip transpilation and permission check)
     let tsCode = detectTypeScript(parsed.command);

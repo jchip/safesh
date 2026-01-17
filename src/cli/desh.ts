@@ -22,6 +22,39 @@ import { SafeShellError } from "../core/errors.ts";
 const VERSION = "0.1.0";
 
 /**
+ * Project root markers - only truly reliable ones
+ * Other markers like package.json can exist in subdirectories
+ */
+const PROJECT_MARKERS = [
+  ".claude",  // Claude Code project config (most reliable)
+  ".git",     // Git repository root
+];
+
+/**
+ * Find project root by walking up from cwd
+ */
+function findProjectRoot(cwd: string): string {
+  // Check env var first
+  const envProjectDir = Deno.env.get("CLAUDE_PROJECT_DIR");
+  if (envProjectDir) return envProjectDir;
+
+  // Walk up looking for markers
+  let dir = cwd;
+  while (true) {
+    for (const marker of PROJECT_MARKERS) {
+      try {
+        Deno.statSync(`${dir}/${marker}`);
+        return dir;
+      } catch { /* continue */ }
+    }
+    const parent = dir.replace(/\/[^/]+$/, "");
+    if (parent === dir || parent === "") break;
+    dir = parent;
+  }
+  return cwd;
+}
+
+/**
  * Get session-allowed commands from session file
  */
 function getSessionAllowedCommands(): string[] {
@@ -106,7 +139,7 @@ async function handleRetry(args: string[]): Promise<void> {
 
   // Execute the command
   const cwd = pending.cwd;
-  const projectDir = Deno.env.get("CLAUDE_PROJECT_DIR") ?? cwd;
+  const projectDir = findProjectRoot(cwd);
 
   // Load config and merge approved commands
   const baseConfig = await loadConfig(cwd, { logWarnings: false });
@@ -302,10 +335,9 @@ async function main() {
   const verbose = args.verbose as boolean;
   const quiet = args.quiet as boolean;
   const configPath = args.config as string | undefined;
-  // Project dir: explicit flag > CLAUDE_PROJECT_DIR env > fallback to cwd
+  // Project dir: explicit flag > findProjectRoot (checks env + markers)
   const projectDir = (args.project as string | undefined)
-    ?? Deno.env.get("CLAUDE_PROJECT_DIR")
-    ?? cwd;
+    ?? findProjectRoot(cwd);
   // Default to streaming if stdout is a TTY, unless explicitly set
   const stream = args.stream !== undefined ? args.stream as boolean : Deno.stdout.isTerminal();
 
