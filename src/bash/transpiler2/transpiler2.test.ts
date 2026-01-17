@@ -411,6 +411,24 @@ describe("Transpiler2 - Pipelines", () => {
     // Second transform continues the stream
     assertStringIncludes(output, ".pipe($.tail(2))");
   });
+
+  it("should use toCmdLines when piping from stream to command", () => {
+    const ast = parse("ls | head -5 | awk '{print $1}'");
+    const output = transpile(ast);
+
+    // When piping from a stream (after head) to a command (awk), should use toCmdLines
+    assertStringIncludes(output, ".pipe($.toCmdLines(");
+    assertStringIncludes(output, 'awk');
+  });
+
+  it("should handle complex pipeline: command | transform | command", () => {
+    const ast = parse("git log --oneline | head -5 | awk '{print $1}'");
+    const output = transpile(ast);
+
+    // git log -> .stdout().lines() -> .pipe($.head(5)) -> .pipe($.toCmdLines(awk))
+    assertStringIncludes(output, ".stdout().lines().pipe($.head(5))");
+    assertStringIncludes(output, ".pipe($.toCmdLines(");
+  });
 });
 
 // =============================================================================
