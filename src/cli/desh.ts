@@ -59,8 +59,8 @@ function findProjectRoot(cwd: string): string {
 /**
  * Get session-allowed commands from session file
  */
-function getSessionAllowedCommands(): string[] {
-  const sessionFile = getSessionFilePath();
+function getSessionAllowedCommands(projectDir?: string): string[] {
+  const sessionFile = getSessionFilePath(projectDir);
 
   try {
     const content = Deno.readTextFileSync(sessionFile);
@@ -122,6 +122,10 @@ async function handleRetry(args: string[]): Promise<void> {
     Deno.exit(1);
   }
 
+  // Get cwd and projectDir early (needed for session file)
+  const cwd = pending.cwd;
+  const projectDir = findProjectRoot(cwd);
+
   // Choice 4 = Deny - cleanup and exit
   if (choice === 4) {
     console.error("[safesh] Command denied by user.");
@@ -136,12 +140,8 @@ async function handleRetry(args: string[]): Promise<void> {
 
   // Choice 3 = Session allow - update session file
   if (choice === 3) {
-    await addToSessionFile(pending.commands);
+    await addToSessionFile(pending.commands, projectDir);
   }
-
-  // Execute the command
-  const cwd = pending.cwd;
-  const projectDir = findProjectRoot(cwd);
 
   // Load config and merge approved commands
   const baseConfig = await loadConfig(cwd, { logWarnings: false });
@@ -237,8 +237,8 @@ async function addToConfigLocal(commands: string[], cwd: string): Promise<void> 
 /**
  * Add commands to session file for "session allow"
  */
-async function addToSessionFile(commands: string[]): Promise<void> {
-  const sessionFile = getSessionFilePath();
+async function addToSessionFile(commands: string[], projectDir?: string): Promise<void> {
+  const sessionFile = getSessionFilePath(projectDir);
 
   // Load existing or create new
   let session: { allowedCommands?: string[] } = {};
@@ -407,7 +407,7 @@ async function main() {
     }
 
     // Merge session-allowed commands
-    const sessionAllowed = getSessionAllowedCommands();
+    const sessionAllowed = getSessionAllowedCommands(projectDir);
     if (sessionAllowed.length > 0) {
       config.permissions = config.permissions ?? {};
       config.permissions.run = [
