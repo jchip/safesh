@@ -88,7 +88,7 @@ describe("Package Manager Scripts", () => {
         apt-get clean && rm -rf /var/lib/apt/lists/*
       `);
       assertStringIncludes(code, '"apt-get", "clean"');
-      assertStringIncludes(code, '"rm"');
+      assertStringIncludes(code, "__rm(");
     });
   });
 
@@ -307,7 +307,7 @@ describe("Docker Entrypoint Scripts", () => {
       chmod 755 /app/bin/*
     `);
     assertStringIncludes(code, '"chown"');
-    assertStringIncludes(code, '"chmod"');
+    assertStringIncludes(code, "__chmod(");
   });
 });
 
@@ -734,7 +734,7 @@ describe("Common Utility Patterns", () => {
       const code = transpileBash(`
         [ -d "/path/to/dir" ] || mkdir -p /path/to/dir
       `);
-      assertStringIncludes(code, '"mkdir"');
+      assertStringIncludes(code, "__mkdir(");
     });
 
     it("should handle file copying with backup", () => {
@@ -744,7 +744,7 @@ describe("Common Utility Patterns", () => {
         fi
         cp source target
       `);
-      assertStringIncludes(code, '"cp"');
+      assertStringIncludes(code, "__cp(");
     });
 
     it("should handle recursive file processing", () => {

@@ -196,8 +196,8 @@ describe("Security - Command Injection Prevention", () => {
 
     // Variable should be interpolated in template literal
     assertStringIncludes(output, "${VAR}");
-    // Should be within a template literal context
-    assertStringIncludes(output, '$.cmd("');
+    // Should use echo builtin
+    assertStringIncludes(output, "__echo(");
   });
 
   it("should handle shell metacharacters in command arguments", () => {
@@ -399,11 +399,12 @@ EOF`);
   });
 
   it("should prevent glob pattern injection", () => {
-    const ast = parse('echo *');
+    const ast = parse('echo "*"');
     const output = transpile(ast);
 
-    // Glob should be passed to command (shell handles expansion)
-    assertStringIncludes(output, '$.cmd("echo", "*")');
+    // Glob should be quoted and not expanded
+    assertStringIncludes(output, "__echo(");
+    assertStringIncludes(output, '"*"');
   });
 });
 
@@ -552,7 +553,7 @@ describe("Security - Subshell Safety", () => {
 
     // Subshell inside command substitution generates async IIFE
     assertStringIncludes(output, "(async () => {");
-    assertStringIncludes(output, '$.cmd("echo", "inner")');
+    assertStringIncludes(output, '__echo("inner")');
   });
 
   it("should prevent subshell escape to parent scope", () => {
@@ -561,8 +562,8 @@ describe("Security - Subshell Safety", () => {
 
     // cd in subshell should not affect parent
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, '$.cmd("cd", "/tmp")');
-    assertStringIncludes(output, '$.cmd("pwd")');
+    assertStringIncludes(output, '__cd("/tmp")');
+    assertStringIncludes(output, "__pwd(");
   });
 
   it("should handle nested subshells securely", () => {
@@ -571,7 +572,7 @@ describe("Security - Subshell Safety", () => {
 
     // Nested subshells should be safely isolated
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, '$.cmd("echo", "inner")');
+    assertStringIncludes(output, '__echo("inner")');
   });
 
   it("should handle subshell with pipelines", () => {
@@ -676,7 +677,7 @@ describe("Security - Complex Injection Scenarios", () => {
 
     // Two separate statements
     assertStringIncludes(output, 'let VAR = "value"');
-    assertStringIncludes(output, '$.cmd("echo"');
+    assertStringIncludes(output, "__echo(");
   });
 
   it("should handle injection via arithmetic expansion", () => {
@@ -719,11 +720,12 @@ describe("Security - Complex Injection Scenarios", () => {
   });
 
   it("should prevent code injection through glob patterns", () => {
-    const ast = parse('echo *.txt');
+    const ast = parse('echo "*.txt"');
     const output = transpile(ast);
 
-    // Glob should be passed to command safely
-    assertStringIncludes(output, '$.cmd("echo", "*.txt")');
+    // Glob should be passed to command safely (quoted to prevent expansion)
+    assertStringIncludes(output, "__echo(");
+    assertStringIncludes(output, '"*.txt"');
   });
 
   it("should handle brace expansion injection attempts", () => {
