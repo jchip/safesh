@@ -28,7 +28,7 @@ import { loadConfig, mergeConfigs } from "../src/core/config.ts";
 import { getAllowedCommands } from "../src/core/command_permission.ts";
 import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
-import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath, getSessionFilePath } from "../src/core/temp.ts";
+import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath, getSessionFilePath, getScriptsDir, getTempRoot } from "../src/core/temp.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 
 // =============================================================================
@@ -51,6 +51,80 @@ const DESH_CMD = "/Users/jc/dev/safesh/src/cli/desh.ts";
 function debug(message: string): void {
   if (DEBUG) {
     console.error(`[bash-prehook] ${message}`);
+  }
+}
+
+/**
+ * Clean up old transpiled script files and pending files if count exceeds threshold
+ *
+ * When script file count exceeds 100, delete any files older than 24 hours
+ * Also cleans up corresponding pending-*.json files
+ * This runs proactively to prevent unlimited growth of temp files
+ */
+function cleanupOldScripts(): void {
+  try {
+    const scriptsDir = getScriptsDir();
+    const tempRoot = getTempRoot();
+
+    // Read all files in scripts directory
+    const entries = [...Deno.readDirSync(scriptsDir)];
+    const files = entries.filter(e => e.isFile && e.name.endsWith('.ts'));
+
+    debug(`Script file count: ${files.length}`);
+
+    // Only cleanup if we exceed 100 files
+    if (files.length <= 100) {
+      return;
+    }
+
+    debug(`Exceeded 100 files (${files.length}), cleaning up files older than 24 hours`);
+
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+    let deletedScripts = 0;
+    let deletedPending = 0;
+
+    for (const file of files) {
+      try {
+        const filePath = `${scriptsDir}/${file.name}`;
+        const stat = Deno.statSync(filePath);
+        const age = now - stat.mtime!.getTime();
+
+        // Delete if older than 24 hours
+        if (age > oneDayMs) {
+          Deno.removeSync(filePath);
+          deletedScripts++;
+          debug(`Deleted old script: ${file.name} (age: ${Math.round(age / 1000 / 60 / 60)}h)`);
+
+          // Also try to delete corresponding pending file
+          // Extract ID from file_<id>.ts
+          const match = file.name.match(/^file_(.+)\.ts$/);
+          if (match) {
+            const id = match[1];
+            const pendingPath = `${tempRoot}/pending-${id}.json`;
+            try {
+              Deno.removeSync(pendingPath);
+              deletedPending++;
+              debug(`Deleted corresponding pending file: pending-${id}.json`);
+            } catch {
+              // Pending file might not exist or already deleted
+            }
+          }
+        }
+      } catch (error) {
+        // Ignore errors for individual files
+        debug(`Failed to delete ${file.name}: ${error}`);
+      }
+    }
+
+    if (deletedScripts > 0 || deletedPending > 0) {
+      debug(`Cleanup complete: deleted ${deletedScripts} scripts, ${deletedPending} pending files`);
+    } else {
+      debug(`Cleanup complete: no files older than 24 hours found`);
+    }
+  } catch (error) {
+    // Cleanup errors shouldn't block execution
+    debug(`Cleanup failed: ${error}`);
   }
 }
 
@@ -691,6 +765,9 @@ async function executeStreaming(
 // =============================================================================
 
 async function main() {
+  // Clean up old script files proactively
+  cleanupOldScripts();
+
   let parsed: ParsedCommand | undefined;
   try {
     // Get the bash command with options
