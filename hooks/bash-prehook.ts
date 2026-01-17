@@ -581,15 +581,16 @@ function outputDenyWithRetry(
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Build deny message with retry instructions for LLM
-  const message = `[SAFESH] Command requires approval: ${cmdList}
+  const message = `[SAFESH] COMMAND BLOCKED - requires user approval: ${cmdList}
 
-Ask user which option they prefer:
+Options:
 1. Allow once
 2. Always allow (adds to config)
 3. Allow for this session
 4. Deny
 
-Then run: desh retry --id=${id} --choice=<1-4>`;
+IMPORTANT: You MUST wait for user to choose an option (1-4) before proceeding.
+After user responds, run: desh retry --id=${id} --choice=<user's choice>`;
 
   const output = {
     hookSpecificOutput: {
