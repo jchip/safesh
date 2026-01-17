@@ -118,10 +118,12 @@ function cleanupOldScripts(): void {
           debug(`Deleted old script: ${file.name} (age: ${Math.round(age / 1000 / 60 / 60)}h)`);
 
           // Also try to delete corresponding pending file
-          // Extract ID from various patterns:
+          // Extract ID from patterns that have pending files (bash-prehook scripts):
           // - file_<id>.ts (legacy timestamp-based)
-          // - script-<hash>.ts (direct TypeScript)
-          // - tx-script-<hash>.ts (transpiled bash)
+          // - script-<hash>.ts (direct TypeScript via bash-prehook)
+          // - tx-script-<hash>.ts (transpiled bash via bash-prehook)
+          // Note: Other prefixes (exec-, bg-script-) are from direct desh execution
+          // and don't have pending files
           let id: string | null = null;
 
           const legacyMatch = file.name.match(/^file_(.+)\.ts$/);
@@ -234,6 +236,118 @@ const BUILTIN_COMMANDS = new Set([
   "alias", "unalias", "type", "which", "hash", "command", "builtin",
   "let", "expr",
 ]);
+
+/**
+ * Check if AST represents a simple command that can be executed with native bash
+ * Simple commands: basic commands, pipelines with &&/||/|, redirects
+ * Complex commands: loops, conditionals, functions, subshells, command substitutions
+ */
+function isSimpleCommand(ast: AST.Program): boolean {
+  // Check each statement in the program
+  for (const stmt of ast.body) {
+    if (!isSimpleStatement(stmt)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Check if a statement is simple (can execute with native bash)
+ */
+function isSimpleStatement(stmt: AST.Statement): boolean {
+  switch (stmt.type) {
+    case "Command":
+      // Simple command - check for command substitutions in args
+      return !hasComplexExpansions(stmt);
+
+    case "Pipeline":
+      // Pipelines are OK if all commands are simple
+      return stmt.commands.every(cmd => isSimpleStatement(cmd));
+
+    case "VariableAssignment":
+      // Variable assignments are OK if no command substitution in value
+      return !hasComplexValue(stmt.value);
+
+    // Complex statements that need transpilation
+    case "IfStatement":
+    case "ForStatement":
+    case "CStyleForStatement":
+    case "WhileStatement":
+    case "UntilStatement":
+    case "CaseStatement":
+    case "FunctionDeclaration":
+    case "Subshell":
+    case "BraceGroup":
+      return false;
+
+    case "TestCommand":
+    case "ArithmeticCommand":
+      // These are OK for native bash
+      return true;
+
+    default:
+      // Unknown statement type - safer to transpile
+      return false;
+  }
+}
+
+/**
+ * Check if command has complex expansions (command substitution, process substitution)
+ */
+function hasComplexExpansions(cmd: AST.Command): boolean {
+  // Check command name
+  if (cmd.name.type === "CommandSubstitution") {
+    return true;
+  }
+
+  // Check arguments
+  for (const arg of cmd.args) {
+    if (arg.type === "CommandSubstitution") {
+      return true;
+    }
+    if (arg.type === "Word" && arg.parts) {
+      for (const part of arg.parts) {
+        if (part.type === "CommandSubstitution" || part.type === "ProcessSubstitution") {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check if value has command substitution
+ */
+function hasComplexValue(value: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution | AST.ArithmeticExpansion | AST.ArrayLiteral): boolean {
+  if (value.type === "CommandSubstitution") {
+    return true;
+  }
+  if (value.type === "Word" && value.parts) {
+    for (const part of value.parts) {
+      if (part.type === "CommandSubstitution" || part.type === "ProcessSubstitution") {
+        return true;
+      }
+    }
+  }
+  if (value.type === "ArrayLiteral") {
+    for (const elem of value.elements) {
+      if (elem.type === "CommandSubstitution") {
+        return true;
+      }
+      if (elem.type === "Word" && elem.parts) {
+        for (const part of elem.parts) {
+          if (part.type === "CommandSubstitution" || part.type === "ProcessSubstitution") {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * Extract command names from a statement recursively
@@ -607,7 +721,9 @@ async function outputRewriteToDeshFile(tsCode: string, projectDir: string, optio
   // Add marker to prove code went through SafeShell transpilation
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Generate hash-based ID from ORIGINAL command (for caching and retry)
+  // Generate hash-based ID for caching and retry
+  // For bash: hash original command to cache transpiled result
+  // For /*#*/ scripts: hash TypeScript code directly
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
   const prefix = options?.isDirectTs ? "script" : "tx-script";
@@ -658,7 +774,9 @@ async function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, op
   // Add marker to prove code went through SafeShell transpilation
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Generate hash-based ID from ORIGINAL command (for caching and retry)
+  // Generate hash-based ID for caching and retry
+  // For bash: hash original command to cache transpiled result
+  // For /*#*/ scripts: hash TypeScript code directly
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
   const id = hash;
@@ -742,7 +860,9 @@ async function outputDenyWithRetry(
   // Add marker to prove code went through SafeShell transpilation
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Generate hash-based ID from ORIGINAL command (for caching and retry)
+  // Generate hash-based ID for caching and retry
+  // For bash: hash original command to cache transpiled result
+  // For /*#*/ scripts: hash TypeScript code directly
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
   const prefix = "tx-script"; // Denied commands are always transpiled bash
@@ -887,58 +1007,11 @@ async function main() {
     let tsCode = detectTypeScript(parsed.command);
     if (tsCode) {
       debug("TypeScript detected, rewriting to desh");
-      // Prepend original command for error messages and wrap in error handler
-      const bashCommandEscaped = parsed.command.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
-      const preview = parsed.command.length > 100 ? parsed.command.slice(0, 100) + "..." : parsed.command;
-      const previewEscaped = preview.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
-
-      tsCode = `const __ORIGINAL_BASH_COMMAND__ = \`${bashCommandEscaped}\`;
-const __handleError = (error) => {
-  const fullCommand = __ORIGINAL_BASH_COMMAND__;
-
-  // Generate unique error log file (directory is auto-created)
-  const errorFile = \`${getErrorLogPath()}\`;
-
-  // Build full error message
-  const errorMsg = [
-    "=== TypeScript Code Error ===",
-    \`Command: \${fullCommand}\`,
-    \`\\nError: \${error.message || error}\`,
-    error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
-    "============================\\n"
-  ].join("\\n");
-
-  // Write to file
-  try {
-    Deno.writeTextFileSync(errorFile, errorMsg);
-  } catch (e) {
-    console.error("Warning: Could not write error log:", e);
-  }
-
-  // Output with file reference first
-  console.error(\`\\nError log: \${errorFile}\`);
-  console.error(errorMsg);
-  Deno.exit(1);
-};
-
-// Global error handlers for uncaught errors
-globalThis.addEventListener("error", (event) => {
-  event.preventDefault();
-  __handleError(event.error);
-});
-
-globalThis.addEventListener("unhandledrejection", (event) => {
-  event.preventDefault();
-  __handleError(event.reason);
-});
-
-${tsCode}
-`;
+      // For /*#*/ scripts, no need to store original command - the script file has the code
       await outputRewriteToDesh(tsCode, projectDir, {
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
         isDirectTs: true,
-        originalCommand: parsed.command,
       });
       Deno.exit(0);
     }
@@ -960,6 +1033,19 @@ ${tsCode}
     // Extract commands for permission checking
     const commands = extractCommands(ast);
     debug(`Extracted commands: ${[...commands].join(", ") || "(none)"}`);
+
+    // Check which commands are not allowed
+    const disallowed = getDisallowedCommands(commands, config, cwd);
+
+    // For simple commands with all permissions granted, pass through to native bash
+    if (isSimpleCommand(ast) && disallowed.length === 0) {
+      debug("Simple command with all permissions granted - passthrough to native bash");
+      outputPassthrough();
+      Deno.exit(0);
+    }
+
+    // Complex command or needs permission - transpile to TypeScript
+    debug(`Complex command or blocked commands detected - will transpile`);
 
     // Transpile AST to TypeScript (needed for both ask and allow)
     tsCode = transpile(ast, {
@@ -1017,8 +1103,7 @@ globalThis.addEventListener("unhandledrejection", (event) => {
 ${tsCode}
 `;
 
-    // Check which commands are not allowed
-    const disallowed = getDisallowedCommands(commands, config, cwd);
+    // If we reach here with disallowed commands, deny with retry prompt
     if (disallowed.length > 0) {
       debug(`Disallowed commands: ${disallowed.join(", ")}`);
       // Deny and prompt user for choice via LLM, then retry with desh retry
@@ -1030,7 +1115,8 @@ ${tsCode}
       Deno.exit(0);
     }
 
-    debug("All commands allowed, rewriting to desh");
+    // Complex command with all permissions granted - rewrite to desh
+    debug("Complex command with all permissions granted, rewriting to desh");
 
     // Rewrite command to use desh with heredoc
     // Pass through timeout and run_in_background options

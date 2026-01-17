@@ -78,9 +78,9 @@ export async function launchCodeScript(
   // Ensure temp directory exists
   await ensureDir(TEMP_DIR);
 
-  // Create script file
+  // Create script file with background-script prefix
   const hash = await hashCode(code);
-  const scriptPath = join(TEMP_DIR, `${hash}.ts`);
+  const scriptPath = join(TEMP_DIR, `bg-script-${hash}.ts`);
 
   // Build full code with preamble and error handler
   const { preamble, preambleLineCount } = buildPreamble(shell);
