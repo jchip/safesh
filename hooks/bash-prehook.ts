@@ -1112,6 +1112,32 @@ ${tsCode}
     });
     debug("Bash transpiled to TypeScript");
 
+    // Check for known transpiler bugs that generate invalid TypeScript
+    // These patterns indicate the transpiler couldn't handle the bash complexity
+    const knownBadPatterns = [
+      /const\s+\w+\s+=\s+for\s+await/,  // "const x = for await" - invalid syntax
+      /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,  // "for (const x of ["${await..." - template in array
+      /\bfor\s+await.*\[".*\$\{await/,  // Nested await in for loop array
+    ];
+
+    for (const pattern of knownBadPatterns) {
+      if (pattern.test(tsCode)) {
+        console.error(`
+[SAFESH] Transpiler Error: The bash script is too complex for automatic transpilation.
+
+DO NOT USE BASH FOR SCRIPTS THAT ARE TOO COMPLEX. Use safesh /*#*/ TypeScript instead.
+
+Example:
+  /*#*/
+  const branches = (await $.cmd('git', 'branch', '-r').text()).split('\\n');
+  for (const branch of branches) {
+    console.log(\`Branch: \${branch}\`);
+  }
+`);
+        Deno.exit(1);
+      }
+    }
+
     // Prepend original bash command as a constant for error messages and wrap in error handler
     const bashCommandEscaped = parsed.command.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
     const preview = parsed.command.length > 100 ? parsed.command.slice(0, 100) + "..." : parsed.command;
