@@ -293,7 +293,7 @@ function isSimpleStatement(stmt: AST.Statement): boolean {
 }
 
 /**
- * Check if command has complex expansions (command substitution, process substitution)
+ * Check if command has complex expansions (command substitution, process substitution, heredocs)
  */
 function hasComplexExpansions(cmd: AST.Command): boolean {
   // Check command name
@@ -312,6 +312,14 @@ function hasComplexExpansions(cmd: AST.Command): boolean {
           return true;
         }
       }
+    }
+  }
+
+  // Check redirects for heredocs (<<, <<-, <<<)
+  // Heredocs need transpilation for proper handling
+  for (const redirect of cmd.redirects) {
+    if (redirect.operator === "<<" || redirect.operator === "<<-" || redirect.operator === "<<<") {
+      return true;
     }
   }
 
