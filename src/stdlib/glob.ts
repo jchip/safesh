@@ -68,6 +68,12 @@ function validateGlobPath(
  * Used to validate the pattern is within sandbox before expanding
  */
 export function getGlobBase(pattern: string): string {
+  if (pattern === undefined || pattern === null) {
+    throw new TypeError("getGlobBase: pattern cannot be undefined or null");
+  }
+  if (typeof pattern !== "string") {
+    throw new TypeError(`getGlobBase: pattern must be a string, got ${typeof pattern}`);
+  }
   // Find the first segment without wildcards
   const segments = pattern.split("/");
   const baseSegments: string[] = [];

@@ -2,7 +2,7 @@
  * Tests for stdlib/glob.ts
  */
 
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { describe, it, beforeEach, afterEach } from "@std/testing/bdd";
 import {
   glob,
@@ -54,6 +54,30 @@ describe("glob", () => {
     it("handles absolute paths", () => {
       assertEquals(getGlobBase("/home/user/src/*.ts"), "/home/user/src");
       assertEquals(getGlobBase("/tmp/**/*.log"), "/tmp");
+    });
+
+    it("throws TypeError for undefined pattern", () => {
+      assertThrows(
+        () => getGlobBase(undefined as any),
+        TypeError,
+        "pattern cannot be undefined or null"
+      );
+    });
+
+    it("throws TypeError for null pattern", () => {
+      assertThrows(
+        () => getGlobBase(null as any),
+        TypeError,
+        "pattern cannot be undefined or null"
+      );
+    });
+
+    it("throws TypeError for non-string pattern", () => {
+      assertThrows(
+        () => getGlobBase(123 as any),
+        TypeError,
+        "pattern must be a string"
+      );
     });
   });
 
