@@ -111,13 +111,7 @@ async function handleRetry(args: string[]): Promise<void> {
     Deno.exit(1);
   }
 
-  // Choice 4 = Deny
-  if (choice === 4) {
-    console.error("[safesh] Command denied by user.");
-    Deno.exit(0);
-  }
-
-  // Read pending command file
+  // Read pending command file first
   const pendingFile = getPendingFilePath(id);
   let pending: PendingCommand;
   try {
@@ -126,6 +120,13 @@ async function handleRetry(args: string[]): Promise<void> {
   } catch {
     console.error(`Error: Pending command not found: ${pendingFile}`);
     Deno.exit(1);
+  }
+
+  // Choice 4 = Deny - cleanup and exit
+  if (choice === 4) {
+    console.error("[safesh] Command denied by user.");
+    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    Deno.exit(0);
   }
 
   // Choice 2 = Always allow - update config.local.json
@@ -196,6 +197,8 @@ async function handleRetry(args: string[]): Promise<void> {
     Deno.exit(result.code);
   } catch (error) {
     console.error(`Execution failed: ${error}`);
+    // Cleanup pending file on failure too
+    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
     Deno.exit(1);
   }
 }
