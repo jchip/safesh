@@ -9,6 +9,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it, beforeAll } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
 import { transpile } from "./mod.ts";
+import { echo, cd, pwd, pushd, popd, dirs, test as shellTest, which, chmod, ln, rm, cp, mv, mkdir, touch, ls } from "../../stdlib/shelljs/mod.ts";
 
 // =============================================================================
 // Test Execution Helpers
@@ -51,8 +52,54 @@ async function executeTranspiled(bashScript: string): Promise<ExecutionResult> {
   tsCode = tsCode.replace(/^\(async \(\) => \{/, "await (async () => {");
   tsCode = tsCode.replace(/\}\)\(\);$/, "})();");
 
+  // Get the path to shelljs module
+  const shelljsPath = new URL("../../stdlib/shelljs/mod.ts", import.meta.url).pathname;
+
   // Wrap in SafeShell mock runtime that captures and prints stdout
   const fullCode = `
+// Import shelljs builtins
+import { echo as __echo, cd as __cd, pwd as __pwd, pushd as __pushd, popd as __popd, dirs as __dirs, test as __testFn, which as __which, chmod as __chmod, ln as __ln, rm as __rm, cp as __cp, mv as __mv, mkdir as __mkdir, touch as __touch, ls as __ls } from "file://${shelljsPath}";
+
+// Wrap test to return result object expected by transpiler
+// Supports both file tests (-f, -d, etc.) and comparisons (-eq, -ne, =, !=, etc.)
+async function __test(...args: string[]): Promise<{ code: number; stdout: string; stderr: string; success: boolean }> {
+  let result = false;
+
+  // Handle different test patterns
+  if (args.length === 2) {
+    // File test: test -f path
+    result = await __testFn(args[0], args[1]);
+  } else if (args.length === 3) {
+    // Comparison: test val1 -eq val2 or test str1 = str2
+    const [left, op, right] = args;
+    switch (op) {
+      case "-eq": result = parseInt(left) === parseInt(right); break;
+      case "-ne": result = parseInt(left) !== parseInt(right); break;
+      case "-lt": result = parseInt(left) < parseInt(right); break;
+      case "-le": result = parseInt(left) <= parseInt(right); break;
+      case "-gt": result = parseInt(left) > parseInt(right); break;
+      case "-ge": result = parseInt(left) >= parseInt(right); break;
+      case "=":
+      case "==": result = left === right; break;
+      case "!=": result = left !== right; break;
+      default: result = false;
+    }
+  } else if (args.length === 1) {
+    // String test: test -n str or test -z str
+    const arg = args[0];
+    if (arg.startsWith("-n ")) {
+      result = arg.slice(3).length > 0;
+    } else if (arg.startsWith("-z ")) {
+      result = arg.slice(3).length === 0;
+    } else {
+      // Non-empty string test
+      result = arg.length > 0;
+    }
+  }
+
+  return { code: result ? 0 : 1, stdout: "", stderr: "", success: result };
+}
+
 // Helper function to execute commands and print their output (matches preamble)
 async function __printCmd(cmd: any): Promise<number> {
   const result = await cmd;
@@ -177,8 +224,11 @@ ${tsCode}
   try {
     await Deno.writeTextFile(tempFile, fullCode);
 
+    // Get the project's deno.json config path (test is in src/bash/transpiler2/)
+    const configPath = new URL("../../../deno.json", import.meta.url).pathname;
+
     const cmd = new Deno.Command("deno", {
-      args: ["run", "--allow-all", tempFile],
+      args: ["run", "--allow-all", "--config", configPath, tempFile],
       stdout: "piped",
       stderr: "piped",
     });
@@ -528,8 +578,8 @@ describe("Conformance - Functions", () => {
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
     assertStringIncludes(output, "async function say_hello()");
-    // Transpiler outputs $.cmd("echo", "Hello") not literal "echo Hello"
-    assertStringIncludes(output, '$.cmd("echo"');
+    // SSH-372: Transpiler now outputs __echo("Hello") using preamble builtins
+    assertStringIncludes(output, '__echo(');
     assertStringIncludes(output, '"Hello"');
   });
 });

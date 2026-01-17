@@ -20,6 +20,8 @@ export interface LsOptions {
   long?: boolean;
   /** Recursive listing */
   recursive?: boolean;
+  /** Human-readable file sizes (1K, 234M, 2G) */
+  humanReadable?: boolean;
 }
 
 const OPTIONS_MAP: OptionsMap = {
@@ -28,6 +30,7 @@ const OPTIONS_MAP: OptionsMap = {
   d: "directory",
   l: "long",
   R: "recursive",
+  h: "humanReadable",
 };
 
 /**
@@ -73,8 +76,27 @@ function formatMode(mode: number | null, isDir: boolean, isSymlink: boolean): st
 /**
  * Format size for display
  */
-function formatSize(size: number): string {
-  return size.toString().padStart(8);
+function formatSize(size: number, humanReadable?: boolean): string {
+  if (!humanReadable) {
+    return size.toString().padStart(8);
+  }
+
+  // Human-readable format
+  const units = ["B", "K", "M", "G", "T", "P"];
+  let unitIndex = 0;
+  let adjustedSize = size;
+
+  while (adjustedSize >= 1024 && unitIndex < units.length - 1) {
+    adjustedSize /= 1024;
+    unitIndex++;
+  }
+
+  // Format with 1 decimal place for values >= 10, otherwise no decimal
+  const formatted = adjustedSize >= 10
+    ? Math.round(adjustedSize).toString()
+    : adjustedSize.toFixed(1);
+
+  return (formatted + units[unitIndex]).padStart(8);
 }
 
 /**
@@ -217,7 +239,7 @@ export async function ls(
       // Format long output
       for (const entry of entries) {
         const mode = formatMode(entry.mode, entry.isDirectory, entry.isSymlink);
-        const size = formatSize(entry.size);
+        const size = formatSize(entry.size, options.humanReadable);
         const date = formatDate(entry.mtime);
         results.push(`${mode} ${size} ${date} ${entry.name}`);
       }

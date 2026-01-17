@@ -100,7 +100,8 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle command with special characters in arguments", () => {
     const ast = parse("echo 'hello world'");
     const output = transpile(ast);
-    assertStringIncludes(output, '$.cmd("echo"');
+    // SSH-372: Now uses __echo builtin
+    assertStringIncludes(output, '__echo');
   });
 
   it("should handle command with variable in name", () => {
@@ -127,7 +128,8 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle command with escaped quotes", () => {
     const ast = parse('echo "say \\"hello\\""');
     const output = transpile(ast);
-    assertStringIncludes(output, '$.cmd("echo"');
+    // SSH-372: Now uses __echo builtin
+    assertStringIncludes(output, '__echo');
   });
 
   it("should handle empty command gracefully", () => {
@@ -1440,7 +1442,8 @@ describe("Grouping Constructs", () => {
     const ast = parse("(ls)");
     const output = transpile(ast);
     assertStringIncludes(output, "(async () => {");
-    assertStringIncludes(output, '$.cmd("ls"');
+    // SSH-372: Now uses __ls builtin
+    assertStringIncludes(output, '__ls(');
   });
 });
 
@@ -1473,7 +1476,8 @@ describe("Complex Realistic Bash Scripts", () => {
     assertStringIncludes(output, 'let DATE');
     assertStringIncludes(output, 'if (');
     assertStringIncludes(output, 'for (const file of');
-    assertStringIncludes(output, '$.cmd("cp"');
+    // SSH-372: Now uses __cp builtin
+    assertStringIncludes(output, '__cp(');
   });
 
   it("should transpile a log analysis script", () => {
@@ -1552,7 +1556,8 @@ describe("Complex Realistic Bash Scripts", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'for (const target of');
-    assertStringIncludes(output, '$.cmd("echo"');
+    // SSH-372: Now uses __echo builtin
+    assertStringIncludes(output, '__echo');
   });
 
   it("should transpile a case statement script", () => {
@@ -1792,7 +1797,8 @@ describe("BashTranspiler2 Class Extended", () => {
     const ast = parse("echo hello");
     const output = transpiler.transpile(ast);
 
-    assertStringIncludes(output, "\tawait");
+    // SSH-372: Check tab indentation (echo is prints type, no await)
+    assertStringIncludes(output, "\t__echo");
   });
 
   it("should handle different import paths", () => {
@@ -1820,11 +1826,12 @@ describe("BashTranspiler2 Class Extended", () => {
     const outputs = scripts.map(s => transpiler.transpile(parse(s)));
 
     // Each transpilation should produce the correct command with its argument
-    assertStringIncludes(outputs[0]!, '$.cmd("echo", "one")');
-    assertStringIncludes(outputs[1]!, '$.cmd("echo", "two")');
-    assertStringIncludes(outputs[2]!, '$.cmd("echo", "three")');
-    assertStringIncludes(outputs[3]!, '$.cmd("echo", "four")');
-    assertStringIncludes(outputs[4]!, '$.cmd("echo", "five")');
+    // SSH-372: Now uses __echo builtin
+    assertStringIncludes(outputs[0]!, '__echo("one")');
+    assertStringIncludes(outputs[1]!, '__echo("two")');
+    assertStringIncludes(outputs[2]!, '__echo("three")');
+    assertStringIncludes(outputs[3]!, '__echo("four")');
+    assertStringIncludes(outputs[4]!, '__echo("five")');
   });
 });
 
