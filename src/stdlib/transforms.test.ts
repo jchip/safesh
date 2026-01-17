@@ -130,6 +130,37 @@ Deno.test("flatMap() - can yield many items per input", async () => {
   assertEquals(result, [2, 2, 3, 3, 3]);
 });
 
+Deno.test("flatMap() - supports returning arrays", async () => {
+  const stream = fromArray([1, 2, 3]);
+  const expanded = stream.pipe(
+    flatMap((x) => [x, x * 10]),
+  );
+  const result = await expanded.collect();
+  assertEquals(result, [1, 10, 2, 20, 3, 30]);
+});
+
+Deno.test("flatMap() - supports async functions returning arrays", async () => {
+  const stream = fromArray([1, 2, 3]);
+  const expanded = stream.pipe(
+    flatMap(async (x) => {
+      // Simulate async operation
+      await Promise.resolve();
+      return [x, x * 10];
+    }),
+  );
+  const result = await expanded.collect();
+  assertEquals(result, [1, 10, 2, 20, 3, 30]);
+});
+
+Deno.test("flatMap() - supports returning empty arrays", async () => {
+  const stream = fromArray([1, 2, 3, 4, 5]);
+  const filtered = stream.pipe(
+    flatMap((x) => x % 2 === 0 ? [x, x * 2] : []),
+  );
+  const result = await filtered.collect();
+  assertEquals(result, [2, 4, 4, 8]);
+});
+
 Deno.test("take() - takes first n items", async () => {
   const stream = fromArray([1, 2, 3, 4, 5]);
   const first3 = stream.pipe(take(3));
