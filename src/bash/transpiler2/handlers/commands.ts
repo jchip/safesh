@@ -105,6 +105,34 @@ function formatArg(arg: string): string {
 /**
  * Build a command expression (without await/semicolon)
  */
+/**
+ * Shell builtins that should use preamble imports instead of $.cmd()
+ *
+ * Categories:
+ * - silent: Side-effect only, no output (cd, pushd, popd)
+ * - prints: Already prints output, don't wrap (echo)
+ * - output: Returns value that should be printed (pwd, dirs, ls)
+ * - async: Async operations that return results (which, test, chmod, etc.)
+ */
+const SHELL_BUILTINS: Record<string, { fn: string; type: "silent" | "prints" | "output" | "async" }> = {
+  cd: { fn: "__cd", type: "silent" },
+  pushd: { fn: "__pushd", type: "silent" },
+  popd: { fn: "__popd", type: "silent" },
+  echo: { fn: "__echo", type: "prints" },
+  pwd: { fn: "__pwd", type: "output" },
+  dirs: { fn: "__dirs", type: "output" },
+  ls: { fn: "__ls", type: "output" },
+  test: { fn: "__test", type: "async" },
+  which: { fn: "__which", type: "async" },
+  chmod: { fn: "__chmod", type: "async" },
+  ln: { fn: "__ln", type: "async" },
+  rm: { fn: "__rm", type: "async" },
+  cp: { fn: "__cp", type: "async" },
+  mv: { fn: "__mv", type: "async" },
+  mkdir: { fn: "__mkdir", type: "async" },
+  touch: { fn: "__touch", type: "async" },
+};
+
 export function buildCommand(
   command: AST.Command,
   ctx: VisitorContext,
@@ -137,6 +165,28 @@ export function buildCommand(
     cmdExpr = `${name}()`;
     isAsync = true;
     isUserFunction = true;
+  } else if (SHELL_BUILTINS[name] && !hasAssignments) {
+    // SSH-372: Use preamble builtins for cd, pwd, echo, etc.
+    const builtin = SHELL_BUILTINS[name];
+    const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+
+    if (builtin.type === "output") {
+      // Output builtins should print their result (use toString() to get plain string)
+      cmdExpr = `console.log(${builtin.fn}(${argsArray}).toString())`;
+      isAsync = false;
+    } else if (builtin.type === "prints") {
+      // Prints builtins already output, just execute
+      cmdExpr = `${builtin.fn}(${argsArray})`;
+      isAsync = false;
+    } else if (builtin.type === "async") {
+      // Async builtins that need await
+      cmdExpr = `${builtin.fn}(${argsArray})`;
+      isAsync = true;
+    } else {
+      // Silent builtins (cd, pushd, popd) - just execute
+      cmdExpr = `${builtin.fn}(${argsArray})`;
+      isAsync = false;
+    }
   } else {
     // Check if any args contain dynamic values (template literals with ${)
     // If so, fluent command handlers can't parse them correctly at transpile-time
@@ -152,9 +202,17 @@ export function buildCommand(
     // BUT: env assignments and heredocs force explicit $.cmd() style
     if (isFluentCommand(name) && !hasDynamicArgs && !hasAssignments && !hasHeredoc) {
       const fluentResult = buildFluentCommand(name, args, ctx);
-      cmdExpr = fluentResult.code;
-      isTransform = fluentResult.isTransform;
-      isStream = fluentResult.isStream;
+      // buildFluentCommand may return null to indicate fallback to $.cmd()
+      if (fluentResult !== null) {
+        cmdExpr = fluentResult.code;
+        isTransform = fluentResult.isTransform;
+        isStream = fluentResult.isStream;
+      } else {
+        // Fall back to $.cmd() style
+        const argsList = args.length > 0 ? ", " + args.map(formatArg).join(", ") : "";
+        cmdExpr = `$.cmd("${name}"${argsList})`;
+        isAsync = true;
+      }
     } else if (hasAssignments) {
       // Use function call style with env options when there are assignments
       const envEntries = command.assignments
@@ -221,6 +279,7 @@ function buildFluentCommand(
       let invert = false;
       let ignoreCase = false;
       let lineNumber = false;
+      let recursive = false;
 
       for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -230,6 +289,9 @@ function buildFluentCommand(
           ignoreCase = true;
         } else if (arg === "-n") {
           lineNumber = true;
+        } else if (arg === "-r" || arg === "-R" || arg?.includes("r") && arg.startsWith("-")) {
+          // Check for -r, -R, or combined flags like -rn, -rin, etc.
+          recursive = true;
         } else if (arg?.startsWith("-")) {
           // Skip other options
         } else if (!pattern) {
@@ -237,6 +299,12 @@ function buildFluentCommand(
         } else {
           files.push(arg ?? "");
         }
+      }
+
+      // If recursive flag is present, fall back to $.cmd()
+      // Fluent grep doesn't support directory recursion
+      if (recursive) {
+        return null;
       }
 
       const escapedPattern = escapeForQuotes(pattern);
@@ -437,7 +505,7 @@ interface PipelinePart {
 export function buildPipeline(
   pipeline: AST.Pipeline,
   ctx: VisitorContext,
-): ExpressionResult & { isStream?: boolean } {
+): ExpressionResult & { isStream?: boolean; isPrintable?: boolean } {
   // Single command, no pipeline
   if (pipeline.commands.length === 1 && !pipeline.background) {
     const cmd = pipeline.commands[0];
@@ -547,7 +615,7 @@ export function buildPipeline(
     result = `${result}.negate()`;
   }
 
-  return { code: result, async: true, isStream: resultIsStream };
+  return { code: result, async: true, isStream: resultIsStream, isPrintable: resultIsPrintable };
 }
 
 /**
@@ -654,6 +722,11 @@ export function visitPipeline(
   if (result.isStream) {
     // For streams (from .trans()), iterate and print each line
     return { lines: [`${indent}for await (const __line of ${result.code}) { console.log(__line); }`] };
+  }
+
+  // SSH-372: Don't wrap non-printable results (like shell builtins) in __printCmd
+  if (!result.isPrintable) {
+    return { lines: [`${indent}${result.code};`] };
   }
 
   // Wrap pipeline execution with __printCmd to print output

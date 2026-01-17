@@ -18,6 +18,7 @@ import { parseArgs } from "@std/cli/parse-args";
 import { loadConfig, mergeConfigs, validateConfig } from "../core/config.ts";
 import { executeCode, executeFile, executeCodeStreaming } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
+import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
 
 const VERSION = "0.1.0";
 
@@ -153,7 +154,7 @@ async function handleRetry(args: string[]): Promise<void> {
   ];
 
   // Add marker and execute
-  const markedCode = `console.error("# /*$*/");\n${pending.tsCode}`;
+  const markedCode = `console.error("# /*#*/");\n${pending.tsCode}`;
 
   // Write to temp file and execute
   const tempFile = `/tmp/safesh-${Date.now()}-${Deno.pid}.ts`;
@@ -253,6 +254,7 @@ OPTIONS:
   -v, --verbose          Verbose output
   -h, --help             Show this help
   --version              Show version
+  --api-doc              Show SafeShell API documentation
 
 EXAMPLES:
   # Inline code as argument
@@ -303,7 +305,7 @@ async function main() {
 
   const args = parseArgs(Deno.args, {
     string: ["code", "file", "import", "config", "project"],
-    boolean: ["verbose", "help", "version", "stream", "quiet"],
+    boolean: ["verbose", "help", "version", "api-doc", "stream", "quiet"],
     alias: {
       c: "code",
       f: "file",
@@ -328,6 +330,12 @@ async function main() {
 
   if (args.version) {
     console.log(`desh ${VERSION}`);
+    Deno.exit(0);
+  }
+
+  if (args["api-doc"]) {
+    console.log(getApiDoc());
+    console.log(getBashPrehookNote());
     Deno.exit(0);
   }
 

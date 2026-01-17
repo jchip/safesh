@@ -392,7 +392,7 @@ function outputPassthrough(): void {
  * SafeShell TypeScript signature prefix
  * Agent must prefix code with this to indicate it's SafeShell TypeScript
  */
-const SAFESH_SIGNATURE = "/*$*/";
+const SAFESH_SIGNATURE = "/*#*/";
 
 /**
  * Detect if the command is SafeShell TypeScript
@@ -405,7 +405,7 @@ const SAFESH_SIGNATURE = "/*$*/";
 function detectTypeScript(command: string): string | null {
   const trimmed = command.trim();
 
-  // Check for SafeShell signature prefix: /*$*/
+  // Check for SafeShell signature prefix: /*#*/
   if (trimmed.startsWith(SAFESH_SIGNATURE)) {
     const code = trimmed.slice(SAFESH_SIGNATURE.length).trim();
     if (!code) {
@@ -480,9 +480,9 @@ const DESH_MODE = Deno.env.get("BASH_PREHOOK_DESH_MODE") || "file"; // "file" or
  * Output hook decision to rewrite command as desh with file
  * Writes transpiled code to /tmp and passes file path to desh
  */
-function outputRewriteToDeshFile(tsCode: string, options?: { timeout?: number; runInBackground?: boolean }): void {
+function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean }): void {
   // Add marker to prove code went through SafeShell transpilation
-  const markedCode = `console.error("# /*$*/");\n${tsCode}`;
+  const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
   // Write to temp file using timestamp + pid for uniqueness
   const tempFile = `/tmp/safesh-${Date.now()}-${Deno.pid}.ts`;
@@ -498,9 +498,9 @@ function outputRewriteToDeshFile(tsCode: string, options?: { timeout?: number; r
  * Output hook decision to rewrite command as desh heredoc
  * Uses heredoc to pass code inline
  */
-function outputRewriteToDeshHeredoc(tsCode: string, options?: { timeout?: number; runInBackground?: boolean }): void {
+function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean }): void {
   // Add marker to prove code went through SafeShell transpilation
-  const markedCode = `console.error("# /*$*/");\n${tsCode}`;
+  const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
   // Create desh heredoc command
   const deshCommand = `${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
@@ -581,16 +581,15 @@ function outputDenyWithRetry(
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Build deny message with retry instructions for LLM
-  const message = `[SAFESH] COMMAND BLOCKED - requires user approval: ${cmdList}
+  const message = `[SAFESH] BLOCKED: ${cmdList}
 
-Options:
+WAIT for user choice (1-4):
 1. Allow once
-2. Always allow (adds to config)
-3. Allow for this session
+2. Always allow
+3. Allow for session
 4. Deny
 
-IMPORTANT: You MUST wait for user to choose an option (1-4) before proceeding.
-After user responds, run: desh retry --id=${id} --choice=<user's choice>`;
+DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${id} --choice=<user's choice>`;
 
   const output = {
     hookSpecificOutput: {
@@ -606,11 +605,11 @@ After user responds, run: desh retry --id=${id} --choice=<user's choice>`;
  * Output hook decision to rewrite command to desh
  * Uses file mode by default, heredoc if configured
  */
-function outputRewriteToDesh(tsCode: string, options?: { timeout?: number; runInBackground?: boolean }): void {
+function outputRewriteToDesh(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean }): void {
   if (DESH_MODE === "heredoc") {
-    outputRewriteToDeshHeredoc(tsCode, options);
+    outputRewriteToDeshHeredoc(tsCode, projectDir, options);
   } else {
-    outputRewriteToDeshFile(tsCode, options);
+    outputRewriteToDeshFile(tsCode, projectDir, options);
   }
 }
 
@@ -656,9 +655,10 @@ async function executeStreaming(
 // =============================================================================
 
 async function main() {
+  let parsed: ParsedCommand | undefined;
   try {
     // Get the bash command with options
-    const parsed = await getBashCommand();
+    parsed = await getBashCommand();
 
     if (!parsed.command) {
       console.error("Error: Empty bash command provided");
@@ -685,7 +685,7 @@ async function main() {
     let tsCode = detectTypeScript(parsed.command);
     if (tsCode) {
       debug("TypeScript detected, rewriting to desh");
-      outputRewriteToDesh(tsCode, {
+      outputRewriteToDesh(tsCode, projectDir, {
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
       });
@@ -693,7 +693,18 @@ async function main() {
     }
 
     // Parse bash command to AST
-    const ast = parse(parsed.command);
+    let ast;
+    try {
+      ast = parse(parsed.command);
+    } catch (parseError) {
+      // On parse error, show the command for debugging
+      const lines = parsed.command.split('\n');
+      const errorMsg = parseError instanceof Error ? parseError.message : String(parseError);
+      debug(`Parse error: ${errorMsg}`);
+      debug(`Command (${lines.length} lines):`);
+      lines.forEach((line, i) => debug(`  ${i + 1}: ${line}`));
+      throw parseError;
+    }
 
     // Extract commands for permission checking
     const commands = extractCommands(ast);
@@ -722,7 +733,7 @@ async function main() {
 
     // Rewrite command to use desh with heredoc
     // Pass through timeout and run_in_background options
-    outputRewriteToDesh(tsCode, {
+    outputRewriteToDesh(tsCode, projectDir, {
       timeout: parsed.timeout,
       runInBackground: parsed.runInBackground,
     });
@@ -731,7 +742,17 @@ async function main() {
     // On error, output error message and let it through
     // (desh will show the error when it tries to run)
     const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`Transpilation error: ${errorMsg}`);
+
+    // Show first few lines of command for context (if available)
+    let context = "";
+    if (parsed?.command) {
+      const lines = parsed.command.split('\n');
+      const preview = lines.slice(0, 3).join('\n');
+      const more = lines.length > 3 ? `\n... (${lines.length} lines total)` : "";
+      context = `\n\nCommand preview:\n${preview}${more}`;
+    }
+
+    console.error(`Transpilation error: ${errorMsg}${context}`);
     // Exit 2 to signal error, native bash won't run
     Deno.exit(2);
   }
