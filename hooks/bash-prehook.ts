@@ -1018,7 +1018,54 @@ async function main() {
     let tsCode = detectTypeScript(parsed.command);
     if (tsCode) {
       debug("TypeScript detected, rewriting to desh");
-      // For /*#*/ scripts, no need to store original command - the script file has the code
+
+      // Add error handlers for better error formatting (without storing original command)
+      tsCode = `// Global error handlers for unhandled errors
+globalThis.addEventListener("error", (event) => {
+  event.preventDefault();
+  const error = event.error;
+  const errorFile = \`${getErrorLogPath()}\`;
+
+  const errorMsg = [
+    "=== TypeScript Error ===",
+    \`Error: \${error?.message || error}\`,
+    error?.stack ? \`\nStack trace:\n\${error.stack}\` : "",
+    "=======================\\n"
+  ].join("\\n");
+
+  try {
+    Deno.writeTextFileSync(errorFile, errorMsg);
+    console.error(\`\\nError log: \${errorFile}\`);
+  } catch {}
+
+  console.error(errorMsg);
+  Deno.exit(1);
+});
+
+globalThis.addEventListener("unhandledrejection", (event) => {
+  event.preventDefault();
+  const reason = event.reason;
+  const errorFile = \`${getErrorLogPath()}\`;
+
+  const errorMsg = [
+    "=== Unhandled Promise Rejection ===",
+    \`Error: \${reason?.message || reason}\`,
+    reason?.stack ? \`\nStack trace:\n\${reason.stack}\` : "",
+    "===================================\\n"
+  ].join("\\n");
+
+  try {
+    Deno.writeTextFileSync(errorFile, errorMsg);
+    console.error(\`\\nError log: \${errorFile}\`);
+  } catch {}
+
+  console.error(errorMsg);
+  Deno.exit(1);
+});
+
+${tsCode}
+`;
+
       await outputRewriteToDesh(tsCode, projectDir, {
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
