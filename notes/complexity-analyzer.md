@@ -7,15 +7,18 @@ The bash-prehook now includes a complexity analyzer that determines whether a ba
 ## Decision Logic
 
 ```
-Parse bash → Analyze AST → Check permissions
-                                    ↓
-                    ┌───────────────┴────────────────┐
-                    │                                 │
-             Simple + Allowed                  Complex or Blocked
-                    ↓                                 ↓
-          Passthrough to bash              Transpile to TypeScript
-          (no script file)                  (cached script file)
+Parse bash → Analyze AST complexity
+                    ↓
+        ┌───────────┴────────────┐
+        │                        │
+     Simple                   Complex
+        ↓                        ↓
+  Passthrough to bash     Transpile to TypeScript
+  (Bash tool handles       (SafeShell handles
+   permissions)             permissions)
 ```
+
+**Key insight**: Simple commands don't need SafeShell's sandboxing. They can execute directly with native bash, and Claude Code's Bash tool will handle any permission prompts. Only complex commands require transpilation and SafeShell's runtime.
 
 ## Command Classification
 
@@ -47,22 +50,25 @@ Commands that require TypeScript transpilation:
 ## Benefits
 
 ### Performance
-- Simple commands execute directly (faster startup, no Deno overhead)
-- Complex commands still benefit from SafeShell's sandboxing
+- Simple commands execute with native bash (zero overhead)
+- No parsing, transpiling, or Deno startup for simple commands
+- Complex commands still benefit from SafeShell's TypeScript runtime
 
 ### Disk I/O
 - No script files created for simple commands
-- Fewer files in `/tmp/safesh/scripts/`
-- Reduced cleanup overhead
+- Only complex commands create cached files in `/tmp/safesh/scripts/`
+- Minimal disk footprint
 
-### Security
-- Permission checks happen before passthrough decision
-- Blocked commands still require user approval
-- Complex commands maintain full error handling
+### Permission Handling
+- Simple commands: Claude Code's Bash tool handles permissions naturally
+- Complex commands: SafeShell's permission system (since they need transpilation anyway)
+- Cleaner separation of concerns
 
 ## Examples
 
 ### Passthrough Examples
+
+These execute with native bash, regardless of permissions:
 
 ```bash
 # Simple command
@@ -76,6 +82,9 @@ echo "data" > output.txt
 
 # Script execution
 ./my-script.sh
+
+# Even "blocked" commands passthrough (Bash tool handles permission)
+chmod +x script.sh
 ```
 
 ### Transpiled Examples
