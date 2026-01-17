@@ -5,7 +5,7 @@
  * to ensure robust transpilation from Bash to TypeScript/SafeShell.
  */
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertNotMatch } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
 import { transpile, BashTranspiler2 } from "./mod.ts";
@@ -413,6 +413,10 @@ describe("Control Flow - Complex Scenarios", () => {
       const ast = parse(script);
       const output = transpile(ast);
       assertStringIncludes(output, "for (const file of");
+      // SSH-375: Should generate valid TypeScript with await and word splitting
+      assertStringIncludes(output, "const _tmp");
+      assertStringIncludes(output, ".split(/\\s+/)");
+      assertStringIncludes(output, "await __cmdSubText");
     });
 
     it("should handle for loop with word list", () => {
@@ -438,6 +442,41 @@ describe("Control Flow - Complex Scenarios", () => {
       const ast = parse(script);
       const output = transpile(ast);
       assertStringIncludes(output, "for (const x of");
+    });
+
+    it("should handle for loop with mixed list including command substitution (SSH-375)", () => {
+      const script = `
+        for item in before $(echo one two three) after
+        do
+          echo "$item"
+        done
+      `;
+      const ast = parse(script);
+      const output = transpile(ast);
+      // Should build dynamic array with temp variable
+      assertStringIncludes(output, "const _tmp");
+      assertStringIncludes(output, '.push(`before`)');
+      assertStringIncludes(output, ".split(/\\s+/)");
+      assertStringIncludes(output, '.push(`after`)');
+      assertStringIncludes(output, "for (const item of _tmp");
+    });
+
+    it("should handle for loop with pipeline in command substitution (SSH-375)", () => {
+      const script = `
+        for branch in $(git branch -r | grep -v HEAD | head -5)
+        do
+          echo "=== $branch ==="
+        done
+      `;
+      const ast = parse(script);
+      const output = transpile(ast);
+      // Should generate valid TypeScript
+      assertStringIncludes(output, "const _tmp");
+      assertStringIncludes(output, "await __cmdSubText");
+      assertStringIncludes(output, ".split(/\\s+/)");
+      assertStringIncludes(output, "for (const branch of _tmp");
+      // Should not have invalid syntax like ["${await ...}"]
+      assertNotMatch(output, /\["\$\{await/);
     });
   });
 
