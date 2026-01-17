@@ -82,11 +82,11 @@ export function map<T, U>(
 /**
  * Transform each item into multiple items and flatten the result
  *
- * Each item is transformed into an async iterable, and all items from
+ * Each item is transformed into an async iterable or array, and all items from
  * each iterable are yielded in sequence. Useful for expanding streams
  * or performing one-to-many transformations.
  *
- * @param fn - Function that returns an async iterable for each item
+ * @param fn - Function that returns an async iterable or array for each item
  * @returns Transform that flattens nested iterables
  *
  * @example
@@ -102,15 +102,28 @@ export function map<T, U>(
  * const allLines = files.pipe(flatMap(file =>
  *   readLines(file.path)
  * ));
+ *
+ * // Expand using arrays
+ * const items = data.pipe(flatMap(item => [item.a, item.b, item.c]));
  * ```
  */
 export function flatMap<T, U>(
-  fn: (item: T) => AsyncIterable<U>,
+  fn: (item: T) => AsyncIterable<U> | U[] | Promise<U[] | AsyncIterable<U>>,
 ): Transform<T, U> {
   return async function* (stream) {
     for await (const item of stream) {
-      for await (const subItem of fn(item)) {
-        yield subItem;
+      const result = await fn(item);
+
+      // Handle arrays
+      if (Array.isArray(result)) {
+        for (const subItem of result) {
+          yield subItem;
+        }
+      } else {
+        // Handle async iterables
+        for await (const subItem of result) {
+          yield subItem;
+        }
       }
     }
   };
