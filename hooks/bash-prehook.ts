@@ -1119,7 +1119,8 @@ ${tsCode}
       /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,  // "for (const x of ["${await..." - template in array
       /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,  // Alternative: for (const x of ["...await
       /\.pipe\([^)]+\)\.lines\(\)\.pipe\([^)]+\)\.lines\(\)/,  // Double .lines() chaining - invalid
-      /\.stdout\(\)\.lines\(\)\.pipe\([^)]+\)\.pipe\([^)]+\)\.stdout\(\)/,  // Double stdout chaining - invalid
+      /\.pipe\([^)]+\)\.pipe\([^)]+\)\.stdout\(\)/,  // Calling stdout() after multiple pipes - invalid
+      /\.lines\(\)\.pipe\([^)]+\)\.lines\(\)/,  // Calling .lines() twice with pipe - invalid
     ];
 
     for (const pattern of knownBadPatterns) {
