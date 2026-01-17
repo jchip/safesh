@@ -19,7 +19,7 @@ import { loadConfig, mergeConfigs, validateConfig } from "../core/config.ts";
 import { executeCode, executeFile, executeCodeStreaming } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
-import { getPendingFilePath } from "../core/temp.ts";
+import { getPendingFilePath, getSessionFilePath } from "../core/temp.ts";
 
 const VERSION = "0.1.0";
 
@@ -60,8 +60,7 @@ function findProjectRoot(cwd: string): string {
  * Get session-allowed commands from session file
  */
 function getSessionAllowedCommands(): string[] {
-  const sessionId = Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
-  const sessionFile = `/tmp/safesh-session-${sessionId}.json`;
+  const sessionFile = getSessionFilePath();
 
   try {
     const content = Deno.readTextFileSync(sessionFile);
@@ -210,12 +209,9 @@ async function addToConfigLocal(commands: string[], cwd: string): Promise<void> 
 
 /**
  * Add commands to session file for "session allow"
- * Session file is /tmp/safesh-session-{ppid}.json
  */
 async function addToSessionFile(commands: string[]): Promise<void> {
-  // Use parent PID to identify session (Claude Code process)
-  const sessionId = Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
-  const sessionFile = `/tmp/safesh-session-${sessionId}.json`;
+  const sessionFile = getSessionFilePath();
 
   // Load existing or create new
   let session: { allowedCommands?: string[] } = {};

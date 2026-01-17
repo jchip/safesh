@@ -76,3 +76,12 @@ export function getScriptFilePath(id: string): string {
 export function generateTempId(): string {
   return `${Date.now()}-${Deno.pid}`;
 }
+
+/**
+ * Get the session file path for storing session-allowed commands
+ */
+export function getSessionFilePath(sessionId?: string): string {
+  const dir = getTempRoot();
+  const id = sessionId ?? Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
+  return `${dir}/session-${id}.json`;
+}

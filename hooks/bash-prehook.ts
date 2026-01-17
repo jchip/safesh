@@ -28,7 +28,7 @@ import { loadConfig, mergeConfigs } from "../src/core/config.ts";
 import { getAllowedCommands } from "../src/core/command_permission.ts";
 import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
-import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath } from "../src/core/temp.ts";
+import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath, getSessionFilePath } from "../src/core/temp.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 
 // =============================================================================
@@ -226,8 +226,7 @@ function extractCommands(ast: AST.Program): Set<string> {
  * Get session-allowed commands from session file
  */
 function getSessionAllowedCommands(): Set<string> {
-  const sessionId = Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
-  const sessionFile = `/tmp/safesh-session-${sessionId}.json`;
+  const sessionFile = getSessionFilePath();
 
   try {
     const content = Deno.readTextFileSync(sessionFile);
