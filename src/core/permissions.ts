@@ -204,11 +204,12 @@ export function getEffectivePermissions(
 ): PermissionsConfig {
   const perms = config.permissions ?? {};
 
-  // Default read includes cwd, /tmp, and home directory (read is less dangerous)
+  // Default read includes cwd, /tmp, and optionally home directory (read is less dangerous)
   // Default write is ONLY /tmp - projectDir must be explicitly enabled
   const home = Deno.env.get("HOME");
   const defaultRead = [cwd, "/tmp"];
-  if (home) {
+  // Include HOME in default read paths unless explicitly disabled (default: true)
+  if (home && config.includeHomeInDefaultRead !== false) {
     defaultRead.push(home);
   }
   const defaultWrite = ["/tmp"];

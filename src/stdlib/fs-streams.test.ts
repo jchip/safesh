@@ -192,16 +192,13 @@ Deno.test("glob() - handles binary files", async () => {
 
 Deno.test({
   name: "glob() - respects sandbox boundaries",
-  ignore: true, // Skip: getEffectivePermissions adds HOME to default read paths
   fn: async () => {
     await setupFixtures();
     try {
       // Config that only allows read from a subdirectory
-      // NOTE: This test is skipped because getEffectivePermissions() in permissions.ts
-      // adds HOME, cwd, and /tmp to the default read paths. Since test fixtures are
-      // under HOME, files are always readable. This is by design for user convenience.
-      // A stricter sandbox mode would need to be added to support this use case.
+      // Use includeHomeInDefaultRead: false to enable strict sandbox mode
       const restrictedConfig: SafeShellConfig = {
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [join(FIXTURES_DIR, "src")],
           write: [],
@@ -306,15 +303,12 @@ Deno.test("cat() - integrates with transforms", async () => {
 
 Deno.test({
   name: "cat() - throws on sandbox violation",
-  ignore: true, // Skip: getEffectivePermissions adds HOME to default read paths
   fn: async () => {
     await setupFixtures();
     try {
-      // NOTE: This test is skipped because getEffectivePermissions() in permissions.ts
-      // adds HOME, cwd, and /tmp to the default read paths. Since test fixtures are
-      // under HOME, files are always readable. This is by design for user convenience.
-      // A stricter sandbox mode would need to be added to support this use case.
+      // Use includeHomeInDefaultRead: false to enable strict sandbox mode
       const restrictedConfig: SafeShellConfig = {
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [join(FIXTURES_DIR, "src")],
           write: [],
