@@ -14,6 +14,7 @@ import {
   ERROR_COMMAND_NOT_FOUND,
   ERROR_COMMANDS_BLOCKED,
 } from "../core/constants.ts";
+import { getPendingFilePath } from "../core/temp.ts";
 
 /**
  * Config interface injected by preamble for permission checking
@@ -223,7 +224,7 @@ export async function initCmds<T extends readonly string[]>(
       const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
       if (scriptId) {
         // Update pending command file with blocked commands
-        const pendingFile = `/tmp/safesh-pending-${scriptId}.json`;
+        const pendingFile = getPendingFilePath(scriptId);
         try {
           const pendingContent = Deno.readTextFileSync(pendingFile);
           const pending = JSON.parse(pendingContent);

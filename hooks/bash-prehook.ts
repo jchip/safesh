@@ -28,6 +28,7 @@ import { loadConfig, mergeConfigs } from "../src/core/config.ts";
 import { getAllowedCommands } from "../src/core/command_permission.ts";
 import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
+import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath } from "../src/core/temp.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 
 // =============================================================================
@@ -488,8 +489,8 @@ function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: {
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
   // Generate unique ID for this script (for potential retry)
-  const id = `${Date.now()}-${Deno.pid}`;
-  const tempFile = `/tmp/safesh-${id}.ts`;
+  const id = generateTempId();
+  const tempFile = getScriptFilePath(id);
   Deno.writeTextFileSync(tempFile, markedCode);
 
   // Save metadata for potential retry (if initCmds encounters blocked commands)
@@ -502,7 +503,7 @@ function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: {
     runInBackground: options?.runInBackground,
     createdAt: new Date().toISOString(),
   };
-  const pendingFile = `/tmp/safesh-pending-${id}.json`;
+  const pendingFile = getPendingFilePath(id);
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Create desh command with file path and pass ID via env var
@@ -523,7 +524,7 @@ function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, options?
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
   // Generate unique ID for this script (for potential retry)
-  const id = `${Date.now()}-${Deno.pid}`;
+  const id = generateTempId();
 
   // Save metadata for potential retry (if initCmds encounters blocked commands)
   const pending: PendingCommand = {
@@ -535,7 +536,7 @@ function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, options?
     runInBackground: options?.runInBackground,
     createdAt: new Date().toISOString(),
   };
-  const pendingFile = `/tmp/safesh-pending-${id}.json`;
+  const pendingFile = getPendingFilePath(id);
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Create desh heredoc command with ID via env var
@@ -600,7 +601,7 @@ function outputDenyWithRetry(
   const cmdList = disallowedCommands.join(", ");
 
   // Generate unique ID for this pending command
-  const id = `${Date.now()}-${Deno.pid}`;
+  const id = generateTempId();
 
   // Save pending command to temp file
   const pending: PendingCommand = {
@@ -613,7 +614,7 @@ function outputDenyWithRetry(
     createdAt: new Date().toISOString(),
   };
 
-  const pendingFile = `/tmp/safesh-pending-${id}.json`;
+  const pendingFile = getPendingFilePath(id);
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Build deny message with retry instructions for LLM
@@ -730,8 +731,8 @@ async function main() {
 const __handleError = (error) => {
   const fullCommand = __ORIGINAL_BASH_COMMAND__;
 
-  // Generate unique error log file
-  const errorFile = \`/tmp/safesh-error-\${Date.now()}-\${Deno.pid}.log\`;
+  // Generate unique error log file (directory is auto-created)
+  const errorFile = \`${getErrorLogPath()}\`;
 
   // Build full error message
   const errorMsg = [
@@ -810,8 +811,8 @@ ${tsCode}
 const __handleError = (error) => {
   const fullCommand = __ORIGINAL_BASH_COMMAND__;
 
-  // Generate unique error log file
-  const errorFile = \`/tmp/safesh-error-\${Date.now()}-\${Deno.pid}.log\`;
+  // Generate unique error log file (directory is auto-created)
+  const errorFile = \`${getErrorLogPath()}\`;
 
   // Build full error message
   const errorMsg = [
