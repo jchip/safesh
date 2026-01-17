@@ -292,6 +292,7 @@ const PASSTHROUGH_COMMANDS = [
   /^desh\b/,              // desh CLI
   /^\.\/src\/cli\/desh\.ts\b/,  // desh via path
   /desh\.ts\b/,           // any desh.ts path
+  /^deno\b/,              // deno runtime (for tests, etc.)
 ];
 
 /**
@@ -480,7 +481,10 @@ function outputAskPermission(
   const markedCode = `console.error("# /*$*/");\n${tsCode}`;
   const tempFile = `/tmp/safesh-${Date.now()}-${Deno.pid}.ts`;
   Deno.writeTextFileSync(tempFile, markedCode);
-  const deshCommand = `${DESH_CMD} -q -f ${tempFile}`;
+
+  // Use --approved flag so desh knows these commands were user-approved
+  const approvedFlag = `--approved=${disallowedCommands.join(",")}`;
+  const deshCommand = `${DESH_CMD} -q ${approvedFlag} -f ${tempFile}`;
 
   // Build updatedInput with the desh command (not original bash)
   const updatedInput: Record<string, unknown> = { command: deshCommand };
