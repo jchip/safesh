@@ -636,8 +636,15 @@ export function buildPipeline(
         resultIsStream = true;
       } else {
         // Part is a command - pipe to it
-        result = `${result}.pipe(${part.code})`;
-        resultIsStream = false;
+        if (resultIsStream) {
+          // When piping from a stream to a command, need to use toCmdLines transform
+          result = `${result}.pipe($.toCmdLines(${part.code}))`;
+          resultIsStream = false;
+        } else {
+          // When piping from a command to a command, can pipe directly
+          result = `${result}.pipe(${part.code})`;
+          resultIsStream = false;
+        }
       }
       resultIsPrintable = true; // Pipes always produce output
     } else if (op === ";") {
@@ -665,9 +672,14 @@ export function buildPipeline(
         result = `(await ${result})`;
         resultIsPromise = false;
       }
-      result = `${result}.pipe(${part.code})`;
+      // Check if we need toCmdLines transform when piping from stream to command
+      if (resultIsStream && !part.isTransform && !part.isStreamProducer) {
+        result = `${result}.pipe($.toCmdLines(${part.code}))`;
+      } else {
+        result = `${result}.pipe(${part.code})`;
+      }
       resultIsPrintable = true;
-      resultIsStream = false;
+      resultIsStream = part.isStreamProducer || part.isTransform;
     }
   }
 
