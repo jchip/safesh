@@ -169,17 +169,35 @@ function extractCommands(ast: AST.Program): Set<string> {
 }
 
 /**
+ * Get session-allowed commands from session file
+ */
+function getSessionAllowedCommands(): Set<string> {
+  const sessionId = Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
+  const sessionFile = `/tmp/safesh-session-${sessionId}.json`;
+
+  try {
+    const content = Deno.readTextFileSync(sessionFile);
+    const session = JSON.parse(content) as { allowedCommands?: string[] };
+    return new Set(session.allowedCommands ?? []);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
  * Check which commands are not in the allowed list
+ * Also checks session-allowed commands
  */
 function getDisallowedCommands(
   commands: Set<string>,
   config: SafeShellConfig,
 ): string[] {
   const allowed = getAllowedCommands(config);
+  const sessionAllowed = getSessionAllowedCommands();
   const disallowed: string[] = [];
 
   for (const cmd of commands) {
-    if (!allowed.has(cmd)) {
+    if (!allowed.has(cmd) && !sessionAllowed.has(cmd)) {
       disallowed.push(cmd);
     }
   }
@@ -289,7 +307,7 @@ async function getBashCommand(): Promise<ParsedCommand> {
  * These are typically SafeShell CLI tools that should run directly
  */
 const PASSTHROUGH_COMMANDS = [
-  /^desh\b/,              // desh CLI
+  /^desh\b/,              // desh CLI (includes "desh retry")
   /^\.\/src\/cli\/desh\.ts\b/,  // desh via path
   /desh\.ts\b/,           // any desh.ts path
   /^deno\b/,              // deno runtime (for tests, etc.)
@@ -463,44 +481,68 @@ function outputHookResponse(deshCommand: string, options?: { timeout?: number; r
 }
 
 /**
- * Output hook decision to ask user for permission
- * Used when commands are not in the safesh allowlist
- *
- * IMPORTANT: After user approves, the prehook is NOT called again.
- * Claude Code uses the updatedInput directly. So we must provide
- * the transpiled desh command, not the original bash command.
+ * Pending command structure saved to temp file for retry flow
  */
-function outputAskPermission(
+interface PendingCommand {
+  id: string;
+  commands: string[];  // Disallowed commands
+  tsCode: string;      // Transpiled TypeScript code
+  cwd: string;
+  timeout?: number;
+  runInBackground?: boolean;
+  createdAt: string;
+}
+
+/**
+ * Output hook decision to deny and prompt user for choice via LLM
+ *
+ * Flow:
+ * 1. Save pending command to temp file with unique ID
+ * 2. Return "deny" with message for LLM to prompt user
+ * 3. LLM prompts user with choices (once/always/session/deny)
+ * 4. User picks, LLM runs: desh retry --id=X --choice=N
+ * 5. desh retry executes command and persists choice if needed
+ */
+function outputDenyWithRetry(
   disallowedCommands: string[],
   tsCode: string,
   options?: { timeout?: number; runInBackground?: boolean },
 ): void {
   const cmdList = disallowedCommands.join(", ");
 
-  // Add marker and write to temp file (same as outputRewriteToDeshFile)
-  const markedCode = `console.error("# /*$*/");\n${tsCode}`;
-  const tempFile = `/tmp/safesh-${Date.now()}-${Deno.pid}.ts`;
-  Deno.writeTextFileSync(tempFile, markedCode);
+  // Generate unique ID for this pending command
+  const id = `${Date.now()}-${Deno.pid}`;
 
-  // Use --approved flag so desh knows these commands were user-approved
-  const approvedFlag = `--approved=${disallowedCommands.join(",")}`;
-  const deshCommand = `${DESH_CMD} -q ${approvedFlag} -f ${tempFile}`;
+  // Save pending command to temp file
+  const pending: PendingCommand = {
+    id,
+    commands: disallowedCommands,
+    tsCode,
+    cwd: Deno.cwd(),
+    timeout: options?.timeout,
+    runInBackground: options?.runInBackground,
+    createdAt: new Date().toISOString(),
+  };
 
-  // Build updatedInput with the desh command (not original bash)
-  const updatedInput: Record<string, unknown> = { command: deshCommand };
-  if (options?.timeout !== undefined) {
-    updatedInput.timeout = options.timeout;
-  }
-  if (options?.runInBackground !== undefined) {
-    updatedInput.run_in_background = options.runInBackground;
-  }
+  const pendingFile = `/tmp/safesh-pending-${id}.json`;
+  Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+
+  // Build deny message with retry instructions for LLM
+  const message = `[SAFESH] Command requires approval: ${cmdList}
+
+Ask user which option they prefer:
+1. Allow once
+2. Always allow (adds to config)
+3. Allow for this session
+4. Deny
+
+Then run: desh retry --id=${id} --choice=<1-4>`;
 
   const output = {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      permissionDecision: "ask",
-      permissionDecisionReason: `Command(s) not in safesh allowlist: ${cmdList}`,
-      updatedInput,
+      permissionDecision: "deny",
+      permissionDecisionReason: message,
     },
   };
   console.log(JSON.stringify(output));
@@ -614,8 +656,8 @@ async function main() {
     const disallowed = getDisallowedCommands(commands, config);
     if (disallowed.length > 0) {
       debug(`Disallowed commands: ${disallowed.join(", ")}`);
-      // Ask user for permission - provide transpiled code so it runs through safesh if approved
-      outputAskPermission(disallowed, tsCode, {
+      // Deny and prompt user for choice via LLM, then retry with desh retry
+      outputDenyWithRetry(disallowed, tsCode, {
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
       });
