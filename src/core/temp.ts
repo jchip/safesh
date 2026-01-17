@@ -78,11 +78,21 @@ export function generateTempId(): string {
 }
 
 /**
- * Get the session file path for storing session-allowed commands
+ * Get the session file path for storing session-allowed commands.
+ * Stored under {projectDir}/.temp/safesh/ if projectDir is provided,
+ * otherwise falls back to /tmp/safesh/
  */
-export function getSessionFilePath(sessionId?: string): string {
-  const dir = getTempRoot();
+export function getSessionFilePath(projectDir?: string, sessionId?: string): string {
   const id = sessionId ?? Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
+
+  if (projectDir) {
+    const dir = `${projectDir}/.temp/safesh`;
+    ensureDir(dir);
+    return `${dir}/session-${id}.json`;
+  }
+
+  // Fallback to /tmp/safesh if no projectDir
+  const dir = getTempRoot();
   return `${dir}/session-${id}.json`;
 }
 
