@@ -249,6 +249,7 @@ export function visitParameterExpansion(
 
   if (!modifier) {
     // Simple expansion: ${VAR} or $VAR
+    // Variable lookup: local var first, then $.ENV (for env vars)
     return `\${${param}}`;
   }
 
