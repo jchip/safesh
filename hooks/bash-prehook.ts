@@ -479,17 +479,34 @@ const DESH_MODE = Deno.env.get("BASH_PREHOOK_DESH_MODE") || "file"; // "file" or
 /**
  * Output hook decision to rewrite command as desh with file
  * Writes transpiled code to /tmp and passes file path to desh
+ *
+ * For TypeScript code, generates an ID and saves metadata for potential
+ * retry flow if initCmds encounters blocked commands at runtime.
  */
 function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean }): void {
   // Add marker to prove code went through SafeShell transpilation
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Write to temp file using timestamp + pid for uniqueness
-  const tempFile = `/tmp/safesh-${Date.now()}-${Deno.pid}.ts`;
+  // Generate unique ID for this script (for potential retry)
+  const id = `${Date.now()}-${Deno.pid}`;
+  const tempFile = `/tmp/safesh-${id}.ts`;
   Deno.writeTextFileSync(tempFile, markedCode);
 
-  // Create desh command with file path
-  const deshCommand = `${DESH_CMD} -q -f ${tempFile}`;
+  // Save metadata for potential retry (if initCmds encounters blocked commands)
+  const pending: PendingCommand = {
+    id,
+    commands: [], // Will be filled by initCmds if commands are blocked
+    tsCode,
+    cwd: Deno.cwd(),
+    timeout: options?.timeout,
+    runInBackground: options?.runInBackground,
+    createdAt: new Date().toISOString(),
+  };
+  const pendingFile = `/tmp/safesh-pending-${id}.json`;
+  Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+
+  // Create desh command with file path and pass ID via env var
+  const deshCommand = `SAFESH_SCRIPT_ID=${id} ${DESH_CMD} -q -f ${tempFile}`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -497,13 +514,32 @@ function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: {
 /**
  * Output hook decision to rewrite command as desh heredoc
  * Uses heredoc to pass code inline
+ *
+ * For TypeScript code, generates an ID and saves metadata for potential
+ * retry flow if initCmds encounters blocked commands at runtime.
  */
 function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean }): void {
   // Add marker to prove code went through SafeShell transpilation
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Create desh heredoc command
-  const deshCommand = `${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
+  // Generate unique ID for this script (for potential retry)
+  const id = `${Date.now()}-${Deno.pid}`;
+
+  // Save metadata for potential retry (if initCmds encounters blocked commands)
+  const pending: PendingCommand = {
+    id,
+    commands: [], // Will be filled by initCmds if commands are blocked
+    tsCode,
+    cwd: Deno.cwd(),
+    timeout: options?.timeout,
+    runInBackground: options?.runInBackground,
+    createdAt: new Date().toISOString(),
+  };
+  const pendingFile = `/tmp/safesh-pending-${id}.json`;
+  Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+
+  // Create desh heredoc command with ID via env var
+  const deshCommand = `SAFESH_SCRIPT_ID=${id} ${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -685,6 +721,53 @@ async function main() {
     let tsCode = detectTypeScript(parsed.command);
     if (tsCode) {
       debug("TypeScript detected, rewriting to desh");
+      // Prepend original command for error messages and wrap in error handler
+      const bashCommandEscaped = parsed.command.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+      const preview = parsed.command.length > 100 ? parsed.command.slice(0, 100) + "..." : parsed.command;
+      const previewEscaped = preview.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+
+      tsCode = `const __ORIGINAL_BASH_COMMAND__ = \`${bashCommandEscaped}\`;
+const __handleError = (error) => {
+  const fullCommand = __ORIGINAL_BASH_COMMAND__;
+
+  // Generate unique error log file
+  const errorFile = \`/tmp/safesh-error-\${Date.now()}-\${Deno.pid}.log\`;
+
+  // Build full error message
+  const errorMsg = [
+    "=== TypeScript Code Error ===",
+    \`Command: \${fullCommand}\`,
+    \`\\nError: \${error.message || error}\`,
+    error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
+    "============================\\n"
+  ].join("\\n");
+
+  // Write to file
+  try {
+    Deno.writeTextFileSync(errorFile, errorMsg);
+  } catch (e) {
+    console.error("Warning: Could not write error log:", e);
+  }
+
+  // Output with file reference first
+  console.error(\`\\nError log: \${errorFile}\`);
+  console.error(errorMsg);
+  Deno.exit(1);
+};
+
+// Global error handlers for uncaught errors
+globalThis.addEventListener("error", (event) => {
+  event.preventDefault();
+  __handleError(event.error);
+});
+
+globalThis.addEventListener("unhandledrejection", (event) => {
+  event.preventDefault();
+  __handleError(event.reason);
+});
+
+${tsCode}
+`;
       outputRewriteToDesh(tsCode, projectDir, {
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
@@ -716,6 +799,55 @@ async function main() {
       strict: false,
     });
     debug("Bash transpiled to TypeScript");
+
+    // Prepend original bash command as a constant for error messages and wrap in error handler
+    const bashCommandEscaped = parsed.command.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+    const preview = parsed.command.length > 100 ? parsed.command.slice(0, 100) + "..." : parsed.command;
+    const previewEscaped = preview.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+
+    // Add global error handlers to catch all errors (sync and async)
+    tsCode = `const __ORIGINAL_BASH_COMMAND__ = \`${bashCommandEscaped}\`;
+const __handleError = (error) => {
+  const fullCommand = __ORIGINAL_BASH_COMMAND__;
+
+  // Generate unique error log file
+  const errorFile = \`/tmp/safesh-error-\${Date.now()}-\${Deno.pid}.log\`;
+
+  // Build full error message
+  const errorMsg = [
+    "=== Bash Command Error ===",
+    \`Command: \${fullCommand}\`,
+    \`\\nError: \${error.message || error}\`,
+    error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
+    "=========================\\n"
+  ].join("\\n");
+
+  // Write to file
+  try {
+    Deno.writeTextFileSync(errorFile, errorMsg);
+  } catch (e) {
+    console.error("Warning: Could not write error log:", e);
+  }
+
+  // Output with file reference first
+  console.error(\`\\nError log: \${errorFile}\`);
+  console.error(errorMsg);
+  Deno.exit(1);
+};
+
+// Global error handlers for uncaught errors
+globalThis.addEventListener("error", (event) => {
+  event.preventDefault();
+  __handleError(event.error);
+});
+
+globalThis.addEventListener("unhandledrejection", (event) => {
+  event.preventDefault();
+  __handleError(event.reason);
+});
+
+${tsCode}
+`;
 
     // Check which commands are not allowed
     const disallowed = getDisallowedCommands(commands, config);
