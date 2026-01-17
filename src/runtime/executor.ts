@@ -634,12 +634,14 @@ function buildRunPermission(
   cwd: string,
   config: SafeShellConfig,
 ): string | null {
-  const runCommands = [...commands];
-
-  // If allowProjectCommands is true, add projectDir to allow running any command there
+  // If allowProjectCommands is true, use unrestricted --allow-run
+  // This is necessary because Deno doesn't support directory-based run permissions
+  // (--allow-run=/dir does NOT grant permission to executables within that dir)
   if (config.allowProjectCommands && config.projectDir) {
-    runCommands.push(config.projectDir);
+    return "--allow-run";
   }
+
+  const runCommands = [...commands];
 
   if (runCommands.length) {
     // Filter to only commands that exist to avoid Deno warnings (cached)
