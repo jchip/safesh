@@ -735,9 +735,9 @@ export async function executeCode(
   // Ensure temp directory exists
   await ensureDir(TEMP_SCRIPT_DIR);
 
-  // Create script file
+  // Create script file with exec prefix for inline code execution
   const hash = await hashCode(code);
-  const scriptPath = join(TEMP_SCRIPT_DIR, `${hash}.ts`);
+  const scriptPath = join(TEMP_SCRIPT_DIR, `exec-${hash}.ts`);
 
   // Build full code with preamble, user code, and error handler
   const preambleConfig = extractPreambleConfig(config, cwd);
@@ -1010,9 +1010,9 @@ export async function* executeCodeStreaming(
   // Ensure temp directory exists
   await ensureDir(TEMP_SCRIPT_DIR);
 
-  // Create script file
+  // Create script file with exec prefix for inline code execution
   const hash = await hashCode(code);
-  const scriptPath = join(TEMP_SCRIPT_DIR, `${hash}.ts`);
+  const scriptPath = join(TEMP_SCRIPT_DIR, `exec-${hash}.ts`);
 
   // Build full code with preamble and error handler
   const preambleConfig = extractPreambleConfig(config, cwd);
