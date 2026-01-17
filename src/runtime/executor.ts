@@ -35,45 +35,8 @@ import {
 } from "../core/constants.ts";
 import { DEFAULT_TIMEOUT_MS, TEMP_SCRIPT_DIR } from "../core/defaults.ts";
 
-// Cache for existing commands (checked once per unique command list + cwd)
-const existingCommandsCache = new Map<string, string[]>();
-
-/**
- * Filter commands to only those that exist on the system (cached)
- */
-function filterExistingCommands(commands: string[], cwd: string): string[] {
-  const cacheKey = `${cwd}:${commands.sort().join(",")}`;
-
-  if (existingCommandsCache.has(cacheKey)) {
-    return existingCommandsCache.get(cacheKey)!;
-  }
-
-  const existing = commands.filter((cmd) => {
-    try {
-      // For paths (absolute or relative), check if file or directory exists
-      if (cmd.startsWith("/") || cmd.startsWith("./") || cmd.startsWith("../")) {
-        // Resolve relative paths against cwd
-        const fullPath = cmd.startsWith("/") ? cmd : join(cwd, cmd);
-        const stat = Deno.statSync(fullPath);
-        // Allow both files (executables) and directories (for --allow-run=<dir>)
-        return stat.isFile || stat.isDirectory;
-      }
-      // For command names, use which
-      const result = new Deno.Command("which", {
-        args: [cmd],
-        stderr: "null",
-        stdout: "null"
-      }).outputSync();
-      return result.success;
-    } catch {
-      // Command not found or path doesn't exist
-      return false;
-    }
-  });
-
-  existingCommandsCache.set(cacheKey, existing);
-  return existing;
-}
+// NOTE: filterExistingCommands cache and function removed since we now always
+// use unrestricted --allow-run. No need to filter commands anymore.
 
 // Stderr markers - use constants from core/constants.ts
 const STDERR_MARKERS = {
@@ -628,29 +591,24 @@ function buildNetPermission(net: boolean | string[] | undefined): string {
 
 /**
  * Build run permission flag
+ *
+ * Always returns unrestricted --allow-run because:
+ * 1. Deno doesn't support directory-based run permissions
+ * 2. No wildcard/glob support for command lists
+ * 3. Dynamic scripts cannot be listed upfront
+ * 4. Security is enforced at application layer (bash-prehook, initCmds)
  */
 function buildRunPermission(
   commands: string[],
   cwd: string,
   config: SafeShellConfig,
 ): string | null {
-  // If allowProjectCommands is true, use unrestricted --allow-run
-  // This is necessary because Deno doesn't support directory-based run permissions
-  // (--allow-run=/dir does NOT grant permission to executables within that dir)
-  if (config.allowProjectCommands && config.projectDir) {
-    return "--allow-run";
-  }
-
-  const runCommands = [...commands];
-
-  if (runCommands.length) {
-    // Filter to only commands that exist to avoid Deno warnings (cached)
-    const existingCommands = filterExistingCommands(runCommands, cwd);
-    if (existingCommands.length) {
-      return `--allow-run=${existingCommands.join(",")}`;
-    }
-  }
-  return null;
+  // Always use unrestricted --allow-run
+  // SafeShell's permission validation happens at application layer:
+  // - bash-prehook validates commands before transpilation
+  // - initCmds() validates commands before execution
+  // - User approval required for new commands
+  return "--allow-run";
 }
 
 /**
