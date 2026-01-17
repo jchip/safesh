@@ -1117,13 +1117,12 @@ ${tsCode}
     const knownBadPatterns = [
       /const\s+\w+\s+=\s+for\s+await/,  // "const x = for await" - invalid syntax
       /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,  // "for (const x of ["${await..." - template in array
-      /\bfor\s+await.*\[".*\$\{await/,  // Nested await in for loop array
+      /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,  // Alternative: for (const x of ["...await
     ];
 
     for (const pattern of knownBadPatterns) {
       if (pattern.test(tsCode)) {
-        console.error(`
-[SAFESH] Transpiler Error: The bash script is too complex for automatic transpilation.
+        const message = `[SAFESH] Transpiler Error: The bash script is too complex for automatic transpilation.
 
 DO NOT USE BASH FOR SCRIPTS THAT ARE TOO COMPLEX. Use safesh /*#*/ TypeScript instead.
 
@@ -1133,7 +1132,17 @@ Example:
   for (const branch of branches) {
     console.log(\`Branch: \${branch}\`);
   }
-`);
+`;
+
+        // Output hook denial to block execution
+        const output = {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: message,
+          },
+        };
+        console.log(JSON.stringify(output));
         Deno.exit(1);
       }
     }
