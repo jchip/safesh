@@ -12,13 +12,19 @@ import type { PendingRetry } from "../core/types.ts";
 import { PENDING_RETRY_TTL, MAX_PENDING_RETRIES } from "../core/types.ts";
 
 /**
+ * Generate a unique retry ID using timestamp and process ID.
+ * Format: {timestamp}-{pid} to ensure uniqueness across multiple SafeShell instances.
+ */
+function generateRetryId(): string {
+  return `${Date.now()}-${Deno.pid}`;
+}
+
+/**
  * RetryManager - manages pending retries for permission workflow
  */
 export class RetryManager {
   /** Pending retries by ID */
   private pendingRetries: Map<string, PendingRetry> = new Map();
-  /** Sequence counter for retry IDs */
-  private retrySequence = 0;
 
   /**
    * Create a pending retry for a blocked command (legacy single command)
@@ -28,6 +34,7 @@ export class RetryManager {
     blockedCommand: string,
     context: PendingRetry["context"],
     shellId?: string,
+    scriptHash?: string,
   ): PendingRetry {
     // Cleanup expired retries first
     this.cleanupExpiredRetries();
@@ -39,8 +46,9 @@ export class RetryManager {
     }
 
     const retry: PendingRetry = {
-      id: `rt${++this.retrySequence}`,
+      id: generateRetryId(),
       code,
+      scriptHash,
       shellId,
       context,
       blockedCommand,
@@ -60,6 +68,7 @@ export class RetryManager {
     notFoundCommands: string[],
     context: PendingRetry["context"],
     shellId?: string,
+    scriptHash?: string,
   ): PendingRetry {
     // Cleanup expired retries first
     this.cleanupExpiredRetries();
@@ -71,8 +80,9 @@ export class RetryManager {
     }
 
     const retry: PendingRetry = {
-      id: `rt${++this.retrySequence}`,
+      id: generateRetryId(),
       code,
+      scriptHash,
       shellId,
       context,
       blockedCommands,
@@ -92,6 +102,7 @@ export class RetryManager {
     blockedHost: string,
     context: PendingRetry["context"],
     shellId?: string,
+    scriptHash?: string,
   ): PendingRetry {
     // Cleanup expired retries first
     this.cleanupExpiredRetries();
@@ -103,8 +114,9 @@ export class RetryManager {
     }
 
     const retry: PendingRetry = {
-      id: `rt${++this.retrySequence}`,
+      id: generateRetryId(),
       code,
+      scriptHash,
       shellId,
       context,
       blockedHost,
