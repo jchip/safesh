@@ -122,6 +122,15 @@ async function checkPermission(
   // Relative path - check CWD first
   const cwdPath = resolvePath(cwd, command);
   if (await checkCommandExists(cwdPath)) {
+    // Check if allowProjectCommands is enabled and path is within project
+    if (allowProjectCommands && projectDir) {
+      // cwdPath is already absolute (resolved from cwd)
+      // Check if it's within the project directory
+      const absoluteProjectDir = projectDir.startsWith("/") ? projectDir : resolvePath(cwd, projectDir);
+      if (cwdPath.startsWith(absoluteProjectDir + "/") || cwdPath === absoluteProjectDir) {
+        return { allowed: true, resolvedPath: cwdPath };
+      }
+    }
     if (isInAllowedList(cwdPath, allowedCommands)) {
       return { allowed: true, resolvedPath: cwdPath };
     }

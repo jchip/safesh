@@ -19,7 +19,7 @@ import { loadConfig, mergeConfigs, validateConfig } from "../core/config.ts";
 import { executeCode, executeFile, executeCodeStreaming } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
-import { getPendingFilePath, getSessionFilePath } from "../core/temp.ts";
+import { getPendingFilePath, getSessionFilePath, getScriptsDir } from "../core/temp.ts";
 
 const VERSION = "0.1.0";
 
@@ -76,12 +76,12 @@ function getSessionAllowedCommands(): string[] {
  */
 interface PendingCommand {
   id: string;
-  commands: string[];
-  tsCode: string;
+  commands: string[];  // Disallowed commands (filled by initCmds)
   cwd: string;
   timeout?: number;
   runInBackground?: boolean;
   createdAt: string;
+  // Note: tsCode removed - read from script file using id/hash
 }
 
 /**
@@ -153,21 +153,45 @@ async function handleRetry(args: string[]): Promise<void> {
     ...pending.commands,
   ];
 
-  // Add marker and execute
-  const markedCode = `console.error("# /*#*/");\n${pending.tsCode}`;
+  // Find and read the script file using the hash-based ID
+  // Script file can be: tx-script-<hash>.ts, script-<hash>.ts, or file_<hash>.ts (legacy)
+  const scriptsDir = getScriptsDir();
+  const possiblePaths = [
+    `${scriptsDir}/tx-script-${id}.ts`,
+    `${scriptsDir}/script-${id}.ts`,
+    `${scriptsDir}/file_${id}.ts`,
+  ];
 
-  // Write to temp file and execute
-  const tempFile = `/tmp/safesh-${Date.now()}-${Deno.pid}.ts`;
-  await Deno.writeTextFile(tempFile, markedCode);
+  let scriptFilePath: string | null = null;
+  for (const path of possiblePaths) {
+    try {
+      await Deno.stat(path);
+      scriptFilePath = path;
+      break;
+    } catch {
+      // Try next path
+    }
+  }
+
+  if (!scriptFilePath) {
+    console.error(`Error: Script file not found for id: ${id}`);
+    console.error(`Tried: ${possiblePaths.join(", ")}`);
+    Deno.exit(1);
+  }
 
   try {
-    const result = await executeFile(tempFile, config);
+    // Execute the script file directly (it already has the marker)
+    // Pass cwd, timeout, and runInBackground from pending metadata
+    const result = await executeFile(scriptFilePath, config, {
+      cwd,
+      timeout: pending.timeout,
+    });
+
     if (result.stdout) console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);
 
-    // Cleanup pending file on success
+    // Cleanup pending file on success (keep script file for caching)
     try { await Deno.remove(pendingFile); } catch { /* ignore */ }
-    try { await Deno.remove(tempFile); } catch { /* ignore */ }
 
     Deno.exit(result.code);
   } catch (error) {
@@ -361,6 +385,13 @@ async function main() {
       // Merge projectDir override
       config = mergeConfigs(baseConfig, { projectDir });
       if (verbose) console.error("Config loaded successfully");
+    }
+
+    // Check if allowProjectCommands should be enabled via env var (set by bash-prehook)
+    const envAllowProjectCommands = Deno.env.get("SAFESH_ALLOW_PROJECT_COMMANDS");
+    if (envAllowProjectCommands === "true") {
+      config = mergeConfigs(config, { allowProjectCommands: true });
+      if (verbose) console.error("Enabled allowProjectCommands from environment");
     }
 
     // Validate and log warnings after projectDir merge (unless quiet)
