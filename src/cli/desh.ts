@@ -21,6 +21,186 @@ import { SafeShellError } from "../core/errors.ts";
 
 const VERSION = "0.1.0";
 
+/**
+ * Get session-allowed commands from session file
+ */
+function getSessionAllowedCommands(): string[] {
+  const sessionId = Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
+  const sessionFile = `/tmp/safesh-session-${sessionId}.json`;
+
+  try {
+    const content = Deno.readTextFileSync(sessionFile);
+    const session = JSON.parse(content) as { allowedCommands?: string[] };
+    return session.allowedCommands ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Pending command structure (matches prehook's PendingCommand)
+ */
+interface PendingCommand {
+  id: string;
+  commands: string[];
+  tsCode: string;
+  cwd: string;
+  timeout?: number;
+  runInBackground?: boolean;
+  createdAt: string;
+}
+
+/**
+ * Handle retry subcommand: desh retry --id=X --choice=N
+ *
+ * Choices:
+ * 1 = Allow once (just execute)
+ * 2 = Always allow (update config.local.json, then execute)
+ * 3 = Allow for session (update session file, then execute)
+ * 4 = Deny (do nothing)
+ */
+async function handleRetry(args: string[]): Promise<void> {
+  const parsed = parseArgs(args, {
+    string: ["id", "choice"],
+  });
+
+  const id = parsed.id as string;
+  const choice = parseInt(parsed.choice as string, 10);
+
+  if (!id) {
+    console.error("Error: --id is required for retry");
+    Deno.exit(1);
+  }
+
+  if (isNaN(choice) || choice < 1 || choice > 4) {
+    console.error("Error: --choice must be 1-4");
+    Deno.exit(1);
+  }
+
+  // Choice 4 = Deny
+  if (choice === 4) {
+    console.error("[safesh] Command denied by user.");
+    Deno.exit(0);
+  }
+
+  // Read pending command file
+  const pendingFile = `/tmp/safesh-pending-${id}.json`;
+  let pending: PendingCommand;
+  try {
+    const content = await Deno.readTextFile(pendingFile);
+    pending = JSON.parse(content);
+  } catch {
+    console.error(`Error: Pending command not found: ${pendingFile}`);
+    Deno.exit(1);
+  }
+
+  // Choice 2 = Always allow - update config.local.json
+  if (choice === 2) {
+    await addToConfigLocal(pending.commands, pending.cwd);
+  }
+
+  // Choice 3 = Session allow - update session file
+  if (choice === 3) {
+    await addToSessionFile(pending.commands);
+  }
+
+  // Execute the command
+  const cwd = pending.cwd;
+  const projectDir = Deno.env.get("CLAUDE_PROJECT_DIR") ?? cwd;
+
+  // Load config and merge approved commands
+  const baseConfig = await loadConfig(cwd, { logWarnings: false });
+  const config = mergeConfigs(baseConfig, { projectDir });
+
+  // Add pending commands to permissions
+  config.permissions = config.permissions ?? {};
+  config.permissions.run = [
+    ...(config.permissions.run ?? []),
+    ...pending.commands,
+  ];
+
+  // Add marker and execute
+  const markedCode = `console.error("# /*$*/");\n${pending.tsCode}`;
+
+  // Write to temp file and execute
+  const tempFile = `/tmp/safesh-${Date.now()}-${Deno.pid}.ts`;
+  await Deno.writeTextFile(tempFile, markedCode);
+
+  try {
+    const result = await executeFile(tempFile, config);
+    if (result.stdout) console.log(result.stdout);
+    if (result.stderr) console.error(result.stderr);
+
+    // Cleanup pending file on success
+    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+
+    Deno.exit(result.code);
+  } catch (error) {
+    console.error(`Execution failed: ${error}`);
+    Deno.exit(1);
+  }
+}
+
+/**
+ * Add commands to .config/safesh/config.local.json for "always allow"
+ */
+async function addToConfigLocal(commands: string[], cwd: string): Promise<void> {
+  const configDir = `${cwd}/.config/safesh`;
+  const configPath = `${configDir}/config.local.json`;
+
+  // Ensure directory exists
+  try {
+    await Deno.mkdir(configDir, { recursive: true });
+  } catch { /* ignore if exists */ }
+
+  // Load existing config or create new
+  let config: { allowedCommands?: string[] } = {};
+  try {
+    const content = await Deno.readTextFile(configPath);
+    config = JSON.parse(content);
+  } catch { /* file doesn't exist */ }
+
+  // Merge commands
+  const existing = new Set(config.allowedCommands ?? []);
+  for (const cmd of commands) {
+    existing.add(cmd);
+  }
+  config.allowedCommands = [...existing];
+
+  // Write back
+  await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2) + "\n");
+  console.error(`[safesh] Added to always-allow: ${commands.join(", ")}`);
+}
+
+/**
+ * Add commands to session file for "session allow"
+ * Session file is /tmp/safesh-session-{ppid}.json
+ */
+async function addToSessionFile(commands: string[]): Promise<void> {
+  // Use parent PID to identify session (Claude Code process)
+  const sessionId = Deno.env.get("CLAUDE_SESSION_ID") ?? "default";
+  const sessionFile = `/tmp/safesh-session-${sessionId}.json`;
+
+  // Load existing or create new
+  let session: { allowedCommands?: string[] } = {};
+  try {
+    const content = await Deno.readTextFile(sessionFile);
+    session = JSON.parse(content);
+  } catch { /* file doesn't exist */ }
+
+  // Merge commands
+  const existing = new Set(session.allowedCommands ?? []);
+  for (const cmd of commands) {
+    existing.add(cmd);
+  }
+  session.allowedCommands = [...existing];
+
+  // Write back
+  await Deno.writeTextFile(sessionFile, JSON.stringify(session, null, 2) + "\n");
+  console.error(`[safesh] Added to session-allow: ${commands.join(", ")}`);
+}
+
 const HELP = `
 desh - Deno Shell CLI for SafeShell
 
@@ -82,8 +262,14 @@ async function readStdin(): Promise<string> {
 }
 
 async function main() {
+  // Check for retry subcommand first
+  if (Deno.args[0] === "retry") {
+    await handleRetry(Deno.args.slice(1));
+    return;
+  }
+
   const args = parseArgs(Deno.args, {
-    string: ["code", "file", "import", "config", "project", "approved"],
+    string: ["code", "file", "import", "config", "project"],
     boolean: ["verbose", "help", "version", "stream", "quiet"],
     alias: {
       c: "code",
@@ -94,7 +280,6 @@ async function main() {
       q: "quiet",
       v: "verbose",
       h: "help",
-      a: "approved",
     },
     default: {
       verbose: false,
@@ -150,14 +335,13 @@ async function main() {
       }
     }
 
-    // Merge user-approved commands from --approved flag
-    const approved = args.approved as string | undefined;
-    if (approved) {
-      const approvedCmds = approved.split(",").map((c) => c.trim()).filter(Boolean);
+    // Merge session-allowed commands
+    const sessionAllowed = getSessionAllowedCommands();
+    if (sessionAllowed.length > 0) {
       config.permissions = config.permissions ?? {};
       config.permissions.run = [
         ...(config.permissions.run ?? []),
-        ...approvedCmds,
+        ...sessionAllowed,
       ];
     }
   } catch (error) {
