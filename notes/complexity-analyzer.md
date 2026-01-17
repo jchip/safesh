@@ -25,9 +25,11 @@ Commands that can execute directly without transpilation:
 
 - **Basic commands**: `ls -la`, `echo hello`, `cat file.txt`
 - **Pipelines**: `ls | grep foo`, `echo a && echo b`, `cmd1 || cmd2`
-- **Redirects**: `echo foo > file.txt`, `cat < input.txt`
+- **Simple redirects**: `echo foo > file.txt`, `cat < input.txt`, `cmd 2>&1`
 - **Variable assignments**: `FOO=bar`, `export PATH=/usr/bin`
 - **Test commands**: `[[ -f file.txt ]]`, `(( x > 5 ))`
+
+**Note**: Heredocs are treated as complex and require transpilation.
 
 ### Complex Commands (Transpiled)
 
@@ -40,6 +42,7 @@ Commands that require TypeScript transpilation:
 - **Brace groups**: `{ echo a; echo b; }`
 - **Command substitutions**: `echo $(pwd)`, `` echo `date` ``
 - **Process substitutions**: `diff <(cmd1) <(cmd2)`
+- **Heredocs**: `cat <<EOF`, `cat <<-EOF`, `cat <<<"string"`
 
 ## Benefits
 
@@ -89,6 +92,12 @@ if [[ -f file.txt ]]; then cat file.txt; fi
 
 # Subshell
 (cd /tmp && ls -la)
+
+# Heredoc
+cat <<EOF
+line 1
+line 2
+EOF
 ```
 
 ## Implementation
