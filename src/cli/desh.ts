@@ -19,6 +19,7 @@ import { loadConfig, mergeConfigs, validateConfig } from "../core/config.ts";
 import { executeCode, executeFile, executeCodeStreaming } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
+import { getPendingFilePath } from "../core/temp.ts";
 
 const VERSION = "0.1.0";
 
@@ -118,7 +119,7 @@ async function handleRetry(args: string[]): Promise<void> {
   }
 
   // Read pending command file
-  const pendingFile = `/tmp/safesh-pending-${id}.json`;
+  const pendingFile = getPendingFilePath(id);
   let pending: PendingCommand;
   try {
     const content = await Deno.readTextFile(pendingFile);
