@@ -137,15 +137,16 @@ Deno.test({
   },
 });
 
-// TODO: Implement safesh:* import mapping before enabling this test
+// NOTE: Static imports don't work in executeCode because user code is wrapped in async IIFE.
+// Use $.fs, $.text, etc. instead, or use dynamic imports: await import("safesh:fs")
 Deno.test({
-  name: "executeCode - supports imports from safesh:*",
-  ignore: true, // Disabled until safesh:* imports are implemented
+  name: "executeCode - supports safesh modules via $ namespace",
   fn: async () => {
     const code = `
-      import * as fs from "safesh:fs";
-      console.log("fs imported successfully");
-      console.log(typeof fs.read);
+      // Static imports don't work (code is wrapped in async IIFE)
+      // Use $.fs instead:
+      console.log("fs available via $.fs");
+      console.log(typeof $.fs.read);
     `;
 
     const result = await executeCode(code, testConfig);
@@ -157,7 +158,7 @@ Deno.test({
     }
 
     assertEquals(result.success, true);
-    assertStringIncludes(result.stdout, "fs imported successfully");
+    assertStringIncludes(result.stdout, "fs available via $.fs");
     assertStringIncludes(result.stdout, "function");
   },
 });
