@@ -624,10 +624,13 @@ function shouldPassthrough(command: string): boolean {
 
 /**
  * Output passthrough decision - let native bash handle the command
- * Exit 0 with no output = hook succeeded, allow normal execution
+ * Exits with no output so the hook is effectively a no-op
+ * The command continues to the Bash tool which handles it normally
  */
 function outputPassthrough(): void {
-  // No output, just exit 0 - signals success without blocking
+  // Exit 0 with no output = hook completed successfully, no decision made
+  // This allows the Bash tool to handle the command with its own permission system
+  // Cleaner than returning "allow" which might bypass permission checks
 }
 
 /**
