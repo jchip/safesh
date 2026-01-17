@@ -48,6 +48,7 @@ export class Parser {
   private contextStack: ParserContext[] = [];
   private diagnostics: AST.ParseDiagnostic[] = [];
   private recoveryMode = false;
+  private pendingHeredocs: AST.Redirection[] = [];
 
   constructor(input: string) {
     this.lexer = new Lexer(input);
@@ -171,6 +172,10 @@ export class Parser {
       }
 
       body.push(this.parseStatement());
+
+      // After parsing a statement, consume any pending heredoc content
+      this.consumePendingHeredocs();
+
       this.skipNewlines();
     }
 
@@ -199,6 +204,9 @@ export class Parser {
 
       try {
         body.push(this.parseStatement());
+
+        // After parsing a statement, consume any pending heredoc content
+        this.consumePendingHeredocs();
       } catch (e) {
         // Record the error and try to recover
         if (e instanceof Error) {
@@ -1190,6 +1198,38 @@ export class Parser {
   // Redirections
   // ===========================================================================
 
+  /**
+   * Consume pending heredoc content tokens and fill in the redirection targets
+   * This should be called after parsing a complete command/pipeline
+   */
+  private consumePendingHeredocs(): void {
+    if (this.pendingHeredocs.length === 0) {
+      return;
+    }
+
+    // Skip any newlines before heredoc content
+    while (this.is(TokenType.NEWLINE) || this.is(TokenType.COMMENT)) {
+      this.advance();
+    }
+
+    // Consume HEREDOC_CONTENT tokens for each pending heredoc
+    for (const heredoc of this.pendingHeredocs) {
+      if (this.is(TokenType.HEREDOC_CONTENT)) {
+        const contentToken = this.advance();
+        // Replace the delimiter with the actual content
+        heredoc.target = {
+          type: "Word",
+          value: contentToken.value,
+          quoted: false,
+          singleQuoted: false,
+          parts: [{ type: "LiteralPart", value: contentToken.value }],
+        };
+      }
+    }
+
+    this.pendingHeredocs = [];
+  }
+
   private isRedirectionOperator(): boolean {
     // Direct redirection operators
     if (this.isAny(...REDIRECTION_TOKEN_TYPES)) {
@@ -1267,29 +1307,12 @@ export class Parser {
       // Handle close FD syntax: >&- or <&-
       target = this.parseWord();
     } else if (operator === "<<" || operator === "<<-") {
-      // Here-document: parse delimiter, then skip newlines and consume heredoc content
+      // Here-document: parse delimiter
+      // IMPORTANT: Don't consume HEREDOC_CONTENT yet!
+      // Heredoc content comes after the entire command line (including pipelines)
+      // We'll consume it after parsing the complete statement
       const delimiter = this.parseWord();
-
-      // Skip newlines and comments until we find HEREDOC_CONTENT
-      while (this.is(TokenType.NEWLINE) || this.is(TokenType.COMMENT)) {
-        this.advance();
-      }
-
-      // Consume the heredoc content
-      if (this.is(TokenType.HEREDOC_CONTENT)) {
-        const contentToken = this.advance();
-        target = {
-          type: "Word",
-          value: contentToken.value,
-          quoted: false,
-          singleQuoted: false,
-          parts: [{ type: "LiteralPart", value: contentToken.value }],
-        };
-      } else {
-        // If no HEREDOC_CONTENT token found, use the delimiter as placeholder
-        // This can happen if the heredoc is incomplete
-        target = delimiter;
-      }
+      target = delimiter;
     } else {
       target = this.parseWord();
     }
@@ -1305,6 +1328,11 @@ export class Parser {
     }
     if (fdVar !== undefined) {
       result.fdVar = fdVar;
+    }
+
+    // Track heredoc redirections so we can fill in content later
+    if (operator === "<<" || operator === "<<-") {
+      this.pendingHeredocs.push(result);
     }
 
     return result;
