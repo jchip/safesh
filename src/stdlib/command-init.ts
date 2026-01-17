@@ -210,7 +210,7 @@ export async function initCmds<T extends readonly string[]>(
       }
     }
 
-    // If any errors, emit marker and throw
+    // If any errors, check if we're running under a script ID (for retry flow)
     if (notAllowed.length > 0 || notFound.length > 0) {
       const errorEvent = {
         type: ERROR_COMMANDS_BLOCKED,
@@ -219,6 +219,44 @@ export async function initCmds<T extends readonly string[]>(
       };
       console.error(`${INIT_ERROR_MARKER}${JSON.stringify(errorEvent)}`);
 
+      // Check if we're running under a script ID (TypeScript via prehook)
+      const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
+      if (scriptId) {
+        // Update pending command file with blocked commands
+        const pendingFile = `/tmp/safesh-pending-${scriptId}.json`;
+        try {
+          const pendingContent = Deno.readTextFileSync(pendingFile);
+          const pending = JSON.parse(pendingContent);
+          pending.commands = notAllowed; // Update with actual blocked commands
+          Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+        } catch (error) {
+          console.error(`Warning: Could not update pending file: ${error}`);
+        }
+
+        // Output deny-with-retry message (same format as bash prehook)
+        const cmdList = notAllowed.join(", ");
+        const message = `[SAFESH] BLOCKED: ${cmdList}
+
+WAIT for user choice (1-4):
+1. Allow once
+2. Always allow
+3. Allow for session
+4. Deny
+
+DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${scriptId} --choice=<user's choice>`;
+
+        const output = {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: message,
+          },
+        };
+        console.log(JSON.stringify(output));
+        Deno.exit(1);
+      }
+
+      // No script ID - normal error handling
       const errors: string[] = [];
       if (notAllowed.length > 0) {
         errors.push(`Commands not allowed: ${notAllowed.join(", ")}`);

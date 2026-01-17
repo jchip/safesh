@@ -259,7 +259,7 @@ function buildFluentCommand(
   name: string,
   args: string[],
   _ctx: VisitorContext,
-): FluentCommandResult {
+): FluentCommandResult | null {
   switch (name) {
     case "cat": {
       // $.cat(file) or $.cat(file1, file2, ...)
@@ -530,10 +530,28 @@ export function buildPipeline(
   // Build the chained expression
   if (parts.length === 0) return { code: "", async: false };
 
+  // Look ahead: check if any && in the chain is eventually followed by a pipe
+  // This affects how we transpile the entire && chain
+  const hasAndThenPipe = (() => {
+    for (let i = 0; i < operators.length; i++) {
+      if (operators[i] === "&&") {
+        // Check if this && is eventually followed by a pipe before hitting ||, ;, or end
+        for (let j = i + 1; j < operators.length; j++) {
+          const laterOp = operators[j];
+          if (laterOp === "|") return true;
+          if (laterOp === "||" || laterOp === ";") break;
+        }
+      }
+    }
+    return false;
+  })();
+
   let result = parts[0]?.code ?? "";
   let resultIsPrintable = parts[0]?.isPrintable ?? false;
   // Track if result is a stream - either a stream producer ($.cat) or from .stdout().lines()
   let resultIsStream = parts[0]?.isStreamProducer ?? false;
+  // Track if result is a Promise (from async IIFE) that needs awaiting before piping
+  let resultIsPromise = false;
 
   for (let i = 1; i < parts.length; i++) {
     const op = operators[i - 1];
@@ -541,17 +559,39 @@ export function buildPipeline(
     if (!part) continue;
 
     if (op === "&&") {
+      // If this && chain will eventually be piped, use comma operator for all of them
+      const followedByPipe = hasAndThenPipe;
+
       // SSH-361/362: Handle printable vs non-printable parts correctly
       // Variable assignments (isPrintable: false) should just be executed, not returned
       if (!resultIsPrintable && !part.isPrintable) {
         // SSH-362: Both are non-printable (e.g., consecutive variable assignments)
         // Just sequence them without IIFE wrapping
         result = `${result}; ${part.code}`;
+        resultIsPromise = false;
       } else if (resultIsPrintable) {
-        result = `(async () => { await __printCmd(${result}); return ${part.code}; })()`;
+        // Await the previous result if it's a promise (from a previous IIFE)
+        const resultExpr = resultIsPromise ? `await ${result}` : result;
+        // If followed by pipe, don't use IIFE - sequence with semicolon and conditional
+        if (followedByPipe) {
+          // Use comma operator to execute first command, then return second
+          result = `(await __printCmd(${resultExpr}), ${part.code})`;
+          resultIsPromise = false;
+        } else {
+          result = `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`;
+          resultIsPromise = true; // This IIFE returns a Promise
+        }
       } else {
-        // result is non-printable, part is printable - wrap in IIFE
-        result = `(async () => { ${result}; return ${part.code}; })()`;
+        // result is non-printable (like cd), part is printable
+        if (followedByPipe) {
+          // Use comma operator to execute first, then return second Command
+          result = `(${result}, ${part.code})`;
+          resultIsPromise = false;
+        } else {
+          // Wrap in IIFE only if not followed by pipe
+          result = `(async () => { ${result}; return ${part.code}; })()`;
+          resultIsPromise = true; // This IIFE returns a Promise
+        }
       }
       resultIsPrintable = part.isPrintable;
       resultIsStream = false; // && chain resets to command result
@@ -560,15 +600,26 @@ export function buildPipeline(
       if (!resultIsPrintable && !part.isPrintable) {
         // Both non-printable - sequence with try/catch for || semantics
         result = `(async () => { try { ${result}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${part.code}; return { code: 0, stdout: '', stderr: '', success: true }; } })()`;
+        resultIsPromise = true;
       } else if (resultIsPrintable) {
-        result = `(async () => { try { await __printCmd(${result}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+        // Await the previous result if it's a promise
+        const resultExpr = resultIsPromise ? `await ${result}` : result;
+        result = `(async () => { try { await __printCmd(${resultExpr}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+        resultIsPromise = true;
       } else {
         result = `(async () => { try { ${result}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+        resultIsPromise = true;
       }
       resultIsPrintable = part.isPrintable;
       resultIsStream = false; // || chain resets to command result
     } else if (op === "|") {
       // SSH-364: Use appropriate method for transforms vs commands
+      // If result is a Promise (from && or || IIFE), await it first
+      if (resultIsPromise) {
+        result = `(await ${result})`;
+        resultIsPromise = false;
+      }
+
       // Transforms (like $.head, $.grep) need the output split into lines first
       if (part.isTransform) {
         if (resultIsStream) {
@@ -595,15 +646,25 @@ export function buildPipeline(
       if (!resultIsPrintable && !part.isPrintable) {
         // Both non-printable - just sequence them
         result = `${result}; ${part.code}`;
+        resultIsPromise = false;
       } else if (resultIsPrintable) {
-        result = `(async () => { await __printCmd(${result}); return ${part.code}; })()`;
+        // Await the previous result if it's a promise
+        const resultExpr = resultIsPromise ? `await ${result}` : result;
+        result = `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`;
+        resultIsPromise = true;
       } else {
         result = `(async () => { ${result}; return ${part.code}; })()`;
+        resultIsPromise = true;
       }
       resultIsPrintable = part.isPrintable;
       resultIsStream = false; // ; resets to command result
     } else {
       // Default: pipe
+      // If result is a Promise (from && or || IIFE), await it first
+      if (resultIsPromise) {
+        result = `(await ${result})`;
+        resultIsPromise = false;
+      }
       result = `${result}.pipe(${part.code})`;
       resultIsPrintable = true;
       resultIsStream = false;
