@@ -71,12 +71,65 @@ export function visitForStatement(
   const lines: string[] = [];
   const indent = ctx.getIndent();
 
-  // Build iterable
-  const items = stmt.iterable.map((item) => {
-    const value = ctx.visitWord(item);
-    return `"${value}"`;
+  // Check if any item contains command substitution or other dynamic expansion
+  const hasDynamicExpansion = stmt.iterable.some((item) => {
+    if (item.type === "CommandSubstitution") return true;
+    if (item.type === "Word" && item.parts.length > 0) {
+      return item.parts.some((part) =>
+        part.type === "CommandSubstitution" ||
+        part.type === "ParameterExpansion" ||
+        part.type === "ArithmeticExpansion"
+      );
+    }
+    return false;
   });
-  const itemsExpr = `[${items.join(", ")}]`;
+
+  let itemsExpr: string;
+
+  if (hasDynamicExpansion) {
+    // Build array dynamically at runtime
+    // For command substitutions, split by whitespace (word splitting)
+    // For other expansions, use as-is
+    const tempVar = ctx.getTempVar();
+    lines.push(`${indent}const ${tempVar} = [];`);
+
+    for (const item of stmt.iterable) {
+      if (item.type === "CommandSubstitution") {
+        // Command substitution: evaluate and split by whitespace
+        const cmdSubExpr = ctx.visitWord(item);
+        // cmdSubExpr is ${await __cmdSubText(...)} - extract the inner part
+        const innerExpr = cmdSubExpr.slice(2, -1); // Remove ${ and }
+        lines.push(`${indent}${tempVar}.push(...(${innerExpr}).split(/\\s+/).filter(s => s.length > 0));`);
+      } else if (item.type === "Word" && item.parts.length > 0) {
+        // Check if the word contains command substitution
+        const hasCommandSub = item.parts.some((part) => part.type === "CommandSubstitution");
+
+        if (hasCommandSub) {
+          // Word with command substitution: evaluate and split
+          const wordExpr = ctx.visitWord(item);
+          // Build a template literal evaluation that handles expansion
+          lines.push(`${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`);
+        } else {
+          // Word with other expansions (parameter, arithmetic): evaluate as single item
+          const wordExpr = ctx.visitWord(item);
+          lines.push(`${indent}${tempVar}.push(\`${wordExpr}\`);`);
+        }
+      } else {
+        // Plain word: add as string literal
+        const value = ctx.visitWord(item);
+        lines.push(`${indent}${tempVar}.push("${value}");`);
+      }
+    }
+
+    itemsExpr = tempVar;
+  } else {
+    // No dynamic expansion: build static array
+    const items = stmt.iterable.map((item) => {
+      const value = ctx.visitWord(item);
+      return `"${value}"`;
+    });
+    itemsExpr = `[${items.join(", ")}]`;
+  }
 
   lines.push(`${indent}for (const ${stmt.variable} of ${itemsExpr}) {`);
 
