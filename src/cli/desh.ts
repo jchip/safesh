@@ -83,7 +83,7 @@ async function readStdin(): Promise<string> {
 
 async function main() {
   const args = parseArgs(Deno.args, {
-    string: ["code", "file", "import", "config", "project"],
+    string: ["code", "file", "import", "config", "project", "approved"],
     boolean: ["verbose", "help", "version", "stream", "quiet"],
     alias: {
       c: "code",
@@ -94,6 +94,7 @@ async function main() {
       q: "quiet",
       v: "verbose",
       h: "help",
+      a: "approved",
     },
     default: {
       verbose: false,
@@ -147,6 +148,17 @@ async function main() {
         console.error("⚠️  Config warnings:");
         validation.warnings.forEach((w) => console.error(`   ${w}`));
       }
+    }
+
+    // Merge user-approved commands from --approved flag
+    const approved = args.approved as string | undefined;
+    if (approved) {
+      const approvedCmds = approved.split(",").map((c) => c.trim()).filter(Boolean);
+      config.permissions = config.permissions ?? {};
+      config.permissions.run = [
+        ...(config.permissions.run ?? []),
+        ...approvedCmds,
+      ];
     }
   } catch (error) {
     if (error instanceof SafeShellError) {
