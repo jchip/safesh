@@ -136,6 +136,7 @@ const SHELL_BUILTINS: Record<string, { fn: string; type: "silent" | "prints" | "
 export function buildCommand(
   command: AST.Command,
   ctx: VisitorContext,
+  options?: { inPipeline?: boolean },
 ): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean; isStream?: boolean } {
   // Handle pure variable assignments (no command name)
   const hasNoCommand =
@@ -159,14 +160,18 @@ export function buildCommand(
   // Check if command has environment variable assignments
   const hasAssignments = command.assignments.length > 0 && !hasNoCommand;
 
+  // Check if command has redirections - builtins can't handle redirections
+  const hasRedirects = command.redirects.length > 0;
+
   // Check if this is a user-defined function call
   if (ctx.isFunction(name)) {
     // Call the function directly
     cmdExpr = `${name}()`;
     isAsync = true;
     isUserFunction = true;
-  } else if (SHELL_BUILTINS[name] && !hasAssignments) {
+  } else if (SHELL_BUILTINS[name] && !hasAssignments && !hasRedirects && !options?.inPipeline) {
     // SSH-372: Use preamble builtins for cd, pwd, echo, etc.
+    // But NOT when in a pipeline, since builtins don't return Command objects that support piping
     const builtin = SHELL_BUILTINS[name];
     const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
 
@@ -198,9 +203,12 @@ export function buildCommand(
       (r) => r.operator === "<<" || r.operator === "<<-"
     );
 
+    // Check if command has any redirections - fluent transforms don't support redirection methods
+    const hasAnyRedirects = command.redirects.length > 0;
+
     // Use fluent style for common text processing commands (only with static args)
-    // BUT: env assignments and heredocs force explicit $.cmd() style
-    if (isFluentCommand(name) && !hasDynamicArgs && !hasAssignments && !hasHeredoc) {
+    // BUT: env assignments, redirections, and heredocs force explicit $.cmd() style
+    if (isFluentCommand(name) && !hasDynamicArgs && !hasAssignments && !hasAnyRedirects) {
       const fluentResult = buildFluentCommand(name, args, ctx);
       // buildFluentCommand may return null to indicate fallback to $.cmd()
       if (fluentResult !== null) {
@@ -702,11 +710,14 @@ function flattenPipeline(
   operators: (string | null)[],
   ctx: VisitorContext,
 ): void {
+  // Check if this pipeline uses pipe operator (|) - only then we're in a "true" pipeline
+  const hasPipeOperator = pipeline.operator === "|";
+
   // Process left side (first command)
   const left = pipeline.commands[0];
   if (left) {
     if (left.type === "Command") {
-      const result = buildCommand(left, ctx);
+      const result = buildCommand(left, ctx, { inPipeline: hasPipeOperator });
       // SSH-361: Track whether the command produces output that should be printed
       // async: true means it's a command that returns CommandResult
       // async: false means it's a variable assignment (no output to print)
@@ -734,7 +745,7 @@ function flattenPipeline(
     if (!cmd) continue;
 
     if (cmd.type === "Command") {
-      const result = buildCommand(cmd, ctx);
+      const result = buildCommand(cmd, ctx, { inPipeline: hasPipeOperator });
       // SSH-361: Track whether the command produces output that should be printed
       // SSH-364: Track if it's a transform or stream producer for proper pipeline handling
       parts.push({
