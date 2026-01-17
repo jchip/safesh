@@ -30,6 +30,7 @@ import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath, getSessionFilePath, getScriptsDir, getTempRoot } from "../src/core/temp.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
+import { isCommandWithinProjectDir } from "../src/core/permissions.ts";
 
 // =============================================================================
 // Configuration
@@ -52,6 +53,26 @@ function debug(message: string): void {
   if (DEBUG) {
     console.error(`[bash-prehook] ${message}`);
   }
+}
+
+/**
+ * Generate SHA-256 hash for content-based script caching
+ * Returns the first 16 chars of the URL-safe Base64 encoded SHA-256 hash.
+ */
+async function hashContent(content: string): Promise<string> {
+  const data = new TextEncoder().encode(content);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  
+  // Convert 32-byte buffer to binary string safely
+  const binary = String.fromCharCode(...new Uint8Array(hashBuffer));
+  
+  // Convert to Base64 and make URL-safe (replace +/ with -_ and remove padding)
+  const base64 = btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+    
+  return base64.slice(0, 16);
 }
 
 /**
@@ -97,10 +118,23 @@ function cleanupOldScripts(): void {
           debug(`Deleted old script: ${file.name} (age: ${Math.round(age / 1000 / 60 / 60)}h)`);
 
           // Also try to delete corresponding pending file
-          // Extract ID from file_<id>.ts
-          const match = file.name.match(/^file_(.+)\.ts$/);
-          if (match) {
-            const id = match[1];
+          // Extract ID from various patterns:
+          // - file_<id>.ts (legacy timestamp-based)
+          // - script-<hash>.ts (direct TypeScript)
+          // - tx-script-<hash>.ts (transpiled bash)
+          let id: string | null = null;
+
+          const legacyMatch = file.name.match(/^file_(.+)\.ts$/);
+          if (legacyMatch) {
+            id = legacyMatch[1];
+          } else {
+            const hashMatch = file.name.match(/^(?:script|tx-script)-(.+)\.ts$/);
+            if (hashMatch) {
+              id = hashMatch[1];
+            }
+          }
+
+          if (id) {
             const pendingPath = `${tempRoot}/pending-${id}.json`;
             try {
               Deno.removeSync(pendingPath);
@@ -313,20 +347,32 @@ function getSessionAllowedCommands(): Set<string> {
 
 /**
  * Check which commands are not in the allowed list
- * Also checks session-allowed commands
+ * Also checks session-allowed commands and project directory commands
  */
 function getDisallowedCommands(
   commands: Set<string>,
   config: SafeShellConfig,
+  cwd: string,
 ): string[] {
   const allowed = getAllowedCommands(config);
   const sessionAllowed = getSessionAllowedCommands();
   const disallowed: string[] = [];
 
   for (const cmd of commands) {
-    if (!allowed.has(cmd) && !sessionAllowed.has(cmd)) {
-      disallowed.push(cmd);
+    // Check if command is in allowed list or session allowed
+    if (allowed.has(cmd) || sessionAllowed.has(cmd)) {
+      continue;
     }
+
+    // Check if allowProjectCommands is enabled and command is within project
+    if (config.allowProjectCommands && config.projectDir) {
+      if (isCommandWithinProjectDir(cmd, config.projectDir, cwd)) {
+        continue; // Allow project commands
+      }
+    }
+
+    // Command is not allowed
+    disallowed.push(cmd);
   }
 
   return disallowed;
@@ -557,20 +603,35 @@ const DESH_MODE = Deno.env.get("BASH_PREHOOK_DESH_MODE") || "file"; // "file" or
  * For TypeScript code, generates an ID and saves metadata for potential
  * retry flow if initCmds encounters blocked commands at runtime.
  */
-function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean }): void {
+async function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean; isDirectTs?: boolean; originalCommand?: string }): Promise<void> {
   // Add marker to prove code went through SafeShell transpilation
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Generate unique ID for this script (for potential retry)
-  const id = generateTempId();
-  const tempFile = getScriptFilePath(id);
-  Deno.writeTextFileSync(tempFile, markedCode);
+  // Generate hash-based ID from ORIGINAL command (for caching and retry)
+  const hashInput = options?.originalCommand || tsCode;
+  const hash = await hashContent(hashInput);
+  const prefix = options?.isDirectTs ? "script" : "tx-script";
+  const id = hash;
+  const scriptsDir = getScriptsDir();
+  const tempFile = `${scriptsDir}/${prefix}-${hash}.ts`;
+
+  // Check if cached script exists, only write if it doesn't
+  let cached = false;
+  try {
+    await Deno.stat(tempFile);
+    cached = true;
+    debug(`Using cached script: ${prefix}-${hash}.ts`);
+  } catch {
+    // File doesn't exist, write it
+    Deno.writeTextFileSync(tempFile, markedCode);
+    debug(`Created new script: ${prefix}-${hash}.ts`);
+  }
 
   // Save metadata for potential retry (if initCmds encounters blocked commands)
+  // Note: tsCode is NOT stored here - it's read from the script file during retry
   const pending: PendingCommand = {
     id,
     commands: [], // Will be filled by initCmds if commands are blocked
-    tsCode,
     cwd: Deno.cwd(),
     timeout: options?.timeout,
     runInBackground: options?.runInBackground,
@@ -580,7 +641,8 @@ function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: {
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Create desh command with file path and pass ID via env var
-  const deshCommand = `SAFESH_SCRIPT_ID=${id} ${DESH_CMD} -q -f ${tempFile}`;
+  // Also pass allowProjectCommands flag so desh runtime allows project scripts
+  const deshCommand = `SAFESH_SCRIPT_ID=${id} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q -f ${tempFile}`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -592,18 +654,20 @@ function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: {
  * For TypeScript code, generates an ID and saves metadata for potential
  * retry flow if initCmds encounters blocked commands at runtime.
  */
-function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean }): void {
+async function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean; isDirectTs?: boolean; originalCommand?: string }): Promise<void> {
   // Add marker to prove code went through SafeShell transpilation
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Generate unique ID for this script (for potential retry)
-  const id = generateTempId();
+  // Generate hash-based ID from ORIGINAL command (for caching and retry)
+  const hashInput = options?.originalCommand || tsCode;
+  const hash = await hashContent(hashInput);
+  const id = hash;
 
   // Save metadata for potential retry (if initCmds encounters blocked commands)
+  // Note: tsCode is NOT stored here - it's read from the script file during retry
   const pending: PendingCommand = {
     id,
     commands: [], // Will be filled by initCmds if commands are blocked
-    tsCode,
     cwd: Deno.cwd(),
     timeout: options?.timeout,
     runInBackground: options?.runInBackground,
@@ -613,7 +677,8 @@ function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, options?
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Create desh heredoc command with ID via env var
-  const deshCommand = `SAFESH_SCRIPT_ID=${id} ${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
+  // Also pass allowProjectCommands flag so desh runtime allows project scripts
+  const deshCommand = `SAFESH_SCRIPT_ID=${id} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -648,39 +713,58 @@ function outputHookResponse(deshCommand: string, options?: { timeout?: number; r
  */
 interface PendingCommand {
   id: string;
-  commands: string[];  // Disallowed commands
-  tsCode: string;      // Transpiled TypeScript code
+  commands: string[];  // Disallowed commands (filled by initCmds)
   cwd: string;
   timeout?: number;
   runInBackground?: boolean;
   createdAt: string;
+  // Note: tsCode removed - read from script file using id/hash
 }
 
 /**
  * Output hook decision to deny and prompt user for choice via LLM
  *
  * Flow:
- * 1. Save pending command to temp file with unique ID
+ * 1. Save script file and pending command metadata with hash-based ID
  * 2. Return "deny" with message for LLM to prompt user
  * 3. LLM prompts user with choices (once/always/session/deny)
  * 4. User picks, LLM runs: desh retry --id=X --choice=N
  * 5. desh retry executes command and persists choice if needed
  */
-function outputDenyWithRetry(
+async function outputDenyWithRetry(
   disallowedCommands: string[],
   tsCode: string,
-  options?: { timeout?: number; runInBackground?: boolean },
-): void {
+  projectDir: string,
+  options?: { timeout?: number; runInBackground?: boolean; originalCommand?: string },
+): Promise<void> {
   const cmdList = disallowedCommands.join(", ");
 
-  // Generate unique ID for this pending command
-  const id = generateTempId();
+  // Add marker to prove code went through SafeShell transpilation
+  const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Save pending command to temp file
+  // Generate hash-based ID from ORIGINAL command (for caching and retry)
+  const hashInput = options?.originalCommand || tsCode;
+  const hash = await hashContent(hashInput);
+  const prefix = "tx-script"; // Denied commands are always transpiled bash
+  const id = hash;
+  const scriptsDir = getScriptsDir();
+  const scriptFile = `${scriptsDir}/${prefix}-${hash}.ts`;
+
+  // Write script file (needed for retry execution)
+  // Check if cached script exists
+  try {
+    await Deno.stat(scriptFile);
+    debug(`Using cached script for denied command: ${prefix}-${hash}.ts`);
+  } catch {
+    // File doesn't exist, write it
+    Deno.writeTextFileSync(scriptFile, markedCode);
+    debug(`Created script for denied command: ${prefix}-${hash}.ts`);
+  }
+
+  // Save pending command metadata to temp file (without tsCode)
   const pending: PendingCommand = {
     id,
     commands: disallowedCommands,
-    tsCode,
     cwd: Deno.cwd(),
     timeout: options?.timeout,
     runInBackground: options?.runInBackground,
@@ -715,11 +799,11 @@ DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${id} --choi
  * Output hook decision to rewrite command to desh
  * Uses file mode by default, heredoc if configured
  */
-function outputRewriteToDesh(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean }): void {
+async function outputRewriteToDesh(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean; isDirectTs?: boolean; originalCommand?: string }): Promise<void> {
   if (DESH_MODE === "heredoc") {
-    outputRewriteToDeshHeredoc(tsCode, projectDir, options);
+    await outputRewriteToDeshHeredoc(tsCode, projectDir, options);
   } else {
-    outputRewriteToDeshFile(tsCode, projectDir, options);
+    await outputRewriteToDeshFile(tsCode, projectDir, options);
   }
 }
 
@@ -791,7 +875,12 @@ async function main() {
 
     // Load SafeShell config
     const baseConfig = await loadConfig(cwd, { logWarnings: false });
-    const config = mergeConfigs(baseConfig, { projectDir });
+    // Enable allowProjectCommands by default for Claude Code bash commands
+    // This allows executing project-local scripts like .temp/script.sh
+    const config = mergeConfigs(baseConfig, {
+      projectDir,
+      allowProjectCommands: true,
+    });
     debug(`Config loaded`);
 
     // Check if command is already TypeScript (skip transpilation and permission check)
@@ -845,9 +934,11 @@ globalThis.addEventListener("unhandledrejection", (event) => {
 
 ${tsCode}
 `;
-      outputRewriteToDesh(tsCode, projectDir, {
+      await outputRewriteToDesh(tsCode, projectDir, {
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
+        isDirectTs: true,
+        originalCommand: parsed.command,
       });
       Deno.exit(0);
     }
@@ -927,13 +1018,14 @@ ${tsCode}
 `;
 
     // Check which commands are not allowed
-    const disallowed = getDisallowedCommands(commands, config);
+    const disallowed = getDisallowedCommands(commands, config, cwd);
     if (disallowed.length > 0) {
       debug(`Disallowed commands: ${disallowed.join(", ")}`);
       // Deny and prompt user for choice via LLM, then retry with desh retry
-      outputDenyWithRetry(disallowed, tsCode, {
+      await outputDenyWithRetry(disallowed, tsCode, projectDir, {
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
+        originalCommand: parsed.command,
       });
       Deno.exit(0);
     }
@@ -942,23 +1034,44 @@ ${tsCode}
 
     // Rewrite command to use desh with heredoc
     // Pass through timeout and run_in_background options
-    outputRewriteToDesh(tsCode, projectDir, {
+    await outputRewriteToDesh(tsCode, projectDir, {
       timeout: parsed.timeout,
       runInBackground: parsed.runInBackground,
+      originalCommand: parsed.command,
     });
     Deno.exit(0);
   } catch (error) {
-    // On error, output error message and let it through
-    // (desh will show the error when it tries to run)
+    // On error, output error message and save to log file
     const errorMsg = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
 
     // Show first few lines of command for context (if available)
     let context = "";
+    let fullCommand = "";
     if (parsed?.command) {
+      fullCommand = parsed.command;
       const lines = parsed.command.split('\n');
       const preview = lines.slice(0, 3).join('\n');
       const more = lines.length > 3 ? `\n... (${lines.length} lines total)` : "";
       context = `\n\nCommand preview:\n${preview}${more}`;
+    }
+
+    // Build full error message
+    const errorLogContent = [
+      "=== Bash Transpilation Error ===",
+      `Command: ${fullCommand}`,
+      `\nError: ${errorMsg}`,
+      stack ? `\nStack trace:\n${stack}` : "",
+      "================================\n"
+    ].join("\n");
+
+    // Save to error log file
+    const errorFile = getErrorLogPath();
+    try {
+      Deno.writeTextFileSync(errorFile, errorLogContent);
+      console.error(`\nError log: ${errorFile}`);
+    } catch (e) {
+      console.error("Warning: Could not write error log:", e);
     }
 
     console.error(`Transpilation error: ${errorMsg}${context}`);

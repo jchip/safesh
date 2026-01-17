@@ -50,12 +50,13 @@ function filterExistingCommands(commands: string[], cwd: string): string[] {
 
   const existing = commands.filter((cmd) => {
     try {
-      // For paths (absolute or relative), check if file exists
+      // For paths (absolute or relative), check if file or directory exists
       if (cmd.startsWith("/") || cmd.startsWith("./") || cmd.startsWith("../")) {
         // Resolve relative paths against cwd
         const fullPath = cmd.startsWith("/") ? cmd : join(cwd, cmd);
         const stat = Deno.statSync(fullPath);
-        return stat.isFile;
+        // Allow both files (executables) and directories (for --allow-run=<dir>)
+        return stat.isFile || stat.isDirectory;
       }
       // For command names, use which
       const result = new Deno.Command("which", {

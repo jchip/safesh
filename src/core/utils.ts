@@ -56,15 +56,26 @@ export function getDefaultAllowedPaths(cwd: string): string[] {
 }
 
 /**
- * Hash code string using SHA-256
+ * Hash code string using SHA-256 encoded in URL-safe Base64 (truncated)
  *
  * Used for caching script files by content hash.
+ * Returns the first 16 chars of the URL-safe Base64 encoded SHA-256 hash.
+ * This provides ~96 bits of entropy (vs 64 bits for 16-char hex).
  */
-export async function hashCode(code: string): Promise<string> {
+export async function hashCode(code: string, length: number = 16): Promise<string> {
   const data = new TextEncoder().encode(code);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  
+  // Convert 32-byte buffer to binary string safely (small size)
+  const binary = String.fromCharCode(...new Uint8Array(hashBuffer));
+  
+  // Convert to Base64 and make URL-safe (replace +/ with -_ and remove padding)
+  const base64 = btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+    
+  return base64.slice(0, length);
 }
 
 /**
