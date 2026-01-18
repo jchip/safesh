@@ -109,7 +109,7 @@ import { filter, map, flatMap, take, head, tail, lines, grep } from "./transform
 import { stdout, stderr, tee } from "./io.ts";
 import { cat, glob, src, dest } from "./fs-streams.ts";
 import { globPaths, globArray } from "./glob.ts";
-import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString } from "./shelljs/mod.ts";
+import { echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, rmdir, cp, mv, mkdir, touch, ls, ShellString } from "./shelljs/mod.ts";
 import { tree, treeLines, printTree } from "./fs.ts";
 // Import command transforms (used by transpiler as $.wc(), $.sort(), $.uniq())
 import { default as wc } from "../commands/wc.ts";
@@ -143,7 +143,7 @@ const _$props = {
   // File streaming (glob, src, dest - streaming cat is global only)
   glob, globPaths, globArray, src, dest,
   // ShellJS commands
-  echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls, ShellString,
+  echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, rmdir, cp, mv, mkdir, touch, ls, ShellString,
   // Tree commands
   tree, treeLines, printTree,
   // Timing

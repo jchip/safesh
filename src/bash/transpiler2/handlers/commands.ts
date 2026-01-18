@@ -127,6 +127,7 @@ const SHELL_BUILTINS: Record<string, { fn: string; type: "silent" | "prints" | "
   chmod: { fn: "__chmod", type: "async" },
   ln: { fn: "__ln", type: "async" },
   rm: { fn: "__rm", type: "async" },
+  rmdir: { fn: "__rmdir", type: "async" },
   cp: { fn: "__cp", type: "async" },
   mv: { fn: "__mv", type: "async" },
   mkdir: { fn: "__mkdir", type: "async" },
