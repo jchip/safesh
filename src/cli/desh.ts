@@ -287,15 +287,11 @@ async function handleRetryPath(args: string[]): Promise<void> {
   const baseConfig = await loadConfig(cwd, { logWarnings: false });
   const config = mergeConfigs(baseConfig, { projectDir });
 
-  console.error(`[DEBUG] Base config read paths: ${JSON.stringify(config.permissions?.read || [])}`);
-
   // Load session permissions if they exist
   const sessionFile = getSessionFilePath(projectDir);
-  console.error(`[DEBUG] Session file: ${sessionFile}`);
   try {
     const sessionContent = await Deno.readTextFile(sessionFile);
     const session = JSON.parse(sessionContent) as { permissions?: { read?: string[]; write?: string[] } };
-    console.error(`[DEBUG] Session permissions: ${JSON.stringify(session.permissions)}`);
     if (session.permissions) {
       config.permissions = config.permissions ?? {};
       if (session.permissions.read) {
@@ -312,7 +308,7 @@ async function handleRetryPath(args: string[]): Promise<void> {
       }
     }
   } catch (e) {
-    console.error(`[DEBUG] Session file error: ${e instanceof Error ? e.message : String(e)}`);
+    // Session file doesn't exist or is invalid - continue without it
   }
 
   config.permissions = config.permissions ?? {};
@@ -328,10 +324,6 @@ async function handleRetryPath(args: string[]): Promise<void> {
       ...writePaths,
     ];
   }
-
-  console.error(`[DEBUG] Final config read paths: ${JSON.stringify(config.permissions.read || [])}`);
-  console.error(`[DEBUG] Final config write paths: ${JSON.stringify(config.permissions.write || [])}`);
-  console.error(`[DEBUG] Script file: ${scriptFile}`);
 
   // Re-execute the script file
   // Set SAFESH_SCRIPT_HASH for debug output and SAFESH_SCRIPT_ID for retry flow
