@@ -15,9 +15,9 @@ import type { SafeShellConfig } from "../src/core/types.ts";
 
 Deno.test("DEFAULT_CONFIG - has safe defaults", () => {
   // Default read includes HOME for user convenience (reading configs etc)
-  assertEquals(DEFAULT_CONFIG.permissions?.read, ["${CWD}", "${HOME}", "/tmp"]);
-  // Default write is restricted to /tmp and /dev/null only
-  assertEquals(DEFAULT_CONFIG.permissions?.write, ["/tmp", "/dev/null"]);
+  assertEquals(DEFAULT_CONFIG.permissions?.read, ["${CWD}", "${HOME}", "/tmp", "${HOME}/.claude"]);
+  // Default write is restricted to /tmp, /dev/null, and .claude directory
+  assertEquals(DEFAULT_CONFIG.permissions?.write, ["/tmp", "/dev/null", "${HOME}/.claude"]);
   assertEquals(DEFAULT_CONFIG.permissions?.net, []);
   assertEquals(DEFAULT_CONFIG.imports?.blocked?.includes("npm:*"), true);
 });
