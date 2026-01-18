@@ -7,6 +7,7 @@
 import { resolve, isAbsolute } from "@std/path";
 import type { PermissionsConfig, SafeShellConfig } from "./types.ts";
 import { pathViolation, symlinkViolation } from "./errors.ts";
+import { getRealPathAsync } from "./utils.ts";
 
 /**
  * Resolve workspace path - expand ~ and convert to absolute path
@@ -130,13 +131,7 @@ export async function validatePath(
   const absolutePath = resolve(cwd, expandedPath);
 
   // Resolve symlinks to get real path
-  let realPath: string;
-  try {
-    realPath = await Deno.realPath(absolutePath);
-  } catch {
-    // File doesn't exist yet, use the absolute path
-    realPath = absolutePath;
-  }
+  const realPath = await getRealPathAsync(absolutePath);
 
   // projectDir gets full read access, and write access unless blockProjectDirWrite is true
   if (config.projectDir) {

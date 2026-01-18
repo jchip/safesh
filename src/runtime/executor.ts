@@ -11,7 +11,7 @@ import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
 import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
-import { hashCode, buildEnv, collectStreamText, cleanupProcess } from "../core/utils.ts";
+import { hashCode, buildEnv, collectStreamText, cleanupProcess, getRealPathBoth } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
@@ -506,20 +506,6 @@ function extractBlockedCommands(
   return { blockedCommand, blockedCommands, notFoundCommands, blockedHost };
 }
 
-/**
- * Resolve symlinks and return BOTH original and resolved paths.
- * Important for macOS where /tmp -> /private/tmp - Deno checks literal path.
- */
-function resolveWithBoth(p: string): string[] {
-  try {
-    const resolved = Deno.realPathSync(p);
-    // Return both if different (e.g., /tmp and /private/tmp)
-    return resolved !== p ? [p, resolved] : [p];
-  } catch {
-    // Path doesn't exist yet or can't be resolved, return as-is
-    return [p];
-  }
-}
 
 /**
  * Build a path-based permission flag.
@@ -538,7 +524,7 @@ function buildPathPermission(
     }
   }
   if (allPaths.length) {
-    const expanded = allPaths.map(p => expandPath(p, cwd)).flatMap(resolveWithBoth).join(",");
+    const expanded = allPaths.map(p => expandPath(p, cwd)).flatMap(getRealPathBoth).join(",");
     return `--${flag}=${expanded}`;
   }
   return null;

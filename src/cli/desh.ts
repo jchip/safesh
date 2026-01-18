@@ -23,7 +23,7 @@ import { getPendingFilePath, getSessionFilePath, findScriptFilePath } from "../c
 // New unified core modules (DRY refactoring)
 import { findProjectRoot, PROJECT_MARKERS } from "../core/project-root.ts";
 import { readPendingCommand, readPendingPath, deletePending, type PendingCommand, type PendingPathRequest } from "../core/pending.ts";
-import { addSessionCommands, addSessionPaths, getSessionAllowedCommandsArray, getSessionPathPermissions } from "../core/session.ts";
+import { addSessionCommands, addSessionPaths, getSessionAllowedCommandsArray, getSessionPathPermissions, mergeSessionPermissions } from "../core/session.ts";
 import { readStdinFully } from "../core/io-utils.ts";
 
 const VERSION = "0.1.0";
@@ -90,36 +90,8 @@ async function handleRetry(args: string[]): Promise<void> {
   const baseConfig = await loadConfig(cwd, { logWarnings: false });
   const config = mergeConfigs(baseConfig, { projectDir });
 
-  // Load session permissions if they exist
-  const sessionFile = getSessionFilePath(projectDir);
-  try {
-    const sessionContent = await Deno.readTextFile(sessionFile);
-    const session = JSON.parse(sessionContent) as { permissions?: { read?: string[]; write?: string[] }; allowedCommands?: string[] };
-    if (session.permissions) {
-      config.permissions = config.permissions ?? {};
-      if (session.permissions.read) {
-        config.permissions.read = [
-          ...(config.permissions.read ?? []),
-          ...session.permissions.read,
-        ];
-      }
-      if (session.permissions.write) {
-        config.permissions.write = [
-          ...(config.permissions.write ?? []),
-          ...session.permissions.write,
-        ];
-      }
-    }
-    if (session.allowedCommands) {
-      config.permissions = config.permissions ?? {};
-      config.permissions.run = [
-        ...(config.permissions.run ?? []),
-        ...session.allowedCommands,
-      ];
-    }
-  } catch (e) {
-    // Session file doesn't exist or is invalid - that's fine
-  }
+  // Load and merge session permissions
+  mergeSessionPermissions(config, projectDir);
 
   // Add pending commands to permissions
   config.permissions = config.permissions ?? {};
@@ -288,29 +260,8 @@ async function handleRetryPath(args: string[]): Promise<void> {
   const baseConfig = await loadConfig(cwd, { logWarnings: false });
   const config = mergeConfigs(baseConfig, { projectDir });
 
-  // Load session permissions if they exist
-  const sessionFile = getSessionFilePath(projectDir);
-  try {
-    const sessionContent = await Deno.readTextFile(sessionFile);
-    const session = JSON.parse(sessionContent) as { permissions?: { read?: string[]; write?: string[] } };
-    if (session.permissions) {
-      config.permissions = config.permissions ?? {};
-      if (session.permissions.read) {
-        config.permissions.read = [
-          ...(config.permissions.read ?? []),
-          ...session.permissions.read,
-        ];
-      }
-      if (session.permissions.write) {
-        config.permissions.write = [
-          ...(config.permissions.write ?? []),
-          ...session.permissions.write,
-        ];
-      }
-    }
-  } catch (e) {
-    // Session file doesn't exist or is invalid - continue without it
-  }
+  // Load and merge session permissions
+  mergeSessionPermissions(config, projectDir);
 
   config.permissions = config.permissions ?? {};
   if (readPaths.length > 0) {
@@ -525,32 +476,8 @@ async function main() {
       }
     }
 
-    // Merge session-allowed commands
-    const sessionAllowed = getSessionAllowedCommandsArray(projectDir);
-    if (sessionAllowed.length > 0) {
-      config.permissions = config.permissions ?? {};
-      config.permissions.run = [
-        ...(config.permissions.run ?? []),
-        ...sessionAllowed,
-      ];
-    }
-
-    // Merge session-allowed path permissions
-    const sessionPaths = getSessionPathPermissions(projectDir);
-    if (sessionPaths.read && sessionPaths.read.length > 0) {
-      config.permissions = config.permissions ?? {};
-      config.permissions.read = [
-        ...(config.permissions.read ?? []),
-        ...sessionPaths.read,
-      ];
-    }
-    if (sessionPaths.write && sessionPaths.write.length > 0) {
-      config.permissions = config.permissions ?? {};
-      config.permissions.write = [
-        ...(config.permissions.write ?? []),
-        ...sessionPaths.write,
-      ];
-    }
+    // Merge session permissions (commands and paths)
+    mergeSessionPermissions(config, projectDir);
   } catch (error) {
     if (error instanceof SafeShellError) {
       console.error(`Config error: ${error.message}`);
