@@ -867,11 +867,26 @@ export async function executeFile(
     denoFlags: config.denoFlags,
   });
 
+  // DEBUG: Log the actual Deno command being run
+  if (Deno.env.get("SAFESH_SCRIPT_HASH")) {
+    const readFlag = args.find(arg => arg.startsWith("--allow-read="));
+    console.error(`[DEBUG] Read permission flag: ${readFlag || "NONE"}`);
+    console.error(`[DEBUG] Full Deno args: ${args.join(" ")}`);
+  }
+
+  // Build environment
+  const env = buildEnv(config, shell);
+
+  // DEBUG: Add environment variable for debugging path permissions
+  if (Deno.env.get("SAFESH_SCRIPT_HASH")) {
+    env.SAFESH_RETRY_PATH_DEBUG = "1";
+  }
+
   // Spawn and collect output
   const { status, stdout: rawStdout, stderr: rawStderr } = await spawnAndCollectOutput({
     args,
     cwd,
-    env: buildEnv(config, shell),
+    env,
     timeoutMs,
   });
 
