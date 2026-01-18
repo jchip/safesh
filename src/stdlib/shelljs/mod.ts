@@ -90,6 +90,8 @@ export type { LnOptions } from "./ln.ts";
 export { rm, parseRmOptions } from "./rm.ts";
 export type { RmOptions } from "./rm.ts";
 
+export { rmdir } from "./rmdir.ts";
+
 export { cp, parseCpOptions } from "./cp.ts";
 export type { CpOptions } from "./cp.ts";
 

@@ -309,7 +309,7 @@ const BUILTIN_COMMANDS = new Set([
   "alias", "unalias", "type", "which", "hash", "command", "builtin",
   "let", "expr",
   // SafeShell built-in utilities (transpiled to __rm, __cp, etc.)
-  "rm", "cp", "mv", "mkdir", "touch", "ln", "chmod", "ls",
+  "rm", "rmdir", "cp", "mv", "mkdir", "touch", "ln", "chmod", "ls",
 ]);
 
 /**
