@@ -206,10 +206,42 @@ export function visitParameterExpansion(
   const subscript = expansion.subscript;
   const indirection = expansion.indirection;
 
+  // Handle bash special variables first
+  if (param === "!") {
+    // $! - PID of last background process
+    // Note: Background jobs in SafeShell work differently (async/await)
+    // This is not directly supported, but we'll return empty string to avoid syntax error
+    return ""; // or throw error: "Background job PID ($!) is not supported"
+  }
+  if (param === "?") {
+    // $? - Exit status of last command
+    // SafeShell uses exceptions instead of exit codes
+    return "0"; // Default to success
+  }
+  if (param === "$") {
+    // $$ - Current shell PID
+    return `\${Deno.pid}`;
+  }
+  if (param === "0") {
+    // $0 - Script name
+    return `\${__SCRIPT_NAME__ || "safesh"}`;
+  }
+  if (param === "#") {
+    // $# - Number of positional parameters
+    return `\${__POSITIONAL_PARAMS__?.length || 0}`;
+  }
+  if (param === "@" || param === "*") {
+    // $@ or $* - All positional parameters
+    return `\${__POSITIONAL_PARAMS__?.join(" ") || ""}`;
+  }
+  if (/^\d+$/.test(param)) {
+    // $1, $2, etc - Positional parameters
+    return `\${__POSITIONAL_PARAMS__?.[${parseInt(param) - 1}] || ""}`;
+  }
+
   // SSH-330: Handle indirect variable reference ${!ref}
   // The parser prefixes the parameter name with '!' for indirection
-  // BUT: Special variable $! (last background PID) should be treated as-is
-  if (param.startsWith("!") && param !== "!") {
+  if (param.startsWith("!")) {
     const refVar = param.slice(1); // Remove the '!' prefix
 
     // SSH-303: Handle array indirection ${!arr[@]} for array indices
