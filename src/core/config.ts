@@ -209,6 +209,7 @@ export const DEFAULT_CONFIG: SafeShellConfig = {
   },
   tasks: {},
   timeout: DEFAULT_TIMEOUT_MS,
+  alwaysTranspile: true,
 };
 
 // ============================================================================
