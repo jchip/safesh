@@ -28,21 +28,32 @@ const VERSION = "0.1.0";
  * Other markers like package.json can exist in subdirectories
  */
 const PROJECT_MARKERS = [
-  ".claude",  // Claude Code project config (most reliable)
-  ".git",     // Git repository root
+  ".claude",        // Claude Code project config (most reliable)
+  ".git",           // Git repository root
+  ".config/safesh", // SafeShell project config
 ];
 
 /**
  * Find project root by walking up from cwd
+ *
+ * Priority:
+ * 1. CLAUDE_PROJECT_DIR env var
+ * 2. Walk up to find project markers (stop at home directory)
+ * 3. Create .config/safesh/config.local.json in cwd and use it as project root
  */
 function findProjectRoot(cwd: string): string {
   // Check env var first
   const envProjectDir = Deno.env.get("CLAUDE_PROJECT_DIR");
   if (envProjectDir) return envProjectDir;
 
+  const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+
   // Walk up looking for markers
   let dir = cwd;
   while (true) {
+    // Stop at home directory - don't treat home as project root
+    if (homeDir && dir === homeDir) break;
+
     for (const marker of PROJECT_MARKERS) {
       try {
         Deno.statSync(`${dir}/${marker}`);
@@ -50,9 +61,26 @@ function findProjectRoot(cwd: string): string {
       } catch { /* continue */ }
     }
     const parent = dir.replace(/\/[^/]+$/, "");
-    if (parent === dir || parent === "") break;
+    if (parent === dir || parent === "") break; // Reached filesystem root
     dir = parent;
   }
+
+  // No project marker found - create one in cwd
+  try {
+    const configDir = `${cwd}/.config/safesh`;
+    Deno.mkdirSync(configDir, { recursive: true });
+    const configFile = `${configDir}/config.local.json`;
+
+    // Only create if doesn't exist
+    try {
+      Deno.statSync(configFile);
+    } catch {
+      Deno.writeTextFileSync(configFile, "{}\n");
+    }
+  } catch {
+    // Silently ignore errors
+  }
+
   return cwd;
 }
 

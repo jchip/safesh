@@ -169,8 +169,9 @@ function cleanupOldScripts(): void {
  * Other markers like package.json can exist in subdirectories
  */
 const PROJECT_MARKERS = [
-  ".claude",  // Claude Code project config (most reliable)
-  ".git",     // Git repository root
+  ".claude",        // Claude Code project config (most reliable)
+  ".git",           // Git repository root
+  ".config/safesh", // SafeShell project config
 ];
 
 /**
@@ -178,8 +179,8 @@ const PROJECT_MARKERS = [
  *
  * Priority:
  * 1. CLAUDE_PROJECT_DIR env var
- * 2. Walk up to find project markers
- * 3. Fallback to cwd
+ * 2. Walk up to find project markers (stop at home directory)
+ * 3. Create .config/safesh/config.local.json in cwd and use it as project root
  */
 function findProjectRoot(cwd: string): string {
   // Check env var first
@@ -189,9 +190,17 @@ function findProjectRoot(cwd: string): string {
     return envProjectDir;
   }
 
+  const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+
   // Walk up looking for markers
   let dir = cwd;
   while (true) {
+    // Stop at home directory - don't treat home as project root
+    if (homeDir && dir === homeDir) {
+      debug(`Reached home directory, stopping search`);
+      break;
+    }
+
     for (const marker of PROJECT_MARKERS) {
       try {
         const markerPath = `${dir}/${marker}`;
@@ -206,14 +215,30 @@ function findProjectRoot(cwd: string): string {
     // Move up one directory
     const parent = dir.replace(/\/[^/]+$/, "");
     if (parent === dir || parent === "") {
-      // Reached root, give up
+      // Reached filesystem root, give up
       break;
     }
     dir = parent;
   }
 
-  // Fallback to cwd
-  debug(`Project root fallback to cwd: ${cwd}`);
+  // No project marker found - create one in cwd
+  debug(`No project marker found, creating .config/safesh in: ${cwd}`);
+  try {
+    const configDir = `${cwd}/.config/safesh`;
+    Deno.mkdirSync(configDir, { recursive: true });
+    const configFile = `${configDir}/config.local.json`;
+
+    // Only create if doesn't exist
+    try {
+      Deno.statSync(configFile);
+    } catch {
+      Deno.writeTextFileSync(configFile, "{}\n");
+      debug(`Created ${configFile}`);
+    }
+  } catch (error) {
+    debug(`Failed to create .config/safesh: ${error}`);
+  }
+
   return cwd;
 }
 
