@@ -116,6 +116,15 @@ export interface SafeShellConfig {
   allowProjectCommands?: boolean;
 
   /**
+   * Force all bash commands to be transpiled to TypeScript, even simple ones.
+   * When true (default), disables pass-through to native bash for simple commands.
+   * When false, simple bash commands execute directly in native bash.
+   * Complex commands (loops, functions, subshells, etc.) are always transpiled.
+   * Default: true.
+   */
+  alwaysTranspile?: boolean;
+
+  /**
    * Project temp directory configuration for $.tempdir().
    * - true (default): Use projectDir/.temp/<shellId>
    * - false: Use system /tmp/<shellId>

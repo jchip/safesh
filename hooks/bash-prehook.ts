@@ -1429,10 +1429,15 @@ ${tsCode}
     // Simple commands: passthrough to native bash (let Bash tool handle permissions)
     // Complex commands: transpile to TypeScript (need SafeShell runtime)
     // Dangerous commands: always go through safesh for permission checks
-    if (isSimpleCommand(ast) && !hasDangerousCommands(ast)) {
+    // Config option: alwaysTranspile can force all commands through transpiler
+    if (isSimpleCommand(ast) && !hasDangerousCommands(ast) && !config.alwaysTranspile) {
       debug("Simple command detected - passthrough to native bash");
       outputPassthrough();
       Deno.exit(0);
+    }
+
+    if (config.alwaysTranspile) {
+      debug("alwaysTranspile enabled - forcing transpilation");
     }
 
     if (hasDangerousCommands(ast)) {
