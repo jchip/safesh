@@ -189,9 +189,9 @@ const SENSITIVE_WRITE_PATHS = [
 
 export const DEFAULT_CONFIG: SafeShellConfig = {
   permissions: {
-    read: ["${CWD}", "${HOME}", "/tmp"],
+    read: ["${CWD}", "${HOME}", "/tmp", "${HOME}/.claude"],
     denyRead: [...SENSITIVE_READ_PATHS],
-    write: ["/tmp", "/dev/null"],
+    write: ["/tmp", "/dev/null", "${HOME}/.claude"],
     denyWrite: [...SENSITIVE_WRITE_PATHS],
     net: [],
     run: [...SAFE_COMMANDS],
