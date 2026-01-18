@@ -47,6 +47,15 @@ export function getScriptsDir(): string {
 }
 
 /**
+ * Get the pending files directory path (for retry workflow metadata)
+ */
+export function getPendingDir(): string {
+  const dir = `${SAFESH_TMP_ROOT}/pending`;
+  ensureDir(dir);
+  return dir;
+}
+
+/**
  * Generate a unique error log file path
  */
 export function getErrorLogPath(): string {
@@ -58,7 +67,7 @@ export function getErrorLogPath(): string {
  * Generate a pending command file path
  */
 export function getPendingFilePath(id: string): string {
-  const dir = getTempRoot();
+  const dir = getPendingDir();
   return `${dir}/pending-${id}.json`;
 }
 
@@ -66,7 +75,7 @@ export function getPendingFilePath(id: string): string {
  * Generate a pending path request file path
  */
 export function getPendingPathFilePath(id: string): string {
-  const dir = getTempRoot();
+  const dir = getPendingDir();
   return `${dir}/pending-path-${id}.json`;
 }
 
