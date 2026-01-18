@@ -1135,19 +1135,29 @@ async function main() {
 globalThis.addEventListener("error", (event) => {
   event.preventDefault();
   const error = event.error;
-  const errorFile = \`${getErrorLogPath()}\`;
+  const errorMessage = error?.message || String(error);
+
+  // Check if this is a command execution failure (not a SafeShell error)
+  const isCommandFailure =
+    errorMessage.includes("Pipeline failed: upstream command exited with code") ||
+    errorMessage.includes("command exited with code") ||
+    errorMessage.includes("Command failed with exit code");
 
   const errorMsg = [
     "=== TypeScript Error ===",
-    \`Error: \${error?.message || error}\`,
+    \`Error: \${errorMessage}\`,
     error?.stack ? \`\nStack trace:\n\${error.stack}\` : "",
     "=======================\\n"
   ].join("\\n");
 
-  try {
-    Deno.writeTextFileSync(errorFile, errorMsg);
-    console.error(\`\\nError log: \${errorFile}\`);
-  } catch {}
+  // Only log to file if it's a genuine SafeShell error
+  if (!isCommandFailure) {
+    const errorFile = \`${getErrorLogPath()}\`;
+    try {
+      Deno.writeTextFileSync(errorFile, errorMsg);
+      console.error(\`\\nError log: \${errorFile}\`);
+    } catch {}
+  }
 
   console.error(errorMsg);
   Deno.exit(1);
@@ -1156,19 +1166,29 @@ globalThis.addEventListener("error", (event) => {
 globalThis.addEventListener("unhandledrejection", (event) => {
   event.preventDefault();
   const reason = event.reason;
-  const errorFile = \`${getErrorLogPath()}\`;
+  const errorMessage = reason?.message || String(reason);
+
+  // Check if this is a command execution failure (not a SafeShell error)
+  const isCommandFailure =
+    errorMessage.includes("Pipeline failed: upstream command exited with code") ||
+    errorMessage.includes("command exited with code") ||
+    errorMessage.includes("Command failed with exit code");
 
   const errorMsg = [
     "=== Unhandled Promise Rejection ===",
-    \`Error: \${reason?.message || reason}\`,
+    \`Error: \${errorMessage}\`,
     reason?.stack ? \`\nStack trace:\n\${reason.stack}\` : "",
     "===================================\\n"
   ].join("\\n");
 
-  try {
-    Deno.writeTextFileSync(errorFile, errorMsg);
-    console.error(\`\\nError log: \${errorFile}\`);
-  } catch {}
+  // Only log to file if it's a genuine SafeShell error
+  if (!isCommandFailure) {
+    const errorFile = \`${getErrorLogPath()}\`;
+    try {
+      Deno.writeTextFileSync(errorFile, errorMsg);
+      console.error(\`\\nError log: \${errorFile}\`);
+    } catch {}
+  }
 
   console.error(errorMsg);
   Deno.exit(1);
@@ -1274,28 +1294,36 @@ Example:
     tsCode = `const __ORIGINAL_BASH_COMMAND__ = \`${bashCommandEscaped}\`;
 const __handleError = (error) => {
   const fullCommand = __ORIGINAL_BASH_COMMAND__;
+  const errorMessage = error.message || String(error);
 
-  // Generate unique error log file (directory is auto-created)
-  const errorFile = \`${getErrorLogPath()}\`;
+  // Check if this is a command execution failure (not a SafeShell error)
+  // Command failures are expected and shouldn't be logged as SafeShell errors
+  const isCommandFailure =
+    errorMessage.includes("Pipeline failed: upstream command exited with code") ||
+    errorMessage.includes("command exited with code") ||
+    errorMessage.includes("Command failed with exit code");
 
-  // Build full error message
+  // Build error message
   const errorMsg = [
     "=== Bash Command Error ===",
     \`Command: \${fullCommand}\`,
-    \`\\nError: \${error.message || error}\`,
+    \`\\nError: \${errorMessage}\`,
     error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
     "=========================\\n"
   ].join("\\n");
 
-  // Write to file
-  try {
-    Deno.writeTextFileSync(errorFile, errorMsg);
-  } catch (e) {
-    console.error("Warning: Could not write error log:", e);
+  // Only log to file if it's a genuine SafeShell error, not a command failure
+  if (!isCommandFailure) {
+    const errorFile = \`${getErrorLogPath()}\`;
+    try {
+      Deno.writeTextFileSync(errorFile, errorMsg);
+      console.error(\`\\nError log: \${errorFile}\`);
+    } catch (e) {
+      console.error("Warning: Could not write error log:", e);
+    }
   }
 
-  // Output with file reference first
-  console.error(\`\\nError log: \${errorFile}\`);
+  // Always output error to console
   console.error(errorMsg);
   Deno.exit(1);
 };
