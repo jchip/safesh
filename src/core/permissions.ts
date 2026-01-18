@@ -8,6 +8,7 @@ import { resolve, isAbsolute } from "@std/path";
 import type { PermissionsConfig, SafeShellConfig } from "./types.ts";
 import { pathViolation, symlinkViolation } from "./errors.ts";
 import { getRealPathAsync } from "./utils.ts";
+import { isPathWithin } from "./path-utils.ts";
 
 /**
  * Resolve workspace path - expand ~ and convert to absolute path
@@ -32,8 +33,7 @@ export function isWithinWorkspace(path: string, workspace: string): boolean {
   const absolutePath = resolve(path);
   const absoluteWorkspace = resolve(workspace);
 
-  return absolutePath === absoluteWorkspace ||
-         absolutePath.startsWith(absoluteWorkspace + "/");
+  return isPathWithin(absolutePath, absoluteWorkspace);
 }
 
 /**
@@ -44,8 +44,7 @@ export function isWithinProjectDir(path: string, projectDir: string, cwd?: strin
   const absolutePath = isAbsolute(path) ? resolve(path) : resolve(cwd ?? Deno.cwd(), path);
   const absoluteProjectDir = resolve(projectDir);
 
-  return absolutePath === absoluteProjectDir ||
-         absolutePath.startsWith(absoluteProjectDir + "/");
+  return isPathWithin(absolutePath, absoluteProjectDir);
 }
 
 /**
@@ -110,10 +109,9 @@ export function isPathAllowed(
     resolve(cwd, p)
   );
 
-  return expandedAllowed.some((allowed) => {
-    // Path must start with an allowed path
-    return absolutePath === allowed || absolutePath.startsWith(allowed + "/");
-  });
+  return expandedAllowed.some((allowed) =>
+    isPathWithin(absolutePath, allowed)
+  );
 }
 
 /**

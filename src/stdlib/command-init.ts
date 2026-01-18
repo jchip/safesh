@@ -15,6 +15,7 @@ import {
   ERROR_COMMANDS_BLOCKED,
 } from "../core/constants.ts";
 import { getPendingFilePath } from "../core/temp.ts";
+import { isPathWithin } from "../core/path-utils.ts";
 
 /**
  * Config interface injected by preamble for permission checking
@@ -127,7 +128,7 @@ async function checkPermission(
       // cwdPath is already absolute (resolved from cwd)
       // Check if it's within the project directory
       const absoluteProjectDir = projectDir.startsWith("/") ? projectDir : resolvePath(cwd, projectDir);
-      if (cwdPath.startsWith(absoluteProjectDir + "/") || cwdPath === absoluteProjectDir) {
+      if (isPathWithin(cwdPath, absoluteProjectDir)) {
         return { allowed: true, resolvedPath: cwdPath };
       }
     }
