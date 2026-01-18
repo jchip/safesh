@@ -982,13 +982,12 @@ async function outputDenyWithRetry(
   // Add marker to prove code went through SafeShell transpilation
   const markedCode = `console.error("# /*#*/ ${projectDir}");\n${tsCode}`;
 
-  // Generate hash-based ID for caching and retry
+  // Generate hash for script caching
   // For bash: hash original command to cache transpiled result
   // For /*#*/ scripts: hash TypeScript code directly
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
   const prefix = "tx-script"; // Denied commands are always transpiled bash
-  const id = hash;
   const scriptsDir = getScriptsDir();
   const scriptFile = `${scriptsDir}/${prefix}-${hash}.ts`;
 
@@ -1003,9 +1002,13 @@ async function outputDenyWithRetry(
     debug(`Created script for denied command: ${prefix}-${hash}.ts`);
   }
 
+  // Generate unique pending ID (timestamp+pid for multi-instance safety)
+  const pendingId = generateTempId();
+
   // Save pending command metadata to temp file (without tsCode)
   const pending: PendingCommand = {
-    id,
+    id: pendingId,
+    scriptHash: hash,
     commands: disallowedCommands,
     cwd: Deno.cwd(),
     timeout: options?.timeout,
@@ -1013,7 +1016,7 @@ async function outputDenyWithRetry(
     createdAt: new Date().toISOString(),
   };
 
-  const pendingFile = getPendingFilePath(id);
+  const pendingFile = getPendingFilePath(pendingId);
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Build deny message with retry instructions for LLM
@@ -1025,7 +1028,7 @@ WAIT for user choice (1-4):
 3. Allow for session
 4. Deny
 
-DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${id} --choice=<user's choice>`;
+DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${pendingId} --choice=<user's choice>`;
 
   const output = {
     hookSpecificOutput: {
