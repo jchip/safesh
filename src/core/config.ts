@@ -431,14 +431,12 @@ export function mergeConfigs(
   base: SafeShellConfig,
   override: SafeShellConfig,
 ): SafeShellConfig {
-  return {
-    workspace: override.workspace ?? base.workspace,
-    projectDir: override.projectDir ?? base.projectDir,
-    blockProjectDirWrite: override.blockProjectDirWrite ?? base.blockProjectDirWrite,
-    includeHomeInDefaultRead: override.includeHomeInDefaultRead ?? base.includeHomeInDefaultRead,
-    allowProjectCommands: override.allowProjectCommands ?? base.allowProjectCommands,
-    alwaysTranspile: override.alwaysTranspile ?? base.alwaysTranspile,
-    projectTemp: override.projectTemp ?? base.projectTemp,
+  // Start with spread merge (handles all simple override fields automatically)
+  // This ensures new fields don't break - they just use "last wins" strategy
+  const merged: SafeShellConfig = {
+    ...base,
+    ...override,
+    // Now override specific fields that need custom merge strategies
     permissions: mergePermissions(
       base.permissions ?? {},
       override.permissions ?? {},
@@ -450,10 +448,10 @@ export function mergeConfigs(
     env: mergeEnvConfig(base.env ?? {}, override.env ?? {}),
     imports: mergeImportPolicy(base.imports ?? {}, override.imports ?? {}),
     tasks: { ...base.tasks, ...override.tasks },
-    timeout: override.timeout ?? base.timeout,
     denoFlags: unionArrays(base.denoFlags, override.denoFlags),
-    vfs: override.vfs ?? base.vfs,
   };
+
+  return merged;
 }
 
 /**
