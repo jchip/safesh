@@ -11,6 +11,12 @@ export {
   MAX_PENDING_RETRIES,
 } from "./defaults.ts";
 
+// Re-export types from new unified modules (DRY refactoring)
+export type { PendingCommand, PendingPathRequest } from "./pending.ts";
+export type { SessionData } from "./session.ts";
+export type { PathViolationInfo, ErrorHandlerOptions } from "./error-handlers.ts";
+export type { FindProjectRootOptions } from "./project-root.ts";
+
 // ============================================================================
 // Configuration Types
 // ============================================================================
