@@ -13,6 +13,7 @@ import {
   getSessionAllowedCommands,
   getSessionAllowedCommandsArray,
   getSessionPathPermissions,
+  mergeSessionPermissions,
   readSessionFile,
   writeSessionFile,
 } from "./session.ts";
@@ -367,6 +368,158 @@ describe("session", () => {
       // Tmp path should not include project directory
       assertEquals(tmpSessionFile.includes(tempProjectDir), false);
       assertEquals(tmpSessionFile.includes("/tmp/safesh/"), true);
+    });
+  });
+
+  describe("mergeSessionPermissions", () => {
+    it("merges read permissions from session into config", async () => {
+      // Create session with read permissions
+      await addSessionPaths(["/etc/hosts", "/etc/passwd"], [], tempProjectDir, testSessionId);
+
+      // Create config with existing read permissions
+      const config: any = {
+        permissions: {
+          read: ["/var/log"],
+        },
+      };
+
+      // Merge session into config
+      mergeSessionPermissions(config, tempProjectDir, testSessionId);
+
+      // Should have all read permissions merged
+      assertEquals(config.permissions.read.length, 3);
+      assertEquals(config.permissions.read.includes("/var/log"), true);
+      assertEquals(config.permissions.read.includes("/etc/hosts"), true);
+      assertEquals(config.permissions.read.includes("/etc/passwd"), true);
+    });
+
+    it("merges write permissions from session into config", async () => {
+      // Create session with write permissions
+      await addSessionPaths([], ["/tmp/output.txt"], tempProjectDir, testSessionId);
+
+      // Create config with existing write permissions
+      const config: any = {
+        permissions: {
+          write: ["/var/app.log"],
+        },
+      };
+
+      // Merge session into config
+      mergeSessionPermissions(config, tempProjectDir, testSessionId);
+
+      // Should have all write permissions merged
+      assertEquals(config.permissions.write.length, 2);
+      assertEquals(config.permissions.write.includes("/var/app.log"), true);
+      assertEquals(config.permissions.write.includes("/tmp/output.txt"), true);
+    });
+
+    it("merges allowed commands from session into config", async () => {
+      // Create session with commands
+      await addSessionCommands(["docker", "kubectl"], tempProjectDir, testSessionId);
+
+      // Create config with existing run permissions
+      const config: any = {
+        permissions: {
+          run: ["git"],
+        },
+      };
+
+      // Merge session into config
+      mergeSessionPermissions(config, tempProjectDir, testSessionId);
+
+      // Should have all commands merged
+      assertEquals(config.permissions.run.length, 3);
+      assertEquals(config.permissions.run.includes("git"), true);
+      assertEquals(config.permissions.run.includes("docker"), true);
+      assertEquals(config.permissions.run.includes("kubectl"), true);
+    });
+
+    it("initializes permissions when config has none", async () => {
+      // Create session with all types of permissions
+      await addSessionCommands(["docker"], tempProjectDir, testSessionId);
+      await addSessionPaths(["/etc/hosts"], ["/tmp/out"], tempProjectDir, testSessionId);
+
+      // Create config with no permissions
+      const config: any = {};
+
+      // Merge session into config
+      mergeSessionPermissions(config, tempProjectDir, testSessionId);
+
+      // Should create permissions object and populate it
+      assertEquals(config.permissions !== undefined, true);
+      assertEquals(config.permissions.read, ["/etc/hosts"]);
+      assertEquals(config.permissions.write, ["/tmp/out"]);
+      assertEquals(config.permissions.run, ["docker"]);
+    });
+
+    it("handles empty session file gracefully", () => {
+      // No session file created
+
+      const config: any = {
+        permissions: {
+          read: ["/var/log"],
+        },
+      };
+
+      // Should not throw, just return without modifying
+      mergeSessionPermissions(config, tempProjectDir, testSessionId);
+
+      // Config should remain unchanged
+      assertEquals(config.permissions.read, ["/var/log"]);
+    });
+
+    it("merges all permission types at once", async () => {
+      // Create comprehensive session
+      await addSessionCommands(["npm", "yarn"], tempProjectDir, testSessionId);
+      await addSessionPaths(
+        ["/etc/hosts", "/etc/passwd"],
+        ["/tmp/log.txt", "/var/app.log"],
+        tempProjectDir,
+        testSessionId,
+      );
+
+      // Create config with some existing permissions
+      const config: any = {
+        permissions: {
+          read: ["/home/user/.bashrc"],
+          write: ["/tmp/test.txt"],
+          run: ["git"],
+        },
+      };
+
+      // Merge session into config
+      mergeSessionPermissions(config, tempProjectDir, testSessionId);
+
+      // All permissions should be merged
+      assertEquals(config.permissions.read.length, 3);
+      assertEquals(config.permissions.write.length, 3);
+      assertEquals(config.permissions.run.length, 3);
+
+      // Check specific values
+      assertEquals(config.permissions.read.includes("/home/user/.bashrc"), true);
+      assertEquals(config.permissions.read.includes("/etc/hosts"), true);
+      assertEquals(config.permissions.write.includes("/tmp/test.txt"), true);
+      assertEquals(config.permissions.write.includes("/var/app.log"), true);
+      assertEquals(config.permissions.run.includes("git"), true);
+      assertEquals(config.permissions.run.includes("npm"), true);
+    });
+
+    it("doesn't fail on invalid JSON in session file", async () => {
+      // Write invalid JSON to session file
+      const sessionFile = getSessionFilePath(tempProjectDir, testSessionId);
+      await Deno.writeTextFile(sessionFile, "not json at all");
+
+      const config: any = {
+        permissions: {
+          read: ["/var/log"],
+        },
+      };
+
+      // Should handle gracefully without throwing
+      mergeSessionPermissions(config, tempProjectDir, testSessionId);
+
+      // Config should remain unchanged
+      assertEquals(config.permissions.read, ["/var/log"]);
     });
   });
 });
