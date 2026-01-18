@@ -1203,13 +1203,24 @@ globalThis.addEventListener("error", (event) => {
       console.error("Warning: Could not write pending path file:", e);
     }
 
-    // Show permission prompt
+    // Show permission prompt with file and directory options
+    const pathParts = path.split('/');
+    const fileName = pathParts[pathParts.length - 1];
+    const dirPath = pathParts.slice(0, -1).join('/') || '/';
+
     const message = \`[SAFESH] PATH BLOCKED: \${path}
 
 Choose permission (r=read, w=write, rw=both):
-1. Allow once (r1, w1, rw1)
-2. Allow for session (r2, w2, rw2)
-3. Always allow (r3, w3, rw3)
+File only (add nothing):
+  1. Allow once (r1, w1, rw1)
+  2. Allow for session (r2, w2, rw2)
+  3. Always allow (r3, w3, rw3)
+
+Entire directory \${dirPath}/ (add 'd'):
+  1. Allow once (r1d, w1d, rw1d)
+  2. Allow for session (r2d, w2d, rw2d)
+  3. Always allow (r3d, w3d, rw3d)
+
 4. Deny
 
 AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
@@ -1312,13 +1323,24 @@ globalThis.addEventListener("unhandledrejection", (event) => {
       console.error("Warning: Could not write pending path file:", e);
     }
 
-    // Show permission prompt
+    // Show permission prompt with file and directory options
+    const pathParts = path.split('/');
+    const fileName = pathParts[pathParts.length - 1];
+    const dirPath = pathParts.slice(0, -1).join('/') || '/';
+
     const message = \`[SAFESH] PATH BLOCKED: \${path}
 
 Choose permission (r=read, w=write, rw=both):
-1. Allow once (r1, w1, rw1)
-2. Allow for session (r2, w2, rw2)
-3. Always allow (r3, w3, rw3)
+File only (add nothing):
+  1. Allow once (r1, w1, rw1)
+  2. Allow for session (r2, w2, rw2)
+  3. Always allow (r3, w3, rw3)
+
+Entire directory \${dirPath}/ (add 'd'):
+  1. Allow once (r1d, w1d, rw1d)
+  2. Allow for session (r2d, w2d, rw2d)
+  3. Always allow (r3d, w3d, rw3d)
+
 4. Deny
 
 AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
@@ -1517,13 +1539,24 @@ const __handleError = (error) => {
       console.error("Warning: Could not write pending path file:", e);
     }
 
-    // Show permission prompt
+    // Show permission prompt with file and directory options
+    const pathParts = path.split('/');
+    const fileName = pathParts[pathParts.length - 1];
+    const dirPath = pathParts.slice(0, -1).join('/') || '/';
+
     const message = \`[SAFESH] PATH BLOCKED: \${path}
 
 Choose permission (r=read, w=write, rw=both):
-1. Allow once (r1, w1, rw1)
-2. Allow for session (r2, w2, rw2)
-3. Always allow (r3, w3, rw3)
+File only (add nothing):
+  1. Allow once (r1, w1, rw1)
+  2. Allow for session (r2, w2, rw2)
+  3. Always allow (r3, w3, rw3)
+
+Entire directory \${dirPath}/ (add 'd'):
+  1. Allow once (r1d, w1d, rw1d)
+  2. Allow for session (r2d, w2d, rw2d)
+  3. Always allow (r3d, w3d, rw3d)
+
 4. Deny
 
 AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
