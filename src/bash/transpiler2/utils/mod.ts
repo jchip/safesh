@@ -11,3 +11,9 @@ export {
   escapeRegex,
   globToRegex,
 } from "./escape.ts";
+
+export {
+  parseCountArg,
+  collectFlagOptions,
+  collectFlagOptionsAndFiles,
+} from "./command-args.ts";

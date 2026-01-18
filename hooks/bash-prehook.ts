@@ -36,6 +36,7 @@ import { findProjectRoot, PROJECT_MARKERS } from "../src/core/project-root.ts";
 import { generatePendingId, writePendingCommand, writePendingPath } from "../src/core/pending.ts";
 import { getSessionAllowedCommands } from "../src/core/session.ts";
 import { generateInlineErrorHandler } from "../src/core/error-handlers.ts";
+import { readStdinFully } from "../src/core/io-utils.ts";
 
 // =============================================================================
 // Configuration
@@ -601,27 +602,6 @@ function getDisallowedCommands(
   return disallowed;
 }
 
-/**
- * Read stdin completely
- */
-async function readStdin(): Promise<string> {
-  const decoder = new TextDecoder();
-  const chunks: Uint8Array[] = [];
-
-  for await (const chunk of Deno.stdin.readable) {
-    chunks.push(chunk);
-  }
-
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const combined = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    combined.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return decoder.decode(combined);
-}
 
 /**
  * Claude Code PreToolUse hook input format
@@ -680,7 +660,7 @@ async function getBashCommand(): Promise<ParsedCommand> {
 
   // Check if stdin has data (piped)
   if (!Deno.stdin.isTerminal()) {
-    const rawInput = await readStdin();
+    const rawInput = await readStdinFully();
     const trimmed = rawInput.trim();
     debug(`Raw stdin input: ${trimmed}`);
 
@@ -1120,233 +1100,21 @@ async function main() {
       debug("TypeScript detected, rewriting to desh");
 
       // Add error handlers for better error formatting (without storing original command)
-      tsCode = `// Global error handlers for unhandled errors
+      tsCode = generateInlineErrorHandler({
+        prefix: "TypeScript Error",
+        errorLogPath: getErrorLogPath(),
+        includeCommand: false,
+      }) + `
+
+// Global error handlers for uncaught errors
 globalThis.addEventListener("error", (event) => {
   event.preventDefault();
-  const error = event.error;
-  const errorMessage = error?.message || String(error);
-  const errorCode = error?.code || "";
-
-  // Check if this is a path permission error (SafeShell or Deno)
-  const isPathViolation =
-    errorCode === "PATH_VIOLATION" ||
-    errorCode === "SYMLINK_VIOLATION" ||
-    errorCode === "NotCapable" ||
-    error?.name === "NotCapable" ||
-    errorMessage.includes("is outside allowed directories") ||
-    errorMessage.includes("outside allowed directories") ||
-    errorMessage.includes("Requires read access to") ||
-    errorMessage.includes("Requires write access to");
-
-  if (isPathViolation) {
-    // Extract path from error message - handle SafeShell and Deno errors
-    // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
-    // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
-    // Deno NotCapable: "Requires read access to \"/etc/hosts\", run again with --allow-read"
-    let path = "unknown";
-
-    // Try Deno format first: Requires read/write access to "path"
-    const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
-    if (denoMatch) {
-      path = denoMatch[1];
-    } else {
-      // Try SafeShell format: Path/Symlink 'path'
-      const pathMatch = errorMessage.match(/(?:Path|Symlink) '([^']+)'/);
-      if (pathMatch) {
-        path = pathMatch[1];
-        // For symlink violations, extract the real path instead
-        if (errorCode === "SYMLINK_VIOLATION") {
-          const realPathMatch = errorMessage.match(/points to '([^']+)'/);
-          if (realPathMatch) {
-            path = realPathMatch[1];
-          }
-        }
-      }
-    }
-
-    // Create pending path request
-    const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
-    const scriptHash = Deno.env.get("SAFESH_SCRIPT_HASH") || "";
-    const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
-    const pending = {
-      id: pendingId,
-      path: path,
-      operation: "read",
-      cwd: Deno.cwd(),
-      scriptHash: scriptHash,
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
-    } catch (e) {
-      console.error("Warning: Could not write pending path file:", e);
-    }
-
-    // Show permission prompt with file and directory options
-    const pathParts = path.split('/');
-    const fileName = pathParts[pathParts.length - 1];
-    const dirPath = pathParts.slice(0, -1).join('/') || '/';
-
-    const message = \`[SAFESH] PATH BLOCKED: \${path}
-
-Choose permission (r=read, w=write, rw=both):
-File only (add nothing):
-  1. Allow once (r1, w1, rw1)
-  2. Allow for session (r2, w2, rw2)
-  3. Always allow (r3, w3, rw3)
-
-Entire directory \${dirPath}/ (add 'd'):
-  1. Allow once (r1d, w1d, rw1d)
-  2. Allow for session (r2d, w2d, rw2d)
-  3. Always allow (r3d, w3d, rw3d)
-
-4. Deny
-
-AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
-
-    console.error(message);
-    Deno.exit(1);
-  }
-
-  // Check if this is a command execution failure (not a SafeShell error)
-  const isCommandFailure =
-    errorMessage.includes("Pipeline failed: upstream command exited with code") ||
-    errorMessage.includes("command exited with code") ||
-    errorMessage.includes("Command failed with exit code");
-
-  const errorMsg = [
-    "=== TypeScript Error ===",
-    \`Error: \${errorMessage}\`,
-    error?.stack ? \`\nStack trace:\n\${error.stack}\` : "",
-    "=======================\\n"
-  ].join("\\n");
-
-  // Only log to file if it's a genuine SafeShell error
-  if (!isCommandFailure) {
-    const errorFile = \`${getErrorLogPath()}\`;
-    try {
-      Deno.writeTextFileSync(errorFile, errorMsg);
-      console.error(\`\\nError log: \${errorFile}\`);
-    } catch {}
-  }
-
-  console.error(errorMsg);
-  Deno.exit(1);
+  __handleError(event.error);
 });
 
 globalThis.addEventListener("unhandledrejection", (event) => {
   event.preventDefault();
-  const reason = event.reason;
-  const errorMessage = reason?.message || String(reason);
-  const errorCode = reason?.code || "";
-
-  // Check if this is a path permission error (SafeShell or Deno)
-  const isPathViolation =
-    errorCode === "PATH_VIOLATION" ||
-    errorCode === "SYMLINK_VIOLATION" ||
-    errorCode === "NotCapable" ||
-    reason?.name === "NotCapable" ||
-    errorMessage.includes("is outside allowed directories") ||
-    errorMessage.includes("outside allowed directories") ||
-    errorMessage.includes("Requires read access to") ||
-    errorMessage.includes("Requires write access to");
-
-  if (isPathViolation) {
-    // Extract path from error message - handle SafeShell and Deno errors
-    // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
-    // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
-    // Deno NotCapable: "Requires read access to \"/etc/hosts\", run again with --allow-read"
-    let path = "unknown";
-
-    // Try Deno format first: Requires read/write access to "path"
-    const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
-    if (denoMatch) {
-      path = denoMatch[1];
-    } else {
-      // Try SafeShell format: Path/Symlink 'path'
-      const pathMatch = errorMessage.match(/(?:Path|Symlink) '([^']+)'/);
-      if (pathMatch) {
-        path = pathMatch[1];
-        // For symlink violations, extract the real path instead
-        if (errorCode === "SYMLINK_VIOLATION") {
-          const realPathMatch = errorMessage.match(/points to '([^']+)'/);
-          if (realPathMatch) {
-            path = realPathMatch[1];
-          }
-        }
-      }
-    }
-
-    // Create pending path request
-    const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
-    const scriptHash = Deno.env.get("SAFESH_SCRIPT_HASH") || "";
-    const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
-    const pending = {
-      id: pendingId,
-      path: path,
-      operation: "read",
-      cwd: Deno.cwd(),
-      scriptHash: scriptHash,
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
-    } catch (e) {
-      console.error("Warning: Could not write pending path file:", e);
-    }
-
-    // Show permission prompt with file and directory options
-    const pathParts = path.split('/');
-    const fileName = pathParts[pathParts.length - 1];
-    const dirPath = pathParts.slice(0, -1).join('/') || '/';
-
-    const message = \`[SAFESH] PATH BLOCKED: \${path}
-
-Choose permission (r=read, w=write, rw=both):
-File only (add nothing):
-  1. Allow once (r1, w1, rw1)
-  2. Allow for session (r2, w2, rw2)
-  3. Always allow (r3, w3, rw3)
-
-Entire directory \${dirPath}/ (add 'd'):
-  1. Allow once (r1d, w1d, rw1d)
-  2. Allow for session (r2d, w2d, rw2d)
-  3. Always allow (r3d, w3d, rw3d)
-
-4. Deny
-
-AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
-
-    console.error(message);
-    Deno.exit(1);
-  }
-
-  // Check if this is a command execution failure (not a SafeShell error)
-  const isCommandFailure =
-    errorMessage.includes("Pipeline failed: upstream command exited with code") ||
-    errorMessage.includes("command exited with code") ||
-    errorMessage.includes("Command failed with exit code");
-
-  const errorMsg = [
-    "=== Unhandled Promise Rejection ===",
-    \`Error: \${errorMessage}\`,
-    reason?.stack ? \`\nStack trace:\n\${reason.stack}\` : "",
-    "===================================\\n"
-  ].join("\\n");
-
-  // Only log to file if it's a genuine SafeShell error
-  if (!isCommandFailure) {
-    const errorFile = \`${getErrorLogPath()}\`;
-    try {
-      Deno.writeTextFileSync(errorFile, errorMsg);
-      console.error(\`\\nError log: \${errorFile}\`);
-    } catch {}
-  }
-
-  console.error(errorMsg);
-  Deno.exit(1);
+  __handleError(event.reason);
 });
 
 ${tsCode}
@@ -1475,128 +1243,15 @@ ${errorFile ? `\nError log: ${errorFile}` : ""}`;
 
     // Prepend original bash command as a constant for error messages and wrap in error handler
     const bashCommandEscaped = parsed.command.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
-    const preview = parsed.command.length > 100 ? parsed.command.slice(0, 100) + "..." : parsed.command;
-    const previewEscaped = preview.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
 
     // Add global error handlers to catch all errors (sync and async)
     tsCode = `const __ORIGINAL_BASH_COMMAND__ = \`${bashCommandEscaped}\`;
-const __handleError = (error) => {
-  const fullCommand = __ORIGINAL_BASH_COMMAND__;
-  const errorMessage = error.message || String(error);
-  const errorCode = error.code || "";
-
-  // Check if this is a path permission error (SafeShell or Deno)
-  const isPathViolation =
-    errorCode === "PATH_VIOLATION" ||
-    errorCode === "SYMLINK_VIOLATION" ||
-    errorCode === "NotCapable" ||
-    error?.name === "NotCapable" ||
-    errorMessage.includes("is outside allowed directories") ||
-    errorMessage.includes("outside allowed directories") ||
-    errorMessage.includes("Requires read access to") ||
-    errorMessage.includes("Requires write access to");
-
-  if (isPathViolation) {
-    // Extract path from error message - handle SafeShell and Deno errors
-    // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
-    // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
-    // Deno NotCapable: "Requires read access to \"/etc/hosts\", run again with --allow-read"
-    let path = "unknown";
-
-    // Try Deno format first: Requires read/write access to "path"
-    const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
-    if (denoMatch) {
-      path = denoMatch[1];
-    } else {
-      // Try SafeShell format: Path/Symlink 'path'
-      const pathMatch = errorMessage.match(/(?:Path|Symlink) '([^']+)'/);
-      if (pathMatch) {
-        path = pathMatch[1];
-        // For symlink violations, extract the real path instead
-        if (errorCode === "SYMLINK_VIOLATION") {
-          const realPathMatch = errorMessage.match(/points to '([^']+)'/);
-          if (realPathMatch) {
-            path = realPathMatch[1];
-          }
-        }
-      }
-    }
-
-    // Create pending path request
-    const pendingId = \`${Date.now()}-${Deno.pid}\`;
-    const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
-    const pending = {
-      id: pendingId,
-      path: path,
-      operation: "read", // default, will be updated by user choice
-      cwd: Deno.cwd(),
-      command: fullCommand,
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
-    } catch (e) {
-      console.error("Warning: Could not write pending path file:", e);
-    }
-
-    // Show permission prompt with file and directory options
-    const pathParts = path.split('/');
-    const fileName = pathParts[pathParts.length - 1];
-    const dirPath = pathParts.slice(0, -1).join('/') || '/';
-
-    const message = \`[SAFESH] PATH BLOCKED: \${path}
-
-Choose permission (r=read, w=write, rw=both):
-File only (add nothing):
-  1. Allow once (r1, w1, rw1)
-  2. Allow for session (r2, w2, rw2)
-  3. Always allow (r3, w3, rw3)
-
-Entire directory \${dirPath}/ (add 'd'):
-  1. Allow once (r1d, w1d, rw1d)
-  2. Allow for session (r2d, w2d, rw2d)
-  3. Always allow (r3d, w3d, rw3d)
-
-4. Deny
-
-AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
-
-    console.error(message);
-    Deno.exit(1);
-  }
-
-  // Check if this is a command execution failure (not a SafeShell error)
-  // Command failures are expected and shouldn't be logged as SafeShell errors
-  const isCommandFailure =
-    errorMessage.includes("Pipeline failed: upstream command exited with code") ||
-    errorMessage.includes("command exited with code") ||
-    errorMessage.includes("Command failed with exit code");
-
-  // Build error message
-  const errorMsg = [
-    "=== Bash Command Error ===",
-    \`Command: \${fullCommand}\`,
-    \`\\nError: \${errorMessage}\`,
-    error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
-    "=========================\\n"
-  ].join("\\n");
-
-  // Only log to file if it's a genuine SafeShell error, not a command failure
-  if (!isCommandFailure) {
-    const errorFile = \`${getErrorLogPath()}\`;
-    try {
-      Deno.writeTextFileSync(errorFile, errorMsg);
-      console.error(\`\\nError log: \${errorFile}\`);
-    } catch (e) {
-      console.error("Warning: Could not write error log:", e);
-    }
-  }
-
-  // Always output error to console
-  console.error(errorMsg);
-  Deno.exit(1);
-};
+${generateInlineErrorHandler({
+        prefix: "Bash Command Error",
+        errorLogPath: getErrorLogPath(),
+        includeCommand: true,
+        originalCommand: '${bashCommandEscaped}',
+      })}
 
 // Global error handlers for uncaught errors
 globalThis.addEventListener("error", (event) => {

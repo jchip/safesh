@@ -24,6 +24,7 @@ import { getPendingFilePath, getSessionFilePath, findScriptFilePath } from "../c
 import { findProjectRoot, PROJECT_MARKERS } from "../core/project-root.ts";
 import { readPendingCommand, readPendingPath, deletePending, type PendingCommand, type PendingPathRequest } from "../core/pending.ts";
 import { addSessionCommands, addSessionPaths, getSessionAllowedCommandsArray, getSessionPathPermissions } from "../core/session.ts";
+import { readStdinFully } from "../core/io-utils.ts";
 
 const VERSION = "0.1.0";
 
@@ -432,25 +433,6 @@ ENVIRONMENT:
     $.cmd(), $.git(), $.cat(), $.glob(), $.fs, $.text, etc.
 `;
 
-async function readStdin(): Promise<string> {
-  const decoder = new TextDecoder();
-  const chunks: Uint8Array[] = [];
-
-  for await (const chunk of Deno.stdin.readable) {
-    chunks.push(chunk);
-  }
-
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const combined = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    combined.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return decoder.decode(combined);
-}
-
 async function main() {
   // Check for retry subcommand first
   if (Deno.args[0] === "retry") {
@@ -593,7 +575,7 @@ async function main() {
       Deno.exit(1);
     }
     // Read from stdin
-    const code = await readStdin();
+    const code = await readStdinFully();
     if (!code.trim()) {
       console.error("Error: Empty input from stdin");
       Deno.exit(1);
@@ -612,7 +594,7 @@ async function main() {
 
     // If --code is specified but empty/true, read from stdin
     if (code === "" || code === "true") {
-      code = await readStdin();
+      code = await readStdinFully();
     }
 
     if (!code.trim()) {
