@@ -799,7 +799,22 @@ export function visitPipeline(
   const result = buildPipeline(pipeline, ctx);
 
   if (pipeline.background) {
-    return { lines: [`${indent}${result.code}; // background`] };
+    // SSH-XXX: Spawn background job and track PID for $!
+    // Convert the command to a spawned child process so we can get its PID
+    // If the result is async (e.g., wrapped in IIFE for cd), await it first
+    const bgCode = result.async
+      ? `${indent}  const __bgCmd = await (${result.code});`
+      : `${indent}  const __bgCmd = ${result.code};`;
+
+    return {
+      lines: [
+        `${indent}(async () => {`,
+        bgCode,
+        `${indent}  const __child = __bgCmd.spawnBackground();`,
+        `${indent}  __LAST_BG_PID = __child.pid;`,
+        `${indent}})(); // background`,
+      ]
+    };
   }
 
   // SSH-364: Handle stream vs command output differently
