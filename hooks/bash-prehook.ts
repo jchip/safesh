@@ -1101,7 +1101,9 @@ WAIT for user choice (1-4):
 3. Allow for session
 4. Deny
 
-DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${pendingId} --choice=<user's choice>`;
+DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${pendingId} --choice=<user's choice>
+
+HINT: Use safesh TypeScript code with /*#*/ prefix - many shell utils are pre-approved.`;
 
   const output = {
     hookSpecificOutput: {
