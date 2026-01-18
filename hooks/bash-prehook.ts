@@ -453,6 +453,114 @@ function extractCommands(ast: AST.Program): Set<string> {
 }
 
 /**
+ * List of dangerous commands that should always go through safesh for permission checks
+ * These commands can modify/delete files, change permissions, or perform destructive operations
+ */
+const DANGEROUS_COMMANDS = new Set([
+  // File deletion/modification
+  "rm", "rmdir", "unlink", "shred",
+  // Permission/ownership changes
+  "chmod", "chown", "chgrp",
+  // Disk operations
+  "dd", "mkfs", "fdisk", "parted", "wipefs",
+  // System modifications
+  "mount", "umount", "kill", "killall", "pkill",
+  // Package managers
+  "apt", "apt-get", "yum", "dnf", "pacman", "brew",
+  // Low-level operations
+  "truncate", "fallocate",
+]);
+
+/**
+ * Extract all command names including builtins (for dangerous command detection)
+ */
+function extractAllCommands(stmt: AST.Statement, commands: Set<string>): void {
+  switch (stmt.type) {
+    case "Command": {
+      // Extract command name if it's a simple word (including builtins)
+      if (stmt.name.type === "Word") {
+        const cmdName = stmt.name.value;
+        if (cmdName) {
+          commands.add(cmdName);
+        }
+      }
+      break;
+    }
+    case "Pipeline": {
+      for (const cmd of stmt.commands) {
+        extractAllCommands(cmd, commands);
+      }
+      break;
+    }
+    case "IfStatement": {
+      if (stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand") {
+        extractAllCommands(stmt.test, commands);
+      }
+      for (const s of stmt.consequent) {
+        extractAllCommands(s, commands);
+      }
+      if (stmt.alternate) {
+        if (Array.isArray(stmt.alternate)) {
+          for (const s of stmt.alternate) {
+            extractAllCommands(s, commands);
+          }
+        } else {
+          extractAllCommands(stmt.alternate, commands);
+        }
+      }
+      break;
+    }
+    case "ForStatement":
+    case "WhileStatement":
+    case "UntilStatement": {
+      for (const s of stmt.body) {
+        extractAllCommands(s, commands);
+      }
+      break;
+    }
+    case "CStyleForStatement": {
+      for (const s of stmt.body) {
+        extractAllCommands(s, commands);
+      }
+      break;
+    }
+    case "CaseStatement": {
+      for (const caseItem of stmt.cases) {
+        for (const s of caseItem.body) {
+          extractAllCommands(s, commands);
+        }
+      }
+      break;
+    }
+    case "Subshell":
+    case "BraceGroup": {
+      for (const s of stmt.body) {
+        extractAllCommands(s, commands);
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Check if AST contains any dangerous commands that require safesh permission checks
+ */
+function hasDangerousCommands(ast: AST.Program): boolean {
+  const commands = new Set<string>();
+  for (const stmt of ast.body) {
+    extractAllCommands(stmt, commands);
+  }
+
+  for (const cmd of commands) {
+    if (DANGEROUS_COMMANDS.has(cmd)) {
+      debug(`Dangerous command detected: ${cmd}`);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Get session-allowed commands from session file
  */
 function getSessionAllowedCommands(): Set<string> {
@@ -1091,13 +1199,18 @@ ${tsCode}
       throw parseError;
     }
 
-    // Check command complexity
+    // Check command complexity and safety
     // Simple commands: passthrough to native bash (let Bash tool handle permissions)
     // Complex commands: transpile to TypeScript (need SafeShell runtime)
-    if (isSimpleCommand(ast)) {
+    // Dangerous commands: always go through safesh for permission checks
+    if (isSimpleCommand(ast) && !hasDangerousCommands(ast)) {
       debug("Simple command detected - passthrough to native bash");
       outputPassthrough();
       Deno.exit(0);
+    }
+
+    if (hasDangerousCommands(ast)) {
+      debug("Dangerous command detected - forcing through safesh for permission checks");
     }
 
     // Complex command - extract commands for permission checking
