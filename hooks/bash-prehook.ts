@@ -1466,6 +1466,33 @@ ${tsCode}
 
     for (const pattern of knownBadPatterns) {
       if (pattern.test(tsCode)) {
+        // Save detailed error to file
+        let errorFile = "";
+        try {
+          const errorId = `${Date.now()}-${Deno.pid}`;
+          const errorDir = `${getTempRoot()}/errors`;
+          Deno.mkdirSync(errorDir, { recursive: true });
+          errorFile = `${errorDir}/transpile-${errorId}.log`;
+
+          const errorLog = `=== Transpiler Error ===
+Original Bash Command:
+${bashCommand}
+
+Error: The bash script is too complex for automatic transpilation.
+
+Suggestion: Use safesh /*#*/ TypeScript syntax instead of bash for complex scripts.
+
+Generated TypeScript (invalid):
+${tsCode}
+=========================
+`;
+
+          Deno.writeTextFileSync(errorFile, errorLog);
+        } catch (e) {
+          debug(`Failed to write error log: ${e}`);
+        }
+
+        // Brief console message (don't show bash command or generated code)
         const message = `[SAFESH] Transpiler Error: The bash script is too complex for automatic transpilation.
 
 DO NOT USE BASH FOR SCRIPTS THAT ARE TOO COMPLEX. Use safesh /*#*/ TypeScript instead.
@@ -1476,7 +1503,8 @@ Example:
   for (const branch of branches) {
     console.log(\`Branch: \${branch}\`);
   }
-`;
+
+${errorFile ? `\nError log: ${errorFile}` : ""}`;
 
         // Output hook denial to block execution
         const output = {
