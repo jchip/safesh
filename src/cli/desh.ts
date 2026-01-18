@@ -20,113 +20,14 @@ import { executeCode, executeFile, executeCodeStreaming } from "../runtime/execu
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
 import { getPendingFilePath, getSessionFilePath, findScriptFilePath } from "../core/temp.ts";
+// New unified core modules (DRY refactoring)
+import { findProjectRoot, PROJECT_MARKERS } from "../core/project-root.ts";
+import { readPendingCommand, readPendingPath, deletePending, type PendingCommand, type PendingPathRequest } from "../core/pending.ts";
+import { addSessionCommands, addSessionPaths, getSessionAllowedCommandsArray, getSessionPathPermissions } from "../core/session.ts";
 
 const VERSION = "0.1.0";
 
-/**
- * Project root markers - only truly reliable ones
- * Other markers like package.json can exist in subdirectories
- */
-const PROJECT_MARKERS = [
-  ".claude",        // Claude Code project config (most reliable)
-  ".git",           // Git repository root
-  ".config/safesh", // SafeShell project config
-];
-
-/**
- * Find project root by walking up from cwd
- *
- * Priority:
- * 1. CLAUDE_PROJECT_DIR env var
- * 2. Walk up to find project markers (stop at home directory)
- * 3. Create .config/safesh/config.local.json in cwd and use it as project root
- */
-function findProjectRoot(cwd: string): string {
-  // Check env var first
-  const envProjectDir = Deno.env.get("CLAUDE_PROJECT_DIR");
-  if (envProjectDir) return envProjectDir;
-
-  const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
-
-  // Walk up looking for markers
-  let dir = cwd;
-  while (true) {
-    // Stop at home directory - don't treat home as project root
-    if (homeDir && dir === homeDir) break;
-
-    for (const marker of PROJECT_MARKERS) {
-      try {
-        Deno.statSync(`${dir}/${marker}`);
-        return dir;
-      } catch { /* continue */ }
-    }
-    const parent = dir.replace(/\/[^/]+$/, "");
-    if (parent === dir || parent === "") break; // Reached filesystem root
-    dir = parent;
-  }
-
-  // No project marker found - create one in cwd
-  try {
-    const configDir = `${cwd}/.config/safesh`;
-    Deno.mkdirSync(configDir, { recursive: true });
-    const configFile = `${configDir}/config.local.json`;
-
-    // Only create if doesn't exist
-    try {
-      Deno.statSync(configFile);
-    } catch {
-      Deno.writeTextFileSync(configFile, "{}\n");
-    }
-  } catch {
-    // Silently ignore errors
-  }
-
-  return cwd;
-}
-
-/**
- * Get session-allowed commands from session file
- */
-function getSessionAllowedCommands(projectDir?: string): string[] {
-  const sessionFile = getSessionFilePath(projectDir);
-
-  try {
-    const content = Deno.readTextFileSync(sessionFile);
-    const session = JSON.parse(content) as { allowedCommands?: string[] };
-    return session.allowedCommands ?? [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Get session-allowed path permissions from session file
- */
-function getSessionPathPermissions(projectDir?: string): { read?: string[]; write?: string[] } {
-  const sessionFile = getSessionFilePath(projectDir);
-
-  try {
-    const content = Deno.readTextFileSync(sessionFile);
-    const session = JSON.parse(content) as { permissions?: { read?: string[]; write?: string[] } };
-    return session.permissions ?? {};
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Pending command structure (matches prehook's PendingCommand)
- */
-interface PendingCommand {
-  id: string;
-  scriptHash: string;  // Hash of script content for finding cached script file
-  commands: string[];  // Disallowed commands (filled by initCmds)
-  cwd: string;
-  timeout?: number;
-  runInBackground?: boolean;
-  createdAt: string;
-  // Note: tsCode removed - read from script file using scriptHash
-}
+// Project root, session, and pending functions now imported from core modules
 
 /**
  * Handle retry subcommand: desh retry --id=X --choice=N
@@ -156,13 +57,9 @@ async function handleRetry(args: string[]): Promise<void> {
   }
 
   // Read pending command file first
-  const pendingFile = getPendingFilePath(id);
-  let pending: PendingCommand;
-  try {
-    const content = await Deno.readTextFile(pendingFile);
-    pending = JSON.parse(content);
-  } catch {
-    console.error(`Error: Pending command not found: ${pendingFile}`);
+  const pending = readPendingCommand(id);
+  if (!pending) {
+    console.error(`Error: Pending command not found for id: ${id}`);
     Deno.exit(1);
   }
 
@@ -173,7 +70,7 @@ async function handleRetry(args: string[]): Promise<void> {
   // Choice 4 = Deny - cleanup and exit
   if (choice === 4) {
     console.error("[safesh] Command denied by user.");
-    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    deletePending(id, "command");
     Deno.exit(0);
   }
 
@@ -184,7 +81,8 @@ async function handleRetry(args: string[]): Promise<void> {
 
   // Choice 3 = Session allow - update session file
   if (choice === 3) {
-    await addToSessionFile(pending.commands, projectDir);
+    await addSessionCommands(pending.commands, projectDir);
+    console.error(`[safesh] Added to session-allow: ${pending.commands.join(", ")}`);
   }
 
   // Load config and merge approved commands
@@ -249,13 +147,13 @@ async function handleRetry(args: string[]): Promise<void> {
     if (result.stderr) console.error(result.stderr);
 
     // Cleanup pending file on success (keep script file for caching)
-    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    deletePending(id, "command");
 
     Deno.exit(result.code);
   } catch (error) {
     console.error(`Execution failed: ${error}`);
     // Cleanup pending file on failure too
-    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    deletePending(id, "command");
     Deno.exit(1);
   }
 }
@@ -291,30 +189,7 @@ async function addToConfigLocal(commands: string[], cwd: string): Promise<void> 
   console.error(`[safesh] Added to always-allow: ${commands.join(", ")}`);
 }
 
-/**
- * Add commands to session file for "session allow"
- */
-async function addToSessionFile(commands: string[], projectDir?: string): Promise<void> {
-  const sessionFile = getSessionFilePath(projectDir);
-
-  // Load existing or create new
-  let session: { allowedCommands?: string[] } = {};
-  try {
-    const content = await Deno.readTextFile(sessionFile);
-    session = JSON.parse(content);
-  } catch { /* file doesn't exist */ }
-
-  // Merge commands
-  const existing = new Set(session.allowedCommands ?? []);
-  for (const cmd of commands) {
-    existing.add(cmd);
-  }
-  session.allowedCommands = [...existing];
-
-  // Write back
-  await Deno.writeTextFile(sessionFile, JSON.stringify(session, null, 2) + "\n");
-  console.error(`[safesh] Added to session-allow: ${commands.join(", ")}`);
-}
+// addToSessionFile now replaced by addSessionCommands from core/session.ts
 
 /**
  * Handle retry-path subcommand: desh retry-path --id=X --choice=<option>
@@ -340,22 +215,9 @@ async function handleRetryPath(args: string[]): Promise<void> {
   }
 
   // Read pending path request
-  const { getPendingPathFilePath } = await import("../core/temp.ts");
-  const pendingFile = getPendingPathFilePath(id);
-  let pending: {
-    id: string;
-    path: string;
-    operation: string;
-    cwd: string;
-    scriptHash: string;
-    createdAt: string;
-  };
-
-  try {
-    const content = await Deno.readTextFile(pendingFile);
-    pending = JSON.parse(content);
-  } catch {
-    console.error(`Error: Pending path request not found: ${pendingFile}`);
+  const pending = readPendingPath(id);
+  if (!pending) {
+    console.error(`Error: Pending path request not found for id: ${id}`);
     Deno.exit(1);
   }
 
@@ -372,7 +234,7 @@ async function handleRetryPath(args: string[]): Promise<void> {
   // Handle deny
   if (choice === "deny" || choice === "4") {
     console.error("[safesh] Path access denied by user.");
-    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    deletePending(id, "path");
     Deno.exit(0);
   }
 
@@ -383,8 +245,8 @@ async function handleRetryPath(args: string[]): Promise<void> {
     Deno.exit(1);
   }
 
-  const operation = match[1]; // r, w, or rw
-  const scope = parseInt(match[2]); // 1, 2, or 3
+  const operation = match[1]!; // r, w, or rw
+  const scope = parseInt(match[2]!); // 1, 2, or 3
   const isDirectory = match[3] === "d"; // true if 'd' suffix present
 
   // Determine the path to grant permission to
@@ -413,7 +275,11 @@ async function handleRetryPath(args: string[]): Promise<void> {
     await addPathsToConfigLocal(readPaths, writePaths, cwd);
   } else if (scope === 2) {
     // Session allow - update session file
-    await addPathsToSessionFile(readPaths, writePaths, projectDir);
+    await addSessionPaths(readPaths, writePaths, projectDir);
+    const msg = [];
+    if (readPaths.length > 0) msg.push(`read: ${readPaths.join(", ")}`);
+    if (writePaths.length > 0) msg.push(`write: ${writePaths.join(", ")}`);
+    console.error(`[safesh] Added to session-allow paths: ${msg.join("; ")}`);
   }
   // scope === 1: allow once - just add to runtime config, no persistence
 
@@ -446,7 +312,7 @@ async function handleRetryPath(args: string[]): Promise<void> {
       }
     }
   } catch (e) {
-    console.error(`[DEBUG] Session file error: ${e.message}`);
+    console.error(`[DEBUG] Session file error: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   config.permissions = config.permissions ?? {};
@@ -484,7 +350,7 @@ async function handleRetryPath(args: string[]): Promise<void> {
     Deno.exit(result.code);
   } catch (error) {
     console.error(`Execution failed: ${error}`);
-    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    deletePending(id, "path");
     Deno.exit(1);
   }
 }
@@ -530,43 +396,7 @@ async function addPathsToConfigLocal(
   console.error(`[safesh] Added to always-allow (${msg.join("; ")})`);
 }
 
-/**
- * Add paths to session file for "session allow"
- */
-async function addPathsToSessionFile(
-  readPaths: string[],
-  writePaths: string[],
-  projectDir?: string
-): Promise<void> {
-  const sessionFile = getSessionFilePath(projectDir);
-
-  let session: { permissions?: { read?: string[]; write?: string[] } } = {};
-  try {
-    const content = await Deno.readTextFile(sessionFile);
-    session = JSON.parse(content);
-  } catch { /* file doesn't exist */ }
-
-  session.permissions = session.permissions ?? {};
-
-  if (readPaths.length > 0) {
-    const existing = new Set(session.permissions.read ?? []);
-    for (const path of readPaths) existing.add(path);
-    session.permissions.read = [...existing];
-  }
-
-  if (writePaths.length > 0) {
-    const existing = new Set(session.permissions.write ?? []);
-    for (const path of writePaths) existing.add(path);
-    session.permissions.write = [...existing];
-  }
-
-  await Deno.writeTextFile(sessionFile, JSON.stringify(session, null, 2) + "\n");
-
-  const msg = [];
-  if (readPaths.length > 0) msg.push(`read: ${readPaths.join(", ")}`);
-  if (writePaths.length > 0) msg.push(`write: ${writePaths.join(", ")}`);
-  console.error(`[safesh] Added to session-allow (${msg.join("; ")})`);
-}
+// addPathsToSessionFile now replaced by addSessionPaths from core/session.ts
 
 const HELP = `
 desh - Deno Shell CLI for SafeShell
@@ -722,7 +552,7 @@ async function main() {
     }
 
     // Merge session-allowed commands
-    const sessionAllowed = getSessionAllowedCommands(projectDir);
+    const sessionAllowed = getSessionAllowedCommandsArray(projectDir);
     if (sessionAllowed.length > 0) {
       config.permissions = config.permissions ?? {};
       config.permissions.run = [
