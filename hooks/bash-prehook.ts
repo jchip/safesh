@@ -29,8 +29,13 @@ import { getAllowedCommands } from "../src/core/command_permission.ts";
 import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath, getSessionFilePath, getScriptsDir, getTempRoot, getPendingDir } from "../src/core/temp.ts";
-import type { SafeShellConfig } from "../src/core/types.ts";
+import type { SafeShellConfig, PendingCommand } from "../src/core/types.ts";
 import { isCommandWithinProjectDir } from "../src/core/permissions.ts";
+// New unified core modules (DRY refactoring)
+import { findProjectRoot, PROJECT_MARKERS } from "../src/core/project-root.ts";
+import { generatePendingId, writePendingCommand, writePendingPath } from "../src/core/pending.ts";
+import { getSessionAllowedCommands } from "../src/core/session.ts";
+import { generateInlineErrorHandler } from "../src/core/error-handlers.ts";
 
 // =============================================================================
 // Configuration
@@ -176,11 +181,11 @@ function cleanupOldScripts(): void {
 
           const legacyMatch = file.name.match(/^file_(.+)\.ts$/);
           if (legacyMatch) {
-            id = legacyMatch[1];
+            id = legacyMatch[1]!;
           } else {
             const hashMatch = file.name.match(/^(?:script|tx-script)-(.+)\.ts$/);
             if (hashMatch) {
-              id = hashMatch[1];
+              id = hashMatch[1]!;
             }
           }
 
@@ -212,83 +217,7 @@ function cleanupOldScripts(): void {
   }
 }
 
-/**
- * Project root markers - only truly reliable ones
- * Other markers like package.json can exist in subdirectories
- */
-const PROJECT_MARKERS = [
-  ".claude",        // Claude Code project config (most reliable)
-  ".git",           // Git repository root
-  ".config/safesh", // SafeShell project config
-];
-
-/**
- * Find project root by walking up from cwd
- *
- * Priority:
- * 1. CLAUDE_PROJECT_DIR env var
- * 2. Walk up to find project markers (stop at home directory)
- * 3. Create .config/safesh/config.local.json in cwd and use it as project root
- */
-function findProjectRoot(cwd: string): string {
-  // Check env var first
-  const envProjectDir = Deno.env.get("CLAUDE_PROJECT_DIR");
-  if (envProjectDir) {
-    debug(`Project root from CLAUDE_PROJECT_DIR: ${envProjectDir}`);
-    return envProjectDir;
-  }
-
-  const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
-
-  // Walk up looking for markers
-  let dir = cwd;
-  while (true) {
-    // Stop at home directory - don't treat home as project root
-    if (homeDir && dir === homeDir) {
-      debug(`Reached home directory, stopping search`);
-      break;
-    }
-
-    for (const marker of PROJECT_MARKERS) {
-      try {
-        const markerPath = `${dir}/${marker}`;
-        Deno.statSync(markerPath);
-        debug(`Project root found via ${marker}: ${dir}`);
-        return dir;
-      } catch {
-        // Marker not found, continue
-      }
-    }
-
-    // Move up one directory
-    const parent = dir.replace(/\/[^/]+$/, "");
-    if (parent === dir || parent === "") {
-      // Reached filesystem root, give up
-      break;
-    }
-    dir = parent;
-  }
-
-  // No project marker found - create one in cwd
-  debug(`No project marker found, creating .config/safesh in: ${cwd}`);
-  try {
-    const configDir = `${cwd}/.config/safesh`;
-    Deno.mkdirSync(configDir, { recursive: true });
-    const configFile = `${configDir}/config.local.json`;
-
-    // Only create if doesn't exist
-    try {
-      Deno.statSync(configFile);
-    } catch {
-      Deno.writeTextFileSync(configFile, "{}\n");
-      debug(`Created ${configFile}`);
-    }
-  } catch (error) {
-    debug(`Failed to create .config/safesh: ${error}`);
-  }
-
-  return cwd;
-}
+// Project root and markers now imported from core/project-root.ts
 
 // =============================================================================
 // Command Extraction and Permission Checking
@@ -637,20 +566,7 @@ function hasDangerousCommands(ast: AST.Program): boolean {
   return false;
 }
 
-/**
- * Get session-allowed commands from session file
- */
-function getSessionAllowedCommands(): Set<string> {
-  const sessionFile = getSessionFilePath();
-
-  try {
-    const content = Deno.readTextFileSync(sessionFile);
-    const session = JSON.parse(content) as { allowedCommands?: string[] };
-    return new Set(session.allowedCommands ?? []);
-  } catch {
-    return new Set();
-  }
-}
+// getSessionAllowedCommands now imported from core/session.ts
 
 /**
  * Check which commands are not in the allowed list
@@ -662,7 +578,7 @@ function getDisallowedCommands(
   cwd: string,
 ): string[] {
   const allowed = getAllowedCommands(config);
-  const sessionAllowed = getSessionAllowedCommands();
+  const sessionAllowed = getSessionAllowedCommands(config.projectDir);
   const disallowed: string[] = [];
 
   for (const cmd of commands) {
@@ -941,7 +857,7 @@ async function outputRewriteToDeshFile(tsCode: string, projectDir: string, optio
 
   // Save metadata for potential retry (if initCmds encounters blocked commands)
   // Note: tsCode is NOT stored here - it's read from the script file using scriptHash
-  const pendingId = generateTempId();
+  const pendingId = generatePendingId();
   const pending: PendingCommand = {
     id: pendingId,
     scriptHash: hash,
@@ -951,8 +867,7 @@ async function outputRewriteToDeshFile(tsCode: string, projectDir: string, optio
     runInBackground: options?.runInBackground,
     createdAt: new Date().toISOString(),
   };
-  const pendingFile = getPendingFilePath(pendingId);
-  Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+  writePendingCommand(pending);
 
   // Create desh command with file path and pass ID and hash via env var
   // Also pass allowProjectCommands flag so desh runtime allows project scripts
@@ -979,7 +894,7 @@ async function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, op
   const hash = await hashContent(hashInput);
   // Save metadata for potential retry (if initCmds encounters blocked commands)
   // Note: tsCode is NOT stored here - it's passed via heredoc, scriptHash used for caching
-  const pendingId = generateTempId();
+  const pendingId = generatePendingId();
   const pending: PendingCommand = {
     id: pendingId,
     scriptHash: hash,
@@ -989,8 +904,7 @@ async function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, op
     runInBackground: options?.runInBackground,
     createdAt: new Date().toISOString(),
   };
-  const pendingFile = getPendingFilePath(pendingId);
-  Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+  writePendingCommand(pending);
 
   // Create desh heredoc command with ID and hash via env var
   // Also pass allowProjectCommands flag so desh runtime allows project scripts
@@ -1027,16 +941,7 @@ function outputHookResponse(deshCommand: string, options?: { timeout?: number; r
 /**
  * Pending command structure saved to temp file for retry flow
  */
-interface PendingCommand {
-  id: string;
-  scriptHash: string;  // Hash of script content for finding cached script file
-  commands: string[];  // Disallowed commands (filled by initCmds)
-  cwd: string;
-  timeout?: number;
-  runInBackground?: boolean;
-  createdAt: string;
-  // Note: tsCode removed - read from script file using scriptHash
-}
+// PendingCommand interface now imported from core/types.ts
 
 /**
  * Output hook decision to deny and prompt user for choice via LLM
@@ -1080,7 +985,7 @@ async function outputDenyWithRetry(
   }
 
   // Generate unique pending ID (timestamp+pid for multi-instance safety)
-  const pendingId = generateTempId();
+  const pendingId = generatePendingId();
 
   // Save pending command metadata to temp file (without tsCode)
   const pending: PendingCommand = {
@@ -1093,8 +998,7 @@ async function outputDenyWithRetry(
     createdAt: new Date().toISOString(),
   };
 
-  const pendingFile = getPendingFilePath(pendingId);
-  Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+  writePendingCommand(pending);
 
   // Build deny message with retry instructions for LLM
   const message = `[SAFESH] BLOCKED: ${cmdList}
@@ -1538,7 +1442,7 @@ ${tsCode}
 
           const errorLog = `=== Transpiler Error ===
 Original Bash Command:
-${bashCommand}
+${parsed.command}
 
 Error: The bash script is too complex for automatic transpilation.
 
