@@ -209,9 +209,8 @@ export function visitParameterExpansion(
   // Handle bash special variables first
   if (param === "!") {
     // $! - PID of last background process
-    // Note: Background jobs in SafeShell work differently (async/await)
-    // This is not directly supported, but we'll return empty string to avoid syntax error
-    return ""; // or throw error: "Background job PID ($!) is not supported"
+    // Background commands spawn child processes and store their PID in __LAST_BG_PID
+    return `\${__LAST_BG_PID || ""}`;
   }
   if (param === "?") {
     // $? - Exit status of last command

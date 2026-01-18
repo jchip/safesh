@@ -268,6 +268,16 @@ export class Command implements PromiseLike<CommandResult> {
   }
 
   /**
+   * Spawn command as a background process and return child process
+   * Used by bash transpiler for background jobs (&)
+   * @returns Deno.ChildProcess with .pid property
+   */
+  spawnBackground(): Deno.ChildProcess {
+    const command = this.createCommand(false);
+    return this.spawnProcess(command);
+  }
+
+  /**
    * Pipe this command's stdout to another command's stdin
    *
    * Creates a pipeline where this command's stdout becomes the next
