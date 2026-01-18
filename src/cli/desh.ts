@@ -25,6 +25,7 @@ import { findProjectRoot, PROJECT_MARKERS } from "../core/project-root.ts";
 import { readPendingCommand, readPendingPath, deletePending, type PendingCommand, type PendingPathRequest } from "../core/pending.ts";
 import { addSessionCommands, addSessionPaths, getSessionAllowedCommandsArray, getSessionPathPermissions, mergeSessionPermissions } from "../core/session.ts";
 import { readStdinFully } from "../core/io-utils.ts";
+import { addCommandsToConfig, addPathsToConfig } from "../core/config-persistence.ts";
 
 const VERSION = "0.1.0";
 
@@ -77,7 +78,7 @@ async function handleRetry(args: string[]): Promise<void> {
 
   // Choice 2 = Always allow - update config.local.json
   if (choice === 2) {
-    await addToConfigLocal(pending.commands, pending.cwd);
+    await addCommandsToConfig(pending.commands, pending.cwd);
   }
 
   // Choice 3 = Session allow - update session file
@@ -134,33 +135,7 @@ async function handleRetry(args: string[]): Promise<void> {
 /**
  * Add commands to .config/safesh/config.local.json for "always allow"
  */
-async function addToConfigLocal(commands: string[], cwd: string): Promise<void> {
-  const configDir = `${cwd}/.config/safesh`;
-  const configPath = `${configDir}/config.local.json`;
-
-  // Ensure directory exists
-  try {
-    await Deno.mkdir(configDir, { recursive: true });
-  } catch { /* ignore if exists */ }
-
-  // Load existing config or create new
-  let config: { allowedCommands?: string[] } = {};
-  try {
-    const content = await Deno.readTextFile(configPath);
-    config = JSON.parse(content);
-  } catch { /* file doesn't exist */ }
-
-  // Merge commands
-  const existing = new Set(config.allowedCommands ?? []);
-  for (const cmd of commands) {
-    existing.add(cmd);
-  }
-  config.allowedCommands = [...existing];
-
-  // Write back
-  await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2) + "\n");
-  console.error(`[safesh] Added to always-allow: ${commands.join(", ")}`);
-}
+// addToConfigLocal now replaced by addCommandsToConfig from core/config-persistence.ts
 
 // addToSessionFile now replaced by addSessionCommands from core/session.ts
 
@@ -245,7 +220,7 @@ async function handleRetryPath(args: string[]): Promise<void> {
   // Apply permissions based on scope
   if (scope === 3) {
     // Always allow - update config.local.json
-    await addPathsToConfigLocal(readPaths, writePaths, cwd);
+    await addPathsToConfig(readPaths, writePaths, cwd);
   } else if (scope === 2) {
     // Session allow - update session file
     await addSessionPaths(readPaths, writePaths, projectDir);
@@ -302,43 +277,7 @@ async function handleRetryPath(args: string[]): Promise<void> {
 /**
  * Add paths to config.local.json for "always allow"
  */
-async function addPathsToConfigLocal(
-  readPaths: string[],
-  writePaths: string[],
-  cwd: string
-): Promise<void> {
-  const configDir = `${cwd}/.config/safesh`;
-  const configPath = `${configDir}/config.local.json`;
-
-  await Deno.mkdir(configDir, { recursive: true }).catch(() => {});
-
-  let config: { permissions?: { read?: string[]; write?: string[] } } = {};
-  try {
-    const content = await Deno.readTextFile(configPath);
-    config = JSON.parse(content);
-  } catch { /* file doesn't exist */ }
-
-  config.permissions = config.permissions ?? {};
-
-  if (readPaths.length > 0) {
-    const existing = new Set(config.permissions.read ?? []);
-    for (const path of readPaths) existing.add(path);
-    config.permissions.read = [...existing];
-  }
-
-  if (writePaths.length > 0) {
-    const existing = new Set(config.permissions.write ?? []);
-    for (const path of writePaths) existing.add(path);
-    config.permissions.write = [...existing];
-  }
-
-  await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2) + "\n");
-
-  const msg = [];
-  if (readPaths.length > 0) msg.push(`read: ${readPaths.join(", ")}`);
-  if (writePaths.length > 0) msg.push(`write: ${writePaths.join(", ")}`);
-  console.error(`[safesh] Added to always-allow (${msg.join("; ")})`);
-}
+// addPathsToConfigLocal now replaced by addPathsToConfig from core/config-persistence.ts
 
 // addPathsToSessionFile now replaced by addSessionPaths from core/session.ts
 
