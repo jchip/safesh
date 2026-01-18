@@ -46,8 +46,8 @@ export const path = {
 };
 import { ensureDir as stdEnsureDir } from "@std/fs/ensure-dir";
 import { walk as stdWalk, type WalkOptions as StdWalkOptions } from "@std/fs/walk";
-import { validatePath, expandPath, isPathAllowed } from "../core/permissions.ts";
-import { pathViolation, executionError } from "../core/errors.ts";
+import { expandPath } from "../core/permissions.ts";
+import { executionError } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 import { getDefaultConfig } from "../core/utils.ts";
 import { glob, globArray, globPaths, type GlobOptions, type GlobEntry } from "./glob.ts";
@@ -80,27 +80,19 @@ async function ensureDirSafe(path: string): Promise<void> {
 }
 
 /**
- * Validate read access to a path
+ * Resolve path (expand ~ and variables, make absolute)
+ * Deno will enforce permission checks via --allow-read/--allow-write flags
  */
-async function validateRead(
+function resolvePath(
   path: string,
   options: SandboxOptions = {},
-): Promise<string> {
+): string {
   const cwd = options.cwd ?? Deno.cwd();
   const config = options.config ?? getDefaultConfig(cwd);
-  return await validatePath(path, config, cwd, "read");
-}
 
-/**
- * Validate write access to a path
- */
-async function validateWrite(
-  path: string,
-  options: SandboxOptions = {},
-): Promise<string> {
-  const cwd = options.cwd ?? Deno.cwd();
-  const config = options.config ?? getDefaultConfig(cwd);
-  return await validatePath(path, config, cwd, "write");
+  // Expand tilde and path variables before resolving
+  const expandedPath = expandPath(path, cwd, config.workspace);
+  return resolve(cwd, expandedPath);
 }
 
 /**
@@ -120,8 +112,8 @@ export async function read(
   path: string,
   options: SandboxOptions = {},
 ): Promise<string> {
-  const validPath = await validateRead(path, options);
-  return await Deno.readTextFile(validPath);
+  const resolvedPath = resolvePath(path, options);
+  return await Deno.readTextFile(resolvedPath);
 }
 
 /**
@@ -135,8 +127,8 @@ export async function readBytes(
   path: string,
   options: SandboxOptions = {},
 ): Promise<Uint8Array> {
-  const validPath = await validateRead(path, options);
-  return await Deno.readFile(validPath);
+  const resolvedPath = resolvePath(path, options);
+  return await Deno.readFile(resolvedPath);
 }
 
 /**
@@ -181,13 +173,13 @@ export async function write(
   content: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const validPath = await validateWrite(path, options);
-  const dir = dirname(validPath);
+  const resolvedPath = resolvePath(path, options);
+  const dir = dirname(resolvedPath);
 
   // Ensure parent directory exists
   await ensureDirSafe(dir);
 
-  await Deno.writeTextFile(validPath, content);
+  await Deno.writeTextFile(resolvedPath, content);
 }
 
 /**
@@ -202,12 +194,12 @@ export async function writeBytes(
   data: Uint8Array,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const validPath = await validateWrite(path, options);
-  const dir = dirname(validPath);
+  const resolvedPath = resolvePath(path, options);
+  const dir = dirname(resolvedPath);
 
   await ensureDirSafe(dir);
 
-  await Deno.writeFile(validPath, data);
+  await Deno.writeFile(resolvedPath, data);
 }
 
 /**
@@ -243,12 +235,12 @@ export async function append(
   content: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const validPath = await validateWrite(path, options);
-  const dir = dirname(validPath);
+  const resolvedPath = resolvePath(path, options);
+  const dir = dirname(resolvedPath);
 
   await ensureDirSafe(dir);
 
-  await Deno.writeTextFile(validPath, content, { append: true });
+  await Deno.writeTextFile(resolvedPath, content, { append: true });
 }
 
 /**
@@ -270,7 +262,7 @@ export async function exists(
   options: SandboxOptions = {},
 ): Promise<boolean> {
   try {
-    await validateRead(path, options);
+    resolvePath(path, options);
     await Deno.stat(path);
     return true;
   } catch {
@@ -290,8 +282,8 @@ export async function stat(
   path: string,
   options: SandboxOptions = {},
 ): Promise<Deno.FileInfo> {
-  const validPath = await validateRead(path, options);
-  return await Deno.stat(validPath);
+  const resolvedPath = resolvePath(path, options);
+  return await Deno.stat(resolvedPath);
 }
 
 /**
@@ -312,8 +304,8 @@ export async function remove(
   removeOptions?: { recursive?: boolean },
   options: SandboxOptions = {},
 ): Promise<void> {
-  const validPath = await validateWrite(path, options);
-  await Deno.remove(validPath, removeOptions);
+  const resolvedPath = resolvePath(path, options);
+  await Deno.remove(resolvedPath, removeOptions);
 }
 
 /**
@@ -333,8 +325,8 @@ export async function mkdir(
   mkdirOptions?: { recursive?: boolean },
   options: SandboxOptions = {},
 ): Promise<void> {
-  const validPath = await validateWrite(path, options);
-  await Deno.mkdir(validPath, mkdirOptions);
+  const resolvedPath = resolvePath(path, options);
+  await Deno.mkdir(resolvedPath, mkdirOptions);
 }
 
 /**
@@ -352,8 +344,8 @@ export async function ensureDir(
   path: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const validPath = await validateWrite(path, options);
-  await stdEnsureDir(validPath);
+  const resolvedPath = resolvePath(path, options);
+  await stdEnsureDir(resolvedPath);
 }
 
 /**
@@ -374,10 +366,10 @@ export async function copy(
   dest: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  await validateRead(src, options);
-  await validateWrite(dest, options);
+  const resolvedSrc = resolvePath(src, options);
+  const resolvedDest = resolvePath(dest, options);
 
-  await stdCopy(src, dest, { overwrite: true });
+  await stdCopy(resolvedSrc, resolvedDest, { overwrite: true });
 }
 
 /**
@@ -397,13 +389,13 @@ export async function move(
   dest: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  await validateRead(src, options);
-  await validateWrite(dest, options);
+  const resolvedSrc = resolvePath(src, options);
+  const resolvedDest = resolvePath(dest, options);
 
-  const destDir = dirname(dest);
+  const destDir = dirname(resolvedDest);
   await ensureDirSafe(destDir);
 
-  await Deno.rename(src, dest);
+  await Deno.rename(resolvedSrc, resolvedDest);
 }
 
 /**
@@ -421,18 +413,18 @@ export async function touch(
   path: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const validPath = await validateWrite(path, options);
-  const dir = dirname(validPath);
+  const resolvedPath = resolvePath(path, options);
+  const dir = dirname(resolvedPath);
 
   await ensureDirSafe(dir);
 
   try {
     // Try to update mtime if file exists
     const now = new Date();
-    await Deno.utime(validPath, now, now);
+    await Deno.utime(resolvedPath, now, now);
   } catch {
     // File doesn't exist or utime failed, create empty file
-    await Deno.writeTextFile(validPath, "");
+    await Deno.writeTextFile(resolvedPath, "");
   }
 }
 
@@ -448,9 +440,9 @@ export async function symlink(
   link: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  await validateRead(target, options);
-  await validateWrite(link, options);
-  await Deno.symlink(target, link);
+  const resolvedTarget = resolvePath(target, options);
+  const resolvedLink = resolvePath(link, options);
+  await Deno.symlink(resolvedTarget, resolvedLink);
 }
 
 /**
@@ -472,10 +464,10 @@ export async function readDir(
   path: string,
   options: SandboxOptions = {},
 ): Promise<Deno.DirEntry[]> {
-  const validPath = await validateRead(path, options);
+  const resolvedPath = resolvePath(path, options);
   const entries: Deno.DirEntry[] = [];
 
-  for await (const entry of Deno.readDir(validPath)) {
+  for await (const entry of Deno.readDir(resolvedPath)) {
     entries.push(entry);
   }
 
@@ -541,7 +533,7 @@ export async function* walk(
   walkOptions: WalkOptions = {},
   sandboxOptions: SandboxOptions = {},
 ): AsyncGenerator<WalkEntry> {
-  const validPath = await validateRead(path, sandboxOptions);
+  const resolvedPath = resolvePath(path, sandboxOptions);
 
   const stdOptions: StdWalkOptions = {
     maxDepth: walkOptions.maxDepth,
@@ -553,7 +545,7 @@ export async function* walk(
     exts: walkOptions.exts,
   };
 
-  for await (const entry of stdWalk(validPath, stdOptions)) {
+  for await (const entry of stdWalk(resolvedPath, stdOptions)) {
     yield {
       path: entry.path,
       name: entry.name,
@@ -662,7 +654,7 @@ export async function* tree(
   treeOptions: TreeOptions = {},
   sandboxOptions: SandboxOptions = {},
 ): AsyncGenerator<TreeEntry> {
-  const validPath = await validateRead(rootPath, sandboxOptions);
+  const resolvedPath = resolvePath(rootPath, sandboxOptions);
   const maxDepth = treeOptions.maxDepth ?? Infinity;
   const dirsOnly = treeOptions.dirsOnly ?? false;
   const showHidden = treeOptions.showHidden ?? false;
@@ -670,10 +662,10 @@ export async function* tree(
   const followSymlinks = treeOptions.followSymlinks ?? false;
 
   // Yield the root directory first
-  const rootName = basename(validPath) || validPath;
+  const rootName = basename(resolvedPath) || resolvedPath;
   yield {
     name: rootName,
-    path: validPath,
+    path: resolvedPath,
     isDirectory: true,
     depth: 0,
     line: rootName,
@@ -745,7 +737,7 @@ export async function* tree(
     }
   }
 
-  yield* walkTree(validPath, 1, "");
+  yield* walkTree(resolvedPath, 1, "");
 }
 
 /**

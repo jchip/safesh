@@ -1141,19 +1141,51 @@ globalThis.addEventListener("error", (event) => {
   const errorMessage = error?.message || String(error);
   const errorCode = error?.code || "";
 
-  // Check if this is a path permission error
+  // Check if this is a path permission error (SafeShell or Deno)
   const isPathViolation =
     errorCode === "PATH_VIOLATION" ||
+    errorCode === "SYMLINK_VIOLATION" ||
+    errorCode === "NotCapable" ||
+    error?.name === "NotCapable" ||
     errorMessage.includes("is outside allowed directories") ||
-    errorMessage.includes("outside allowed directories");
+    errorMessage.includes("outside allowed directories") ||
+    errorMessage.includes("Requires read access to") ||
+    errorMessage.includes("Requires write access to");
 
   if (isPathViolation) {
-    // Extract path from error message
-    const pathMatch = errorMessage.match(/Path '([^']+)'/);
-    const path = pathMatch ? pathMatch[1] : "unknown";
+    // DEBUG: Log the actual error for debugging
+    console.error("[DEBUG] Path violation error caught:");
+    console.error("[DEBUG] Error code:", errorCode);
+    console.error("[DEBUG] Error message:", errorMessage);
+
+    // Extract path from error message - handle SafeShell and Deno errors
+    // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
+    // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
+    // Deno NotCapable: "Requires read access to \"/etc/hosts\", run again with --allow-read"
+    let path = "unknown";
+
+    // Try Deno format first: Requires read/write access to "path"
+    const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
+    if (denoMatch) {
+      path = denoMatch[1];
+    } else {
+      // Try SafeShell format: Path/Symlink 'path'
+      const pathMatch = errorMessage.match(/(?:Path|Symlink) '([^']+)'/);
+      if (pathMatch) {
+        path = pathMatch[1];
+        // For symlink violations, extract the real path instead
+        if (errorCode === "SYMLINK_VIOLATION") {
+          const realPathMatch = errorMessage.match(/points to '([^']+)'/);
+          if (realPathMatch) {
+            path = realPathMatch[1];
+          }
+        }
+      }
+    }
+    console.error("[DEBUG] Extracted path:", path);
 
     // Create pending path request
-    const pendingId = \`${Date.now()}-${Deno.pid}\`;
+    const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
     const scriptHash = Deno.env.get("SAFESH_SCRIPT_HASH") || "";
     const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
     const pending = {
@@ -1218,19 +1250,51 @@ globalThis.addEventListener("unhandledrejection", (event) => {
   const errorMessage = reason?.message || String(reason);
   const errorCode = reason?.code || "";
 
-  // Check if this is a path permission error
+  // Check if this is a path permission error (SafeShell or Deno)
   const isPathViolation =
     errorCode === "PATH_VIOLATION" ||
+    errorCode === "SYMLINK_VIOLATION" ||
+    errorCode === "NotCapable" ||
+    reason?.name === "NotCapable" ||
     errorMessage.includes("is outside allowed directories") ||
-    errorMessage.includes("outside allowed directories");
+    errorMessage.includes("outside allowed directories") ||
+    errorMessage.includes("Requires read access to") ||
+    errorMessage.includes("Requires write access to");
 
   if (isPathViolation) {
-    // Extract path from error message
-    const pathMatch = errorMessage.match(/Path '([^']+)'/);
-    const path = pathMatch ? pathMatch[1] : "unknown";
+    // DEBUG: Log the actual error for debugging
+    console.error("[DEBUG] Path violation error caught:");
+    console.error("[DEBUG] Error code:", errorCode);
+    console.error("[DEBUG] Error message:", errorMessage);
+
+    // Extract path from error message - handle SafeShell and Deno errors
+    // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
+    // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
+    // Deno NotCapable: "Requires read access to \"/etc/hosts\", run again with --allow-read"
+    let path = "unknown";
+
+    // Try Deno format first: Requires read/write access to "path"
+    const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
+    if (denoMatch) {
+      path = denoMatch[1];
+    } else {
+      // Try SafeShell format: Path/Symlink 'path'
+      const pathMatch = errorMessage.match(/(?:Path|Symlink) '([^']+)'/);
+      if (pathMatch) {
+        path = pathMatch[1];
+        // For symlink violations, extract the real path instead
+        if (errorCode === "SYMLINK_VIOLATION") {
+          const realPathMatch = errorMessage.match(/points to '([^']+)'/);
+          if (realPathMatch) {
+            path = realPathMatch[1];
+          }
+        }
+      }
+    }
+    console.error("[DEBUG] Extracted path:", path);
 
     // Create pending path request
-    const pendingId = \`${Date.now()}-${Deno.pid}\`;
+    const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
     const scriptHash = Deno.env.get("SAFESH_SCRIPT_HASH") || "";
     const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
     const pending = {
@@ -1392,16 +1456,48 @@ const __handleError = (error) => {
   const errorMessage = error.message || String(error);
   const errorCode = error.code || "";
 
-  // Check if this is a path permission error
+  // Check if this is a path permission error (SafeShell or Deno)
   const isPathViolation =
     errorCode === "PATH_VIOLATION" ||
+    errorCode === "SYMLINK_VIOLATION" ||
+    errorCode === "NotCapable" ||
+    error?.name === "NotCapable" ||
     errorMessage.includes("is outside allowed directories") ||
-    errorMessage.includes("outside allowed directories");
+    errorMessage.includes("outside allowed directories") ||
+    errorMessage.includes("Requires read access to") ||
+    errorMessage.includes("Requires write access to");
 
   if (isPathViolation) {
-    // Extract path from error message
-    const pathMatch = errorMessage.match(/Path '([^']+)'/);
-    const path = pathMatch ? pathMatch[1] : "unknown";
+    // DEBUG: Log the actual error for debugging
+    console.error("[DEBUG] Path violation error caught:");
+    console.error("[DEBUG] Error code:", errorCode);
+    console.error("[DEBUG] Error message:", errorMessage);
+
+    // Extract path from error message - handle SafeShell and Deno errors
+    // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
+    // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
+    // Deno NotCapable: "Requires read access to \"/etc/hosts\", run again with --allow-read"
+    let path = "unknown";
+
+    // Try Deno format first: Requires read/write access to "path"
+    const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
+    if (denoMatch) {
+      path = denoMatch[1];
+    } else {
+      // Try SafeShell format: Path/Symlink 'path'
+      const pathMatch = errorMessage.match(/(?:Path|Symlink) '([^']+)'/);
+      if (pathMatch) {
+        path = pathMatch[1];
+        // For symlink violations, extract the real path instead
+        if (errorCode === "SYMLINK_VIOLATION") {
+          const realPathMatch = errorMessage.match(/points to '([^']+)'/);
+          if (realPathMatch) {
+            path = realPathMatch[1];
+          }
+        }
+      }
+    }
+    console.error("[DEBUG] Extracted path:", path);
 
     // Create pending path request
     const pendingId = \`${Date.now()}-${Deno.pid}\`;
