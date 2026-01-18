@@ -38,6 +38,13 @@ export interface PreambleConfig {
     maxFiles?: number;
     preload?: Record<string, string | null>;
   };
+  /** Path permissions for validation */
+  permissions?: {
+    read?: string[];
+    write?: string[];
+    denyRead?: string[];
+    denyWrite?: string[];
+  };
 }
 
 /**
@@ -67,6 +74,12 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
     cwd,
     projectTemp: config.projectTemp,
     vfs: config.vfs,
+    permissions: config.permissions ? {
+      read: config.permissions.read,
+      write: config.permissions.write,
+      denyRead: config.permissions.denyRead,
+      denyWrite: config.permissions.denyWrite,
+    } : undefined,
   };
 }
 
