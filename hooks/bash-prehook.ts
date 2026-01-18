@@ -308,6 +308,8 @@ const BUILTIN_COMMANDS = new Set([
   "trap", "wait", "jobs", "fg", "bg", "kill", "disown",
   "alias", "unalias", "type", "which", "hash", "command", "builtin",
   "let", "expr",
+  // SafeShell built-in utilities (transpiled to __rm, __cp, etc.)
+  "rm", "cp", "mv", "mkdir", "touch", "ln", "chmod", "ls",
 ]);
 
 /**
@@ -528,12 +530,14 @@ function extractCommands(ast: AST.Program): Set<string> {
 /**
  * List of dangerous commands that should always go through safesh for permission checks
  * These commands can modify/delete files, change permissions, or perform destructive operations
+ *
+ * NOTE: rm, chmod are NOT in this list because they use SafeShell's sandboxed built-in implementations
  */
 const DANGEROUS_COMMANDS = new Set([
-  // File deletion/modification
-  "rm", "rmdir", "unlink", "shred",
-  // Permission/ownership changes
-  "chmod", "chown", "chgrp",
+  // File deletion/modification (rm uses builtin)
+  "rmdir", "unlink", "shred",
+  // Permission/ownership changes (chmod uses builtin)
+  "chown", "chgrp",
   // Disk operations
   "dd", "mkfs", "fdisk", "parted", "wipefs",
   // System modifications
