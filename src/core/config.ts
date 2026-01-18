@@ -877,19 +877,25 @@ export interface ConfigValidation {
   warnings: string[];
 }
 
-export function validateConfig(config: SafeShellConfig): ConfigValidation {
+/**
+ * Helper to combine multiple validation results
+ */
+function combineValidationResults(results: ConfigValidation[]): ConfigValidation {
+  return results.reduce(
+    (combined, result) => ({
+      errors: [...combined.errors, ...result.errors],
+      warnings: [...combined.warnings, ...result.warnings],
+    }),
+    { errors: [], warnings: [] },
+  );
+}
+
+/**
+ * Validate permission configuration
+ */
+function validatePermissions(config: SafeShellConfig): ConfigValidation {
   const result: ConfigValidation = { errors: [], warnings: [] };
   const perms = config.permissions ?? {};
-
-  // ========== Project Directory Validation ==========
-
-  if (!config.projectDir) {
-    result.warnings.push(
-      "projectDir: not set - file permissions will be limited to /tmp and explicit paths",
-    );
-  }
-
-  // ========== Permission Validation ==========
 
   // Check for overly permissive read
   if (perms.read?.includes("/")) {
@@ -946,9 +952,16 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
     );
   }
 
-  // ========== External Command Validation ==========
+  return result;
+}
 
+/**
+ * Validate external command configurations
+ */
+function validateExternalCommands(config: SafeShellConfig): ConfigValidation {
+  const result: ConfigValidation = { errors: [], warnings: [] };
   const external = config.external ?? {};
+
   for (const [cmd, cmdConfig] of Object.entries(external)) {
     const deny = cmdConfig.denyFlags ?? [];
     const require = cmdConfig.requireFlags ?? [];
@@ -975,8 +988,25 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
     }
   }
 
-  // ========== Import Policy Validation ==========
+  return result;
+}
 
+/**
+ * Validate Deno flags configuration
+ * (Currently a placeholder for future Deno-specific flag validation)
+ */
+function validateDenoFlags(_config: SafeShellConfig): ConfigValidation {
+  const result: ConfigValidation = { errors: [], warnings: [] };
+  // Future: Validate denoFlags array for dangerous flags
+  // e.g., --allow-all, --unstable flags that might pose security risks
+  return result;
+}
+
+/**
+ * Validate import policy configuration
+ */
+function validateImportPolicy(config: SafeShellConfig): ConfigValidation {
+  const result: ConfigValidation = { errors: [], warnings: [] };
   const imports = config.imports ?? {};
   const trusted = imports.trusted ?? [];
   const allowed = imports.allowed ?? [];
@@ -1024,7 +1054,26 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
     }
   }
 
-  // ========== Cross-Concern Validation ==========
+  return result;
+}
+
+/**
+ * Validate shell settings and cross-concern security issues
+ */
+function validateShellSettings(config: SafeShellConfig): ConfigValidation {
+  const result: ConfigValidation = { errors: [], warnings: [] };
+  const perms = config.permissions ?? {};
+  const imports = config.imports ?? {};
+  const trusted = imports.trusted ?? [];
+  const allowed = imports.allowed ?? [];
+  const blocked = imports.blocked ?? [];
+
+  // Project directory warning
+  if (!config.projectDir) {
+    result.warnings.push(
+      "projectDir: not set - file permissions will be limited to /tmp and explicit paths",
+    );
+  }
 
   // Check for dangerous combination: unrestricted net + npm imports
   if (
@@ -1047,4 +1096,17 @@ export function validateConfig(config: SafeShellConfig): ConfigValidation {
   }
 
   return result;
+}
+
+/**
+ * Main validation function that orchestrates all validators
+ */
+export function validateConfig(config: SafeShellConfig): ConfigValidation {
+  return combineValidationResults([
+    validatePermissions(config),
+    validateExternalCommands(config),
+    validateDenoFlags(config),
+    validateImportPolicy(config),
+    validateShellSettings(config),
+  ]);
 }
