@@ -1139,6 +1139,57 @@ globalThis.addEventListener("error", (event) => {
   event.preventDefault();
   const error = event.error;
   const errorMessage = error?.message || String(error);
+  const errorCode = error?.code || "";
+
+  // Check if this is a path permission error
+  const isPathViolation =
+    errorCode === "PATH_VIOLATION" ||
+    errorMessage.includes("is outside allowed directories") ||
+    errorMessage.includes("outside allowed directories");
+
+  if (isPathViolation) {
+    // Extract path from error message
+    const pathMatch = errorMessage.match(/Path '([^']+)'/);
+    const path = pathMatch ? pathMatch[1] : "unknown";
+
+    // Create pending path request
+    const pendingId = \`${Date.now()}-${Deno.pid}\`;
+    const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
+    const pending = {
+      id: pendingId,
+      path: path,
+      operation: "read",
+      cwd: Deno.cwd(),
+      command: "(TypeScript code)",
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+    } catch (e) {
+      console.error("Warning: Could not write pending path file:", e);
+    }
+
+    // Show permission prompt
+    const message = \`[SAFESH] PATH BLOCKED: \${path}
+
+WAIT for user choice:
+r1  - Allow read once
+w1  - Allow write once
+rw1 - Allow read/write once
+r2  - Allow read for session
+w2  - Allow write for session
+rw2 - Allow read/write for session
+r3  - Always allow read
+w3  - Always allow write
+rw3 - Always allow read/write
+deny - Deny
+
+DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
+
+    console.error(message);
+    Deno.exit(1);
+  }
 
   // Check if this is a command execution failure (not a SafeShell error)
   const isCommandFailure =
@@ -1170,6 +1221,57 @@ globalThis.addEventListener("unhandledrejection", (event) => {
   event.preventDefault();
   const reason = event.reason;
   const errorMessage = reason?.message || String(reason);
+  const errorCode = reason?.code || "";
+
+  // Check if this is a path permission error
+  const isPathViolation =
+    errorCode === "PATH_VIOLATION" ||
+    errorMessage.includes("is outside allowed directories") ||
+    errorMessage.includes("outside allowed directories");
+
+  if (isPathViolation) {
+    // Extract path from error message
+    const pathMatch = errorMessage.match(/Path '([^']+)'/);
+    const path = pathMatch ? pathMatch[1] : "unknown";
+
+    // Create pending path request
+    const pendingId = \`${Date.now()}-${Deno.pid}\`;
+    const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
+    const pending = {
+      id: pendingId,
+      path: path,
+      operation: "read",
+      cwd: Deno.cwd(),
+      command: "(TypeScript code)",
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+    } catch (e) {
+      console.error("Warning: Could not write pending path file:", e);
+    }
+
+    // Show permission prompt
+    const message = \`[SAFESH] PATH BLOCKED: \${path}
+
+WAIT for user choice:
+r1  - Allow read once
+w1  - Allow write once
+rw1 - Allow read/write once
+r2  - Allow read for session
+w2  - Allow write for session
+rw2 - Allow read/write for session
+r3  - Always allow read
+w3  - Always allow write
+rw3 - Always allow read/write
+deny - Deny
+
+DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
+
+    console.error(message);
+    Deno.exit(1);
+  }
 
   // Check if this is a command execution failure (not a SafeShell error)
   const isCommandFailure =
@@ -1298,6 +1400,57 @@ Example:
 const __handleError = (error) => {
   const fullCommand = __ORIGINAL_BASH_COMMAND__;
   const errorMessage = error.message || String(error);
+  const errorCode = error.code || "";
+
+  // Check if this is a path permission error
+  const isPathViolation =
+    errorCode === "PATH_VIOLATION" ||
+    errorMessage.includes("is outside allowed directories") ||
+    errorMessage.includes("outside allowed directories");
+
+  if (isPathViolation) {
+    // Extract path from error message
+    const pathMatch = errorMessage.match(/Path '([^']+)'/);
+    const path = pathMatch ? pathMatch[1] : "unknown";
+
+    // Create pending path request
+    const pendingId = \`${Date.now()}-${Deno.pid}\`;
+    const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
+    const pending = {
+      id: pendingId,
+      path: path,
+      operation: "read", // default, will be updated by user choice
+      cwd: Deno.cwd(),
+      command: fullCommand,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+    } catch (e) {
+      console.error("Warning: Could not write pending path file:", e);
+    }
+
+    // Show permission prompt
+    const message = \`[SAFESH] PATH BLOCKED: \${path}
+
+WAIT for user choice:
+r1  - Allow read once
+w1  - Allow write once
+rw1 - Allow read/write once
+r2  - Allow read for session
+w2  - Allow write for session
+rw2 - Allow read/write for session
+r3  - Always allow read
+w3  - Always allow write
+rw3 - Always allow read/write
+deny - Deny
+
+DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
+
+    console.error(message);
+    Deno.exit(1);
+  }
 
   // Check if this is a command execution failure (not a SafeShell error)
   // Command failures are expected and shouldn't be logged as SafeShell errors

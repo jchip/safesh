@@ -63,6 +63,14 @@ export function getPendingFilePath(id: string): string {
 }
 
 /**
+ * Generate a pending path request file path
+ */
+export function getPendingPathFilePath(id: string): string {
+  const dir = getTempRoot();
+  return `${dir}/pending-path-${id}.json`;
+}
+
+/**
  * Generate a unique script file path for transpiled code
  */
 export function getScriptFilePath(id: string): string {
