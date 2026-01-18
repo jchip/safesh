@@ -72,6 +72,21 @@ function getSessionAllowedCommands(projectDir?: string): string[] {
 }
 
 /**
+ * Get session-allowed path permissions from session file
+ */
+function getSessionPathPermissions(projectDir?: string): { read?: string[]; write?: string[] } {
+  const sessionFile = getSessionFilePath(projectDir);
+
+  try {
+    const content = Deno.readTextFileSync(sessionFile);
+    const session = JSON.parse(content) as { permissions?: { read?: string[]; write?: string[] } };
+    return session.permissions ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Pending command structure (matches prehook's PendingCommand)
  */
 interface PendingCommand {
@@ -333,25 +348,35 @@ async function handleRetryPath(args: string[]): Promise<void> {
     Deno.exit(0);
   }
 
-  // Parse choice: r1, w1, rw1, r2, w2, rw2, r3, w3, rw3
-  const match = choice.match(/^(r|w|rw)([123])$/);
+  // Parse choice: r1, w1, rw1, r2, w2, rw2, r3, w3, rw3, or with 'd' for directory (r1d, w2d, etc.)
+  const match = choice.match(/^(r|w|rw)([123])(d?)$/);
   if (!match) {
-    console.error(`Error: Invalid choice '${choice}'. Must be r1, w1, rw1, r2, w2, rw2, r3, w3, rw3, or 4`);
+    console.error(`Error: Invalid choice '${choice}'. Must be r1, w1, rw1, r2, w2, rw2, r3, w3, rw3 (or add 'd' for directory), or 4`);
     Deno.exit(1);
   }
 
   const operation = match[1]; // r, w, or rw
   const scope = parseInt(match[2]); // 1, 2, or 3
+  const isDirectory = match[3] === "d"; // true if 'd' suffix present
+
+  // Determine the path to grant permission to
+  let permissionPath = pending.path;
+  if (isDirectory) {
+    // Grant permission to the directory instead of the file
+    const pathParts = pending.path.split('/');
+    permissionPath = pathParts.slice(0, -1).join('/') || '/';
+    console.error(`[safesh] Granting permission to directory: ${permissionPath}/`);
+  }
 
   // Determine which permissions to add
   const readPaths: string[] = [];
   const writePaths: string[] = [];
 
   if (operation === "r" || operation === "rw") {
-    readPaths.push(pending.path);
+    readPaths.push(permissionPath);
   }
   if (operation === "w" || operation === "rw") {
-    writePaths.push(pending.path);
+    writePaths.push(permissionPath);
   }
 
   // Apply permissions based on scope
@@ -675,6 +700,23 @@ async function main() {
       config.permissions.run = [
         ...(config.permissions.run ?? []),
         ...sessionAllowed,
+      ];
+    }
+
+    // Merge session-allowed path permissions
+    const sessionPaths = getSessionPathPermissions(projectDir);
+    if (sessionPaths.read && sessionPaths.read.length > 0) {
+      config.permissions = config.permissions ?? {};
+      config.permissions.read = [
+        ...(config.permissions.read ?? []),
+        ...sessionPaths.read,
+      ];
+    }
+    if (sessionPaths.write && sessionPaths.write.length > 0) {
+      config.permissions = config.permissions ?? {};
+      config.permissions.write = [
+        ...(config.permissions.write ?? []),
+        ...sessionPaths.write,
       ];
     }
   } catch (error) {
