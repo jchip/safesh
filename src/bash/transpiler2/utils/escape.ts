@@ -5,15 +5,71 @@
  */
 
 /**
+ * Options for escaping strings
+ */
+export interface EscapeOptions {
+  /** Quote style to escape for: 'single', 'double', or 'template' */
+  quotes?: "single" | "double" | "template";
+  /** Whether to escape newlines (default: false) */
+  escapeNewlines?: boolean;
+  /** Whether to escape backslashes (default: true) */
+  escapeBackslashes?: boolean;
+}
+
+/**
+ * Base string escape function with configurable options.
+ *
+ * This function provides a flexible way to escape strings for various contexts
+ * in generated TypeScript code. All specialized escape functions use this
+ * internally for consistency.
+ *
+ * @param str - The string to escape
+ * @param options - Escape options
+ * @returns The escaped string
+ */
+export function escapeString(
+  str: string,
+  options: EscapeOptions = {},
+): string {
+  let result = str;
+
+  // Escape backslashes first (most common case)
+  if (options.escapeBackslashes !== false) {
+    result = result.replace(/\\/g, "\\\\");
+  }
+
+  // Escape quotes based on style
+  switch (options.quotes) {
+    case "single":
+      result = result.replace(/'/g, "\\'");
+      break;
+    case "double":
+      result = result.replace(/"/g, '\\"');
+      break;
+    case "template":
+      result = result
+        .replace(/`/g, "\\`")
+        .replace(/\$/g, "\\$");
+      break;
+  }
+
+  // Escape newlines and special whitespace if requested
+  if (options.escapeNewlines) {
+    result = result
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t");
+  }
+
+  return result;
+}
+
+/**
  * Escape a string for safe inclusion in template literals.
  * Prevents injection attacks by escaping backticks, backslashes, and ${
  */
 export function escapeForTemplate(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\") // Escape backslashes first
-    .replace(/`/g, "\\`") // Escape backticks
-    .replace(/\$\{/g, "\\${") // Escape template literal interpolation
-    .replace(/\$/g, "\\$"); // Escape dollar signs
+  return escapeString(str, { quotes: "template" });
 }
 
 /**
@@ -21,12 +77,15 @@ export function escapeForTemplate(str: string): string {
  * Used for redirect targets and variable values.
  */
 export function escapeForQuotes(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\") // Escape backslashes first
-    .replace(/"/g, '\\"') // Escape double quotes
-    .replace(/\n/g, "\\n") // Escape newlines
-    .replace(/\r/g, "\\r") // Escape carriage returns
-    .replace(/\t/g, "\\t"); // Escape tabs
+  return escapeString(str, { quotes: "double", escapeNewlines: true });
+}
+
+/**
+ * Escape a string for safe inclusion in single-quoted strings.
+ * Used when generating string literals.
+ */
+export function escapeForSingleQuotes(str: string): string {
+  return escapeString(str, { quotes: "single" });
 }
 
 /**
@@ -35,16 +94,6 @@ export function escapeForQuotes(str: string): string {
  */
 export function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * Escape a string for safe inclusion in single-quoted strings.
- * Used when generating string literals.
- */
-export function escapeForSingleQuotes(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\") // Escape backslashes first
-    .replace(/'/g, "\\'"); // Escape single quotes
 }
 
 /**
