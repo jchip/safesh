@@ -242,6 +242,236 @@ async function addToSessionFile(commands: string[], projectDir?: string): Promis
   console.error(`[safesh] Added to session-allow: ${commands.join(", ")}`);
 }
 
+/**
+ * Handle retry-path subcommand: desh retry-path --id=X --choice=<option>
+ *
+ * Choices: r1, w1, rw1 (once), r2, w2, rw2 (session), r3, w3, rw3 (always), deny
+ */
+async function handleRetryPath(args: string[]): Promise<void> {
+  const parsed = parseArgs(args, {
+    string: ["id", "choice"],
+  });
+
+  const id = parsed.id as string;
+  const choice = parsed.choice as string;
+
+  if (!id) {
+    console.error("Error: --id is required for retry-path");
+    Deno.exit(1);
+  }
+
+  if (!choice) {
+    console.error("Error: --choice is required for retry-path");
+    Deno.exit(1);
+  }
+
+  // Read pending path request
+  const { getPendingPathFilePath } = await import("../core/temp.ts");
+  const pendingFile = getPendingPathFilePath(id);
+  let pending: {
+    id: string;
+    path: string;
+    operation: string;
+    cwd: string;
+    scriptHash: string;
+    createdAt: string;
+  };
+
+  try {
+    const content = await Deno.readTextFile(pendingFile);
+    pending = JSON.parse(content);
+  } catch {
+    console.error(`Error: Pending path request not found: ${pendingFile}`);
+    Deno.exit(1);
+  }
+
+  // Find the script file
+  const scriptFile = await findScriptFilePath(pending.scriptHash);
+  if (!scriptFile) {
+    console.error(`Error: Script file not found for hash: ${pending.scriptHash}`);
+    Deno.exit(1);
+  }
+
+  const cwd = pending.cwd;
+  const projectDir = findProjectRoot(cwd);
+
+  // Handle deny
+  if (choice === "deny" || choice === "4") {
+    console.error("[safesh] Path access denied by user.");
+    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    Deno.exit(0);
+  }
+
+  // Parse choice: r1, w1, rw1, r2, w2, rw2, r3, w3, rw3
+  const match = choice.match(/^(r|w|rw)([123])$/);
+  if (!match) {
+    console.error(`Error: Invalid choice '${choice}'. Must be r1, w1, rw1, r2, w2, rw2, r3, w3, rw3, or 4`);
+    Deno.exit(1);
+  }
+
+  const operation = match[1]; // r, w, or rw
+  const scope = parseInt(match[2]); // 1, 2, or 3
+
+  // Determine which permissions to add
+  const readPaths: string[] = [];
+  const writePaths: string[] = [];
+
+  if (operation === "r" || operation === "rw") {
+    readPaths.push(pending.path);
+  }
+  if (operation === "w" || operation === "rw") {
+    writePaths.push(pending.path);
+  }
+
+  // Apply permissions based on scope
+  if (scope === 3) {
+    // Always allow - update config.local.json
+    await addPathsToConfigLocal(readPaths, writePaths, cwd);
+  } else if (scope === 2) {
+    // Session allow - update session file
+    await addPathsToSessionFile(readPaths, writePaths, projectDir);
+  }
+  // scope === 1: allow once - just add to runtime config, no persistence
+
+  // Load config and add paths
+  const baseConfig = await loadConfig(cwd, { logWarnings: false });
+  const config = mergeConfigs(baseConfig, { projectDir });
+
+  // Load session permissions if they exist
+  const sessionFile = getSessionFilePath(projectDir);
+  try {
+    const sessionContent = await Deno.readTextFile(sessionFile);
+    const session = JSON.parse(sessionContent) as { permissions?: { read?: string[]; write?: string[] } };
+    if (session.permissions) {
+      config.permissions = config.permissions ?? {};
+      if (session.permissions.read) {
+        config.permissions.read = [
+          ...(config.permissions.read ?? []),
+          ...session.permissions.read,
+        ];
+      }
+      if (session.permissions.write) {
+        config.permissions.write = [
+          ...(config.permissions.write ?? []),
+          ...session.permissions.write,
+        ];
+      }
+    }
+  } catch {
+    // Session file doesn't exist or is invalid - that's okay
+  }
+
+  config.permissions = config.permissions ?? {};
+  if (readPaths.length > 0) {
+    config.permissions.read = [
+      ...(config.permissions.read ?? []),
+      ...readPaths,
+    ];
+  }
+  if (writePaths.length > 0) {
+    config.permissions.write = [
+      ...(config.permissions.write ?? []),
+      ...writePaths,
+    ];
+  }
+
+  // Re-execute the script file
+  try {
+    const result = await executeFile(scriptFile, config, { cwd });
+
+    if (result.stdout) console.log(result.stdout);
+    if (result.stderr) console.error(result.stderr);
+
+    // Cleanup pending file on success (keep script file for caching)
+    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+
+    Deno.exit(result.code);
+  } catch (error) {
+    console.error(`Execution failed: ${error}`);
+    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    Deno.exit(1);
+  }
+}
+
+/**
+ * Add paths to config.local.json for "always allow"
+ */
+async function addPathsToConfigLocal(
+  readPaths: string[],
+  writePaths: string[],
+  cwd: string
+): Promise<void> {
+  const configDir = `${cwd}/.config/safesh`;
+  const configPath = `${configDir}/config.local.json`;
+
+  await Deno.mkdir(configDir, { recursive: true }).catch(() => {});
+
+  let config: { permissions?: { read?: string[]; write?: string[] } } = {};
+  try {
+    const content = await Deno.readTextFile(configPath);
+    config = JSON.parse(content);
+  } catch { /* file doesn't exist */ }
+
+  config.permissions = config.permissions ?? {};
+
+  if (readPaths.length > 0) {
+    const existing = new Set(config.permissions.read ?? []);
+    for (const path of readPaths) existing.add(path);
+    config.permissions.read = [...existing];
+  }
+
+  if (writePaths.length > 0) {
+    const existing = new Set(config.permissions.write ?? []);
+    for (const path of writePaths) existing.add(path);
+    config.permissions.write = [...existing];
+  }
+
+  await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2) + "\n");
+
+  const msg = [];
+  if (readPaths.length > 0) msg.push(`read: ${readPaths.join(", ")}`);
+  if (writePaths.length > 0) msg.push(`write: ${writePaths.join(", ")}`);
+  console.error(`[safesh] Added to always-allow (${msg.join("; ")})`);
+}
+
+/**
+ * Add paths to session file for "session allow"
+ */
+async function addPathsToSessionFile(
+  readPaths: string[],
+  writePaths: string[],
+  projectDir?: string
+): Promise<void> {
+  const sessionFile = getSessionFilePath(projectDir);
+
+  let session: { permissions?: { read?: string[]; write?: string[] } } = {};
+  try {
+    const content = await Deno.readTextFile(sessionFile);
+    session = JSON.parse(content);
+  } catch { /* file doesn't exist */ }
+
+  session.permissions = session.permissions ?? {};
+
+  if (readPaths.length > 0) {
+    const existing = new Set(session.permissions.read ?? []);
+    for (const path of readPaths) existing.add(path);
+    session.permissions.read = [...existing];
+  }
+
+  if (writePaths.length > 0) {
+    const existing = new Set(session.permissions.write ?? []);
+    for (const path of writePaths) existing.add(path);
+    session.permissions.write = [...existing];
+  }
+
+  await Deno.writeTextFile(sessionFile, JSON.stringify(session, null, 2) + "\n");
+
+  const msg = [];
+  if (readPaths.length > 0) msg.push(`read: ${readPaths.join(", ")}`);
+  if (writePaths.length > 0) msg.push(`write: ${writePaths.join(", ")}`);
+  console.error(`[safesh] Added to session-allow (${msg.join("; ")})`);
+}
+
 const HELP = `
 desh - Deno Shell CLI for SafeShell
 
@@ -307,6 +537,12 @@ async function main() {
   // Check for retry subcommand first
   if (Deno.args[0] === "retry") {
     await handleRetry(Deno.args.slice(1));
+    return;
+  }
+
+  // Check for retry-path subcommand
+  if (Deno.args[0] === "retry-path") {
+    await handleRetryPath(Deno.args.slice(1));
     return;
   }
 

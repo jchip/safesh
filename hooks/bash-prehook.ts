@@ -877,9 +877,9 @@ async function outputRewriteToDeshFile(tsCode: string, projectDir: string, optio
   const pendingFile = getPendingFilePath(pendingId);
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
-  // Create desh command with file path and pass ID via env var
+  // Create desh command with file path and pass ID and hash via env var
   // Also pass allowProjectCommands flag so desh runtime allows project scripts
-  const deshCommand = `SAFESH_SCRIPT_ID=${pendingId} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q -f ${tempFile}`;
+  const deshCommand = `SAFESH_SCRIPT_ID=${pendingId} SAFESH_SCRIPT_HASH=${hash} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q -f ${tempFile}`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -915,9 +915,9 @@ async function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, op
   const pendingFile = getPendingFilePath(pendingId);
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
-  // Create desh heredoc command with ID via env var
+  // Create desh heredoc command with ID and hash via env var
   // Also pass allowProjectCommands flag so desh runtime allows project scripts
-  const deshCommand = `SAFESH_SCRIPT_ID=${pendingId} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
+  const deshCommand = `SAFESH_SCRIPT_ID=${pendingId} SAFESH_SCRIPT_HASH=${hash} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -1154,13 +1154,14 @@ globalThis.addEventListener("error", (event) => {
 
     // Create pending path request
     const pendingId = \`${Date.now()}-${Deno.pid}\`;
+    const scriptHash = Deno.env.get("SAFESH_SCRIPT_HASH") || "";
     const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
     const pending = {
       id: pendingId,
       path: path,
       operation: "read",
       cwd: Deno.cwd(),
-      command: "(TypeScript code)",
+      scriptHash: scriptHash,
       createdAt: new Date().toISOString()
     };
 
@@ -1173,19 +1174,13 @@ globalThis.addEventListener("error", (event) => {
     // Show permission prompt
     const message = \`[SAFESH] PATH BLOCKED: \${path}
 
-WAIT for user choice:
-r1  - Allow read once
-w1  - Allow write once
-rw1 - Allow read/write once
-r2  - Allow read for session
-w2  - Allow write for session
-rw2 - Allow read/write for session
-r3  - Always allow read
-w3  - Always allow write
-rw3 - Always allow read/write
-deny - Deny
+Choose permission (r=read, w=write, rw=both):
+1. Allow once (r1, w1, rw1)
+2. Allow for session (r2, w2, rw2)
+3. Always allow (r3, w3, rw3)
+4. Deny
 
-DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
+AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
 
     console.error(message);
     Deno.exit(1);
@@ -1236,13 +1231,14 @@ globalThis.addEventListener("unhandledrejection", (event) => {
 
     // Create pending path request
     const pendingId = \`${Date.now()}-${Deno.pid}\`;
+    const scriptHash = Deno.env.get("SAFESH_SCRIPT_HASH") || "";
     const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
     const pending = {
       id: pendingId,
       path: path,
       operation: "read",
       cwd: Deno.cwd(),
-      command: "(TypeScript code)",
+      scriptHash: scriptHash,
       createdAt: new Date().toISOString()
     };
 
@@ -1255,19 +1251,13 @@ globalThis.addEventListener("unhandledrejection", (event) => {
     // Show permission prompt
     const message = \`[SAFESH] PATH BLOCKED: \${path}
 
-WAIT for user choice:
-r1  - Allow read once
-w1  - Allow write once
-rw1 - Allow read/write once
-r2  - Allow read for session
-w2  - Allow write for session
-rw2 - Allow read/write for session
-r3  - Always allow read
-w3  - Always allow write
-rw3 - Always allow read/write
-deny - Deny
+Choose permission (r=read, w=write, rw=both):
+1. Allow once (r1, w1, rw1)
+2. Allow for session (r2, w2, rw2)
+3. Always allow (r3, w3, rw3)
+4. Deny
 
-DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
+AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
 
     console.error(message);
     Deno.exit(1);
@@ -1434,19 +1424,13 @@ const __handleError = (error) => {
     // Show permission prompt
     const message = \`[SAFESH] PATH BLOCKED: \${path}
 
-WAIT for user choice:
-r1  - Allow read once
-w1  - Allow write once
-rw1 - Allow read/write once
-r2  - Allow read for session
-w2  - Allow write for session
-rw2 - Allow read/write for session
-r3  - Always allow read
-w3  - Always allow write
-rw3 - Always allow read/write
-deny - Deny
+Choose permission (r=read, w=write, rw=both):
+1. Allow once (r1, w1, rw1)
+2. Allow for session (r2, w2, rw2)
+3. Always allow (r3, w3, rw3)
+4. Deny
 
-DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
+AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>\`;
 
     console.error(message);
     Deno.exit(1);
