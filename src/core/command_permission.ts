@@ -10,6 +10,7 @@
 import { basename, resolve, join } from "@std/path";
 import type { SafeShellConfig } from "./types.ts";
 import { ERROR_COMMAND_NOT_ALLOWED, ERROR_COMMAND_NOT_FOUND } from "./constants.ts";
+import { isPathWithin } from "./path-utils.ts";
 
 /**
  * Result of permission check - allowed with resolved path
@@ -152,7 +153,7 @@ export async function checkCommandPermission(
   const cwdPath = resolve(cwd, command);
   if (await commandExists(cwdPath)) {
     // If allowProjectCommands is enabled and resolved path is under projectDir, auto-allow
-    if (allowProjectCommands && projectDir && cwdPath.startsWith(projectDir + "/")) {
+    if (allowProjectCommands && projectDir && isPathWithin(cwdPath, projectDir)) {
       return { allowed: true, resolvedPath: cwdPath };
     }
     // Yes → allowed_check(resolved)
