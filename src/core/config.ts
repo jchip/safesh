@@ -435,7 +435,10 @@ export function mergeConfigs(
     workspace: override.workspace ?? base.workspace,
     projectDir: override.projectDir ?? base.projectDir,
     blockProjectDirWrite: override.blockProjectDirWrite ?? base.blockProjectDirWrite,
+    includeHomeInDefaultRead: override.includeHomeInDefaultRead ?? base.includeHomeInDefaultRead,
     allowProjectCommands: override.allowProjectCommands ?? base.allowProjectCommands,
+    alwaysTranspile: override.alwaysTranspile ?? base.alwaysTranspile,
+    projectTemp: override.projectTemp ?? base.projectTemp,
     permissions: mergePermissions(
       base.permissions ?? {},
       override.permissions ?? {},
@@ -449,6 +452,7 @@ export function mergeConfigs(
     tasks: { ...base.tasks, ...override.tasks },
     timeout: override.timeout ?? base.timeout,
     denoFlags: unionArrays(base.denoFlags, override.denoFlags),
+    vfs: override.vfs ?? base.vfs,
   };
 }
 
