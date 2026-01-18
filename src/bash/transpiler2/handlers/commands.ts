@@ -134,6 +134,16 @@ const SHELL_BUILTINS: Record<string, { fn: string; type: "silent" | "prints" | "
   touch: { fn: "__touch", type: "async" },
 };
 
+/**
+ * Specialized command wrappers that provide enhanced functionality
+ * These commands use dedicated wrapper functions instead of generic $.cmd()
+ */
+const SPECIALIZED_COMMANDS = new Set([
+  "git",
+  "docker",
+  "tmux",
+]);
+
 export function buildCommand(
   command: AST.Command,
   ctx: VisitorContext,
@@ -234,6 +244,11 @@ export function buildCommand(
         .join(", ");
       const argsArray = args.map(formatArg).join(", ");
       cmdExpr = `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+    } else if (SPECIALIZED_COMMANDS.has(name)) {
+      // Use specialized command wrappers (git, docker, tmux)
+      // These provide enhanced functionality like auto-delay for tmux send-keys
+      const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+      cmdExpr = `$.${name}(${argsArray})`;
     } else {
       // Use explicit $.cmd() function call style
       // $.cmd(name, ...args) returns a Command directly
