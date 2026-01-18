@@ -26,6 +26,44 @@ export function getRealPath(path: string): string {
 }
 
 /**
+ * Get both original and resolved paths for symlink handling
+ *
+ * Returns an array with both the original path and its resolved real path.
+ * If they are the same, returns a single-element array.
+ * Important for macOS where /tmp -> /private/tmp - Deno checks literal paths.
+ *
+ * @param path - The path to resolve
+ * @returns Array containing [originalPath, resolvedPath] or just [path] if they're the same
+ */
+export function getRealPathBoth(path: string): string[] {
+  try {
+    const resolved = Deno.realPathSync(path);
+    // Return both if different (e.g., /tmp and /private/tmp)
+    return resolved !== path ? [path, resolved] : [path];
+  } catch {
+    // Path doesn't exist yet or can't be resolved, return as-is
+    return [path];
+  }
+}
+
+/**
+ * Async version of getRealPath
+ *
+ * Returns the resolved real path if possible, otherwise returns the input path.
+ * Useful for normalizing paths that may contain symlinks in async contexts.
+ *
+ * @param path - The path to resolve
+ * @returns Promise resolving to the real path or the original path if resolution fails
+ */
+export async function getRealPathAsync(path: string): Promise<string> {
+  try {
+    return await Deno.realPath(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * Get default config with current directory as sandbox
  *
  * Creates a minimal SafeShellConfig allowing read/write to the current directory

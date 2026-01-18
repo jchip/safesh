@@ -9,6 +9,7 @@ import { resolve } from "@std/path";
 import type { ExternalCommandConfig, SafeShellConfig } from "../core/types.ts";
 import { expandPath, isPathAllowed, isWithinWorkspace } from "../core/permissions.ts";
 import { pathViolation, symlinkViolation } from "../core/errors.ts";
+import { getRealPathAsync } from "../core/utils.ts";
 
 /**
  * Patterns that indicate an argument is likely a path
@@ -212,13 +213,7 @@ export async function validatePathArgs(
     const absolutePath = resolve(cwd, pathToCheck);
 
     // Try to resolve symlinks
-    let realPath: string;
-    try {
-      realPath = await Deno.realPath(absolutePath);
-    } catch {
-      // File doesn't exist yet, use absolute path
-      realPath = absolutePath;
-    }
+    const realPath = await getRealPathAsync(absolutePath);
 
     // If workspace is configured and path is within workspace, allow it
     if (workspace && isWithinWorkspace(realPath, workspace)) {

@@ -197,3 +197,59 @@ export function getSessionPathPermissions(
   const session = readSessionFile(projectDir, sessionId);
   return session.permissions ?? {};
 }
+
+/**
+ * Merge session permissions into a config object
+ * Consolidates the common pattern of loading and merging session permissions
+ *
+ * This function:
+ * 1. Loads session data from disk (if exists)
+ * 2. Merges session.permissions.read into config.permissions.read
+ * 3. Merges session.permissions.write into config.permissions.write
+ * 4. Merges session.allowedCommands into config.permissions.run
+ *
+ * @param config - The config object to merge into (will be mutated)
+ * @param projectDir - Project directory to determine session file location
+ * @param sessionId - Optional session ID (defaults to CLAUDE_SESSION_ID env var)
+ */
+export function mergeSessionPermissions(
+  config: any,
+  projectDir: string,
+  sessionId?: string,
+): void {
+  const sessionFile = getTempSessionFilePath(projectDir, sessionId);
+
+  try {
+    const sessionContent = Deno.readTextFileSync(sessionFile);
+    const session = JSON.parse(sessionContent) as SessionData;
+
+    // Merge read permissions
+    if (session.permissions?.read) {
+      config.permissions = config.permissions ?? {};
+      config.permissions.read = [
+        ...(config.permissions.read ?? []),
+        ...session.permissions.read,
+      ];
+    }
+
+    // Merge write permissions
+    if (session.permissions?.write) {
+      config.permissions = config.permissions ?? {};
+      config.permissions.write = [
+        ...(config.permissions.write ?? []),
+        ...session.permissions.write,
+      ];
+    }
+
+    // Merge allowed commands into run permissions
+    if (session.allowedCommands) {
+      config.permissions = config.permissions ?? {};
+      config.permissions.run = [
+        ...(config.permissions.run ?? []),
+        ...session.allowedCommands,
+      ];
+    }
+  } catch {
+    // Session file doesn't exist or is invalid - continue without it
+  }
+}

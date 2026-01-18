@@ -200,7 +200,7 @@ export function buildCommand(
         } else if (arg === "-c" && nextArg) {
           client = formatArg(nextArg);
           i++; // skip next arg
-        } else {
+        } else if (arg) {
           textArgs.push(formatArg(arg));
         }
       }
@@ -248,6 +248,92 @@ interface FluentCommandResult {
   isTransform: boolean;
   /** True if this produces a stream (like $.cat), false if it's a Command */
   isStream: boolean;
+}
+
+/**
+ * Configuration for building a simple fluent transform command
+ */
+interface SimpleFluentConfig {
+  /** Parse arguments into options and files */
+  parseArgs: (args: string[]) => { options?: string; files: string[] };
+  /** Build the transform code (e.g., "$.head(10)") */
+  buildTransform: (options?: string) => string;
+}
+
+/**
+ * Registry of simple fluent commands that follow the pattern:
+ * 1. Parse args into options and files
+ * 2. If files present: $.cat(file).lines().pipe(transform)
+ * 3. Otherwise: return transform
+ */
+const SIMPLE_FLUENT_COMMANDS: Record<string, SimpleFluentConfig> = {
+  head: {
+    parseArgs: (args) => {
+      const { count, files } = parseCountArg(args);
+      return { options: count.toString(), files };
+    },
+    buildTransform: (count) => `$.head(${count})`,
+  },
+  tail: {
+    parseArgs: (args) => {
+      const { count, files } = parseCountArg(args);
+      return { options: count.toString(), files };
+    },
+    buildTransform: (count) => `$.tail(${count})`,
+  },
+  sort: {
+    parseArgs: (args) => {
+      const { options, files } = collectFlagOptionsAndFiles(args, {
+        "-n": "numeric: true",
+        "-r": "reverse: true",
+        "-u": "unique: true",
+      });
+      return { options: options.length > 0 ? options.join(", ") : undefined, files };
+    },
+    buildTransform: (opts) => opts ? `$.sort({ ${opts} })` : "$.sort()",
+  },
+  uniq: {
+    parseArgs: (args) => {
+      const { options, files } = collectFlagOptionsAndFiles(args, {
+        "-c": "count: true",
+        "-i": "ignoreCase: true",
+      });
+      return { options: options.length > 0 ? options.join(", ") : undefined, files };
+    },
+    buildTransform: (opts) => opts ? `$.uniq({ ${opts} })` : "$.uniq()",
+  },
+  wc: {
+    parseArgs: (args) => {
+      const { options, files } = collectFlagOptionsAndFiles(args, {
+        "-l": "lines: true",
+        "-w": "words: true",
+        "-c": "bytes: true",
+        "-m": "chars: true",
+      });
+      return { options: options.length > 0 ? options.join(", ") : undefined, files };
+    },
+    buildTransform: (opts) => opts ? `$.wc({ ${opts} })` : "$.wc()",
+  },
+};
+
+/**
+ * Build a simple fluent command using the registry pattern
+ */
+function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandResult {
+  const config = SIMPLE_FLUENT_COMMANDS[name];
+  if (!config) {
+    throw new Error(`Unknown simple fluent command: ${name}`);
+  }
+
+  const { options, files } = config.parseArgs(args);
+  const transformCode = config.buildTransform(options);
+
+  if (files.length > 0) {
+    const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+    return { code: `$.cat(${file}).lines().pipe(${transformCode})`, isTransform: false, isStream: true };
+  }
+
+  return { code: transformCode, isTransform: true, isStream: false };
 }
 
 /**
@@ -322,70 +408,12 @@ function buildFluentCommand(
       return { code: `$.grep(${regexPattern})`, isTransform: true, isStream: false };
     }
 
-    case "head": {
-      // $.head(n) as transform, or $.cat(file).lines().pipe($.head(n)) with file
-      const { count, files } = parseCountArg(args);
-      if (files.length > 0) {
-        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
-        return { code: `$.cat(${file}).lines().pipe($.head(${count}))`, isTransform: false, isStream: true };
-      }
-      return { code: `$.head(${count})`, isTransform: true, isStream: false };
-    }
-
-    case "tail": {
-      // $.tail(n) as transform, or $.cat(file).lines().pipe($.tail(n)) with file
-      const { count, files } = parseCountArg(args);
-      if (files.length > 0) {
-        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
-        return { code: `$.cat(${file}).lines().pipe($.tail(${count}))`, isTransform: false, isStream: true };
-      }
-      return { code: `$.tail(${count})`, isTransform: true, isStream: false };
-    }
-
-    case "sort": {
-      // $.sort(options) as transform, or $.cat(file).lines().pipe($.sort(options)) with file
-      const { options, files } = collectFlagOptionsAndFiles(args, {
-        "-n": "numeric: true",
-        "-r": "reverse: true",
-        "-u": "unique: true",
-      });
-      const sortCode = options.length > 0 ? `$.sort({ ${options.join(", ")} })` : "$.sort()";
-      if (files.length > 0) {
-        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
-        return { code: `$.cat(${file}).lines().pipe(${sortCode})`, isTransform: false, isStream: true };
-      }
-      return { code: sortCode, isTransform: true, isStream: false };
-    }
-
-    case "uniq": {
-      // $.uniq(options) as transform, or $.cat(file).lines().pipe($.uniq(options)) with file
-      const { options, files } = collectFlagOptionsAndFiles(args, {
-        "-c": "count: true",
-        "-i": "ignoreCase: true",
-      });
-      const uniqCode = options.length > 0 ? `$.uniq({ ${options.join(", ")} })` : "$.uniq()";
-      if (files.length > 0) {
-        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
-        return { code: `$.cat(${file}).lines().pipe(${uniqCode})`, isTransform: false, isStream: true };
-      }
-      return { code: uniqCode, isTransform: true, isStream: false };
-    }
-
-    case "wc": {
-      // $.wc() or $.wc(options) as transform, or $.cat(file).lines().pipe($.wc(options)) with file
-      const { options, files } = collectFlagOptionsAndFiles(args, {
-        "-l": "lines: true",
-        "-w": "words: true",
-        "-c": "bytes: true",
-        "-m": "chars: true",
-      });
-      const wcCode = options.length > 0 ? `$.wc({ ${options.join(", ")} })` : "$.wc()";
-      if (files.length > 0) {
-        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
-        return { code: `$.cat(${file}).lines().pipe(${wcCode})`, isTransform: false, isStream: true };
-      }
-      return { code: wcCode, isTransform: true, isStream: false };
-    }
+    case "head":
+    case "tail":
+    case "sort":
+    case "uniq":
+    case "wc":
+      return buildSimpleFluentCommand(name, args);
 
     case "tee": {
       // $.tee(file) as transform
