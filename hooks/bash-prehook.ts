@@ -755,21 +755,23 @@ async function outputRewriteToDeshFile(tsCode: string, projectDir: string, optio
   }
 
   // Save metadata for potential retry (if initCmds encounters blocked commands)
-  // Note: tsCode is NOT stored here - it's read from the script file during retry
+  // Note: tsCode is NOT stored here - it's read from the script file using scriptHash
+  const pendingId = generateTempId();
   const pending: PendingCommand = {
-    id,
+    id: pendingId,
+    scriptHash: hash,
     commands: [], // Will be filled by initCmds if commands are blocked
     cwd: Deno.cwd(),
     timeout: options?.timeout,
     runInBackground: options?.runInBackground,
     createdAt: new Date().toISOString(),
   };
-  const pendingFile = getPendingFilePath(id);
+  const pendingFile = getPendingFilePath(pendingId);
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Create desh command with file path and pass ID via env var
   // Also pass allowProjectCommands flag so desh runtime allows project scripts
-  const deshCommand = `SAFESH_SCRIPT_ID=${id} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q -f ${tempFile}`;
+  const deshCommand = `SAFESH_SCRIPT_ID=${pendingId} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q -f ${tempFile}`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -790,24 +792,24 @@ async function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, op
   // For /*#*/ scripts: hash TypeScript code directly
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
-  const id = hash;
-
   // Save metadata for potential retry (if initCmds encounters blocked commands)
-  // Note: tsCode is NOT stored here - it's read from the script file during retry
+  // Note: tsCode is NOT stored here - it's passed via heredoc, scriptHash used for caching
+  const pendingId = generateTempId();
   const pending: PendingCommand = {
-    id,
+    id: pendingId,
+    scriptHash: hash,
     commands: [], // Will be filled by initCmds if commands are blocked
     cwd: Deno.cwd(),
     timeout: options?.timeout,
     runInBackground: options?.runInBackground,
     createdAt: new Date().toISOString(),
   };
-  const pendingFile = getPendingFilePath(id);
+  const pendingFile = getPendingFilePath(pendingId);
   Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
 
   // Create desh heredoc command with ID via env var
   // Also pass allowProjectCommands flag so desh runtime allows project scripts
-  const deshCommand = `SAFESH_SCRIPT_ID=${id} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
+  const deshCommand = `SAFESH_SCRIPT_ID=${pendingId} SAFESH_ALLOW_PROJECT_COMMANDS=true ${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
 
   outputHookResponse(deshCommand, options);
 }
@@ -842,12 +844,13 @@ function outputHookResponse(deshCommand: string, options?: { timeout?: number; r
  */
 interface PendingCommand {
   id: string;
+  scriptHash: string;  // Hash of script content for finding cached script file
   commands: string[];  // Disallowed commands (filled by initCmds)
   cwd: string;
   timeout?: number;
   runInBackground?: boolean;
   createdAt: string;
-  // Note: tsCode removed - read from script file using id/hash
+  // Note: tsCode removed - read from script file using scriptHash
 }
 
 /**
