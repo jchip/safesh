@@ -244,6 +244,42 @@ export function buildCommand(
         .join(", ");
       const argsArray = args.map(formatArg).join(", ");
       cmdExpr = `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+    } else if (name === "tmux" && args.length > 0 && args[0] === "send-keys" && args[args.length - 1] === "C-m") {
+      // Special case: tmux send-keys with C-m → use tmuxSubmit()
+      // Pattern: tmux send-keys -t <target> [-c <client>] <text> C-m
+      let target: string | null = null;
+      let client: string | null = null;
+      const textArgs: string[] = [];
+
+      // Parse arguments (skip first "send-keys" and last "C-m")
+      for (let i = 1; i < args.length - 1; i++) {
+        const arg = args[i];
+        const nextArg = args[i + 1];
+
+        if (arg === "-t" && nextArg) {
+          target = formatArg(nextArg);
+          i++; // skip next arg
+        } else if (arg === "-c" && nextArg) {
+          client = formatArg(nextArg);
+          i++; // skip next arg
+        } else {
+          textArgs.push(formatArg(arg));
+        }
+      }
+
+      if (target && textArgs.length > 0) {
+        // Join text args with spaces
+        const text = textArgs.join(" + \" \" + ");
+        if (client) {
+          cmdExpr = `$.tmuxSubmit(${target}, ${text}, ${client})`;
+        } else {
+          cmdExpr = `$.tmuxSubmit(${target}, ${text})`;
+        }
+      } else {
+        // Fallback to regular tmux if we can't parse properly
+        const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+        cmdExpr = `$.tmux(${argsArray})`;
+      }
     } else if (SPECIALIZED_COMMANDS.has(name)) {
       // Use specialized command wrappers (git, docker, tmux)
       // These provide enhanced functionality like auto-delay for tmux send-keys
