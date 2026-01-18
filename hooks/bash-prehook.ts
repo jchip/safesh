@@ -1139,11 +1139,6 @@ globalThis.addEventListener("error", (event) => {
     errorMessage.includes("Requires write access to");
 
   if (isPathViolation) {
-    // DEBUG: Log the actual error for debugging
-    console.error("[DEBUG] Path violation error caught:");
-    console.error("[DEBUG] Error code:", errorCode);
-    console.error("[DEBUG] Error message:", errorMessage);
-
     // Extract path from error message - handle SafeShell and Deno errors
     // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
     // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
@@ -1168,7 +1163,6 @@ globalThis.addEventListener("error", (event) => {
         }
       }
     }
-    console.error("[DEBUG] Extracted path:", path);
 
     // Create pending path request
     const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
@@ -1259,11 +1253,6 @@ globalThis.addEventListener("unhandledrejection", (event) => {
     errorMessage.includes("Requires write access to");
 
   if (isPathViolation) {
-    // DEBUG: Log the actual error for debugging
-    console.error("[DEBUG] Path violation error caught:");
-    console.error("[DEBUG] Error code:", errorCode);
-    console.error("[DEBUG] Error message:", errorMessage);
-
     // Extract path from error message - handle SafeShell and Deno errors
     // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
     // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
@@ -1288,7 +1277,6 @@ globalThis.addEventListener("unhandledrejection", (event) => {
         }
       }
     }
-    console.error("[DEBUG] Extracted path:", path);
 
     // Create pending path request
     const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
@@ -1509,11 +1497,6 @@ const __handleError = (error) => {
     errorMessage.includes("Requires write access to");
 
   if (isPathViolation) {
-    // DEBUG: Log the actual error for debugging
-    console.error("[DEBUG] Path violation error caught:");
-    console.error("[DEBUG] Error code:", errorCode);
-    console.error("[DEBUG] Error message:", errorMessage);
-
     // Extract path from error message - handle SafeShell and Deno errors
     // SafeShell PATH_VIOLATION: "Path '/etc/hosts' is outside allowed directories"
     // SafeShell SYMLINK_VIOLATION: "Symlink '/etc/hosts' points to '/private/etc/hosts' which is outside allowed directories"
@@ -1538,7 +1521,6 @@ const __handleError = (error) => {
         }
       }
     }
-    console.error("[DEBUG] Extracted path:", path);
 
     // Create pending path request
     const pendingId = \`${Date.now()}-${Deno.pid}\`;

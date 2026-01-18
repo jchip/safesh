@@ -157,11 +157,6 @@ export function handlePathViolationAndExit(
     Deno.exit(1);
   }
 
-  console.error("[DEBUG] Path violation error caught:");
-  console.error("[DEBUG] Error code:", violation.errorCode);
-  console.error("[DEBUG] Error message:", violation.errorMessage);
-  console.error("[DEBUG] Extracted path:", violation.path);
-
   // Create pending path request
   const pendingId = `${Date.now()}-${Deno.pid}`;
   const pendingFile = `${getTempRoot()}/pending-path-${pendingId}.json`;
@@ -303,10 +298,6 @@ ${includeCommandCheck}  const errorMessage = error.message || String(error);
     errorMessage.includes("Requires write access to");
 
   if (isPathViolation) {
-    console.error("[DEBUG] Path violation error caught:");
-    console.error("[DEBUG] Error code:", errorCode);
-    console.error("[DEBUG] Error message:", errorMessage);
-
     let path = "unknown";
     const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
     if (denoMatch) {
@@ -321,7 +312,6 @@ ${includeCommandCheck}  const errorMessage = error.message || String(error);
         }
       }
     }
-    console.error("[DEBUG] Extracted path:", path);
 
     const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
     const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
