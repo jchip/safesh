@@ -71,6 +71,30 @@ export function getScriptFilePath(id: string): string {
 }
 
 /**
+ * Find an existing script file by hash, trying multiple naming conventions
+ * Returns the path if found, null otherwise
+ */
+export async function findScriptFilePath(hash: string): Promise<string | null> {
+  const scriptsDir = getScriptsDir();
+  const possiblePaths = [
+    `${scriptsDir}/tx-script-${hash}.ts`,
+    `${scriptsDir}/script-${hash}.ts`,
+    `${scriptsDir}/file_${hash}.ts`,
+  ];
+
+  for (const path of possiblePaths) {
+    try {
+      await Deno.stat(path);
+      return path;
+    } catch {
+      // Try next path
+    }
+  }
+
+  return null;
+}
+
+/**
  * Generate a unique ID for temporary files
  */
 export function generateTempId(): string {

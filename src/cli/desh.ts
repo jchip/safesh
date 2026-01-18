@@ -19,7 +19,7 @@ import { loadConfig, mergeConfigs, validateConfig } from "../core/config.ts";
 import { executeCode, executeFile, executeCodeStreaming } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
-import { getPendingFilePath, getSessionFilePath, getScriptsDir } from "../core/temp.ts";
+import { getPendingFilePath, getSessionFilePath, findScriptFilePath } from "../core/temp.ts";
 
 const VERSION = "0.1.0";
 
@@ -76,12 +76,13 @@ function getSessionAllowedCommands(projectDir?: string): string[] {
  */
 interface PendingCommand {
   id: string;
+  scriptHash: string;  // Hash of script content for finding cached script file
   commands: string[];  // Disallowed commands (filled by initCmds)
   cwd: string;
   timeout?: number;
   runInBackground?: boolean;
   createdAt: string;
-  // Note: tsCode removed - read from script file using id/hash
+  // Note: tsCode removed - read from script file using scriptHash
 }
 
 /**
@@ -154,29 +155,11 @@ async function handleRetry(args: string[]): Promise<void> {
     ...pending.commands,
   ];
 
-  // Find and read the script file using the hash-based ID
-  // Script file can be: tx-script-<hash>.ts, script-<hash>.ts, or file_<hash>.ts (legacy)
-  const scriptsDir = getScriptsDir();
-  const possiblePaths = [
-    `${scriptsDir}/tx-script-${id}.ts`,
-    `${scriptsDir}/script-${id}.ts`,
-    `${scriptsDir}/file_${id}.ts`,
-  ];
-
-  let scriptFilePath: string | null = null;
-  for (const path of possiblePaths) {
-    try {
-      await Deno.stat(path);
-      scriptFilePath = path;
-      break;
-    } catch {
-      // Try next path
-    }
-  }
+  // Find and read the script file using the scriptHash
+  const scriptFilePath = await findScriptFilePath(pending.scriptHash);
 
   if (!scriptFilePath) {
-    console.error(`Error: Script file not found for id: ${id}`);
-    console.error(`Tried: ${possiblePaths.join(", ")}`);
+    console.error(`Error: Script file not found for hash: ${pending.scriptHash}`);
     Deno.exit(1);
   }
 
