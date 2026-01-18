@@ -148,6 +148,37 @@ async function handleRetry(args: string[]): Promise<void> {
   const baseConfig = await loadConfig(cwd, { logWarnings: false });
   const config = mergeConfigs(baseConfig, { projectDir });
 
+  // Load session permissions if they exist
+  const sessionFile = getSessionFilePath(projectDir);
+  try {
+    const sessionContent = await Deno.readTextFile(sessionFile);
+    const session = JSON.parse(sessionContent) as { permissions?: { read?: string[]; write?: string[] }; allowedCommands?: string[] };
+    if (session.permissions) {
+      config.permissions = config.permissions ?? {};
+      if (session.permissions.read) {
+        config.permissions.read = [
+          ...(config.permissions.read ?? []),
+          ...session.permissions.read,
+        ];
+      }
+      if (session.permissions.write) {
+        config.permissions.write = [
+          ...(config.permissions.write ?? []),
+          ...session.permissions.write,
+        ];
+      }
+    }
+    if (session.allowedCommands) {
+      config.permissions = config.permissions ?? {};
+      config.permissions.run = [
+        ...(config.permissions.run ?? []),
+        ...session.allowedCommands,
+      ];
+    }
+  } catch (e) {
+    // Session file doesn't exist or is invalid - that's fine
+  }
+
   // Add pending commands to permissions
   config.permissions = config.permissions ?? {};
   config.permissions.run = [
@@ -384,8 +415,9 @@ async function handleRetryPath(args: string[]): Promise<void> {
   console.error(`[DEBUG] Script file: ${scriptFile}`);
 
   // Re-execute the script file
-  // Set SAFESH_SCRIPT_HASH for debug output
+  // Set SAFESH_SCRIPT_HASH for debug output and SAFESH_SCRIPT_ID for retry flow
   Deno.env.set("SAFESH_SCRIPT_HASH", pending.scriptHash);
+  Deno.env.set("SAFESH_SCRIPT_ID", id);
 
   try {
     const result = await executeFile(scriptFile, config, { cwd });
@@ -393,8 +425,8 @@ async function handleRetryPath(args: string[]): Promise<void> {
     if (result.stdout) console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);
 
-    // Cleanup pending file on success (keep script file for caching)
-    try { await Deno.remove(pendingFile); } catch { /* ignore */ }
+    // Don't cleanup pending file yet - it may be needed for command retries
+    // The file will be cleaned up by subsequent retries or manual cleanup
 
     Deno.exit(result.code);
   } catch (error) {

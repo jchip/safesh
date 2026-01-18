@@ -225,15 +225,29 @@ export async function initCmds<T extends readonly string[]>(
       // Check if we're running under a script ID (TypeScript via prehook)
       const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
       if (scriptId) {
-        // Update pending command file with blocked commands
+        // Update or create pending command file with blocked commands
         const pendingFile = getPendingFilePath(scriptId);
         try {
+          // Try to read existing file
           const pendingContent = Deno.readTextFileSync(pendingFile);
           const pending = JSON.parse(pendingContent);
           pending.commands = notAllowed; // Update with actual blocked commands
           Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
         } catch (error) {
-          console.error(`Warning: Could not update pending file: ${error}`);
+          // File doesn't exist - create a new one
+          const scriptHash = Deno.env.get("SAFESH_SCRIPT_HASH") || "";
+          const pending = {
+            id: scriptId,
+            scriptHash: scriptHash,
+            commands: notAllowed,
+            cwd: Deno.cwd(),
+            createdAt: new Date().toISOString(),
+          };
+          try {
+            Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+          } catch (writeError) {
+            console.error(`Warning: Could not create pending file: ${writeError}`);
+          }
         }
 
         // Output deny-with-retry message to stderr so user sees it
