@@ -1250,7 +1250,7 @@ ${generateInlineErrorHandler({
         prefix: "Bash Command Error",
         errorLogPath: getErrorLogPath(),
         includeCommand: true,
-        originalCommand: '${bashCommandEscaped}',
+        originalCommand: bashCommandEscaped,
       })}
 
 // Global error handlers for uncaught errors
