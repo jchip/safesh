@@ -43,7 +43,7 @@ Deno.test("escapeString - escapes template literal syntax", () => {
   const options: EscapeOptions = { quotes: "template" };
   assertEquals(
     escapeString("use `backticks` and ${vars}", options),
-    "use \\`backticks\\` and \\${vars}",
+    "use \\`backticks\\` and \\\\${vars}",
   );
 });
 
@@ -76,7 +76,7 @@ Deno.test("escapeString - combines all options", () => {
 Deno.test("escapeForTemplate - escapes backticks and dollar signs", () => {
   assertEquals(
     escapeForTemplate("use `backticks` and ${vars} plus $dollar"),
-    "use \\`backticks\\` and \\${vars} plus \\$dollar",
+    "use \\`backticks\\` and \\\\${vars} plus \\$dollar",
   );
 });
 
@@ -159,7 +159,7 @@ Deno.test("escapeString - handles string with no special characters", () => {
 
 Deno.test("escapeForTemplate - complex real-world example", () => {
   const input = 'Run `ls -la` in ${HOME}\\Desktop with $PATH';
-  const expected = 'Run \\`ls -la\\` in \\${HOME}\\\\Desktop with \\$PATH';
+  const expected = 'Run \\`ls -la\\` in \\\\${HOME}\\\\Desktop with \\$PATH';
   assertEquals(escapeForTemplate(input), expected);
 });
 

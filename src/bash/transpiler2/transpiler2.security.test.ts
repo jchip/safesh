@@ -639,8 +639,8 @@ describe("Security - Redirection Safety", () => {
     const ast = parse('cmd 2>&1');
     const output = transpile(ast);
 
-    // FD duplication should be transpiled
-    assertStringIncludes(output, '$.cmd("cmd")');
+    // FD duplication (2>&1) should be transpiled with mergeStreams option
+    assertStringIncludes(output, '$.cmd({ mergeStreams: true }, "cmd")');
   });
 
   it("should handle here-string safely", () => {

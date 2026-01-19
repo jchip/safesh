@@ -792,18 +792,18 @@ describe("Variable Expansion - All Modifiers", () => {
     it("should handle positional parameters", () => {
       const ast = parse('echo "$1" "$2" "$@"');
       const output = transpile(ast);
-      assertStringIncludes(output, "${1}");
-      assertStringIncludes(output, "${2}");
-      assertStringIncludes(output, "${@}");
+      assertStringIncludes(output, "__POSITIONAL_PARAMS__?.[0]");
+      assertStringIncludes(output, "__POSITIONAL_PARAMS__?.[1]");
+      assertStringIncludes(output, "__POSITIONAL_PARAMS__?.join");
     });
 
     it("should handle special shell variables", () => {
       const ast = parse('echo "$?" "$!" "$$" "$#"');
       const output = transpile(ast);
-      assertStringIncludes(output, "${?}");
-      assertStringIncludes(output, "${!}");
-      assertStringIncludes(output, "${$}");
-      assertStringIncludes(output, "${#}");
+      assertStringIncludes(output, "0"); // $? is always 0 (success)
+      assertStringIncludes(output, "__LAST_BG_PID");
+      assertStringIncludes(output, "Deno.pid");
+      assertStringIncludes(output, "__POSITIONAL_PARAMS__?.length");
     });
   });
 
@@ -1442,8 +1442,8 @@ EOF`;
     // Should generate valid variable assignment with command substitution
     assertStringIncludes(output, "let BRANCH");
     assertStringIncludes(output, "await __cmdSubText");
-    // The command substitution should reference git command
-    assertStringIncludes(output, '$.cmd("git"');
+    // The command substitution should reference git command (now uses $.git() builtin)
+    assertStringIncludes(output, '$.git(');
   });
 });
 
@@ -1655,7 +1655,7 @@ describe("Complex Realistic Bash Scripts", () => {
 
     assertStringIncludes(output, 'let BRANCH');
     assertStringIncludes(output, 'if (');
-    assertStringIncludes(output, '$.cmd("git"');
+    assertStringIncludes(output, '$.git('); // Now uses $.git() builtin
   });
 
   it("should transpile a health check script", () => {

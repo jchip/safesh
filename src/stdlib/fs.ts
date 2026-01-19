@@ -46,7 +46,7 @@ export const path = {
 };
 import { ensureDir as stdEnsureDir } from "@std/fs/ensure-dir";
 import { walk as stdWalk, type WalkOptions as StdWalkOptions } from "@std/fs/walk";
-import { expandPath } from "../core/permissions.ts";
+import { expandPath, validatePath } from "../core/permissions.ts";
 import { executionError } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 import { getDefaultConfig } from "../core/utils.ts";
@@ -96,6 +96,28 @@ function resolvePath(
 }
 
 /**
+ * Resolve and validate path against sandbox
+ * This async version properly validates paths against the sandbox configuration
+ */
+async function resolveAndValidatePath(
+  path: string,
+  operation: "read" | "write",
+  options: SandboxOptions = {},
+): Promise<string> {
+  const cwd = options.cwd ?? Deno.cwd();
+  const config = options.config ?? getDefaultConfig(cwd);
+
+  // If config has explicit permissions, validate the path
+  if (config.permissions?.read || config.permissions?.write) {
+    return await validatePath(path, config, cwd, operation);
+  }
+
+  // Otherwise just resolve the path (no sandbox validation needed)
+  const expandedPath = expandPath(path, cwd, config.workspace);
+  return resolve(cwd, expandedPath);
+}
+
+/**
  * Read file contents as string
  *
  * @param path - Path to file
@@ -112,7 +134,7 @@ export async function read(
   path: string,
   options: SandboxOptions = {},
 ): Promise<string> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "read", options);
   return await Deno.readTextFile(resolvedPath);
 }
 
@@ -127,7 +149,7 @@ export async function readBytes(
   path: string,
   options: SandboxOptions = {},
 ): Promise<Uint8Array> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "read", options);
   return await Deno.readFile(resolvedPath);
 }
 
@@ -173,7 +195,7 @@ export async function write(
   content: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "write", options);
   const dir = dirname(resolvedPath);
 
   // Ensure parent directory exists
@@ -194,7 +216,7 @@ export async function writeBytes(
   data: Uint8Array,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "write", options);
   const dir = dirname(resolvedPath);
 
   await ensureDirSafe(dir);
@@ -235,7 +257,7 @@ export async function append(
   content: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "write", options);
   const dir = dirname(resolvedPath);
 
   await ensureDirSafe(dir);
@@ -262,8 +284,8 @@ export async function exists(
   options: SandboxOptions = {},
 ): Promise<boolean> {
   try {
-    resolvePath(path, options);
-    await Deno.stat(path);
+    const resolvedPath = await resolveAndValidatePath(path, "read", options);
+    await Deno.stat(resolvedPath);
     return true;
   } catch {
     // Path doesn't exist or access denied - both mean "not accessible"
@@ -282,7 +304,7 @@ export async function stat(
   path: string,
   options: SandboxOptions = {},
 ): Promise<Deno.FileInfo> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "read", options);
   return await Deno.stat(resolvedPath);
 }
 
@@ -304,7 +326,7 @@ export async function remove(
   removeOptions?: { recursive?: boolean },
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "write", options);
   await Deno.remove(resolvedPath, removeOptions);
 }
 
@@ -325,7 +347,7 @@ export async function mkdir(
   mkdirOptions?: { recursive?: boolean },
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "write", options);
   await Deno.mkdir(resolvedPath, mkdirOptions);
 }
 
@@ -344,7 +366,7 @@ export async function ensureDir(
   path: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "write", options);
   await stdEnsureDir(resolvedPath);
 }
 
@@ -366,8 +388,8 @@ export async function copy(
   dest: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedSrc = resolvePath(src, options);
-  const resolvedDest = resolvePath(dest, options);
+  const resolvedSrc = await resolveAndValidatePath(src, "read", options);
+  const resolvedDest = await resolveAndValidatePath(dest, "write", options);
 
   await stdCopy(resolvedSrc, resolvedDest, { overwrite: true });
 }
@@ -389,8 +411,8 @@ export async function move(
   dest: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedSrc = resolvePath(src, options);
-  const resolvedDest = resolvePath(dest, options);
+  const resolvedSrc = await resolveAndValidatePath(src, "write", options);
+  const resolvedDest = await resolveAndValidatePath(dest, "write", options);
 
   const destDir = dirname(resolvedDest);
   await ensureDirSafe(destDir);
@@ -413,7 +435,7 @@ export async function touch(
   path: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "write", options);
   const dir = dirname(resolvedPath);
 
   await ensureDirSafe(dir);
@@ -440,8 +462,8 @@ export async function symlink(
   link: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedTarget = resolvePath(target, options);
-  const resolvedLink = resolvePath(link, options);
+  const resolvedTarget = await resolveAndValidatePath(target, "read", options);
+  const resolvedLink = await resolveAndValidatePath(link, "write", options);
   await Deno.symlink(resolvedTarget, resolvedLink);
 }
 
@@ -464,7 +486,7 @@ export async function readDir(
   path: string,
   options: SandboxOptions = {},
 ): Promise<Deno.DirEntry[]> {
-  const resolvedPath = resolvePath(path, options);
+  const resolvedPath = await resolveAndValidatePath(path, "read", options);
   const entries: Deno.DirEntry[] = [];
 
   for await (const entry of Deno.readDir(resolvedPath)) {
@@ -533,7 +555,7 @@ export async function* walk(
   walkOptions: WalkOptions = {},
   sandboxOptions: SandboxOptions = {},
 ): AsyncGenerator<WalkEntry> {
-  const resolvedPath = resolvePath(path, sandboxOptions);
+  const resolvedPath = await resolveAndValidatePath(path, "read", sandboxOptions);
 
   const stdOptions: StdWalkOptions = {
     maxDepth: walkOptions.maxDepth,
@@ -654,7 +676,7 @@ export async function* tree(
   treeOptions: TreeOptions = {},
   sandboxOptions: SandboxOptions = {},
 ): AsyncGenerator<TreeEntry> {
-  const resolvedPath = resolvePath(rootPath, sandboxOptions);
+  const resolvedPath = await resolveAndValidatePath(rootPath, "read", sandboxOptions);
   const maxDepth = treeOptions.maxDepth ?? Infinity;
   const dirsOnly = treeOptions.dirsOnly ?? false;
   const showHidden = treeOptions.showHidden ?? false;

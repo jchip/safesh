@@ -404,7 +404,7 @@ describe("AWS CLI Scripts", () => {
     `);
     assertStringIncludes(code, '"aws", "ecr"');
     assertStringIncludes(code, ".pipe(");
-    assertStringIncludes(code, '"docker", "login"');
+    assertStringIncludes(code, '$.docker("login"');
   });
 
   it("should handle aws with jq processing", () => {
@@ -448,7 +448,7 @@ describe("Git Hooks", () => {
         fi
       `);
       assertStringIncludes(code, "FILES");
-      assertStringIncludes(code, '"git", "diff"');
+      assertStringIncludes(code, '$.git("diff"');
       assertStringIncludes(code, '"eslint"');
     });
 
@@ -479,7 +479,7 @@ describe("Git Hooks", () => {
       `);
       assertStringIncludes(code, "while");
       assertStringIncludes(code, '"read"');
-      assertStringIncludes(code, '"git", "pull"');
+      assertStringIncludes(code, '$.git("pull"');
     });
   });
 
@@ -493,7 +493,7 @@ describe("Git Hooks", () => {
         fi
       `);
       assertStringIncludes(code, "BRANCH");
-      assertStringIncludes(code, '"git", "rev-parse"');
+      assertStringIncludes(code, '$.git("rev-parse"');
     });
   });
 });
