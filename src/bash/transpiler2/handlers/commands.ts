@@ -674,28 +674,35 @@ function buildOrOperator(
 function buildPipeOperator(
   result: string,
   resultIsStream: boolean,
+  resultIsLineStream: boolean,
   part: PipelinePart,
-): string {
+): { code: string; isLineStream: boolean } {
   // Transforms (like $.head, $.grep) need the output split into lines first
   if (part.isTransform) {
-    if (resultIsStream) {
+    if (resultIsLineStream) {
+      // SSH-408: Already a line stream, just pipe to the transform
+      return { code: `${result}.pipe(${part.code})`, isLineStream: true };
+    } else if (resultIsStream) {
       // Stream producer (like $.cat) - need .lines() to split content into lines
-      return `${result}.lines().pipe(${part.code})`;
+      return { code: `${result}.lines().pipe(${part.code})`, isLineStream: true };
     } else {
       // Command - convert to line stream first, then apply transform
-      return `${result}.stdout().lines().pipe(${part.code})`;
+      return { code: `${result}.stdout().lines().pipe(${part.code})`, isLineStream: true };
     }
   } else if (part.isStreamProducer) {
     // Part is a stream producer (like $.cat) - it can receive piped input
-    return `${result}.pipe(${part.code})`;
+    return { code: `${result}.pipe(${part.code})`, isLineStream: false };
   } else {
     // Part is a command - pipe to it
-    if (resultIsStream) {
+    if (resultIsLineStream) {
+      // SSH-408: Piping from a line stream to a command needs toCmdLines
+      return { code: `${result}.pipe($.toCmdLines(${part.code}))`, isLineStream: false };
+    } else if (resultIsStream) {
       // When piping from a stream to a command, need to use toCmdLines transform
-      return `${result}.pipe($.toCmdLines(${part.code}))`;
+      return { code: `${result}.pipe($.toCmdLines(${part.code}))`, isLineStream: false };
     } else {
       // When piping from a command to a command, can pipe directly
-      return `${result}.pipe(${part.code})`;
+      return { code: `${result}.pipe(${part.code})`, isLineStream: false };
     }
   }
 }
@@ -742,6 +749,7 @@ function assemblePipeline(
   let resultIsPrintable = parts[0]?.isPrintable ?? false;
   let resultIsStream = parts[0]?.isStreamProducer ?? false;
   let resultIsPromise = false;
+  let resultIsLineStream = false; // SSH-408: Track if we've already called .lines()
 
   for (let i = 1; i < parts.length; i++) {
     const op = operators[i - 1];
@@ -755,27 +763,33 @@ function assemblePipeline(
       resultIsPromise = andResult.isPromise;
       resultIsPrintable = part.isPrintable;
       resultIsStream = false;
+      resultIsLineStream = false; // SSH-408: Reset after && operator
     } else if (op === "||") {
       const orResult = buildOrOperator(result, resultIsPrintable, resultIsPromise, part);
       result = orResult.code;
       resultIsPromise = orResult.isPromise;
       resultIsPrintable = part.isPrintable;
       resultIsStream = false;
+      resultIsLineStream = false; // SSH-408: Reset after || operator
     } else if (op === "|") {
       // SSH-364: Use appropriate method for transforms vs commands
       if (resultIsPromise) {
         result = `(await ${result})`;
         resultIsPromise = false;
       }
-      result = buildPipeOperator(result, resultIsStream, part);
+      const pipeResult = buildPipeOperator(result, resultIsStream, resultIsLineStream, part);
+      result = pipeResult.code;
       resultIsPrintable = true;
-      resultIsStream = true;
+      // SSH-409: resultIsStream should reflect whether the result is actually a stream
+      resultIsStream = part.isStreamProducer || part.isTransform;
+      resultIsLineStream = pipeResult.isLineStream; // SSH-408: Track line stream state
     } else if (op === ";") {
       const seqResult = buildSequentialOperator(result, resultIsPrintable, resultIsPromise, part);
       result = seqResult.code;
       resultIsPromise = seqResult.isPromise;
       resultIsPrintable = part.isPrintable;
       resultIsStream = false;
+      resultIsLineStream = false; // SSH-408: Reset after ; operator
     } else {
       // Default: pipe
       if (resultIsPromise) {
@@ -789,6 +803,7 @@ function assemblePipeline(
       }
       resultIsPrintable = true;
       resultIsStream = part.isStreamProducer || part.isTransform;
+      resultIsLineStream = false; // SSH-408: Default case resets line stream state
     }
   }
 
