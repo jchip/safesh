@@ -347,6 +347,125 @@ describe("error-handlers", () => {
       // "Short" = 5 chars, so 5 + 8 = 13 "=" characters
       assertMatch(code, /=============/) ;
     });
+
+    // Bug fix tests (commits: fff217d, 9151561)
+    describe("command escaping and embedding", () => {
+      it("properly escapes commands with double quotes", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+          originalCommand: 'git commit -m "Fix bug with quotes"',
+        });
+
+        // Should define fullCommand in a template literal (backticks)
+        assertMatch(code, /const fullCommand = `git commit -m "Fix bug with quotes"`/);
+        // Should contain the command text
+        assertMatch(code, /git commit -m/);
+        // Template literals can safely contain double quotes, so this is OK
+        assertEquals(code.includes('`git commit'), true, "Should use template literal");
+      });
+
+      it("properly escapes commands with backticks", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+          originalCommand: 'echo `date`',
+        });
+
+        // Should escape backticks
+        assertMatch(code, /\\`/);
+        // Should not break template literal syntax
+        assertEquals(code.includes('`date`'), false, "Should not have unescaped backticks");
+      });
+
+      it("properly escapes commands with dollar signs", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+          originalCommand: 'echo $HOME',
+        });
+
+        // Should escape dollar signs
+        assertMatch(code, /\\\$/);
+      });
+
+      it("properly escapes commands with backslashes", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+          originalCommand: 'echo "Line 1\\nLine 2"',
+        });
+
+        // Should escape backslashes
+        assertMatch(code, /\\\\/);
+      });
+
+      it("handles commands with multiple special characters", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+          originalCommand: 'git commit -m "Fix `bug` with $VAR and \\"quotes\\""',
+        });
+
+        // Should contain the command text
+        assertMatch(code, /git commit/);
+        // Should have escaped special chars
+        assertMatch(code, /\\\$/);
+        assertMatch(code, /\\`/);
+        assertMatch(code, /\\\\/);
+      });
+
+      it("uses template literal to safely contain injection attempts", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+          originalCommand: 'malicious"; alert("xss")',
+        });
+
+        // Should define the command in a template literal (which safely contains quotes)
+        assertMatch(code, /const fullCommand = `malicious"; alert\("xss"\)`/);
+        // The malicious string is contained safely in a template literal, not executable
+        // The key is it's in backticks, not double quotes that could break out
+        assertEquals(code.includes('const fullCommand = `'), true, "Should use template literal");
+        // Should not be able to break out of the template literal
+        assertEquals(code.includes('`; alert('), false, "Should not break out of template literal");
+      });
+
+      it("passes command as variable value not string literal", () => {
+        // This tests the fix from commit fff217d
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+          originalCommand: 'test command',
+        });
+
+        // Should define fullCommand from template literal with escaped command
+        assertMatch(code, /const fullCommand = `test command`/);
+        // Should not have '${bashCommandEscaped}' as a literal string
+        assertEquals(code.includes('${bashCommandEscaped}'), false, "Should not have variable interpolation in string");
+      });
+
+      it("handles empty command gracefully", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+          originalCommand: '',
+        });
+
+        // Should still generate valid code
+        assertMatch(code, /__handleError/);
+      });
+
+      it("handles undefined originalCommand with includeCommand=true", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+          includeCommand: true,
+        });
+
+        // Should fall back to using __ORIGINAL_BASH_COMMAND__
+        assertMatch(code, /__ORIGINAL_BASH_COMMAND__/);
+      });
+    });
   });
 
   describe("edge cases", () => {
