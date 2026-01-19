@@ -12,6 +12,7 @@ import { FluentStream } from "./fluent-stream.ts";
 import { writeStdin } from "./io.ts";
 import { collectStreamBytes } from "../core/utils.ts";
 import { CMD_NAME_SYMBOL, type CommandFn } from "./command-init.ts";
+import { lines } from "./transforms.ts";
 import {
   JOB_MARKER,
   CMD_ERROR_MARKER,
@@ -278,19 +279,22 @@ export class Command implements PromiseLike<CommandResult> {
   }
 
   /**
-   * Pipe this command's stdout to another command's stdin
+   * Pipe this command's stdout to another command's stdin or to a transform
    *
    * Creates a pipeline where this command's stdout becomes the next
    * command's stdin. Can be chained for multi-stage pipelines.
    *
    * Accepts either:
-   * - CommandFn from initCmds() with args
-   * - Command object directly (for transpiler-generated pipelines)
+   * - CommandFn from initCmds() with args → returns Command
+   * - Command object directly (for transpiler-generated pipelines) → returns Command
+   * - Transform function (e.g., grep, head, tail) → returns FluentStream
    *
-   * @param command - CommandFn from initCmds() or Command object
+   * When piping to a Transform, automatically splits stdout into lines first.
+   *
+   * @param command - CommandFn, Command object, or Transform function
    * @param args - Arguments for the target command (only used with CommandFn)
    * @param options - Options for the target command (only used with CommandFn)
-   * @returns New Command instance configured with this command as upstream
+   * @returns New Command or FluentStream depending on the target type
    *
    * @example
    * ```ts
@@ -301,6 +305,9 @@ export class Command implements PromiseLike<CommandResult> {
    * // With Command object (transpiler-generated)
    * await cmd("echo", ["hello"]).pipe(cmd("tr", ["a-z", "A-Z"])).exec();
    *
+   * // With Transform function (SSH-422)
+   * await git("log", "--oneline").pipe(grep(/pattern/)).exec();
+   *
    * // Multi-stage pipeline
    * await $.cat("file.txt").stdout()
    *   .pipe(toCmd(grep, ["pattern"]))
@@ -308,21 +315,36 @@ export class Command implements PromiseLike<CommandResult> {
    *   .collect();
    * ```
    */
-  pipe(command: CommandFn | Command, args: string[] = [], options?: CommandOptions): Command {
+  pipe(command: CommandFn | Command, args?: string[], options?: CommandOptions): Command;
+  pipe<U>(transform: Transform<string, U>): FluentStream<U>;
+  pipe<U>(
+    command: CommandFn | Command | Transform<string, U>,
+    args: string[] = [],
+    options?: CommandOptions,
+  ): Command | FluentStream<U> {
     // Handle Command object directly (SSH-365: command-to-command pipelines)
     if (command instanceof Command) {
       command.upstream = this;
       return command;
     }
 
-    const cmdName = command[CMD_NAME_SYMBOL];
-    if (!cmdName) {
-      throw new Error("pipe() requires a CommandFn from initCmds() or a Command object.");
+    // Check if it's a CommandFn from initCmds() or a Transform function
+    if (typeof command === "function") {
+      const cmdName = (command as CommandFn)[CMD_NAME_SYMBOL];
+
+      if (cmdName) {
+        // It's a CommandFn from initCmds() - create command pipeline
+        const next = new Command(cmdName, args, options ?? {});
+        next.upstream = this;
+        return next;
+      } else {
+        // SSH-422: It's a Transform function - convert stdout to line stream and apply transform
+        const transform = command as Transform<string, U>;
+        return this.stdout().pipe(lines()).pipe(transform);
+      }
     }
 
-    const next = new Command(cmdName, args, options ?? {});
-    next.upstream = this;
-    return next;
+    throw new Error("pipe() requires a CommandFn from initCmds(), a Command object, or a Transform function.");
   }
 
   /**
