@@ -4,7 +4,7 @@
 
 import { assertEquals, assert } from "@std/assert";
 import { cmd, git, str, bytes, toCmd, toCmdLines, initCmds, type StreamChunk, type CommandFn } from "./command.ts";
-import { lines } from "./transforms.ts";
+import { lines, grep } from "./transforms.ts";
 import { createStream } from "./stream.ts";
 import { FluentStream } from "./fluent-stream.ts";
 
@@ -651,4 +651,43 @@ Deno.test("toCmd() - failure throws error", async () => {
     assert(error instanceof Error);
     assert(error.message.includes("toCmdLines failed"));
   }
+});
+
+// ==================== SSH-422: Command.pipe() with Transform functions ====================
+
+Deno.test("SSH-422 - Command.pipe() with Transform function (grep)", async () => {
+  // This test reproduces the bug where piping a Command to a Transform fails
+  // Example: git("show", "commit:file").pipe(grep(/pattern/))
+  // Now it returns a FluentStream, so we use collect() instead of exec()
+
+  const result = await cmd("echo", ["line1\nline2 match\nline3"])
+    .pipe(grep(/match/))
+    .collect();
+
+  // Should successfully pipe and filter
+  assertEquals(result, ["line2 match"]);
+});
+
+Deno.test("SSH-422 - git().pipe() with grep transform", async () => {
+  // Real-world example: git show commit:file | grep pattern
+  // This simulates: git("log", "--oneline").pipe(grep(/pattern/))
+  // Returns FluentStream, so we collect the results
+
+  const result = await git("log", "--oneline", "-n", "5")
+    .pipe(grep(/SSH-/))
+    .collect();
+
+  // Should successfully execute and filter git log output
+  assert(result.length > 0, "Should find commits with SSH- prefix");
+  assert(result.every(line => line.includes("SSH-")));
+});
+
+Deno.test("SSH-422 - Command.pipe() chaining with multiple transforms", async () => {
+  // Test chaining: command | transform | transform
+  const stream = await cmd("echo", ["apple\nbanana\ncherry\napricot"])
+    .pipe(grep(/^a/))  // Filter lines starting with 'a'
+    .pipe(lines())     // Split into lines
+    .collect();
+
+  assertEquals(stream, ["apple", "apricot"]);
 });
