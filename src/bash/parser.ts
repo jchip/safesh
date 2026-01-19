@@ -156,6 +156,13 @@ export class Parser {
     this.contextStack.pop();
   }
 
+  private runInContext<T>(context: ParserContext, fn: () => T): T {
+    this.pushContext(context);
+    const result = fn();
+    this.popContext();
+    return result;
+  }
+
   // ===========================================================================
   // Entry Point
   // ===========================================================================
@@ -537,50 +544,52 @@ export class Parser {
   private parseIfStatement(): AST.IfStatement {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
-    this.pushContext({ type: "if", startLine, startColumn });
-
-    // Accept either IF or ELIF (for recursive elif handling)
-    if (this.is(TokenType.IF)) {
-      this.advance();
-    } else if (this.is(TokenType.ELIF)) {
-      this.advance();
-    } else {
-      throw this.error(`Expected IF or ELIF, got ${this.currentToken.type}`);
-    }
-    this.skipNewlines();
-
-    const test = this.parsePipeline();
-    this.skipNewlines();
-    this.skip(TokenType.SEMICOLON); // Optional semicolon before 'then'
-    this.skipNewlines();
-    this.expect(TokenType.THEN);
-    this.skipNewlines();
-
-    const consequent = this.parseStatementList([TokenType.ELIF, TokenType.ELSE, TokenType.FI]);
-    this.skipNewlines();
-
-    let alternate: AST.Statement[] | AST.IfStatement | null = null;
-
-    if (this.is(TokenType.ELIF)) {
-      this.popContext(); // Pop before recursing for elif
-      alternate = this.parseIfStatement();
-    } else if (this.is(TokenType.ELSE)) {
-      this.advance();
+    
+    return this.runInContext({ type: "if", startLine, startColumn }, () => {
+      // Accept either IF or ELIF (for recursive elif handling)
+      if (this.is(TokenType.IF)) {
+        this.advance();
+      } else if (this.is(TokenType.ELIF)) {
+        this.advance();
+      } else {
+        throw this.error(`Expected IF or ELIF, got ${this.currentToken.type}`);
+      }
       this.skipNewlines();
-      alternate = this.parseStatementList([TokenType.FI]);
-      this.expect(TokenType.FI);
-      this.popContext();
-    } else {
-      this.expect(TokenType.FI);
-      this.popContext();
-    }
 
-    return {
-      type: "IfStatement",
-      test,
-      consequent,
-      alternate,
-    };
+      const test = this.parsePipeline();
+      this.skipNewlines();
+      this.skip(TokenType.SEMICOLON); // Optional semicolon before 'then'
+      this.skipNewlines();
+      this.expect(TokenType.THEN);
+      this.skipNewlines();
+
+      const consequent = this.parseStatementList([TokenType.ELIF, TokenType.ELSE, TokenType.FI]);
+      this.skipNewlines();
+
+      let alternate: AST.Statement[] | AST.IfStatement | null = null;
+
+      if (this.is(TokenType.ELIF)) {
+        // We need to pop current context before recursing to avoid context buildup for elif
+        // But runInContext will pop automatically when we return
+        // So we need to cheat a bit here or refactor elif handling
+        // For now, let's just recurse. The depth will increase but it's safe.
+        alternate = this.parseIfStatement();
+      } else if (this.is(TokenType.ELSE)) {
+        this.advance();
+        this.skipNewlines();
+        alternate = this.parseStatementList([TokenType.FI]);
+        this.expect(TokenType.FI);
+      } else {
+        this.expect(TokenType.FI);
+      }
+
+      return {
+        type: "IfStatement",
+        test,
+        consequent,
+        alternate,
+      };
+    });
   }
 
   private parseForStatement(): AST.ForStatement | AST.CStyleForStatement {
@@ -597,38 +606,38 @@ export class Parser {
 
     const variable = this.expect(TokenType.NAME).value;
 
-    this.pushContext({ type: "for", variable, startLine, startColumn });
-    this.skipNewlines();
-
-    let iterable: (AST.Word | AST.ParameterExpansion | AST.CommandSubstitution)[] = [];
-
-    if (this.is(TokenType.IN)) {
-      this.advance();
+    return this.runInContext({ type: "for", variable, startLine, startColumn }, () => {
       this.skipNewlines();
 
-      // Parse word list
-      while (this.is(TokenType.WORD) || this.is(TokenType.NAME) || this.is(TokenType.NUMBER)) {
-        iterable.push(this.parseWord());
+      let iterable: (AST.Word | AST.ParameterExpansion | AST.CommandSubstitution)[] = [];
+
+      if (this.is(TokenType.IN)) {
+        this.advance();
+        this.skipNewlines();
+
+        // Parse word list
+        while (this.is(TokenType.WORD) || this.is(TokenType.NAME) || this.is(TokenType.NUMBER)) {
+          iterable.push(this.parseWord());
+        }
+
+        this.skipNewlines();
+        this.skip(TokenType.SEMICOLON);
       }
 
       this.skipNewlines();
-      this.skip(TokenType.SEMICOLON);
-    }
+      this.expect(TokenType.DO);
+      this.skipNewlines();
 
-    this.skipNewlines();
-    this.expect(TokenType.DO);
-    this.skipNewlines();
+      const body = this.parseStatementList([TokenType.DONE]);
+      this.expect(TokenType.DONE);
 
-    const body = this.parseStatementList([TokenType.DONE]);
-    this.expect(TokenType.DONE);
-    this.popContext();
-
-    return {
-      type: "ForStatement",
-      variable,
-      iterable,
-      body,
-    };
+      return {
+        type: "ForStatement",
+        variable,
+        iterable,
+        body,
+      };
+    });
   }
 
   /**
@@ -638,55 +647,54 @@ export class Parser {
     startLine: number,
     startColumn: number
   ): AST.CStyleForStatement {
-    this.pushContext({ type: "for", variable: "(C-style)", startLine, startColumn });
+    return this.runInContext({ type: "for", variable: "(C-style)", startLine, startColumn }, () => {
+      this.expect(TokenType.DPAREN_START);
 
-    this.expect(TokenType.DPAREN_START);
-
-    // Collect content until ))
-    // Only track DPAREN_START/END for depth, not regular parens
-    let content = "";
-    let depth = 1;
-    while (depth > 0 && !this.is(TokenType.EOF)) {
-      if (this.is(TokenType.DPAREN_START)) {
-        depth++;
-        content += "((";
-        this.advance();
-      } else if (this.is(TokenType.DPAREN_END)) {
-        depth--;
-        if (depth > 0) {
-          content += "))";
+      // Collect content until ))
+      // Only track DPAREN_START/END for depth, not regular parens
+      let content = "";
+      let depth = 1;
+      while (depth > 0 && !this.is(TokenType.EOF)) {
+        if (this.is(TokenType.DPAREN_START)) {
+          depth++;
+          content += "((";
+          this.advance();
+        } else if (this.is(TokenType.DPAREN_END)) {
+          depth--;
+          if (depth > 0) {
+            content += "))";
+          }
+          this.advance();
+        } else {
+          // Include regular parens as part of content
+          content += this.currentToken.value;
+          this.advance();
         }
-        this.advance();
-      } else {
-        // Include regular parens as part of content
-        content += this.currentToken.value;
-        this.advance();
       }
-    }
 
-    // Parse the three parts: init; test; update
-    const parts = this.splitCStyleForParts(content);
-    const init = parts[0]?.trim() ? parseArithmetic(parts[0].trim()) : null;
-    const test = parts[1]?.trim() ? parseArithmetic(parts[1].trim()) : null;
-    const update = parts[2]?.trim() ? parseArithmetic(parts[2].trim()) : null;
+      // Parse the three parts: init; test; update
+      const parts = this.splitCStyleForParts(content);
+      const init = parts[0]?.trim() ? parseArithmetic(parts[0].trim()) : null;
+      const test = parts[1]?.trim() ? parseArithmetic(parts[1].trim()) : null;
+      const update = parts[2]?.trim() ? parseArithmetic(parts[2].trim()) : null;
 
-    this.skipNewlines();
-    this.skip(TokenType.SEMICOLON);
-    this.skipNewlines();
-    this.expect(TokenType.DO);
-    this.skipNewlines();
+      this.skipNewlines();
+      this.skip(TokenType.SEMICOLON);
+      this.skipNewlines();
+      this.expect(TokenType.DO);
+      this.skipNewlines();
 
-    const body = this.parseStatementList([TokenType.DONE]);
-    this.expect(TokenType.DONE);
-    this.popContext();
+      const body = this.parseStatementList([TokenType.DONE]);
+      this.expect(TokenType.DONE);
 
-    return {
-      type: "CStyleForStatement",
-      init,
-      test,
-      update,
-      body,
-    };
+      return {
+        type: "CStyleForStatement",
+        init,
+        test,
+        update,
+        body,
+      };
+    });
   }
 
   /**
@@ -735,87 +743,87 @@ export class Parser {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
     const contextType = keyword === TokenType.WHILE ? "while" : "until";
-    this.pushContext({ type: contextType, startLine, startColumn });
+    
+    return this.runInContext({ type: contextType, startLine, startColumn }, () => {
+      this.expect(keyword);
+      this.skipNewlines();
 
-    this.expect(keyword);
-    this.skipNewlines();
+      const test = this.parsePipeline();
+      this.skip(TokenType.SEMICOLON); // Allow optional semicolon
+      this.skipNewlines();
+      this.expect(TokenType.DO);
+      this.skipNewlines();
 
-    const test = this.parsePipeline();
-    this.skip(TokenType.SEMICOLON); // Allow optional semicolon
-    this.skipNewlines();
-    this.expect(TokenType.DO);
-    this.skipNewlines();
+      const body = this.parseStatementList([TokenType.DONE]);
+      this.expect(TokenType.DONE);
 
-    const body = this.parseStatementList([TokenType.DONE]);
-    this.expect(TokenType.DONE);
-    this.popContext();
-
-    return {
-      type,
-      test,
-      body,
-    } as T extends "WhileStatement" ? AST.WhileStatement : AST.UntilStatement;
+      return {
+        type,
+        test,
+        body,
+      } as T extends "WhileStatement" ? AST.WhileStatement : AST.UntilStatement;
+    });
   }
 
   private parseCaseStatement(): AST.CaseStatement {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
-    this.pushContext({ type: "case", startLine, startColumn });
-
-    this.expect(TokenType.CASE);
-    const word = this.parseWord();
-    this.skipNewlines();
-    this.expect(TokenType.IN);
-    this.skipNewlines();
-
-    const cases: AST.CaseClause[] = [];
-
-    while (!this.is(TokenType.ESAC)) {
-      if (this.is(TokenType.NEWLINE)) {
-        this.advance();
-        continue;
-      }
-
-      const patterns: (AST.Word | AST.ParameterExpansion)[] = [];
-
-      // Parse patterns
-      do {
-        patterns.push(this.parseWord());
-      } while (this.skip(TokenType.PIPE));
-
-      this.expect(TokenType.RPAREN);
+    
+    return this.runInContext({ type: "case", startLine, startColumn }, () => {
+      this.expect(TokenType.CASE);
+      const word = this.parseWord();
+      this.skipNewlines();
+      this.expect(TokenType.IN);
       this.skipNewlines();
 
-      // Parse body until ;;
-      const body: AST.Statement[] = [];
-      while (!this.is(TokenType.DSEMI) && !this.is(TokenType.ESAC)) {
-        if (this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON)) {
+      const cases: AST.CaseClause[] = [];
+
+      while (!this.is(TokenType.ESAC)) {
+        if (this.is(TokenType.NEWLINE)) {
           this.advance();
           continue;
         }
-        body.push(this.parseStatement());
+
+        const patterns: (AST.Word | AST.ParameterExpansion)[] = [];
+
+        // Parse patterns
+        do {
+          patterns.push(this.parseWord());
+        } while (this.skip(TokenType.PIPE));
+
+        this.expect(TokenType.RPAREN);
+        this.skipNewlines();
+
+        // Parse body until ;;
+        const body: AST.Statement[] = [];
+        while (!this.is(TokenType.DSEMI) && !this.is(TokenType.ESAC)) {
+          if (this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON)) {
+            this.advance();
+            continue;
+          }
+          body.push(this.parseStatement());
+        }
+
+        if (this.is(TokenType.DSEMI)) {
+          this.advance();
+        }
+        this.skipNewlines();
+
+        cases.push({
+          type: "CaseClause",
+          patterns,
+          body,
+        });
       }
 
-      if (this.is(TokenType.DSEMI)) {
-        this.advance();
-      }
-      this.skipNewlines();
+      this.expect(TokenType.ESAC);
 
-      cases.push({
-        type: "CaseClause",
-        patterns,
-        body,
-      });
-    }
-
-    this.expect(TokenType.ESAC);
-    this.popContext();
-
-    return {
-      type: "CaseStatement",
-      word,
-      cases,
-    };
+      return {
+        type: "CaseStatement",
+        word,
+        cases,
+      };
+    });
   }
 
   private parseFunctionDeclaration(): AST.FunctionDeclaration {
@@ -825,24 +833,24 @@ export class Parser {
     this.expect(TokenType.FUNCTION);
     const name = this.expect(TokenType.NAME).value;
 
-    this.pushContext({ type: "function", name, startLine, startColumn });
-    this.skipNewlines();
-
-    // Optional ()
-    if (this.is(TokenType.LPAREN)) {
-      this.advance();
-      this.expect(TokenType.RPAREN);
+    return this.runInContext({ type: "function", name, startLine, startColumn }, () => {
       this.skipNewlines();
-    }
 
-    const body = this.parseFunctionBody();
-    this.popContext();
+      // Optional ()
+      if (this.is(TokenType.LPAREN)) {
+        this.advance();
+        this.expect(TokenType.RPAREN);
+        this.skipNewlines();
+      }
 
-    return {
-      type: "FunctionDeclaration",
-      name,
-      body,
-    };
+      const body = this.parseFunctionBody();
+
+      return {
+        type: "FunctionDeclaration",
+        name,
+        body,
+      };
+    });
   }
 
   /**
@@ -855,21 +863,20 @@ export class Parser {
 
     const name = this.expect(TokenType.NAME).value;
 
-    this.pushContext({ type: "function", name, startLine, startColumn });
+    return this.runInContext({ type: "function", name, startLine, startColumn }, () => {
+      // Expect ()
+      this.expect(TokenType.LPAREN);
+      this.expect(TokenType.RPAREN);
+      this.skipNewlines();
 
-    // Expect ()
-    this.expect(TokenType.LPAREN);
-    this.expect(TokenType.RPAREN);
-    this.skipNewlines();
+      const body = this.parseFunctionBody();
 
-    const body = this.parseFunctionBody();
-    this.popContext();
-
-    return {
-      type: "FunctionDeclaration",
-      name,
-      body,
-    };
+      return {
+        type: "FunctionDeclaration",
+        name,
+        body,
+      };
+    });
   }
 
   /**
@@ -891,39 +898,39 @@ export class Parser {
   private parseSubshell(): AST.Subshell {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
-    this.pushContext({ type: "subshell", startLine, startColumn });
+    
+    return this.runInContext({ type: "subshell", startLine, startColumn }, () => {
+      this.expect(TokenType.LPAREN);
+      this.skipNewlines();
 
-    this.expect(TokenType.LPAREN);
-    this.skipNewlines();
+      const body = this.parseStatementList([TokenType.RPAREN]);
 
-    const body = this.parseStatementList([TokenType.RPAREN]);
+      this.expect(TokenType.RPAREN);
 
-    this.expect(TokenType.RPAREN);
-    this.popContext();
-
-    return {
-      type: "Subshell",
-      body,
-    };
+      return {
+        type: "Subshell",
+        body,
+      };
+    });
   }
 
   private parseBraceGroup(): AST.BraceGroup {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
-    this.pushContext({ type: "brace_group", startLine, startColumn });
+    
+    return this.runInContext({ type: "brace_group", startLine, startColumn }, () => {
+      this.expect(TokenType.LBRACE);
+      this.skipNewlines();
 
-    this.expect(TokenType.LBRACE);
-    this.skipNewlines();
+      const body = this.parseStatementList([TokenType.RBRACE]);
 
-    const body = this.parseStatementList([TokenType.RBRACE]);
+      this.expect(TokenType.RBRACE);
 
-    this.expect(TokenType.RBRACE);
-    this.popContext();
-
-    return {
-      type: "BraceGroup",
-      body,
-    };
+      return {
+        type: "BraceGroup",
+        body,
+      };
+    });
   }
 
   // ===========================================================================
@@ -1366,29 +1373,29 @@ export class Parser {
     const isInput = this.is(TokenType.LESS_LPAREN);
     const operator: "<(" | ">(" = isInput ? "<(" : ">(";
 
-    this.pushContext({ type: "command_substitution", startLine, startColumn });
-    this.advance(); // consume <( or >(
-    this.skipNewlines();
+    return this.runInContext({ type: "command_substitution", startLine, startColumn }, () => {
+      this.advance(); // consume <( or >(
+      this.skipNewlines();
 
-    // Parse the commands inside
-    const body = this.parseStatementList([TokenType.RPAREN]);
+      // Parse the commands inside
+      const body = this.parseStatementList([TokenType.RPAREN]);
 
-    this.expect(TokenType.RPAREN);
-    this.popContext();
+      this.expect(TokenType.RPAREN);
 
-    const processSubstitution: AST.ProcessSubstitution = {
-      type: "ProcessSubstitution",
-      operator,
-      command: body,
-    };
+      const processSubstitution: AST.ProcessSubstitution = {
+        type: "ProcessSubstitution",
+        operator,
+        command: body,
+      };
 
-    return {
-      type: "Word",
-      value: `${operator}...)`, // Placeholder value
-      quoted: false,
-      singleQuoted: false,
-      parts: [processSubstitution],
-    };
+      return {
+        type: "Word",
+        value: `${operator}...)`, // Placeholder value
+        quoted: false,
+        singleQuoted: false,
+        parts: [processSubstitution],
+      };
+    });
   }
 
   private parseWordParts(value: string, _quoted: boolean): AST.WordPart[] {
@@ -1454,7 +1461,7 @@ export class Parser {
 
     // $((arithmetic))
     if (next === "(" && value[pos + 2] === "(") {
-      const result = this.extractBalancedDouble(value, pos + 1, "(", ")");
+      const result = this.extractDelimited(value, pos + 3, "(", ")", 2);
       return {
         part: this.parseArithmeticContent(result.content),
         newPos: result.end + 1,
@@ -1463,7 +1470,7 @@ export class Parser {
 
     // $(command)
     if (next === "(") {
-      const result = this.extractBalanced(value, pos + 1, "(", ")");
+      const result = this.extractDelimited(value, pos + 2, "(", ")", 1);
       return {
         part: this.parseCommandSubstitutionContent(result.content, false),
         newPos: result.end + 1,
@@ -1472,7 +1479,7 @@ export class Parser {
 
     // ${parameter}
     if (next === "{") {
-      const result = this.extractBalanced(value, pos + 1, "{", "}");
+      const result = this.extractDelimited(value, pos + 2, "{", "}", 1);
       return {
         part: this.parseParameterExpansionContent(result.content),
         newPos: result.end + 1,
@@ -1522,14 +1529,15 @@ export class Parser {
   /**
    * Extract content between balanced delimiters (e.g., { and })
    */
-  private extractBalanced(
+  private extractDelimited(
     value: string,
-    startPos: number,
+    scanStart: number,
     open: string,
-    close: string
+    close: string,
+    initialDepth: number
   ): { content: string; end: number } {
-    let depth = 1;
-    let pos = startPos + 1; // Skip opening delimiter
+    let depth = initialDepth;
+    let pos = scanStart;
     let inSingleQuote = false;
     let inDoubleQuote = false;
 
@@ -1553,48 +1561,7 @@ export class Parser {
       pos++;
     }
 
-    const content = value.slice(startPos + 1, pos - 1);
-    return { content, end: pos - 1 };
-  }
-
-  /**
-   * Extract content between double balanced delimiters (e.g., (( and )))
-   * For $((expr)), startPos points to the first '(' after '$'
-   */
-  private extractBalancedDouble(
-    value: string,
-    startPos: number,
-    open: string,
-    close: string
-  ): { content: string; end: number } {
-    let depth = 2; // Start with depth 2 for ((
-    let pos = startPos + 2; // Skip opening ((
-    let inSingleQuote = false;
-    let inDoubleQuote = false;
-
-    while (pos < value.length && depth > 0) {
-      const char = value[pos];
-
-      if (char === "'" && !inDoubleQuote) {
-        inSingleQuote = !inSingleQuote;
-      } else if (char === '"' && !inSingleQuote) {
-        inDoubleQuote = !inDoubleQuote;
-      } else if (!inSingleQuote && !inDoubleQuote) {
-        if (char === "\\" && pos + 1 < value.length) {
-          pos += 2;
-          continue;
-        }
-        if (char === open) depth++;
-        else if (char === close) depth--;
-      }
-      pos++;
-    }
-
-    // Content starts after '((' (startPos + 2) and ends before '))' (pos - 2)
-    // But startPos points to first '(', so content starts at startPos + 2
-    const contentStart = startPos + 2;
-    const contentEnd = pos - 2;
-    const content = value.slice(contentStart, contentEnd);
+    const content = value.slice(scanStart, pos - initialDepth);
     return { content, end: pos - 1 };
   }
 

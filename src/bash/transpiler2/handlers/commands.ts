@@ -19,6 +19,7 @@ import {
   collectFlagOptions,
   collectFlagOptionsAndFiles,
 } from "../utils/mod.ts";
+import { SHELL_BUILTINS } from "../builtins.ts";
 
 // =============================================================================
 // Helpers
@@ -36,44 +37,8 @@ function formatArg(arg: string): string {
   return `"${escapeForQuotes(arg)}"`;
 }
 
-// =============================================================================
-// Command Handler
-// =============================================================================
-
 /**
- * Build a command expression (without await/semicolon)
- */
-/**
- * Shell builtins that should use preamble imports instead of $.cmd()
- *
- * Categories:
- * - silent: Side-effect only, no output (cd, pushd, popd)
- * - prints: Already prints output, don't wrap (echo)
- * - output: Returns value that should be printed (pwd, dirs, ls)
- * - async: Async operations that return results (which, test, chmod, etc.)
- */
-const SHELL_BUILTINS: Record<string, { fn: string; type: "silent" | "prints" | "output" | "async" }> = {
-  cd: { fn: "__cd", type: "silent" },
-  pushd: { fn: "__pushd", type: "silent" },
-  popd: { fn: "__popd", type: "silent" },
-  echo: { fn: "__echo", type: "prints" },
-  pwd: { fn: "__pwd", type: "output" },
-  dirs: { fn: "__dirs", type: "output" },
-  ls: { fn: "__ls", type: "output" },
-  test: { fn: "__test", type: "async" },
-  which: { fn: "__which", type: "async" },
-  chmod: { fn: "__chmod", type: "async" },
-  ln: { fn: "__ln", type: "async" },
-  rm: { fn: "__rm", type: "async" },
-  rmdir: { fn: "__rmdir", type: "async" },
-  cp: { fn: "__cp", type: "async" },
-  mv: { fn: "__mv", type: "async" },
-  mkdir: { fn: "__mkdir", type: "async" },
-  touch: { fn: "__touch", type: "async" },
-};
-
-/**
- * Specialized command wrappers that provide enhanced functionality
+ * specialized command wrappers that provide enhanced functionality
  * These commands use dedicated wrapper functions instead of generic $.cmd()
  */
 const SPECIALIZED_COMMANDS = new Set([
@@ -81,6 +46,132 @@ const SPECIALIZED_COMMANDS = new Set([
   "docker",
   "tmux",
 ]);
+
+// =============================================================================
+// Command Builder Strategies
+// =============================================================================
+
+function handleUserFunction(name: string): string {
+  return `${name}()`;
+}
+
+function handleShellBuiltin(
+  name: string,
+  args: string[],
+  builtin: { fn: string; type: string }
+): { code: string; async: boolean } {
+  const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+
+  if (builtin.type === "output") {
+    // Output builtins should print their result
+    return {
+      code: `console.log(${builtin.fn}(${argsArray}).toString())`,
+      async: false,
+    };
+  } else if (builtin.type === "prints") {
+    // Prints builtins already output, just execute
+    return {
+      code: `${builtin.fn}(${argsArray})`,
+      async: false,
+    };
+  } else if (builtin.type === "async") {
+    // Async builtins that need await
+    return {
+      code: `${builtin.fn}(${argsArray})`,
+      async: true,
+    };
+  } else {
+    // Silent builtins (cd, pushd, popd) - just execute
+    return {
+      code: `${builtin.fn}(${argsArray})`,
+      async: false,
+    };
+  }
+}
+
+function handleTmuxSendKeys(args: string[]): string | null {
+  // Check for pattern: tmux send-keys -t <target> [-c <client>] <text> C-m
+  if (args.length > 0 && args[0] === "send-keys" && args[args.length - 1] === "C-m") {
+    let target: string | null = null;
+    let client: string | null = null;
+    const textArgs: string[] = [];
+
+    // Parse arguments (skip first "send-keys" and last "C-m")
+    for (let i = 1; i < args.length - 1; i++) {
+      const arg = args[i];
+      const nextArg = args[i + 1];
+
+      if (arg === "-t" && nextArg) {
+        target = formatArg(nextArg);
+        i++; // skip next arg
+      } else if (arg === "-c" && nextArg) {
+        client = formatArg(nextArg);
+        i++; // skip next arg
+      } else if (arg) {
+        textArgs.push(formatArg(arg));
+      }
+    }
+
+    if (target && textArgs.length > 0) {
+      const text = textArgs.join(" + \" \" + ");
+      if (client) {
+        return `$.tmuxSubmit(${target}, ${text}, ${client})`;
+      } else {
+        return `$.tmuxSubmit(${target}, ${text})`;
+      }
+    }
+  }
+  return null;
+}
+
+function handleSpecializedCommand(
+  name: string,
+  args: string[],
+  hasMergeStreams: boolean
+): string {
+  // Special handling for tmux send-keys
+  if (name === "tmux") {
+    const tmuxResult = handleTmuxSendKeys(args);
+    if (tmuxResult) return tmuxResult;
+  }
+
+  const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+  if (hasMergeStreams) {
+    return `$.${name}({ mergeStreams: true }${argsArray ? `, ${argsArray}` : ""})`;
+  }
+  return `$.${name}(${argsArray})`;
+}
+
+function handleStandardCommand(
+  name: string,
+  args: string[],
+  hasAssignments: boolean,
+  assignments: AST.VariableAssignment[],
+  hasMergeStreams: boolean,
+  ctx: VisitorContext
+): string {
+  if (hasAssignments) {
+    const envEntries = assignments
+      .map((a) => {
+        const value = ctx.visitWord(a.value as AST.Word);
+        const escapedValue = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        return `${a.name}: "${escapedValue}"`;
+      })
+      .join(", ");
+    const argsArray = args.map(formatArg).join(", ");
+    return `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+  }
+
+  const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+  if (hasMergeStreams) {
+    return `$.cmd({ mergeStreams: true }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+  }
+  return `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+}
+
+// =============================================================================
+// Command Handler
+// =============================================================================
 
 export function buildCommand(
   command: AST.Command,
@@ -100,159 +191,63 @@ export function buildCommand(
   const name = ctx.visitWord(command.name);
   const args = command.args.map((arg) => ctx.visitWord(arg));
 
-  let cmdExpr: string;
+  let cmdExpr = "";
   let isAsync = true;
   let isUserFunction = false;
   let isTransform = false;
   let isStream = false;
 
-  // Check if command has environment variable assignments
-  const hasAssignments = command.assignments.length > 0 && !hasNoCommand;
-
-  // Check if command has redirections - builtins can't handle redirections
+  // Analysis
+  const hasAssignments = command.assignments.length > 0;
   const hasRedirects = command.redirects.length > 0;
-
-  // SSH-411: Check if command has 2>&1 redirection (merge stderr into stdout)
   const hasMergeStreams = command.redirects.some(
     (r) => (r.operator === ">&" || r.operator === "<&") &&
            typeof r.target === "number" && r.target === 1 &&
            r.fd === 2
   );
 
-  // Check if this is a user-defined function call
+  // Strategy Dispatch
   if (ctx.isFunction(name)) {
-    // Call the function directly
-    cmdExpr = `${name}()`;
+    cmdExpr = handleUserFunction(name);
     isAsync = true;
     isUserFunction = true;
   } else if (SHELL_BUILTINS[name] && !hasAssignments && !hasRedirects && !options?.inPipeline) {
-    // SSH-372: Use preamble builtins for cd, pwd, echo, etc.
-    // But NOT when in a pipeline, since builtins don't return Command objects that support piping
-    const builtin = SHELL_BUILTINS[name];
-    const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
-
-    if (builtin.type === "output") {
-      // Output builtins should print their result (use toString() to get plain string)
-      cmdExpr = `console.log(${builtin.fn}(${argsArray}).toString())`;
-      isAsync = false;
-    } else if (builtin.type === "prints") {
-      // Prints builtins already output, just execute
-      cmdExpr = `${builtin.fn}(${argsArray})`;
-      isAsync = false;
-    } else if (builtin.type === "async") {
-      // Async builtins that need await
-      cmdExpr = `${builtin.fn}(${argsArray})`;
-      isAsync = true;
-    } else {
-      // Silent builtins (cd, pushd, popd) - just execute
-      cmdExpr = `${builtin.fn}(${argsArray})`;
-      isAsync = false;
-    }
+    const result = handleShellBuiltin(name, args, SHELL_BUILTINS[name]);
+    cmdExpr = result.code;
+    isAsync = result.async;
   } else {
-    // Check if any args contain dynamic values (template literals with ${)
-    // If so, fluent command handlers can't parse them correctly at transpile-time
+    // Check constraints for fluent commands
     const hasDynamicArgs = args.some((arg) => arg.includes("${"));
+    const hasAnyRedirects = command.redirects.length > 0; // Fluent doesn't support redirects
 
-    // SSH-359: Check if command has heredoc redirections
-    // Fluent API ($.cat, etc.) doesn't support .stdin() method, so use $.cmd() style
-    const hasHeredoc = command.redirects.some(
-      (r) => r.operator === "<<" || r.operator === "<<-"
-    );
+    let handled = false;
 
-    // Check if command has any redirections - fluent transforms don't support redirection methods
-    const hasAnyRedirects = command.redirects.length > 0;
-
-    // Use fluent style for common text processing commands (only with static args)
-    // BUT: env assignments, redirections, and heredocs force explicit $.cmd() style
+    // Try fluent command strategy
     if (isFluentCommand(name) && !hasDynamicArgs && !hasAssignments && !hasAnyRedirects) {
       const fluentResult = buildFluentCommand(name, args, ctx);
-      // buildFluentCommand may return null to indicate fallback to $.cmd()
       if (fluentResult !== null) {
         cmdExpr = fluentResult.code;
         isTransform = fluentResult.isTransform;
         isStream = fluentResult.isStream;
-      } else {
-        // Fall back to $.cmd() style
-        const argsList = args.length > 0 ? ", " + args.map(formatArg).join(", ") : "";
-        cmdExpr = `$.cmd("${name}"${argsList})`;
+        handled = true;
+      }
+    }
+
+    if (!handled) {
+      if (!hasAssignments && (SPECIALIZED_COMMANDS.has(name) || name === "tmux")) {
+        // Specialized commands (git, docker, tmux)
+        cmdExpr = handleSpecializedCommand(name, args, hasMergeStreams);
         isAsync = true;
-      }
-    } else if (hasAssignments) {
-      // Use function call style with env options when there are assignments
-      const envEntries = command.assignments
-        .map((a) => {
-          const value = ctx.visitWord(a.value as AST.Word);
-          // Escape quotes in the value
-          const escapedValue = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-          return `${a.name}: "${escapedValue}"`;
-        })
-        .join(", ");
-      const argsArray = args.map(formatArg).join(", ");
-      cmdExpr = `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
-    } else if (name === "tmux" && args.length > 0 && args[0] === "send-keys" && args[args.length - 1] === "C-m") {
-      // Special case: tmux send-keys with C-m → use tmuxSubmit()
-      // Pattern: tmux send-keys -t <target> [-c <client>] <text> C-m
-      let target: string | null = null;
-      let client: string | null = null;
-      const textArgs: string[] = [];
-
-      // Parse arguments (skip first "send-keys" and last "C-m")
-      for (let i = 1; i < args.length - 1; i++) {
-        const arg = args[i];
-        const nextArg = args[i + 1];
-
-        if (arg === "-t" && nextArg) {
-          target = formatArg(nextArg);
-          i++; // skip next arg
-        } else if (arg === "-c" && nextArg) {
-          client = formatArg(nextArg);
-          i++; // skip next arg
-        } else if (arg) {
-          textArgs.push(formatArg(arg));
-        }
-      }
-
-      if (target && textArgs.length > 0) {
-        // Join text args with spaces
-        const text = textArgs.join(" + \" \" + ");
-        if (client) {
-          cmdExpr = `$.tmuxSubmit(${target}, ${text}, ${client})`;
-        } else {
-          cmdExpr = `$.tmuxSubmit(${target}, ${text})`;
-        }
       } else {
-        // Fallback to regular tmux if we can't parse properly
-        const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
-        cmdExpr = `$.tmux(${argsArray})`;
-      }
-    } else if (SPECIALIZED_COMMANDS.has(name)) {
-      // Use specialized command wrappers (git, docker, tmux)
-      // These provide enhanced functionality like auto-delay for tmux send-keys
-      const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
-
-      if (hasMergeStreams) {
-        // SSH-411: Use mergeStreams option for 2>&1
-        cmdExpr = `$.${name}({ mergeStreams: true }${argsArray ? `, ${argsArray}` : ""})`;
-      } else {
-        cmdExpr = `$.${name}(${argsArray})`;
-      }
-    } else {
-      // Use explicit $.cmd() function call style
-      // $.cmd(name, ...args) returns a Command directly
-      const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
-
-      if (hasMergeStreams) {
-        // SSH-411: Use mergeStreams option for 2>&1
-        cmdExpr = `$.cmd({ mergeStreams: true }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
-      } else {
-        cmdExpr = `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+        // Standard commands
+        cmdExpr = handleStandardCommand(name, args, hasAssignments, command.assignments, hasMergeStreams, ctx);
+        isAsync = true;
       }
     }
   }
 
   // Apply redirections (except 2>&1 which is handled via mergeStreams option)
   for (const redirect of command.redirects) {
-    // SSH-411: Skip 2>&1 redirection as it's handled by mergeStreams option
     if ((redirect.operator === ">&" || redirect.operator === "<&") &&
         typeof redirect.target === "number" && redirect.target === 1 &&
         redirect.fd === 2) {
@@ -626,135 +621,144 @@ function analyzePipelineStructure(operators: (string | null)[]): PipelineAnalysi
   return { hasAndThenPipe };
 }
 
-/**
- * Build code for && (AND) operator
- */
-function buildAndOperator(
-  result: string,
-  resultIsPrintable: boolean,
-  resultIsPromise: boolean,
-  part: PipelinePart,
-  followedByPipe: boolean,
-): { code: string; isPromise: boolean } {
-  // SSH-361/362: Handle printable vs non-printable parts correctly
-  if (!resultIsPrintable && !part.isPrintable) {
-    // SSH-362: Both are non-printable (e.g., consecutive variable assignments)
-    return { code: `${result}; ${part.code}`, isPromise: false };
-  } else if (resultIsPrintable) {
-    const resultExpr = resultIsPromise ? `await ${result}` : result;
-    if (followedByPipe) {
-      // Use comma operator to execute first command, then return second
-      return { code: `(await __printCmd(${resultExpr}), ${part.code})`, isPromise: false };
-    } else {
-      return {
-        code: `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`,
-        isPromise: true,
-      };
-    }
-  } else {
-    // result is non-printable (like cd), part is printable
-    if (followedByPipe) {
-      return { code: `(${result}, ${part.code})`, isPromise: false };
-    } else {
-      return {
-        code: `(async () => { ${result}; return ${part.code}; })()`,
-        isPromise: true,
-      };
-    }
-  }
-}
+// =============================================================================
+// Pipeline Assembler
+// =============================================================================
 
-/**
- * Build code for || (OR) operator
- */
-function buildOrOperator(
-  result: string,
-  resultIsPrintable: boolean,
-  resultIsPromise: boolean,
-  part: PipelinePart,
-): { code: string; isPromise: boolean } {
-  // SSH-361/362: Handle printable vs non-printable parts correctly
-  if (!resultIsPrintable && !part.isPrintable) {
+class PipelineAssembler {
+  private code: string;
+  private isPrintable: boolean;
+  private isPromise: boolean;
+  private isStream: boolean;
+  private isLineStream: boolean;
+
+  constructor(initialPart: PipelinePart) {
+    this.code = initialPart.code;
+    this.isPrintable = initialPart.isPrintable;
+    this.isStream = initialPart.isStreamProducer;
+    this.isPromise = false;
+    this.isLineStream = false;
+  }
+
+  getResult() {
     return {
-      code: `(async () => { try { ${result}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${part.code}; return { code: 0, stdout: '', stderr: '', success: true }; } })()`,
-      isPromise: true,
-    };
-  } else if (resultIsPrintable) {
-    const resultExpr = resultIsPromise ? `await ${result}` : result;
-    return {
-      code: `(async () => { try { await __printCmd(${resultExpr}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`,
-      isPromise: true,
-    };
-  } else {
-    return {
-      code: `(async () => { try { ${result}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`,
-      isPromise: true,
+      code: this.code,
+      isStream: this.isStream,
+      isPrintable: this.isPrintable,
     };
   }
-}
 
-/**
- * Build code for | (pipe) operator
- */
-function buildPipeOperator(
-  result: string,
-  resultIsStream: boolean,
-  resultIsLineStream: boolean,
-  part: PipelinePart,
-): { code: string; isLineStream: boolean } {
-  // Transforms (like $.head, $.grep) need the output split into lines first
-  if (part.isTransform) {
-    if (resultIsLineStream) {
-      // SSH-408: Already a line stream, just pipe to the transform
-      return { code: `${result}.pipe(${part.code})`, isLineStream: true };
-    } else if (resultIsStream) {
-      // Stream producer (like $.cat) - need .lines() to split content into lines
-      return { code: `${result}.lines().pipe(${part.code})`, isLineStream: true };
+  appendAnd(part: PipelinePart, followedByPipe: boolean): void {
+    // SSH-361/362: Handle printable vs non-printable parts correctly
+    if (!this.isPrintable && !part.isPrintable) {
+      this.code = `${this.code}; ${part.code}`;
+      this.isPromise = false;
+    } else if (this.isPrintable) {
+      const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
+      if (followedByPipe) {
+        // Use comma operator to execute first command, then return second
+        this.code = `(await __printCmd(${resultExpr}), ${part.code})`;
+        this.isPromise = false;
+      } else {
+        this.code = `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`;
+        this.isPromise = true;
+      }
     } else {
-      // Command - convert to line stream first, then apply transform
-      return { code: `${result}.stdout().lines().pipe(${part.code})`, isLineStream: true };
+      // result is non-printable (like cd), part is printable
+      if (followedByPipe) {
+        this.code = `(${this.code}, ${part.code})`;
+        this.isPromise = false;
+      } else {
+        this.code = `(async () => { ${this.code}; return ${part.code}; })()`;
+        this.isPromise = true;
+      }
     }
-  } else if (part.isStreamProducer) {
-    // Part is a stream producer (like $.cat) - it can receive piped input
-    return { code: `${result}.pipe(${part.code})`, isLineStream: false };
-  } else {
-    // Part is a command - pipe to it
-    if (resultIsLineStream) {
-      // SSH-408: Piping from a line stream to a command needs toCmdLines
-      return { code: `${result}.pipe($.toCmdLines(${part.code}))`, isLineStream: false };
-    } else if (resultIsStream) {
-      // When piping from a stream to a command, need to use toCmdLines transform
-      return { code: `${result}.pipe($.toCmdLines(${part.code}))`, isLineStream: false };
-    } else {
-      // When piping from a command to a command, can pipe directly
-      return { code: `${result}.pipe(${part.code})`, isLineStream: false };
-    }
+    
+    this.isPrintable = part.isPrintable;
+    this.isStream = false;
+    this.isLineStream = false;
   }
-}
 
-/**
- * Build code for ; (sequential) operator
- */
-function buildSequentialOperator(
-  result: string,
-  resultIsPrintable: boolean,
-  resultIsPromise: boolean,
-  part: PipelinePart,
-): { code: string; isPromise: boolean } {
-  // SSH-362: Handle non-printable parts correctly
-  if (!resultIsPrintable && !part.isPrintable) {
-    return { code: `${result}; ${part.code}`, isPromise: false };
-  } else if (resultIsPrintable) {
-    const resultExpr = resultIsPromise ? `await ${result}` : result;
-    return {
-      code: `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`,
-      isPromise: true,
-    };
-  } else {
-    return {
-      code: `(async () => { ${result}; return ${part.code}; })()`,
-      isPromise: true,
-    };
+  appendOr(part: PipelinePart): void {
+    // SSH-361/362: Handle printable vs non-printable parts correctly
+    if (!this.isPrintable && !part.isPrintable) {
+      this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${part.code}; return { code: 0, stdout: '', stderr: '', success: true }; } })()`;
+    } else if (this.isPrintable) {
+      const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
+      this.code = `(async () => { try { await __printCmd(${resultExpr}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+    } else {
+      this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+    }
+
+    this.isPromise = true;
+    this.isPrintable = part.isPrintable;
+    this.isStream = false;
+    this.isLineStream = false;
+  }
+
+  appendPipe(part: PipelinePart): void {
+    // SSH-364: Use appropriate method for transforms vs commands
+    if (this.isPromise) {
+      this.code = `(await ${this.code})`;
+      this.isPromise = false;
+    }
+
+    // Transforms (like $.head, $.grep) need the output split into lines first
+    if (part.isTransform) {
+      if (this.isLineStream) {
+        // SSH-408: Already a line stream, just pipe to the transform
+        this.code = `${this.code}.pipe(${part.code})`;
+        this.isLineStream = true;
+      } else if (this.isStream) {
+        // Stream producer (like $.cat) - need .lines() to split content into lines
+        this.code = `${this.code}.lines().pipe(${part.code})`;
+        this.isLineStream = true;
+      } else {
+        // Command - convert to line stream first, then apply transform
+        this.code = `${this.code}.stdout().lines().pipe(${part.code})`;
+        this.isLineStream = true;
+      }
+    } else if (part.isStreamProducer) {
+      // Part is a stream producer (like $.cat) - it can receive piped input
+      this.code = `${this.code}.pipe(${part.code})`;
+      this.isLineStream = false;
+    } else {
+      // Part is a command - pipe to it
+      if (this.isLineStream) {
+        // SSH-408: Piping from a line stream to a command needs toCmdLines
+        this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
+      } else if (this.isStream) {
+        // When piping from a stream to a command, need to use toCmdLines transform
+        this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
+      } else {
+        // When piping from a command to a command, can pipe directly
+        this.code = `${this.code}.pipe(${part.code})`;
+      }
+      this.isLineStream = false;
+    }
+
+    this.isPrintable = true;
+    // SSH-409: isStream should reflect whether the result is actually a stream
+    this.isStream = part.isStreamProducer || part.isTransform;
+  }
+
+  appendSequential(part: PipelinePart): void {
+    // SSH-362: Handle non-printable parts correctly
+    if (!this.isPrintable && !part.isPrintable) {
+      this.code = `${this.code}; ${part.code}`;
+      this.isPromise = false;
+    } else if (this.isPrintable) {
+      const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
+      this.code = `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`;
+      this.isPromise = true;
+    } else {
+      this.code = `(async () => { ${this.code}; return ${part.code}; })()`;
+      this.isPromise = true;
+    }
+
+    this.isPrintable = part.isPrintable;
+    this.isStream = false;
+    this.isLineStream = false;
   }
 }
 
@@ -770,11 +774,7 @@ function assemblePipeline(
     return { code: "", isStream: false, isPrintable: false };
   }
 
-  let result = parts[0]?.code ?? "";
-  let resultIsPrintable = parts[0]?.isPrintable ?? false;
-  let resultIsStream = parts[0]?.isStreamProducer ?? false;
-  let resultIsPromise = false;
-  let resultIsLineStream = false; // SSH-408: Track if we've already called .lines()
+  const assembler = new PipelineAssembler(parts[0]!);
 
   for (let i = 1; i < parts.length; i++) {
     const op = operators[i - 1];
@@ -782,57 +782,20 @@ function assemblePipeline(
     if (!part) continue;
 
     if (op === "&&") {
-      const followedByPipe = analysis.hasAndThenPipe;
-      const andResult = buildAndOperator(result, resultIsPrintable, resultIsPromise, part, followedByPipe);
-      result = andResult.code;
-      resultIsPromise = andResult.isPromise;
-      resultIsPrintable = part.isPrintable;
-      resultIsStream = false;
-      resultIsLineStream = false; // SSH-408: Reset after && operator
+      assembler.appendAnd(part, analysis.hasAndThenPipe);
     } else if (op === "||") {
-      const orResult = buildOrOperator(result, resultIsPrintable, resultIsPromise, part);
-      result = orResult.code;
-      resultIsPromise = orResult.isPromise;
-      resultIsPrintable = part.isPrintable;
-      resultIsStream = false;
-      resultIsLineStream = false; // SSH-408: Reset after || operator
+      assembler.appendOr(part);
     } else if (op === "|") {
-      // SSH-364: Use appropriate method for transforms vs commands
-      if (resultIsPromise) {
-        result = `(await ${result})`;
-        resultIsPromise = false;
-      }
-      const pipeResult = buildPipeOperator(result, resultIsStream, resultIsLineStream, part);
-      result = pipeResult.code;
-      resultIsPrintable = true;
-      // SSH-409: resultIsStream should reflect whether the result is actually a stream
-      resultIsStream = part.isStreamProducer || part.isTransform;
-      resultIsLineStream = pipeResult.isLineStream; // SSH-408: Track line stream state
+      assembler.appendPipe(part);
     } else if (op === ";") {
-      const seqResult = buildSequentialOperator(result, resultIsPrintable, resultIsPromise, part);
-      result = seqResult.code;
-      resultIsPromise = seqResult.isPromise;
-      resultIsPrintable = part.isPrintable;
-      resultIsStream = false;
-      resultIsLineStream = false; // SSH-408: Reset after ; operator
+      assembler.appendSequential(part);
     } else {
       // Default: pipe
-      if (resultIsPromise) {
-        result = `(await ${result})`;
-        resultIsPromise = false;
-      }
-      if (resultIsStream && !part.isTransform && !part.isStreamProducer) {
-        result = `${result}.pipe($.toCmdLines(${part.code}))`;
-      } else {
-        result = `${result}.pipe(${part.code})`;
-      }
-      resultIsPrintable = true;
-      resultIsStream = part.isStreamProducer || part.isTransform;
-      resultIsLineStream = false; // SSH-408: Default case resets line stream state
+      assembler.appendPipe(part);
     }
   }
 
-  return { code: result, isStream: resultIsStream, isPrintable: resultIsPrintable };
+  return assembler.getResult();
 }
 
 /**
