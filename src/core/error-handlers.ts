@@ -274,12 +274,15 @@ export function createErrorHandler(
 export function generateInlineErrorHandler(
   options: ErrorHandlerOptions,
 ): string {
+  // Escape command for embedding in template literal
+  const escapedCommand = options.originalCommand?.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+
   const includeCommandCheck = options.includeCommand
-    ? `  const fullCommand = ${options.originalCommand ? `\`${options.originalCommand}\`` : "__ORIGINAL_BASH_COMMAND__"};\n`
+    ? `  const fullCommand = ${escapedCommand ? `\`${escapedCommand}\`` : "__ORIGINAL_BASH_COMMAND__"};\n`
     : "";
 
   const commandInMessage = options.includeCommand
-    ? `    "Command: ${options.originalCommand || '${fullCommand}'}",\n`
+    ? `    "Command: " + ${escapedCommand ? `\`${escapedCommand}\`` : "fullCommand"},\n`
     : "";
 
   return `const __handleError = (error) => {
