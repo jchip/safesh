@@ -141,6 +141,16 @@ const SAFE_COMMANDS = [
   "pip", "pip3", "gem", "cargo", "go", "rustc", "rustup",
   "fyn", "nvx", "xrun", "npm", "pnpm", "yarn",
   // NOTE: node, deno, bun removed - can execute arbitrary code, require explicit permission
+
+  // ============================================================================
+  // Build Tools
+  // ============================================================================
+  "make", "cmake", "meson", "ninja", "autoconf", "automake", "configure",
+
+  // ============================================================================
+  // Container & Virtualization
+  // ============================================================================
+  "docker", "docker-compose", "colima", "podman", "kubectl", "k9s",
 ] as const;
 
 // ============================================================================
