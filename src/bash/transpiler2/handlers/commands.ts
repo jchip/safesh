@@ -112,6 +112,13 @@ export function buildCommand(
   // Check if command has redirections - builtins can't handle redirections
   const hasRedirects = command.redirects.length > 0;
 
+  // SSH-411: Check if command has 2>&1 redirection (merge stderr into stdout)
+  const hasMergeStreams = command.redirects.some(
+    (r) => (r.operator === ">&" || r.operator === "<&") &&
+           typeof r.target === "number" && r.target === 1 &&
+           r.fd === 2
+  );
+
   // Check if this is a user-defined function call
   if (ctx.isFunction(name)) {
     // Call the function directly
@@ -222,17 +229,35 @@ export function buildCommand(
       // Use specialized command wrappers (git, docker, tmux)
       // These provide enhanced functionality like auto-delay for tmux send-keys
       const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
-      cmdExpr = `$.${name}(${argsArray})`;
+
+      if (hasMergeStreams) {
+        // SSH-411: Use mergeStreams option for 2>&1
+        cmdExpr = `$.${name}({ mergeStreams: true }${argsArray ? `, ${argsArray}` : ""})`;
+      } else {
+        cmdExpr = `$.${name}(${argsArray})`;
+      }
     } else {
       // Use explicit $.cmd() function call style
       // $.cmd(name, ...args) returns a Command directly
       const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
-      cmdExpr = `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+
+      if (hasMergeStreams) {
+        // SSH-411: Use mergeStreams option for 2>&1
+        cmdExpr = `$.cmd({ mergeStreams: true }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+      } else {
+        cmdExpr = `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+      }
     }
   }
 
-  // Apply redirections
+  // Apply redirections (except 2>&1 which is handled via mergeStreams option)
   for (const redirect of command.redirects) {
+    // SSH-411: Skip 2>&1 redirection as it's handled by mergeStreams option
+    if ((redirect.operator === ">&" || redirect.operator === "<&") &&
+        typeof redirect.target === "number" && redirect.target === 1 &&
+        redirect.fd === 2) {
+      continue;
+    }
     cmdExpr = applyRedirection(cmdExpr, redirect, ctx);
   }
 
