@@ -728,6 +728,32 @@ const SAFESH_SIGNATURE = "/*#*/";
  * 1. Signature prefix: /\*$*\/ followed by TypeScript code
  * 2. .ts file path: path/to/script.ts (reads and returns file contents)
  */
+/**
+ * Detect if command is hybrid bash | TypeScript
+ * Returns {bashPart, tsPart} if detected, null otherwise
+ *
+ * Example: "echo test | /*#*/ const data = await $.text.lines(Deno.stdin); ..."
+ * Returns: {bashPart: "echo test", tsPart: "const data = await $.text.lines(Deno.stdin); ..."}
+ */
+function detectHybridCommand(command: string): { bashPart: string; tsPart: string } | null {
+  const pipeSignature = `| ${SAFESH_SIGNATURE}`;
+  const index = command.indexOf(pipeSignature);
+
+  if (index === -1) {
+    return null;
+  }
+
+  const bashPart = command.slice(0, index).trim();
+  const tsPart = command.slice(index + pipeSignature.length).trim();
+
+  if (!bashPart || !tsPart) {
+    return null;
+  }
+
+  debug(`Detected hybrid command: bash="${bashPart.slice(0, 50)}..." | ts="${tsPart.slice(0, 50)}..."`);
+  return { bashPart, tsPart };
+}
+
 function detectTypeScript(command: string): string | null {
   const trimmed = command.trim();
 
@@ -1093,6 +1119,118 @@ async function main() {
       allowProjectCommands: true,
     });
     debug(`Config loaded`);
+
+    // SSH-423: Check if command is hybrid bash | TypeScript
+    const hybrid = detectHybridCommand(parsed.command);
+    if (hybrid) {
+      debug("Hybrid bash | TypeScript detected");
+
+      // Parse and transpile the bash part
+      let bashAst;
+      try {
+        bashAst = parse(hybrid.bashPart);
+      } catch (parseError) {
+        const errorMsg = parseError instanceof Error ? parseError.message : String(parseError);
+        throw new Error(`Failed to parse bash part of hybrid command: ${errorMsg}`);
+      }
+
+      let bashTsCode;
+      try {
+        bashTsCode = transpileBash(bashAst);
+      } catch (transpileError) {
+        const errorMsg = transpileError instanceof Error ? transpileError.message : String(transpileError);
+        throw new Error(`Failed to transpile bash part of hybrid command: ${errorMsg}`);
+      }
+
+      // Combine: pipe bash command output to TypeScript code
+      // We need to capture the bash part's output and feed it to the TypeScript part
+      // The TypeScript code expects to read from Deno.stdin, so we simulate piping by:
+      // 1. Capturing bash command's stdout
+      // 2. Creating a ReadableStream from that output
+      // 3. Temporarily replacing Deno.stdin with our stream
+      const combinedTsCode = `
+// Execute bash part and capture output
+const __bashOutput = ${bashTsCode.trim()};
+
+// Get the stdout from the bash command result
+let __stdout: string;
+if (typeof __bashOutput === "object" && "stdout" in __bashOutput) {
+  __stdout = __bashOutput.stdout;
+} else if (typeof __bashOutput === "string") {
+  __stdout = __bashOutput;
+} else {
+  __stdout = String(__bashOutput);
+}
+
+// Create a readable stream from the bash output
+const __encoder = new TextEncoder();
+const __stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue(__encoder.encode(__stdout));
+    controller.close();
+  }
+});
+
+// Temporarily replace Deno.stdin with our stream
+const __originalStdin = Deno.stdin;
+Object.defineProperty(Deno, "stdin", {
+  value: {
+    readable: __stream,
+    rid: __originalStdin.rid,
+    isTerminal: () => false,
+    setRaw: () => {},
+    read: async (p: Uint8Array) => {
+      const reader = __stream.getReader();
+      const { value, done } = await reader.read();
+      if (done) return null;
+      p.set(value!);
+      reader.releaseLock();
+      return value!.length;
+    },
+  },
+  writable: true,
+  configurable: true,
+});
+
+// Execute the TypeScript part (which reads from Deno.stdin)
+${hybrid.tsPart}
+
+// Restore original stdin
+Object.defineProperty(Deno, "stdin", {
+  value: __originalStdin,
+  writable: true,
+  configurable: true,
+});
+`;
+
+      // Add error handlers
+      const finalTsCode = generateInlineErrorHandler({
+        prefix: "Hybrid Command Error",
+        errorLogPath: getErrorLogPath(),
+        includeCommand: false,
+      }) + `
+
+// Global error handlers for uncaught errors
+globalThis.addEventListener("error", (event) => {
+  event.preventDefault();
+  __handleError(event.error);
+});
+
+globalThis.addEventListener("unhandledrejection", (event) => {
+  event.preventDefault();
+  __handleError(event.reason);
+});
+
+${combinedTsCode}
+`;
+
+      await outputRewriteToDesh(finalTsCode, projectDir, {
+        timeout: parsed.timeout,
+        runInBackground: parsed.runInBackground,
+        isDirectTs: true,
+      });
+      Deno.exit(0);
+    }
 
     // Check if command is already TypeScript (skip transpilation and permission check)
     let tsCode = detectTypeScript(parsed.command);
