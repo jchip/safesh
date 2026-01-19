@@ -208,7 +208,7 @@ describe("Parameter Expansion - Indirect Reference", () => {
     const script = 'echo "$!"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "${!}");
+    assertStringIncludes(result, "__LAST_BG_PID");
   });
 
   it("should handle indirect array indices ${!arr[@]}", () => {

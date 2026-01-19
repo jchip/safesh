@@ -47,9 +47,13 @@ export function escapeString(
       result = result.replace(/"/g, '\\"');
       break;
     case "template":
+      // First escape ${ to prevent template interpolation
+      // This needs special handling: ${ becomes \\${
+      // Then escape other $ signs and backticks
       result = result
+        .replace(/\$\{/g, "\\\\${")
         .replace(/`/g, "\\`")
-        .replace(/\$/g, "\\$");
+        .replace(/\$(?!\{)/g, "\\$"); // Escape $ not followed by {
       break;
   }
 

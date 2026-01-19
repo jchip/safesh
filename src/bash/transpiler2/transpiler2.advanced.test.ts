@@ -212,8 +212,8 @@ describe("Real-World CI/CD Scripts", () => {
     const code = transpileBash(script);
     assertStringIncludes(code, "let IMAGE_NAME");
     assertStringIncludes(code, "let VERSION");
-    assertStringIncludes(code, '"docker", "build"');
-    assertStringIncludes(code, '"docker", "push"');
+    assertStringIncludes(code, '$.docker("build"');
+    assertStringIncludes(code, '$.docker("push"');
   });
 
   it("should transpile a Git tag and release script", () => {
@@ -235,8 +235,8 @@ describe("Real-World CI/CD Scripts", () => {
     const code = transpileBash(script);
     assertStringIncludes(code, "let VERSION");
     assertStringIncludes(code, "let BRANCH");
-    assertStringIncludes(code, '"git", "tag"');
-    assertStringIncludes(code, '"git", "push"');
+    assertStringIncludes(code, '$.git("tag"');
+    assertStringIncludes(code, '$.git("push"');
   });
 
   it("should transpile a dependency check script", () => {
