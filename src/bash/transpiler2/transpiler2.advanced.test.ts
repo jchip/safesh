@@ -62,42 +62,42 @@ describe("Background Jobs", () => {
 describe("Complex Quoting Scenarios", () => {
   it("should handle mixed single and double quotes", () => {
     const code = transpileBash(`echo 'single' "double" 'more'`);
-    assertStringIncludes(code, "__echo(");
+    assertStringIncludes(code, "$.echo(");
   });
 
   it("should handle escaped quotes inside double quotes", () => {
     const code = transpileBash(`echo "say \\"hello\\"`);
-    assertStringIncludes(code, "__echo(");
+    assertStringIncludes(code, "$.echo(");
   });
 
   it("should handle escaped single quotes", () => {
     const code = transpileBash(`echo 'it\\'s working'`);
-    assertStringIncludes(code, "__echo(");
+    assertStringIncludes(code, "$.echo(");
   });
 
   it("should handle backslash escaping", () => {
     const code = transpileBash(`echo "path\\to\\file"`);
-    assertStringIncludes(code, "__echo(");
+    assertStringIncludes(code, "$.echo(");
   });
 
   it("should handle newline escaping", () => {
     const code = transpileBash(`echo "line1\\nline2"`);
-    assertStringIncludes(code, "__echo(");
+    assertStringIncludes(code, "$.echo(");
   });
 
   it("should handle tab escaping", () => {
     const code = transpileBash(`echo "col1\\tcol2"`);
-    assertStringIncludes(code, "__echo(");
+    assertStringIncludes(code, "$.echo(");
   });
 
   it("should handle ANSI-C quoting with $'...'", () => {
     const code = transpileBash(`echo $'line1\\nline2\\ttab'`);
-    assertStringIncludes(code, "__echo(");
+    assertStringIncludes(code, "$.echo(");
   });
 
   it("should handle empty quotes", () => {
     const code = transpileBash(`echo "" '' ""`);
-    assertStringIncludes(code, "__echo(");
+    assertStringIncludes(code, "$.echo(");
   });
 });
 
@@ -645,7 +645,7 @@ describe("Edge Cases", () => {
 
   it("should handle commands with no arguments", () => {
     const code = transpileBash("pwd");
-    assertStringIncludes(code, "__pwd(");
+    assertStringIncludes(code, "$.pwd(");
   });
 
   it("should handle multiple redirections", () => {

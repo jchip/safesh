@@ -197,7 +197,7 @@ describe("Security - Command Injection Prevention", () => {
     // Variable should be interpolated in template literal
     assertStringIncludes(output, "${VAR}");
     // Should use echo builtin
-    assertStringIncludes(output, "__echo(");
+    assertStringIncludes(output, "$.echo(");
   });
 
   it("should handle shell metacharacters in command arguments", () => {
@@ -403,7 +403,7 @@ EOF`);
     const output = transpile(ast);
 
     // Glob should be quoted and not expanded
-    assertStringIncludes(output, "__echo(");
+    assertStringIncludes(output, "$.echo(");
     assertStringIncludes(output, '"*"');
   });
 });
@@ -553,7 +553,7 @@ describe("Security - Subshell Safety", () => {
 
     // Subshell inside command substitution generates async IIFE
     assertStringIncludes(output, "(async () => {");
-    assertStringIncludes(output, '__echo("inner")');
+    assertStringIncludes(output, '$.echo("inner")');
   });
 
   it("should prevent subshell escape to parent scope", () => {
@@ -562,8 +562,8 @@ describe("Security - Subshell Safety", () => {
 
     // cd in subshell should not affect parent
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, '__cd("/tmp")');
-    assertStringIncludes(output, "__pwd(");
+    assertStringIncludes(output, '$.cd("/tmp")');
+    assertStringIncludes(output, "$.pwd(");
   });
 
   it("should handle nested subshells securely", () => {
@@ -572,7 +572,7 @@ describe("Security - Subshell Safety", () => {
 
     // Nested subshells should be safely isolated
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, '__echo("inner")');
+    assertStringIncludes(output, '$.echo("inner")');
   });
 
   it("should handle subshell with pipelines", () => {
@@ -677,7 +677,7 @@ describe("Security - Complex Injection Scenarios", () => {
 
     // Two separate statements
     assertStringIncludes(output, 'let VAR = "value"');
-    assertStringIncludes(output, "__echo(");
+    assertStringIncludes(output, "$.echo(");
   });
 
   it("should handle injection via arithmetic expansion", () => {
@@ -724,7 +724,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const output = transpile(ast);
 
     // Glob should be passed to command safely (quoted to prevent expansion)
-    assertStringIncludes(output, "__echo(");
+    assertStringIncludes(output, "$.echo(");
     assertStringIncludes(output, '"*.txt"');
   });
 
