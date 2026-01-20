@@ -103,6 +103,8 @@ async function __test(...args: string[]): Promise<{ code: number; stdout: string
 // Helper function to execute commands and print their output (matches preamble)
 async function __printCmd(cmd: any): Promise<number> {
   const result = await cmd;
+  if (typeof result === 'boolean') return result ? 0 : 1;
+  if (!result) return 1;
   if (result.stdout) {
     await Deno.stdout.write(new TextEncoder().encode(result.stdout));
   }
