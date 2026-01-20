@@ -49,8 +49,8 @@ async function executeTranspiled(bashScript: string): Promise<ExecutionResult> {
   let tsCode = transpile(ast, { imports: false, strict: false });
 
   // Convert the IIFE to an awaited call
-  tsCode = tsCode.replace(/^\(async \(\) => \{/, "await (async () => {");
-  tsCode = tsCode.replace(/\}\)\(\);$/, "})();");
+  tsCode = tsCode.replace(/^\(async \(\)=> \{/, "await (async () => {");
+  tsCode = tsCode.replace(/\}\)\(;$/, ")();");
 
   // Get the path to shelljs module
   const shelljsPath = new URL("../../stdlib/shelljs/mod.ts", import.meta.url).pathname;
@@ -121,6 +121,24 @@ async function __cmdSubText(cmd: any): Promise<string> {
 
 // Mock SafeShell runtime for conformance testing
 const $ = {
+  // Builtins mapped to imported functions
+  echo: __echo,
+  cd: __cd,
+  pwd: __pwd,
+  pushd: __pushd,
+  popd: __popd,
+  dirs: __dirs,
+  test: __test,
+  which: __which,
+  chmod: __chmod,
+  ln: __ln,
+  rm: __rm,
+  cp: __cp,
+  mv: __mv,
+  mkdir: __mkdir,
+  touch: __touch,
+  ls: __ls,
+
   cmd: (command: string, ...args: string[]) => {
     // Build command string from function call args
     const cmdStr = args.length > 0 ? command + ' ' + args.join(' ') : command;
@@ -441,10 +459,10 @@ describe("Conformance - Control Flow", () => {
       case "b" in
         a)
           echo "A"
-          ;;
+          ;; 
         b)
           echo "B"
-          ;;
+          ;; 
       esac
     `;
     const { bashResult, tsResult } = await compareExecution(script);
@@ -456,13 +474,13 @@ describe("Conformance - Control Flow", () => {
       case "file.txt" in
         *.txt)
           echo "text file"
-          ;;
+          ;; 
         *.sh)
           echo "shell script"
-          ;;
+          ;; 
         *)
           echo "other"
-          ;;
+          ;; 
       esac
     `;
     const { bashResult, tsResult } = await compareExecution(script);
@@ -475,10 +493,10 @@ describe("Conformance - Control Flow", () => {
       case "archive.tar.gz" in
         *.tar.gz)
           echo "tarball"
-          ;;
+          ;; 
         *)
           echo "not a tarball"
-          ;;
+          ;; 
       esac
     `;
     const { bashResult, tsResult } = await compareExecution(script);
@@ -491,10 +509,10 @@ describe("Conformance - Control Flow", () => {
       case "a" in
         ?)
           echo "single character"
-          ;;
+          ;; 
         *)
           echo "multiple characters"
-          ;;
+          ;; 
       esac
     `;
     const { bashResult, tsResult } = await compareExecution(script);
@@ -507,10 +525,10 @@ describe("Conformance - Control Flow", () => {
       case "abc.txt" in
         [abc]*.txt)
           echo "starts with a, b, or c"
-          ;;
+          ;; 
         *)
           echo "other"
-          ;;
+          ;; 
       esac
     `;
     const { bashResult, tsResult } = await compareExecution(script);
@@ -523,7 +541,7 @@ describe("Conformance - Control Flow", () => {
       case "anything" in
         *)
           echo "matches everything"
-          ;;
+          ;; 
       esac
     `;
     const { bashResult, tsResult } = await compareExecution(script);
@@ -564,7 +582,7 @@ describe("Conformance - Functions", () => {
     `;
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
-    assertStringIncludes(output, "async function greet()");
+    assertStringIncludes(output, "async function greet()")
   });
 
   it("should transpile function with simple echo", async () => {
@@ -577,9 +595,9 @@ describe("Conformance - Functions", () => {
     `;
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
-    assertStringIncludes(output, "async function say_hello()");
-    // SSH-372: Transpiler now outputs __echo("Hello") using preamble builtins
-    assertStringIncludes(output, '__echo(');
+    assertStringIncludes(output, "async function say_hello()")
+    // SSH-372: Transpiler now outputs $.echo("Hello") using preamble builtins
+    assertStringIncludes(output, '$.echo(');
     assertStringIncludes(output, '"Hello"');
   });
 });

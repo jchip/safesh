@@ -434,7 +434,7 @@ describe("Parameter Expansion - Edge Cases", () => {
     const ast = parse(script);
     const result = transpile(ast);
     assertStringIncludes(result, "await __cmdSubText");
-    assertStringIncludes(result, "__pwd(");
+    assertStringIncludes(result, "$.pwd(");
   });
 
   it("should warn on unsupported parameter modifier", () => {
@@ -454,7 +454,7 @@ describe("Word Expansion - Command Substitution", () => {
     const ast = parse(script);
     const result = transpile(ast);
     assertStringIncludes(result, "await __cmdSubText");
-    assertStringIncludes(result, '__echo("hello")');
+    assertStringIncludes(result, '$.echo("hello")');
   });
 
   it("should strip trailing newlines from command substitution", () => {

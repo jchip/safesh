@@ -1,7 +1,7 @@
 /**
  * SSH-372: Test shell builtin transpilation
  *
- * Tests that the transpiler generates correct __builtin() calls
+ * Tests that the transpiler generates correct $.builtin() calls
  * instead of $.cmd() for shell builtins like cd, pwd, echo, etc.
  */
 
@@ -11,135 +11,135 @@ import { parse } from "../parser.ts";
 import { transpile } from "./mod.ts";
 
 describe("SSH-372 - Shell Builtins", () => {
-  it("should use __cd for cd command", () => {
+  it("should use $.cd for cd command", () => {
     const ast = parse("cd /tmp");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__cd("/tmp")');
+    assertStringIncludes(output, '$.cd("/tmp")');
     assertEquals(output.includes('$.cmd("cd"'), false, "Should not use $.cmd for cd");
   });
 
-  it("should use __pwd for pwd command", () => {
+  it("should use $.pwd for pwd command", () => {
     const ast = parse("pwd");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__pwd()');
+    assertStringIncludes(output, '$.pwd()');
     assertEquals(output.includes('$.cmd("pwd"'), false, "Should not use $.cmd for pwd");
     // pwd is output type, so should print result
     assertStringIncludes(output, 'console.log');
   });
 
-  it("should use __echo for echo command", () => {
+  it("should use $.echo for echo command", () => {
     const ast = parse("echo hello world");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__echo("hello", "world")');
+    assertStringIncludes(output, '$.echo("hello", "world")');
     assertEquals(output.includes('$.cmd("echo"'), false, "Should not use $.cmd for echo");
   });
 
-  it("should use __pushd for pushd command", () => {
+  it("should use $.pushd for pushd command", () => {
     const ast = parse("pushd /tmp");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__pushd("/tmp")');
+    assertStringIncludes(output, '$.pushd("/tmp")');
     assertEquals(output.includes('$.cmd("pushd"'), false, "Should not use $.cmd for pushd");
   });
 
-  it("should use __popd for popd command", () => {
+  it("should use $.popd for popd command", () => {
     const ast = parse("popd");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__popd()');
+    assertStringIncludes(output, '$.popd()');
     assertEquals(output.includes('$.cmd("popd"'), false, "Should not use $.cmd for popd");
   });
 
-  it("should use __dirs for dirs command", () => {
+  it("should use $.dirs for dirs command", () => {
     const ast = parse("dirs");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__dirs()');
+    assertStringIncludes(output, '$.dirs()');
     assertEquals(output.includes('$.cmd("dirs"'), false, "Should not use $.cmd for dirs");
     // dirs is output type, so should print result
     assertStringIncludes(output, 'console.log');
   });
 
-  it("should use __test for test command", () => {
+  it("should use $.test for test command", () => {
     const ast = parse("test -f file.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__test("-f", "file.txt")');
+    assertStringIncludes(output, '$.test("-f", "file.txt")');
     assertEquals(output.includes('$.cmd("test"'), false, "Should not use $.cmd for test");
   });
 
-  it("should use __which for which command", () => {
+  it("should use $.which for which command", () => {
     const ast = parse("which node");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__which("node")');
+    assertStringIncludes(output, '$.which("node")');
     assertEquals(output.includes('$.cmd("which"'), false, "Should not use $.cmd for which");
   });
 
-  it("should use __chmod for chmod command", () => {
+  it("should use $.chmod for chmod command", () => {
     const ast = parse("chmod 755 file.sh");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__chmod("755", "file.sh")');
+    assertStringIncludes(output, '$.chmod("755", "file.sh")');
     assertEquals(output.includes('$.cmd("chmod"'), false, "Should not use $.cmd for chmod");
   });
 
-  it("should use __ln for ln command", () => {
+  it("should use $.ln for ln command", () => {
     const ast = parse("ln -s source target");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__ln("-s", "source", "target")');
+    assertStringIncludes(output, '$.ln("-s", "source", "target")');
     assertEquals(output.includes('$.cmd("ln"'), false, "Should not use $.cmd for ln");
   });
 
-  it("should use __rm for rm command", () => {
+  it("should use $.rm for rm command", () => {
     const ast = parse("rm file.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__rm("file.txt")');
+    assertStringIncludes(output, '$.rm("file.txt")');
     assertEquals(output.includes('$.cmd("rm"'), false, "Should not use $.cmd for rm");
   });
 
-  it("should use __cp for cp command", () => {
+  it("should use $.cp for cp command", () => {
     const ast = parse("cp source.txt dest.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__cp("source.txt", "dest.txt")');
+    assertStringIncludes(output, '$.cp("source.txt", "dest.txt")');
     assertEquals(output.includes('$.cmd("cp"'), false, "Should not use $.cmd for cp");
   });
 
-  it("should use __mv for mv command", () => {
+  it("should use $.mv for mv command", () => {
     const ast = parse("mv old.txt new.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__mv("old.txt", "new.txt")');
+    assertStringIncludes(output, '$.mv("old.txt", "new.txt")');
     assertEquals(output.includes('$.cmd("mv"'), false, "Should not use $.cmd for mv");
   });
 
-  it("should use __mkdir for mkdir command", () => {
+  it("should use $.mkdir for mkdir command", () => {
     const ast = parse("mkdir new_dir");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__mkdir("new_dir")');
+    assertStringIncludes(output, '$.mkdir("new_dir")');
     assertEquals(output.includes('$.cmd("mkdir"'), false, "Should not use $.cmd for mkdir");
   });
 
-  it("should use __touch for touch command", () => {
+  it("should use $.touch for touch command", () => {
     const ast = parse("touch file.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__touch("file.txt")');
+    assertStringIncludes(output, '$.touch("file.txt")');
     assertEquals(output.includes('$.cmd("touch"'), false, "Should not use $.cmd for touch");
   });
 
-  it("should use __ls for ls command", () => {
+  it("should use $.ls for ls command", () => {
     const ast = parse("ls -la");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '__ls("-la")');
+    assertStringIncludes(output, '$.ls("-la")');
     assertEquals(output.includes('$.cmd("ls"'), false, "Should not use $.cmd for ls");
     // ls is output type, so should print result
     assertStringIncludes(output, 'console.log');
@@ -151,7 +151,7 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       assertStringIncludes(output, '$.cmd');
-      assertEquals(output.includes('__cd'), false, "Should not use __cd with env assignment");
+      assertEquals(output.includes('$.cd'), false, "Should not use $.cd with env assignment");
     });
 
     it("should use $.cmd() when echo has env assignment", () => {
@@ -159,7 +159,7 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       assertStringIncludes(output, '$.cmd');
-      assertEquals(output.includes('__echo'), false, "Should not use __echo with env assignment");
+      assertEquals(output.includes('$.echo'), false, "Should not use $.echo with env assignment");
     });
   });
 
@@ -169,7 +169,7 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       assertStringIncludes(output, '$.cmd("echo"');
-      assertEquals(output.includes('__echo'), false, "Should not use __echo with redirection");
+      assertEquals(output.includes('$.echo'), false, "Should not use $.echo with redirection");
     });
 
     it("should use $.cmd() when pwd has stdout redirection", () => {
@@ -177,7 +177,7 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       assertStringIncludes(output, '$.cmd("pwd"');
-      assertEquals(output.includes('__pwd'), false, "Should not use __pwd with redirection");
+      assertEquals(output.includes('$.pwd'), false, "Should not use $.pwd with redirection");
     });
   });
 
@@ -187,7 +187,7 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       assertStringIncludes(output, '$.cmd("echo"');
-      assertEquals(output.includes('__echo'), false, "Should not use __echo in pipeline");
+      assertEquals(output.includes('$.echo'), false, "Should not use $.echo in pipeline");
     });
 
     it("should use $.cmd() when ls is in a pipeline", () => {
@@ -195,34 +195,34 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       assertStringIncludes(output, '$.cmd("ls"');
-      assertEquals(output.includes('__ls'), false, "Should not use __ls in pipeline");
+      assertEquals(output.includes('$.ls'), false, "Should not use $.ls in pipeline");
     });
   });
 
   describe("Builtin combinations", () => {
-    it("should use __cd and __pwd in sequence", () => {
+    it("should use $.cd and $.pwd in sequence", () => {
       const ast = parse("cd /tmp\npwd");
       const output = transpile(ast);
 
-      assertStringIncludes(output, '__cd("/tmp")');
-      assertStringIncludes(output, '__pwd()');
+      assertStringIncludes(output, '$.cd("/tmp")');
+      assertStringIncludes(output, '$.pwd()');
     });
 
-    it("should use __mkdir and __cd in sequence", () => {
+    it("should use $.mkdir and $.cd in sequence", () => {
       const ast = parse("mkdir new_dir\ncd new_dir");
       const output = transpile(ast);
 
-      assertStringIncludes(output, '__mkdir("new_dir")');
-      assertStringIncludes(output, '__cd("new_dir")');
+      assertStringIncludes(output, '$.mkdir("new_dir")');
+      assertStringIncludes(output, '$.cd("new_dir")');
     });
 
-    it("should use __echo multiple times", () => {
+    it("should use $.echo multiple times", () => {
       const ast = parse("echo first\necho second\necho third");
       const output = transpile(ast);
 
-      assertStringIncludes(output, '__echo("first")');
-      assertStringIncludes(output, '__echo("second")');
-      assertStringIncludes(output, '__echo("third")');
+      assertStringIncludes(output, '$.echo("first")');
+      assertStringIncludes(output, '$.echo("second")');
+      assertStringIncludes(output, '$.echo("third")');
     });
   });
 
@@ -232,7 +232,7 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       // pwd returns a value that should be printed
-      assertStringIncludes(output, 'console.log(__pwd()');
+      assertStringIncludes(output, 'console.log($.pwd()');
     });
 
     it("should not await prints type builtins", () => {
@@ -241,7 +241,7 @@ describe("SSH-372 - Shell Builtins", () => {
 
       // echo already prints, should not be wrapped in await __printCmd
       assertEquals(output.includes('await'), false, "echo should not be awaited");
-      assertStringIncludes(output, '__echo("hello")');
+      assertStringIncludes(output, '$.echo("hello")');
     });
 
     it("should await async type builtins", () => {
@@ -249,7 +249,7 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       // test is async and returns a result
-      assertStringIncludes(output, 'await __printCmd(__test');
+      assertStringIncludes(output, '$.test');
     });
 
     it("should not await silent type builtins", () => {
@@ -257,8 +257,8 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       // cd is silent, just execute
-      assertEquals(output.includes('await __printCmd(__cd'), false, "cd should not be wrapped in __printCmd");
-      assertStringIncludes(output, '__cd("/tmp")');
+      assertEquals(output.includes('await __printCmd($.cd'), false, "cd should not be wrapped in __printCmd");
+      assertStringIncludes(output, '$.cd("/tmp")');
     });
   });
 });

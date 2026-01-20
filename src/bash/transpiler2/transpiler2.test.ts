@@ -196,8 +196,8 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("ls");
     const output = transpile(ast);
 
-    // SSH-372: Now uses __ls() builtin (output type, so uses console.log)
-    assertStringIncludes(output, '__ls()');
+    // SSH-372: Now uses $.ls() builtin (output type, so uses console.log)
+    assertStringIncludes(output, '$.ls()');
     assertStringIncludes(output, 'console.log');
   });
 
@@ -205,8 +205,8 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("ls -la /tmp");
     const output = transpile(ast);
 
-    // SSH-372: Now uses __ls() builtin
-    assertStringIncludes(output, '__ls("-la", "/tmp")');
+    // SSH-372: Now uses $.ls() builtin
+    assertStringIncludes(output, '$.ls("-la", "/tmp")');
   });
 
   it("should wrap in async IIFE", () => {
@@ -374,8 +374,8 @@ describe("Transpiler2 - Pipelines", () => {
 
     // The variable assignment should still be present
     assertStringIncludes(output, "let BRANCH");
-    // SSH-372: The echo command now uses __echo builtin
-    assertStringIncludes(output, '__echo');
+    // SSH-372: The echo command now uses $.echo builtin
+    assertStringIncludes(output, '$.echo');
   });
 
   it("should handle multiple variable assignments in && chain (SSH-362)", () => {
@@ -389,7 +389,7 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, 'let A = "1"');
     assertStringIncludes(output, 'let B = "2"');
     // The echo command should be present
-    assertStringIncludes(output, '__echo');
+    assertStringIncludes(output, '$.echo');
   });
 
   it("should use .stdout().lines().pipe() for command-to-transform pipelines (SSH-364)", () => {
@@ -434,9 +434,9 @@ describe("Transpiler2 - Pipelines", () => {
     const ast = parse("echo test | grep test");
     const output = transpile(ast);
 
-    // echo should use $.cmd() in pipe context, not __echo builtin
+    // echo should use $.cmd() in pipe context, not $.echo builtin
     assertStringIncludes(output, '$.cmd("echo"');
-    assertEquals(output.includes("__echo"), false, "Should not use __echo builtin in pipeline");
+    assertEquals(output.includes("$.echo"), false, "Should not use $.echo builtin in pipeline");
   });
 
   it("should use $.cmd() for grep with redirections", () => {
@@ -448,13 +448,13 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, '.stderr("/dev/null")');
   });
 
-  it("should still use __echo for standalone echo", () => {
+  it("should still use $.echo for standalone echo", () => {
     const ast = parse("echo test");
     const output = transpile(ast);
 
-    // Standalone echo (not in pipeline) should still use __echo builtin
-    assertStringIncludes(output, '__echo("test")');
-    assertEquals(output.includes('$.cmd("echo"'), false, "Standalone echo should use __echo builtin");
+    // Standalone echo (not in pipeline) should still use $.echo builtin
+    assertStringIncludes(output, '$.echo("test")');
+    assertEquals(output.includes('$.cmd("echo"'), false, "Standalone echo should use $.echo builtin");
   });
 });
 
@@ -474,8 +474,8 @@ describe("Transpiler2 - Control Flow", () => {
 
     assertStringIncludes(output, "if (");
     assertStringIncludes(output, ".code === 0)");
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output, '__echo("exists")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output, '$.echo("exists")');
   });
 
   it("should transpile if-else statement", () => {
@@ -490,8 +490,8 @@ describe("Transpiler2 - Control Flow", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "} else {");
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output, '__echo("no")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output, '$.echo("no")');
   });
 
   it("should transpile for loop", () => {
@@ -553,8 +553,8 @@ describe("Transpiler2 - Control Flow", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "async function myfunc()");
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output, '__echo("hello")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output, '$.echo("hello")');
   });
 
   it("should handle scoping in functions (SSH-304)", () => {
@@ -728,7 +728,7 @@ describe("Transpiler2 - Arithmetic", () => {
     // Verify increment is valid JS (SSH-322)
     assertStringIncludes(output, "i++)");
     // Should NOT contain invalid Number() wrapping in increment
-    assert(!output.includes("Number(i ?? 0)++)"), "Should not have Number() wrapper in increment");
+    assert(!output.includes("Number(i ?? 0)++"), "Should not have Number() wrapper in increment");
   });
 
   it("should transpile C-style for loop with postfix increment (SSH-322)", () => {
@@ -744,7 +744,7 @@ describe("Transpiler2 - Arithmetic", () => {
     assertStringIncludes(output, "for (");
     assertStringIncludes(output, "i++)");
     // Ensure the increment is NOT wrapped in Number()
-    assert(!output.includes("Number(i ?? 0)++)"), "Increment should not be wrapped in Number()");
+    assert(!output.includes("Number(i ?? 0)++"), "Increment should not be wrapped in Number()");
   });
 
   it("should transpile C-style for loop with prefix increment", () => {
@@ -773,7 +773,7 @@ describe("Transpiler2 - Arithmetic", () => {
 
     assertStringIncludes(output, "for (");
     assertStringIncludes(output, "i--)");
-    assert(!output.includes("Number(i ?? 0)--)"), "Decrement should not be wrapped in Number()");
+    assert(!output.includes("Number(i ?? 0)--"), "Decrement should not be wrapped in Number()");
   });
 
   it("should transpile arithmetic command", () => {
@@ -829,9 +829,9 @@ describe("Transpiler2 - Grouping", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "await (async () => {");
-    // SSH-372: Now uses __cd and __ls builtins
-    assertStringIncludes(output, '__cd("/tmp")');
-    assertStringIncludes(output, '__ls()');
+    // SSH-372: Now uses $.cd and $.ls builtins
+    assertStringIncludes(output, '$.cd("/tmp")');
+    assertStringIncludes(output, '$.ls()');
     assertStringIncludes(output, "})();");
   });
 
@@ -842,8 +842,8 @@ describe("Transpiler2 - Grouping", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "{");
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output, '__echo("hello")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output, '$.echo("hello")');
   });
 });
 
@@ -905,8 +905,8 @@ describe("Transpiler2 - Integration", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'let NAME = "World"');
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output, '__echo("Hello")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output, '$.echo("Hello")');
   });
 
   it("should handle simple pipeline", () => {
@@ -945,7 +945,7 @@ describe("BashTranspiler2 Class", () => {
     const output = transpiler.transpile(ast);
 
     // SSH-372: Check 4-space indentation inside async IIFE (echo is prints type, no await)
-    assertStringIncludes(output, '    __echo');
+    assertStringIncludes(output, '    $.echo');
   });
 
   it("should be reusable for multiple transpilations", () => {
@@ -954,9 +954,9 @@ describe("BashTranspiler2 Class", () => {
     const output1 = transpiler.transpile(parse("echo one"));
     const output2 = transpiler.transpile(parse("echo two"));
 
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output1, '__echo("one")');
-    assertStringIncludes(output2, '__echo("two")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output1, '$.echo("one")');
+    assertStringIncludes(output2, '$.echo("two")');
   });
 });
 
@@ -1065,8 +1065,8 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    // SSH-372: Now uses __ls builtin
-    assertStringIncludes(output, '__ls("-la")');
+    // SSH-372: Now uses $.ls builtin
+    assertStringIncludes(output, '$.ls("-la")');
   });
 
   it("should handle simple variable assignment", () => {
@@ -1121,8 +1121,8 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    // SSH-372: Now uses __test builtin
-    assertStringIncludes(output, '__test("-f", "file")');
+    // SSH-372: Now uses $.test builtin
+    assertStringIncludes(output, '$.test("-f", "file")');
     // SSH-356: Uses async IIFE with __printCmd to ensure output is printed
     assertStringIncludes(output, "__printCmd");
   });
@@ -1133,8 +1133,8 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "if (");
-    // SSH-372: Now uses __test builtin
-    assertStringIncludes(output, '__test("-f", "file")');
+    // SSH-372: Now uses $.test builtin
+    assertStringIncludes(output, '$.test("-f", "file")');
   });
 
   it("should handle standalone TestCommand statement", () => {
@@ -1207,8 +1207,8 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
     const script = "echo hello";
     const ast = parse(script);
     const output = transpile(ast);
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output, '__echo("hello")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output, '$.echo("hello")');
   });
 
   it("should handle IfStatement", () => {
@@ -1272,16 +1272,16 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
     const script = "(echo subshell)";
     const ast = parse(script);
     const output = transpile(ast);
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output, '__echo("subshell")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output, '$.echo("subshell")');
   });
 
   it("should handle BraceGroup", () => {
     const script = "{ echo group; }";
     const ast = parse(script);
     const output = transpile(ast);
-    // SSH-372: Now uses __echo builtin
-    assertStringIncludes(output, '__echo("group")');
+    // SSH-372: Now uses $.echo builtin
+    assertStringIncludes(output, '$.echo("group")');
   });
 
   it("should handle TestCommand", () => {
