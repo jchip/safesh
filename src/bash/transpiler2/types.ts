@@ -58,11 +58,12 @@ export const FLUENT_COMMANDS = new Set([
   "sort",
   "uniq",
   "wc",
-  "tee",
-  // Note: tr, cut, sed, awk are NOT in this list because:
+  // Note: tr, cut, sed, awk, tee are NOT in this list because:
   // - tr: doesn't exist in runtime
   // - cut: exists only as $.text.cut(), not as $.cut()
-  // - sed, awk: fall back to $.cmd`` (external commands)
+  // - sed, awk: fall back to $.cmd() (external commands)
+  // - tee: $.tee() is a transform that expects a callback, not a file path
+  //   The bash `tee` command writes to files and should use $.cmd("tee", ...)
 ]);
 
 /** Check if a command should use fluent style */
