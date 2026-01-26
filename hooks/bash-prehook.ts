@@ -732,8 +732,8 @@ const SAFESH_SIGNATURE = "/*#*/";
  * Detect if command is hybrid bash | TypeScript
  * Returns {bashPart, tsPart} if detected, null otherwise
  *
- * Example: "echo test | /*#*/ const data = await $.text.lines(Deno.stdin); ..."
- * Returns: {bashPart: "echo test", tsPart: "const data = await $.text.lines(Deno.stdin); ..."}
+ * Example: "echo test | /\*#*\/ const data = await $.text.lines(Deno.stdin); etc"
+ * Returns: {bashPart: "echo test", tsPart: "const data = await $.text.lines(Deno.stdin); etc"}
  */
 function detectHybridCommand(command: string): { bashPart: string; tsPart: string } | null {
   const pipeSignature = `| ${SAFESH_SIGNATURE}`;
@@ -1136,7 +1136,7 @@ async function main() {
 
       let bashTsCode;
       try {
-        bashTsCode = transpileBash(bashAst);
+        bashTsCode = transpile(bashAst, { imports: false, strict: false });
       } catch (transpileError) {
         const errorMsg = transpileError instanceof Error ? transpileError.message : String(transpileError);
         throw new Error(`Failed to transpile bash part of hybrid command: ${errorMsg}`);
