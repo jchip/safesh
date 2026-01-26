@@ -1167,7 +1167,7 @@ export class Parser {
         value,
         quoted,
         singleQuoted,
-        parts: this.parseWordParts(value, quoted),
+        parts: this.parseWordParts(value, quoted, singleQuoted),
       },
     };
   }
@@ -1359,7 +1359,7 @@ export class Parser {
       value: token.value,
       quoted: token.quoted || false,
       singleQuoted: token.singleQuoted || false,
-      parts: this.parseWordParts(token.value, token.quoted || false),
+      parts: this.parseWordParts(token.value, token.quoted || false, token.singleQuoted || false),
     };
   }
 
@@ -1398,7 +1398,12 @@ export class Parser {
     });
   }
 
-  private parseWordParts(value: string, _quoted: boolean): AST.WordPart[] {
+  private parseWordParts(value: string, _quoted: boolean, singleQuoted = false): AST.WordPart[] {
+    // Single-quoted strings have NO expansion at all - everything is literal
+    if (singleQuoted) {
+      return [{ type: "LiteralPart", value }];
+    }
+
     const parts: AST.WordPart[] = [];
     let pos = 0;
     let literal = "";
