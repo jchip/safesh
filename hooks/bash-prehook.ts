@@ -1352,8 +1352,11 @@ ${tsCode}
           debug(`Failed to write error log: ${e}`);
         }
 
-        // Brief console message (don't show bash command or generated code)
+        // Brief console message with prominent error log path
         const message = `[SAFESH] Transpiler Error: The bash script is too complex for automatic transpilation.
+
+${errorFile ? `Full details saved to: ${errorFile}\n` : ""}
+Reason: The transpiler generated invalid TypeScript code.
 
 DO NOT USE BASH FOR SCRIPTS THAT ARE TOO COMPLEX. Use safesh /*#*/ TypeScript instead.
 
@@ -1362,9 +1365,7 @@ Example:
   const branches = (await $.cmd('git', 'branch', '-r').text()).split('\\n');
   for (const branch of branches) {
     console.log(\`Branch: \${branch}\`);
-  }
-
-${errorFile ? `\nError log: ${errorFile}` : ""}`;
+  }`;
 
         // Output hook denial to block execution
         const output = {
