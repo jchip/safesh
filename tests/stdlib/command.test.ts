@@ -298,22 +298,17 @@ describe("command execution (SSH-195)", { sanitizeResources: false, sanitizeOps:
     });
 
     it("handles command timeout", async () => {
-      // Test timeout functionality if implemented
+      // Test timeout functionality (SSH-426)
       if (Deno.build.os !== "windows") {
         const result = await cmd(
           { timeout: 100 },
           "sleep",
           "10"
-        ).exec().catch(() => ({
-          stdout: "",
-          stderr: "",
-          code: -1,
-          success: false,
-        }));
+        ).exec();
 
-        // Timeout should cause failure (if timeout is implemented)
-        // Otherwise the command succeeds
-        assertEquals(typeof result.success, "boolean");
+        // Timeout should return exit code 124 (matching GNU timeout)
+        assertEquals(result.success, false);
+        assertEquals(result.code, 124);
       }
     });
 
