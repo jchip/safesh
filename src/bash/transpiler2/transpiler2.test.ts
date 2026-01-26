@@ -16,6 +16,12 @@ import {
   globToRegex,
 } from "./utils/escape.ts";
 
+// Helper function for easier testing
+function transpileBash(bash: string): string {
+  const ast = parse(bash);
+  return transpile(ast);
+}
+
 // =============================================================================
 // Utility Functions Tests
 // =============================================================================
@@ -229,6 +235,64 @@ describe("Transpiler2 - Simple Commands", () => {
     const output = transpile(ast, { imports: false });
 
     assertEquals(output.includes('import { $ }'), false);
+  });
+});
+
+// =============================================================================
+// Timeout Command Tests (SSH-426)
+// =============================================================================
+
+describe("Transpiler2 - Timeout Command", () => {
+  it("should transpile timeout with seconds", () => {
+    const code = transpileBash("timeout 5 sleep 10");
+    assertStringIncludes(code, '$.cmd({ timeout: 5000 }, "sleep", "10")');
+  });
+
+  it("should transpile timeout with seconds suffix", () => {
+    const code = transpileBash("timeout 30s curl https://example.com");
+    assertStringIncludes(code, '$.cmd({ timeout: 30000 }, "curl"');
+  });
+
+  it("should transpile timeout with minutes", () => {
+    const code = transpileBash("timeout 2m long-task");
+    assertStringIncludes(code, '$.cmd({ timeout: 120000 }, "long-task")');
+  });
+
+  it("should transpile timeout with hours", () => {
+    const code = transpileBash("timeout 1h backup");
+    assertStringIncludes(code, '$.cmd({ timeout: 3600000 }, "backup")');
+  });
+
+  it("should transpile timeout with days", () => {
+    const code = transpileBash("timeout 1d weekly-job");
+    assertStringIncludes(code, '$.cmd({ timeout: 86400000 }, "weekly-job")');
+  });
+
+  it("should transpile timeout with command arguments", () => {
+    const code = transpileBash("timeout 10 curl -s -L https://api.example.com");
+    assertStringIncludes(code, '$.cmd({ timeout: 10000 }, "curl", "-s", "-L", "https://api.example.com")');
+  });
+
+  it("should transpile timeout with quoted arguments", () => {
+    const code = transpileBash('timeout 5 echo "hello world"');
+    assertStringIncludes(code, '$.cmd({ timeout: 5000 }, "echo", "hello world")');
+  });
+
+  it("should transpile timeout in pipeline", () => {
+    const code = transpileBash("timeout 5 curl -s https://api.example.com | grep data");
+    assertStringIncludes(code, '$.cmd({ timeout: 5000 }, "curl"');
+    assertStringIncludes(code, '.pipe');
+  });
+
+  it("should transpile timeout with variable substitution", () => {
+    const code = transpileBash("timeout 5 echo $PATH");
+    assertStringIncludes(code, '$.cmd({ timeout: 5000 }');
+    assertStringIncludes(code, 'PATH');
+  });
+
+  it("should transpile timeout with command substitution", () => {
+    const code = transpileBash("result=$(timeout 3 get-data)");
+    assertStringIncludes(code, '$.cmd({ timeout: 3000 }, "get-data")');
   });
 });
 
