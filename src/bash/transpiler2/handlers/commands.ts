@@ -808,14 +808,18 @@ class PipelineAssembler {
       if (this.isLineStream) {
         // SSH-408: Piping from a line stream to a command needs toCmdLines
         this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
+        // toCmdLines returns a line stream (Transform<string, string>)
+        this.isLineStream = true;
       } else if (this.isStream) {
         // When piping from a stream to a command, need to use toCmdLines transform
         this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
+        // toCmdLines returns a line stream (Transform<string, string>)
+        this.isLineStream = true;
       } else {
         // When piping from a command to a command, can pipe directly
         this.code = `${this.code}.pipe(${part.code})`;
+        this.isLineStream = false;
       }
-      this.isLineStream = false;
     }
 
     this.isPrintable = true;

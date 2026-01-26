@@ -223,13 +223,16 @@ describe("Fluent Commands - Comprehensive", () => {
     it("should handle tee with file", () => {
       const ast = parse("tee output.log");
       const output = transpile(ast);
-      assertStringIncludes(output, '$.tee("output.log")');
+      // tee should use $.cmd() because bash tee writes to files,
+      // while $.tee() is a transform expecting a callback function
+      assertStringIncludes(output, '$.cmd("tee", "output.log")');
     });
 
     it("should handle tee without file (stdin)", () => {
       const ast = parse("tee");
       const output = transpile(ast);
-      assertStringIncludes(output, '$.tee("-")');
+      // tee without args should use $.cmd("tee")
+      assertStringIncludes(output, '$.cmd("tee")');
     });
   });
 
