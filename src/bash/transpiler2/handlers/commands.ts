@@ -124,6 +124,54 @@ function handleTmuxSendKeys(args: string[]): string | null {
   return null;
 }
 
+/**
+ * SSH-426: Handle timeout command
+ * Parses "timeout DURATION COMMAND [ARG...]" and generates code with timeout option
+ * @returns Transpiled command with timeout, or null if not a valid timeout command
+ */
+function handleTimeoutCommand(args: string[], ctx: VisitorContext): { code: string; async: boolean } | null {
+  if (args.length < 2) return null;
+
+  const duration = args[0];
+  if (!duration) return null;
+
+  // Parse duration: NUMBER, NUMBERs, NUMBERm, NUMBERh, NUMBERd
+  let timeoutMs: number;
+  const match = duration.match(/^(\d+(?:\.\d+)?)(s|m|h|d)?$/);
+  if (!match) return null;
+
+  const value = parseFloat(match[1] ?? "0");
+  const unit = match[2] ?? "s"; // default to seconds
+
+  switch (unit) {
+    case "s":
+      timeoutMs = value * 1000;
+      break;
+    case "m":
+      timeoutMs = value * 60 * 1000;
+      break;
+    case "h":
+      timeoutMs = value * 60 * 60 * 1000;
+      break;
+    case "d":
+      timeoutMs = value * 24 * 60 * 60 * 1000;
+      break;
+    default:
+      return null;
+  }
+
+  // Extract command and its arguments
+  const cmdName = args[1];
+  if (!cmdName) return null;
+  const cmdArgs = args.slice(2);
+
+  // Build the command with timeout option
+  const argsArray = cmdArgs.length > 0 ? cmdArgs.map(formatArg).join(", ") : "";
+  const code = `$.cmd({ timeout: ${timeoutMs} }, ${formatArg(cmdName)}${argsArray ? `, ${argsArray}` : ""})`;
+
+  return { code, async: true };
+}
+
 function handleSpecializedCommand(
   name: string,
   args: string[],
@@ -215,6 +263,18 @@ export function buildCommand(
     const result = handleShellBuiltin(name, args, SHELL_BUILTINS[name]);
     cmdExpr = result.code;
     isAsync = result.async;
+  } else if (name === "timeout") {
+    // SSH-426: Handle timeout command specially
+    const timeoutResult = handleTimeoutCommand(args, ctx);
+    if (timeoutResult) {
+      cmdExpr = timeoutResult.code;
+      isAsync = timeoutResult.async;
+    } else {
+      // Invalid timeout syntax - fall through to standard command handling
+      // This will likely fail at runtime, but that's expected
+      cmdExpr = handleStandardCommand(name, args, hasAssignments, command.assignments, hasMergeStreams, ctx);
+      isAsync = true;
+    }
   } else {
     // Check constraints for fluent commands
     const hasDynamicArgs = args.some((arg) => arg.includes("${"));

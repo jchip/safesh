@@ -437,51 +437,87 @@ export class Command implements PromiseLike<CommandResult> {
     const startTime = Date.now();
     emitJobStart(jobId, this.cmd, this.args, process.pid);
 
-    // Write stdin, read outputs, and wait for status concurrently
-    const promises: Promise<unknown>[] = [
-      collectStreamBytes(process.stdout),
-      collectStreamBytes(process.stderr),
-      process.status,
-    ];
-    const stdinPromise = this.setupStdin(process, stdinData);
-    if (stdinPromise) {
-      promises.push(stdinPromise);
+    // SSH-426: Set up timeout if specified
+    let timeoutId: number | undefined;
+    let timedOut = false;
+    if (this.options.timeout && this.options.timeout > 0) {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        try {
+          process.kill("SIGTERM");
+          // Give it a moment to terminate gracefully, then force kill
+          setTimeout(() => {
+            try {
+              process.kill("SIGKILL");
+            } catch {
+              // Process may have already terminated
+            }
+          }, 100);
+        } catch {
+          // Process may have already terminated
+        }
+      }, this.options.timeout);
     }
 
-    const [stdoutBytes, stderrBytes, status] = (await Promise.all(promises)) as [
-      Uint8Array,
-      Uint8Array,
-      Deno.CommandStatus,
-    ];
+    try {
+      // Write stdin, read outputs, and wait for status concurrently
+      const promises: Promise<unknown>[] = [
+        collectStreamBytes(process.stdout),
+        collectStreamBytes(process.stderr),
+        process.status,
+      ];
+      const stdinPromise = this.setupStdin(process, stdinData);
+      if (stdinPromise) {
+        promises.push(stdinPromise);
+      }
 
-    // Emit job end event
-    emitJobEnd(jobId, status.code, startTime);
+      const [stdoutBytes, stderrBytes, status] = (await Promise.all(promises)) as [
+        Uint8Array,
+        Uint8Array,
+        Deno.CommandStatus,
+      ];
 
-    const stdoutStr = decoder.decode(stdoutBytes);
-    const stderrStr = decoder.decode(stderrBytes);
+      // Clear timeout if command completed normally
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
 
-    // Handle file redirections
-    if (this.options.stdoutFile) {
-      await this.writeToFile(
-        this.options.stdoutFile.path,
-        stdoutStr,
-        this.options.stdoutFile.options,
-      );
+      // Emit job end event
+      const exitCode = timedOut ? 124 : status.code;
+      emitJobEnd(jobId, exitCode, startTime);
+
+      const stdoutStr = decoder.decode(stdoutBytes);
+      const stderrStr = decoder.decode(stderrBytes);
+
+      // Handle file redirections
+      if (this.options.stdoutFile) {
+        await this.writeToFile(
+          this.options.stdoutFile.path,
+          stdoutStr,
+          this.options.stdoutFile.options,
+        );
+      }
+      if (this.options.stderrFile) {
+        await this.writeToFile(
+          this.options.stderrFile.path,
+          stderrStr,
+          this.options.stderrFile.options,
+        );
+      }
+
+      return {
+        stdout: stdoutStr,
+        stderr: stderrStr,
+        code: exitCode,
+        success: exitCode === 0,
+      };
+    } catch (err) {
+      // Clear timeout on error
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+      throw err;
     }
-    if (this.options.stderrFile) {
-      await this.writeToFile(
-        this.options.stderrFile.path,
-        stderrStr,
-        this.options.stderrFile.options,
-      );
-    }
-
-    return {
-      stdout: stdoutStr,
-      stderr: stderrStr,
-      code: status.code,
-      success: status.success,
-    };
   }
 
   /**
@@ -560,26 +596,61 @@ export class Command implements PromiseLike<CommandResult> {
     const startTime = Date.now();
     emitJobStart(jobId, this.cmd, this.args, process.pid);
 
-    // Start writing stdin in background (don't await yet)
-    const stdinPromise = this.setupStdin(process, stdinData);
-
-    if (this.options.mergeStreams) {
-      yield* this.mergeStreams(process.stdout, process.stderr);
-    } else {
-      yield* this.separateStreams(process.stdout, process.stderr);
+    // SSH-426: Set up timeout if specified
+    let timeoutId: number | undefined;
+    let timedOut = false;
+    if (this.options.timeout && this.options.timeout > 0) {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        try {
+          process.kill("SIGTERM");
+          setTimeout(() => {
+            try {
+              process.kill("SIGKILL");
+            } catch {
+              // Process may have already terminated
+            }
+          }, 100);
+        } catch {
+          // Process may have already terminated
+        }
+      }, this.options.timeout);
     }
 
-    // Wait for stdin to finish writing
-    if (stdinPromise) {
-      await stdinPromise;
+    try {
+      // Start writing stdin in background (don't await yet)
+      const stdinPromise = this.setupStdin(process, stdinData);
+
+      if (this.options.mergeStreams) {
+        yield* this.mergeStreams(process.stdout, process.stderr);
+      } else {
+        yield* this.separateStreams(process.stdout, process.stderr);
+      }
+
+      // Wait for stdin to finish writing
+      if (stdinPromise) {
+        await stdinPromise;
+      }
+
+      const status = await process.status;
+
+      // Clear timeout if command completed normally
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+
+      // Emit job end event
+      const exitCode = timedOut ? 124 : status.code;
+      emitJobEnd(jobId, exitCode, startTime);
+
+      yield { type: "exit", code: exitCode };
+    } catch (err) {
+      // Clear timeout on error
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+      throw err;
     }
-
-    const status = await process.status;
-
-    // Emit job end event
-    emitJobEnd(jobId, status.code, startTime);
-
-    yield { type: "exit", code: status.code };
   }
 
   /**
