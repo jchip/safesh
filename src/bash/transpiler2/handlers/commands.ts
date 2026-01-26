@@ -229,7 +229,10 @@ export function buildCommand(
         cmdExpr = fluentResult.code;
         isTransform = fluentResult.isTransform;
         isStream = fluentResult.isStream;
+        // SSH-424: Fluent commands return Command objects synchronously (no await needed)
+        isAsync = false;
         handled = true;
+        // console.error(`[DEBUG] Fluent command ${name}: isAsync=${isAsync}, isStream=${isStream}, isTransform=${isTransform}`);
       }
     }
 
@@ -543,6 +546,8 @@ interface PipelinePart {
   isTransform: boolean;
   /** Whether this part produces a stream (like $.cat) vs a Command */
   isStreamProducer: boolean;
+  /** Whether this part needs await (true for $.cmd(), false for fluent commands) - SSH-424 */
+  isAsync: boolean;
 }
 
 /**
@@ -588,7 +593,13 @@ export function buildPipeline(
     result = `${result}.negate()`;
   }
 
-  return { code: result, async: true, isStream: assembled.isStream, isPrintable: assembled.isPrintable };
+  // SSH-424: Preserve async=false for single fluent commands (even with background &)
+  // If this is a single-command pipeline with no operators, preserve the original async value
+  const isAsync = (parts.length === 1 && operators.length === 0)
+    ? parts[0]!.isAsync  // Use the isAsync field we now track
+    : true;  // Multi-command pipelines are always async
+
+  return { code: result, async: isAsync, isStream: assembled.isStream, isPrintable: assembled.isPrintable };
 }
 
 /**
@@ -653,30 +664,40 @@ class PipelineAssembler {
     if (!this.isPrintable && !part.isPrintable) {
       this.code = `${this.code}; ${part.code}`;
       this.isPromise = false;
+      this.isStream = false;
+      this.isLineStream = false;
     } else if (this.isPrintable) {
       const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
       if (followedByPipe) {
         // Use comma operator to execute first command, then return second
         this.code = `(await __printCmd(${resultExpr}), ${part.code})`;
         this.isPromise = false;
+        // SSH-425: Preserve stream status from the second part for subsequent piping
+        this.isStream = part.isStreamProducer;
+        this.isLineStream = false;
       } else {
         this.code = `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`;
         this.isPromise = true;
+        this.isStream = false;
+        this.isLineStream = false;
       }
     } else {
       // result is non-printable (like cd), part is printable
       if (followedByPipe) {
         this.code = `(${this.code}, ${part.code})`;
         this.isPromise = false;
+        // SSH-425: Preserve stream status from the second part for subsequent piping
+        this.isStream = part.isStreamProducer;
+        this.isLineStream = false;
       } else {
         this.code = `(async () => { ${this.code}; return ${part.code}; })()`;
         this.isPromise = true;
+        this.isStream = false;
+        this.isLineStream = false;
       }
     }
-    
+
     this.isPrintable = part.isPrintable;
-    this.isStream = false;
-    this.isLineStream = false;
   }
 
   appendOr(part: PipelinePart): void {
@@ -818,20 +839,21 @@ function flattenPipeline(
     if (left.type === "Command") {
       const result = buildCommand(left, ctx, { inPipeline: hasPipeOperator });
       // SSH-361: Track whether the command produces output that should be printed
-      // async: true means it's a command that returns CommandResult
-      // async: false means it's a variable assignment (no output to print)
-      // SSH-364: Track if it's a transform or stream producer for proper pipeline handling
+      // SSH-424: For fluent commands, async=false but they still produce output
+      // isPrintable should be true for all commands except variable assignments
+      const isPrintable = result.async || (result.isStream ?? false) || (result.isTransform ?? false);
       parts.push({
         code: result.code,
-        isPrintable: result.async,
+        isPrintable,
         isTransform: result.isTransform ?? false,
         isStreamProducer: result.isStream ?? false,
+        isAsync: result.async,
       });
     } else if (left.type === "Pipeline") {
       flattenPipeline(left, parts, operators, ctx);
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      parts.push({ code: buildStatementAsExpression(left, ctx), isPrintable: true, isTransform: false, isStreamProducer: false });
+      parts.push({ code: buildStatementAsExpression(left, ctx), isPrintable: true, isTransform: false, isStreamProducer: false, isAsync: true });
     }
   }
 
@@ -846,18 +868,20 @@ function flattenPipeline(
     if (cmd.type === "Command") {
       const result = buildCommand(cmd, ctx, { inPipeline: hasPipeOperator });
       // SSH-361: Track whether the command produces output that should be printed
-      // SSH-364: Track if it's a transform or stream producer for proper pipeline handling
+      // SSH-424: For fluent commands, async=false but they still produce output
+      const isPrintable = result.async || (result.isStream ?? false) || (result.isTransform ?? false);
       parts.push({
         code: result.code,
-        isPrintable: result.async,
+        isPrintable,
         isTransform: result.isTransform ?? false,
         isStreamProducer: result.isStream ?? false,
+        isAsync: result.async,
       });
     } else if (cmd.type === "Pipeline") {
       flattenPipeline(cmd, parts, operators, ctx);
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      parts.push({ code: buildStatementAsExpression(cmd, ctx), isPrintable: true, isTransform: false, isStreamProducer: false });
+      parts.push({ code: buildStatementAsExpression(cmd, ctx), isPrintable: true, isTransform: false, isStreamProducer: false, isAsync: true });
     }
   }
 }
