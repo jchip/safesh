@@ -207,6 +207,64 @@ export async function collectStreamBytes(
 }
 
 /**
+ * Collect stream bytes with abort signal support (SSH-429)
+ *
+ * This version allows canceling the stream collection if it takes too long.
+ * When aborted, it returns all chunks collected so far instead of losing data.
+ *
+ * Use case: Commands that spawn background daemons may leave file descriptors
+ * open. After the parent process exits, we give streams a grace period to flush,
+ * then abort collection to avoid hanging forever.
+ *
+ * @param stream - The readable stream to collect
+ * @param signal - AbortSignal to cancel collection
+ * @returns All collected bytes (even if aborted)
+ */
+export async function collectStreamBytesWithTimeout(
+  stream: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+
+  try {
+    while (!signal.aborted) {
+      // Race between reading next chunk and abort signal
+      const readPromise = reader.read();
+      const abortPromise = new Promise<{ done: boolean; value?: Uint8Array }>(
+        (resolve) => {
+          const abortHandler = () => resolve({ done: true });
+          signal.addEventListener("abort", abortHandler, { once: true });
+        }
+      );
+
+      const { done, value } = await Promise.race([readPromise, abortPromise]);
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+    // Try to cancel the stream to release resources
+    try {
+      await stream.cancel();
+    } catch {
+      // Stream may already be closed, ignore errors
+    }
+  }
+
+  // Concatenate all chunks collected before abort/completion
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
+}
+
+/**
  * Collect a readable stream into a string
  */
 export async function collectStreamText(
