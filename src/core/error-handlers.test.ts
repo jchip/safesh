@@ -465,6 +465,226 @@ describe("error-handlers", () => {
         // Should fall back to using __ORIGINAL_BASH_COMMAND__
         assertMatch(code, /__ORIGINAL_BASH_COMMAND__/);
       });
+
+      // SSH-403: Edge case tests for command escaping
+      describe("SSH-403: additional edge cases", () => {
+        it("handles commands with single quotes", () => {
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: "git commit -m 'Fix bug'",
+          }, false);
+
+          // Should contain the command with single quotes preserved
+          assertMatch(code, /git commit -m 'Fix bug'/);
+          // Should use template literal
+          assertMatch(code, /const fullCommand = `git commit -m 'Fix bug'`/);
+        });
+
+        it("handles commands with mixed quotes", () => {
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: 'echo "It\'s working"',
+          }, false);
+
+          // Should preserve both double and single quotes
+          assertMatch(code, /echo "It's working"/);
+          // Should use template literal that can safely contain both quote types
+          assertMatch(code, /const fullCommand = `echo "It's working"`/);
+        });
+
+        it("handles commands with newlines", () => {
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: 'git commit -m "Line 1\nLine 2"',
+          }, false);
+
+          // Should contain the git commit command
+          assertMatch(code, /git commit -m "Line 1/);
+          assertMatch(code, /Line 2"/);
+          // Template literals can contain actual newlines, which is valid
+          assertEquals(code.includes('git commit -m "Line 1\nLine 2"'), true, "Should preserve newlines in template literal");
+        });
+
+        it("handles very long commands", () => {
+          const longCommand = 'echo "' + 'x'.repeat(10000) + '"';
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: longCommand,
+          }, false);
+
+          // Should contain the echo command
+          assertMatch(code, /echo "/);
+          // Should generate valid code without truncation or corruption
+          assertMatch(code, /__handleError/);
+          // Should have the template literal assignment
+          assertMatch(code, /const fullCommand = `/);
+          // The generated code should contain a significant portion of the x's
+          assertEquals(code.includes('x'.repeat(1000)), true, "Should preserve long command content");
+        });
+
+        it("handles commands with unicode characters", () => {
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: 'git commit -m "Fix 🐛 bug"',
+          }, false);
+
+          // Should preserve unicode emoji
+          assertMatch(code, /Fix 🐛 bug/);
+          // Should use template literal
+          assertMatch(code, /const fullCommand = `git commit -m "Fix 🐛 bug"`/);
+        });
+
+        it("handles commands with multiple edge cases combined", () => {
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: 'git commit -m "Fix 🐛: It\'s working\\nLine 2"',
+          }, false);
+
+          // Should contain all the special elements
+          assertMatch(code, /git commit/);
+          assertMatch(code, /🐛/);
+          assertMatch(code, /It's working/);
+          assertMatch(code, /\\\\/); // Escaped backslash
+        });
+      });
+
+      // SSH-404: Security tests for command injection prevention
+      describe("SSH-404: command injection prevention", () => {
+        it("safely escapes template literal escape attempts", () => {
+          const maliciousCommand = 'test`; Deno.exit(0); console.log(`';
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: maliciousCommand,
+          }, false);
+
+          // Should escape backticks to prevent breaking out of template literal
+          assertMatch(code, /\\`/);
+          // Should not contain unescaped backticks that could execute code
+          assertEquals(
+            code.includes('`; Deno.exit(0);'),
+            false,
+            "Should not have executable code injection"
+          );
+          // The escaped command should be safely contained
+          assertMatch(code, /const fullCommand = `test\\`; Deno\.exit\(0\); console\.log\(\\``/);
+        });
+
+        it("safely escapes JavaScript code injection attempts", () => {
+          const maliciousCommand = 'test"); Deno.exit(0); ("';
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: maliciousCommand,
+          }, false);
+
+          // Should safely contain the injection attempt in template literal
+          assertMatch(code, /const fullCommand = `test"\); Deno\.exit\(0\); \(""`/);
+          // Should not allow breaking out of string context
+          assertEquals(
+            code.includes('"); Deno.exit(0); ("'),
+            true,
+            "Should contain the literal text but not be executable"
+          );
+          // Verify it's in a template literal, not double quotes
+          assertEquals(
+            code.includes('const fullCommand = "'),
+            false,
+            "Should not use double quotes which could be broken out of"
+          );
+        });
+
+        it("safely escapes variable access attempts", () => {
+          const maliciousCommand = 'test${Deno.env.get("SECRET")}test';
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: maliciousCommand,
+          }, false);
+
+          // Should escape $ to prevent template literal interpolation
+          assertMatch(code, /\\\$/);
+          // The variable access should be rendered harmless
+          assertMatch(code, /const fullCommand = `test\\\$\{Deno\.env\.get\("SECRET"\)\}test`/);
+          // Should not have unescaped ${...} that could execute
+          const hasUnescapedInterpolation = code.match(/const fullCommand = `[^\\]\$\{/);
+          assertEquals(
+            hasUnescapedInterpolation,
+            null,
+            "Should not have unescaped template literal interpolation"
+          );
+        });
+
+        it("safely handles combined injection attempts", () => {
+          const maliciousCommand = 'cmd`; ${Deno.env.get("KEY")}; Deno.exit(0); `';
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: maliciousCommand,
+          }, false);
+
+          // Should escape all special characters
+          assertMatch(code, /\\`/);
+          assertMatch(code, /\\\$/);
+          // Should not have any executable interpolation
+          assertEquals(
+            code.includes('`; ${Deno.env'),
+            false,
+            "Should not have unescaped injection vector"
+          );
+        });
+
+        it("prevents code execution through nested template literals", () => {
+          const maliciousCommand = 'test`${`${Deno.exit(0)}`}`';
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: maliciousCommand,
+          }, false);
+
+          // All backticks should be escaped
+          assertMatch(code, /\\`/);
+          // All $ should be escaped
+          assertMatch(code, /\\\$/);
+          // Should not contain nested template literals
+          const nestedBackticks = code.match(/`[^\\]`[^\\]`/);
+          assertEquals(
+            nestedBackticks,
+            null,
+            "Should not have nested unescaped template literals"
+          );
+        });
+
+        it("handles shell command substitution attempts", () => {
+          const maliciousCommand = 'test$(rm -rf /) `whoami` ${USER}';
+          const code = generateInlineErrorHandler({
+            prefix: "Test Error",
+            includeCommand: true,
+            originalCommand: maliciousCommand,
+          }, false);
+
+          // Should escape all special characters
+          assertMatch(code, /\\\$/);
+          assertMatch(code, /\\`/);
+          // Command substitutions should be rendered harmless
+          assertEquals(
+            code.includes('\\$'),
+            true,
+            "Should escape dollar signs"
+          );
+          assertEquals(
+            code.includes('\\`'),
+            true,
+            "Should escape backticks"
+          );
+        });
+      });
     });
 
     describe("includeListeners parameter", () => {
