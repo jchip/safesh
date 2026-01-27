@@ -14,8 +14,8 @@ import {
   ERROR_COMMAND_NOT_FOUND,
   ERROR_COMMANDS_BLOCKED,
 } from "../core/constants.ts";
-import { getPendingFilePath } from "../core/temp.ts";
 import { isPathWithin } from "../core/path-utils.ts";
+import { readPendingCommand, writePendingCommand, type PendingCommand } from "../core/pending.ts";
 
 /**
  * Config interface injected by preamble for permission checking
@@ -227,28 +227,21 @@ export async function initCmds<T extends readonly string[]>(
       const scriptId = Deno.env.get("SAFESH_SCRIPT_ID");
       if (scriptId) {
         // Update or create pending command file with blocked commands
-        const pendingFile = getPendingFilePath(scriptId);
+        const existing = readPendingCommand(scriptId);
+        const pending: PendingCommand = existing
+          ? { ...existing, commands: notAllowed }
+          : {
+              id: scriptId,
+              scriptHash: Deno.env.get("SAFESH_SCRIPT_HASH") || "",
+              commands: notAllowed,
+              cwd: Deno.cwd(),
+              createdAt: new Date().toISOString(),
+            };
+
         try {
-          // Try to read existing file
-          const pendingContent = Deno.readTextFileSync(pendingFile);
-          const pending = JSON.parse(pendingContent);
-          pending.commands = notAllowed; // Update with actual blocked commands
-          Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
-        } catch (error) {
-          // File doesn't exist - create a new one
-          const scriptHash = Deno.env.get("SAFESH_SCRIPT_HASH") || "";
-          const pending = {
-            id: scriptId,
-            scriptHash: scriptHash,
-            commands: notAllowed,
-            cwd: Deno.cwd(),
-            createdAt: new Date().toISOString(),
-          };
-          try {
-            Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
-          } catch (writeError) {
-            console.error(`Warning: Could not create pending file: ${writeError}`);
-          }
+          writePendingCommand(pending);
+        } catch (writeError) {
+          console.error(`Warning: Could not create pending file: ${writeError}`);
         }
 
         // Output deny-with-retry message to stderr so user sees it
