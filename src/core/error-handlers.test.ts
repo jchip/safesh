@@ -263,7 +263,7 @@ describe("error-handlers", () => {
     it("generates JavaScript code as string", () => {
       const code = generateInlineErrorHandler({
         prefix: "Test Error",
-      });
+      }, false);
 
       assertEquals(typeof code, "string");
       assertMatch(code, /const __handleError = \(error\) => \{/);
@@ -272,7 +272,7 @@ describe("error-handlers", () => {
     it("includes path violation detection", () => {
       const code = generateInlineErrorHandler({
         prefix: "Test Error",
-      });
+      }, false);
 
       assertMatch(code, /PATH_VIOLATION/);
       assertMatch(code, /SYMLINK_VIOLATION/);
@@ -282,7 +282,7 @@ describe("error-handlers", () => {
     it("includes path extraction logic", () => {
       const code = generateInlineErrorHandler({
         prefix: "Test Error",
-      });
+      }, false);
 
       // Check for regex patterns in the generated code (as strings)
       assertEquals(code.includes("Requires (?:read|write) access to"), true);
@@ -292,7 +292,7 @@ describe("error-handlers", () => {
     it("includes permission prompt generation", () => {
       const code = generateInlineErrorHandler({
         prefix: "Test Error",
-      });
+      }, false);
 
       assertMatch(code, /PATH BLOCKED/);
       assertMatch(code, /Allow once/);
@@ -306,7 +306,7 @@ describe("error-handlers", () => {
         prefix: "Bash Command Error",
         includeCommand: true,
         originalCommand: "docker ps",
-      });
+      }, false);
 
       assertMatch(code, /const fullCommand/);
       assertMatch(code, /Command:/);
@@ -316,7 +316,7 @@ describe("error-handlers", () => {
       const code = generateInlineErrorHandler({
         prefix: "TypeScript Error",
         includeCommand: false,
-      });
+      }, false);
 
       assertEquals(code.includes("const fullCommand"), false);
     });
@@ -325,7 +325,7 @@ describe("error-handlers", () => {
       const code = generateInlineErrorHandler({
         prefix: "Test Error",
         errorLogPath: "/tmp/safesh/error.log",
-      });
+      }, false);
 
       assertMatch(code, /error\.log/);
     });
@@ -333,7 +333,7 @@ describe("error-handlers", () => {
     it("handles errors without stack traces", () => {
       const code = generateInlineErrorHandler({
         prefix: "Test Error",
-      });
+      }, false);
 
       assertMatch(code, /error\.stack \?/);
     });
@@ -341,7 +341,7 @@ describe("error-handlers", () => {
     it("includes correct prefix in separator", () => {
       const code = generateInlineErrorHandler({
         prefix: "Short",
-      });
+      }, false);
 
       // Separator should be "=" repeated (prefix.length + 8) times
       // "Short" = 5 chars, so 5 + 8 = 13 "=" characters
@@ -355,7 +355,7 @@ describe("error-handlers", () => {
           prefix: "Test Error",
           includeCommand: true,
           originalCommand: 'git commit -m "Fix bug with quotes"',
-        });
+        }, false);
 
         // Should define fullCommand in a template literal (backticks)
         assertMatch(code, /const fullCommand = `git commit -m "Fix bug with quotes"`/);
@@ -370,7 +370,7 @@ describe("error-handlers", () => {
           prefix: "Test Error",
           includeCommand: true,
           originalCommand: 'echo `date`',
-        });
+        }, false);
 
         // Should escape backticks
         assertMatch(code, /\\`/);
@@ -383,7 +383,7 @@ describe("error-handlers", () => {
           prefix: "Test Error",
           includeCommand: true,
           originalCommand: 'echo $HOME',
-        });
+        }, false);
 
         // Should escape dollar signs
         assertMatch(code, /\\\$/);
@@ -394,7 +394,7 @@ describe("error-handlers", () => {
           prefix: "Test Error",
           includeCommand: true,
           originalCommand: 'echo "Line 1\\nLine 2"',
-        });
+        }, false);
 
         // Should escape backslashes
         assertMatch(code, /\\\\/);
@@ -405,7 +405,7 @@ describe("error-handlers", () => {
           prefix: "Test Error",
           includeCommand: true,
           originalCommand: 'git commit -m "Fix `bug` with $VAR and \\"quotes\\""',
-        });
+        }, false);
 
         // Should contain the command text
         assertMatch(code, /git commit/);
@@ -420,7 +420,7 @@ describe("error-handlers", () => {
           prefix: "Test Error",
           includeCommand: true,
           originalCommand: 'malicious"; alert("xss")',
-        });
+        }, false);
 
         // Should define the command in a template literal (which safely contains quotes)
         assertMatch(code, /const fullCommand = `malicious"; alert\("xss"\)`/);
@@ -437,7 +437,7 @@ describe("error-handlers", () => {
           prefix: "Test Error",
           includeCommand: true,
           originalCommand: 'test command',
-        });
+        }, false);
 
         // Should define fullCommand from template literal with escaped command
         assertMatch(code, /const fullCommand = `test command`/);
@@ -450,7 +450,7 @@ describe("error-handlers", () => {
           prefix: "Test Error",
           includeCommand: true,
           originalCommand: '',
-        });
+        }, false);
 
         // Should still generate valid code
         assertMatch(code, /__handleError/);
@@ -460,10 +460,63 @@ describe("error-handlers", () => {
         const code = generateInlineErrorHandler({
           prefix: "Test Error",
           includeCommand: true,
-        });
+        }, false);
 
         // Should fall back to using __ORIGINAL_BASH_COMMAND__
         assertMatch(code, /__ORIGINAL_BASH_COMMAND__/);
+      });
+    });
+
+    describe("includeListeners parameter", () => {
+      it("includes event listeners when includeListeners is true (default)", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+        }); // Default is true
+
+        assertMatch(code, /globalThis\.addEventListener\("error"/);
+        assertMatch(code, /globalThis\.addEventListener\("unhandledrejection"/);
+        assertMatch(code, /__handleError\(event\.error\)/);
+        assertMatch(code, /__handleError\(event\.reason\)/);
+      });
+
+      it("includes event listeners when includeListeners is explicitly true", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+        }, true);
+
+        assertMatch(code, /globalThis\.addEventListener\("error"/);
+        assertMatch(code, /globalThis\.addEventListener\("unhandledrejection"/);
+      });
+
+      it("excludes event listeners when includeListeners is false", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+        }, false);
+
+        assertEquals(code.includes("globalThis.addEventListener"), false);
+        assertEquals(code.includes("event.error"), false);
+        assertEquals(code.includes("event.reason"), false);
+      });
+
+      it("listeners call event.preventDefault()", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+        }, true);
+
+        assertMatch(code, /event\.preventDefault\(\)/);
+      });
+
+      it("both listeners correctly pass errors to __handleError", () => {
+        const code = generateInlineErrorHandler({
+          prefix: "Test Error",
+        }, true);
+
+        // Should have both event listeners that call __handleError
+        const errorListener = code.match(/addEventListener\("error",.*?\{[^}]*__handleError\(event\.error\)/s);
+        const rejectionListener = code.match(/addEventListener\("unhandledrejection",.*?\{[^}]*__handleError\(event\.reason\)/s);
+
+        assertEquals(errorListener !== null, true, "Should have error listener");
+        assertEquals(rejectionListener !== null, true, "Should have unhandledrejection listener");
       });
     });
   });
