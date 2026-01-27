@@ -1228,18 +1228,6 @@ Object.defineProperty(Deno, "stdin", {
         errorLogPath: getErrorLogPath(),
         includeCommand: false,
       }) + `
-
-// Global error handlers for uncaught errors
-globalThis.addEventListener("error", (event) => {
-  event.preventDefault();
-  __handleError(event.error);
-});
-
-globalThis.addEventListener("unhandledrejection", (event) => {
-  event.preventDefault();
-  __handleError(event.reason);
-});
-
 ${combinedTsCode}
 `;
 
@@ -1262,18 +1250,6 @@ ${combinedTsCode}
         errorLogPath: getErrorLogPath(),
         includeCommand: false,
       }) + `
-
-// Global error handlers for uncaught errors
-globalThis.addEventListener("error", (event) => {
-  event.preventDefault();
-  __handleError(event.error);
-});
-
-globalThis.addEventListener("unhandledrejection", (event) => {
-  event.preventDefault();
-  __handleError(event.reason);
-});
-
 ${tsCode}
 `;
 
@@ -1410,18 +1386,6 @@ ${generateInlineErrorHandler({
         includeCommand: true,
         originalCommand: bashCommandEscaped,
       })}
-
-// Global error handlers for uncaught errors
-globalThis.addEventListener("error", (event) => {
-  event.preventDefault();
-  __handleError(event.error);
-});
-
-globalThis.addEventListener("unhandledrejection", (event) => {
-  event.preventDefault();
-  __handleError(event.reason);
-});
-
 ${tsCode}
 `;
 
