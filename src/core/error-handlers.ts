@@ -269,10 +269,12 @@ export function createErrorHandler(
  * Returns JavaScript code as a string that can be injected
  *
  * @param options - Options for the error handler
+ * @param includeListeners - Whether to include global error listeners (default: true)
  * @returns JavaScript code as string
  */
 export function generateInlineErrorHandler(
   options: ErrorHandlerOptions,
+  includeListeners = true,
 ): string {
   // Escape command for embedding in template literal
   const escapedCommand = options.originalCommand?.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
@@ -285,7 +287,7 @@ export function generateInlineErrorHandler(
     ? `    "Command: " + ${escapedCommand ? `\`${escapedCommand}\`` : "fullCommand"},\n`
     : "";
 
-  return `const __handleError = (error) => {
+  const handlerCode = `const __handleError = (error) => {
 ${includeCommandCheck}  const errorMessage = error.message || String(error);
   const errorCode = error.code || "";
 
@@ -381,4 +383,23 @@ ${commandInMessage}    \`\\nError: \${errorMessage}\`,
   console.error(errorMsg);
   Deno.exit(1);
 };`;
+
+  // Append global error listeners if requested
+  if (includeListeners) {
+    return handlerCode + `
+
+// Global error handlers for uncaught errors
+globalThis.addEventListener("error", (event) => {
+  event.preventDefault();
+  __handleError(event.error);
+});
+
+globalThis.addEventListener("unhandledrejection", (event) => {
+  event.preventDefault();
+  __handleError(event.reason);
+});
+`;
+  }
+
+  return handlerCode;
 }
