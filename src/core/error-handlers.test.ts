@@ -566,14 +566,15 @@ describe("error-handlers", () => {
 
           // Should escape backticks to prevent breaking out of template literal
           assertMatch(code, /\\`/);
-          // Should not contain unescaped backticks that could execute code
-          assertEquals(
-            code.includes('`; Deno.exit(0);'),
-            false,
-            "Should not have executable code injection"
-          );
-          // The escaped command should be safely contained
+          // The escaped command should be safely contained in template literal
           assertMatch(code, /const fullCommand = `test\\`; Deno\.exit\(0\); console\.log\(\\``/);
+          // Verify backticks are escaped (cannot break out of template literal)
+          const unescapedBacktickPattern = /const fullCommand = `[^\\]`/;
+          assertEquals(
+            unescapedBacktickPattern.test(code),
+            false,
+            "Should not have unescaped backticks that could break out of template literal"
+          );
         });
 
         it("safely escapes JavaScript code injection attempts", () => {
@@ -584,19 +585,26 @@ describe("error-handlers", () => {
             originalCommand: maliciousCommand,
           }, false);
 
-          // Should safely contain the injection attempt in template literal
-          assertMatch(code, /const fullCommand = `test"\); Deno\.exit\(0\); \(""`/);
-          // Should not allow breaking out of string context
+          // The malicious command is safely contained in a template literal
+          // Double quotes and parentheses don't need escaping in template literals
+          // They're just literal characters with no special meaning
           assertEquals(
-            code.includes('"); Deno.exit(0); ("'),
+            code.includes('const fullCommand = `test"); Deno.exit(0); ("`'),
             true,
-            "Should contain the literal text but not be executable"
+            "Should contain the command safely in a template literal"
           );
-          // Verify it's in a template literal, not double quotes
+          // Verify it's in a template literal (backticks), not double quotes
           assertEquals(
             code.includes('const fullCommand = "'),
             false,
             "Should not use double quotes which could be broken out of"
+          );
+          // The key security feature: using template literals instead of double quotes
+          // means the "); cannot close a string and execute code
+          assertEquals(
+            code.includes('const fullCommand = `'),
+            true,
+            "Should use template literal for safe containment"
           );
         });
 
