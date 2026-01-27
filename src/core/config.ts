@@ -22,6 +22,8 @@ import type {
 import { configError } from "./errors.ts";
 import { resolveWorkspace } from "./permissions.ts";
 import { DEFAULT_TIMEOUT_MS } from "./defaults.ts";
+import { findProjectRoot } from "./project-root.ts";
+import { mergeSessionPermissions } from "./session.ts";
 
 // ============================================================================
 // Helper Functions
@@ -813,6 +815,54 @@ export async function loadConfig(
   }
 
   return config;
+}
+
+/**
+ * Options for loadSessionConfig
+ */
+export interface LoadSessionConfigOptions {
+  /** Override project directory (defaults to findProjectRoot(cwd)) */
+  projectDir?: string;
+  /** Whether to log config validation warnings (default: false) */
+  logWarnings?: boolean;
+  /** Additional options to merge into the config */
+  mergeOptions?: Partial<SafeShellConfig>;
+}
+
+/**
+ * Load session configuration with common pattern
+ *
+ * Consolidates the common pattern of:
+ * - Finding project root
+ * - Loading configuration
+ * - Merging configs
+ * - Merging session permissions
+ *
+ * This helper eliminates ~20 lines of duplicate code across desh.ts
+ *
+ * @param cwd - Current working directory
+ * @param options - Configuration options
+ * @returns Object containing the merged config and projectDir
+ *
+ * @example
+ * ```ts
+ * const { config, projectDir } = await loadSessionConfig(Deno.cwd());
+ * ```
+ */
+export async function loadSessionConfig(
+  cwd: string,
+  options: LoadSessionConfigOptions = {},
+): Promise<{ config: SafeShellConfig; projectDir: string }> {
+  const projectDir = options.projectDir ?? findProjectRoot(cwd);
+  const baseConfig = await loadConfig(cwd, {
+    logWarnings: options.logWarnings ?? false,
+  });
+  let config = mergeConfigs(baseConfig, {
+    projectDir,
+    ...options.mergeOptions,
+  });
+  mergeSessionPermissions(config, projectDir);
+  return { config, projectDir };
 }
 
 /**
