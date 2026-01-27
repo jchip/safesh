@@ -10,7 +10,7 @@
 import { createStream, type Stream, type Transform } from "./stream.ts";
 import { FluentStream } from "./fluent-stream.ts";
 import { writeStdin } from "./io.ts";
-import { collectStreamBytes } from "../core/utils.ts";
+import { collectStreamBytes, collectStreamBytesWithTimeout } from "../core/utils.ts";
 import { CMD_NAME_SYMBOL, type CommandFn } from "./command-init.ts";
 import { lines } from "./transforms.ts";
 import {
@@ -460,22 +460,36 @@ export class Command implements PromiseLike<CommandResult> {
     }
 
     try {
-      // Write stdin, read outputs, and wait for status concurrently
-      const promises: Promise<unknown>[] = [
-        collectStreamBytes(process.stdout),
-        collectStreamBytes(process.stderr),
-        process.status,
-      ];
-      const stdinPromise = this.setupStdin(process, stdinData);
-      if (stdinPromise) {
-        promises.push(stdinPromise);
-      }
+      // SSH-429: Wait for process to exit first, then collect streams with timeout
+      // This prevents hanging when child processes spawn daemons that inherit stdio
 
-      const [stdoutBytes, stderrBytes, status] = (await Promise.all(promises)) as [
-        Uint8Array,
-        Uint8Array,
-        Deno.CommandStatus,
-      ];
+      // Write stdin and wait for process to exit concurrently
+      const stdinPromise = this.setupStdin(process, stdinData);
+      const statusPromise = process.status;
+
+      // Wait for process to exit (and stdin to finish if applicable)
+      const status = stdinPromise
+        ? (await Promise.all([statusPromise, stdinPromise]))[0]
+        : await statusPromise;
+
+      // After process exits, give streams a grace period to flush
+      // If a daemon inherited the streams, they won't close - so we timeout
+      const STREAM_FLUSH_TIMEOUT_MS = 1000; // 1 second
+      const abortController = new AbortController();
+
+      // Set timeout to abort stream collection if streams don't close
+      const streamTimeoutId = setTimeout(() => {
+        abortController.abort();
+      }, STREAM_FLUSH_TIMEOUT_MS);
+
+      // Collect streams with timeout support
+      const [stdoutBytes, stderrBytes] = await Promise.all([
+        collectStreamBytesWithTimeout(process.stdout, abortController.signal),
+        collectStreamBytesWithTimeout(process.stderr, abortController.signal),
+      ]);
+
+      // Clear stream timeout
+      clearTimeout(streamTimeoutId);
 
       // Clear timeout if command completed normally
       if (timeoutId !== undefined) {
