@@ -15,7 +15,7 @@
  */
 
 import { parseArgs } from "@std/cli/parse-args";
-import { loadConfig, mergeConfigs, validateConfig } from "../core/config.ts";
+import { loadConfig, loadSessionConfig, mergeConfigs, validateConfig } from "../core/config.ts";
 import { executeCode, executeFile, executeCodeStreaming } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
@@ -65,9 +65,8 @@ async function handleRetry(args: string[]): Promise<void> {
     Deno.exit(1);
   }
 
-  // Get cwd and projectDir early (needed for session file)
+  // Get cwd early (needed for session file)
   const cwd = pending.cwd;
-  const projectDir = findProjectRoot(cwd);
 
   // Choice 4 = Deny - cleanup and exit
   if (choice === 4) {
@@ -81,18 +80,14 @@ async function handleRetry(args: string[]): Promise<void> {
     await addCommandsToConfig(pending.commands, pending.cwd);
   }
 
+  // Load config and merge session permissions
+  const { config, projectDir } = await loadSessionConfig(cwd);
+
   // Choice 3 = Session allow - update session file
   if (choice === 3) {
     await addSessionCommands(pending.commands, projectDir);
     console.error(`[safesh] Added to session-allow: ${pending.commands.join(", ")}`);
   }
-
-  // Load config and merge approved commands
-  const baseConfig = await loadConfig(cwd, { logWarnings: false });
-  const config = mergeConfigs(baseConfig, { projectDir });
-
-  // Load and merge session permissions
-  mergeSessionPermissions(config, projectDir);
 
   // Add pending commands to permissions
   config.permissions = config.permissions ?? {};
@@ -177,7 +172,6 @@ async function handleRetryPath(args: string[]): Promise<void> {
   }
 
   const cwd = pending.cwd;
-  const projectDir = findProjectRoot(cwd);
 
   // Handle deny
   if (choice === "deny" || choice === "4") {
@@ -217,6 +211,9 @@ async function handleRetryPath(args: string[]): Promise<void> {
     writePaths.push(permissionPath);
   }
 
+  // Load config and merge session permissions
+  const { config, projectDir } = await loadSessionConfig(cwd);
+
   // Apply permissions based on scope
   if (scope === 3) {
     // Always allow - update config.local.json
@@ -230,13 +227,6 @@ async function handleRetryPath(args: string[]): Promise<void> {
     console.error(`[safesh] Added to session-allow paths: ${msg.join("; ")}`);
   }
   // scope === 1: allow once - just add to runtime config, no persistence
-
-  // Load config and add paths
-  const baseConfig = await loadConfig(cwd, { logWarnings: false });
-  const config = mergeConfigs(baseConfig, { projectDir });
-
-  // Load and merge session permissions
-  mergeSessionPermissions(config, projectDir);
 
   config.permissions = config.permissions ?? {};
   if (readPaths.length > 0) {
@@ -376,26 +366,32 @@ async function main() {
   const verbose = args.verbose as boolean;
   const quiet = args.quiet as boolean;
   const configPath = args.config as string | undefined;
-  // Project dir: explicit flag > findProjectRoot (checks env + markers)
-  const projectDir = (args.project as string | undefined)
-    ?? findProjectRoot(cwd);
   // Default to streaming if stdout is a TTY, unless explicitly set
   const stream = args.stream !== undefined ? args.stream as boolean : Deno.stdout.isTerminal();
 
   // Load config with projectDir
   let config;
+  let projectDir: string;
   try {
     if (configPath) {
+      // Custom config path - load manually and merge with project root
       const module = await import(`file://${cwd}/${configPath}`);
       const baseConfig = module.default;
+      // Project dir: explicit flag > findProjectRoot (checks env + markers)
+      projectDir = (args.project as string | undefined) ?? findProjectRoot(cwd);
       // Merge projectDir into loaded config
       config = mergeConfigs(baseConfig, { projectDir });
+      mergeSessionPermissions(config, projectDir);
       if (verbose) console.error(`Config loaded from ${configPath}`);
     } else {
-      // Load base config without logging warnings (we'll validate after merge)
-      const baseConfig = await loadConfig(cwd, { logWarnings: false });
-      // Merge projectDir override
-      config = mergeConfigs(baseConfig, { projectDir });
+      // Standard config loading - use helper
+      // Project dir: explicit flag > findProjectRoot (checks env + markers)
+      const explicitProjectDir = args.project as string | undefined;
+      const result = await loadSessionConfig(cwd, {
+        projectDir: explicitProjectDir,
+      });
+      config = result.config;
+      projectDir = result.projectDir;
       if (verbose) console.error("Config loaded successfully");
     }
 
@@ -414,9 +410,6 @@ async function main() {
         validation.warnings.forEach((w) => console.error(`   ${w}`));
       }
     }
-
-    // Merge session permissions (commands and paths)
-    mergeSessionPermissions(config, projectDir);
   } catch (error) {
     if (error instanceof SafeShellError) {
       console.error(`Config error: ${error.message}`);
