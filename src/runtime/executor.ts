@@ -9,7 +9,7 @@ import { ensureDir } from "@std/fs";
 import { deadline } from "@std/async";
 import { executionError, timeout as timeoutError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
-import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job } from "../core/types.ts";
+import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job, ImportPolicy } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
 import { hashCode, buildEnv, collectStreamText, cleanupProcess, getRealPathBoth } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
@@ -649,33 +649,68 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   return flags;
 }
 
+/** Context for execution preparation */
+interface ExecutionContext {
+  cwd: string;
+  timeoutMs: number;
+  importPolicy: ImportPolicy;
+}
+
 /**
- * Execute JS/TS code in a sandboxed Deno subprocess
- *
- * When an explicit shell is provided, automatically creates a script record
- * for tracking execution history.
+ * Phase 1: Prepare execution context
+ * Resolves CWD, timeout, and validates imports
  */
-export async function executeCode(
+function prepareExecutionContext(
   code: string,
   config: SafeShellConfig,
-  options: ExecOptions = {},
+  options: ExecOptions,
   shell?: Shell,
-): Promise<ExecResult> {
+): ExecutionContext {
   const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
   const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT_MS;
+  const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
 
   // Validate imports against security policy
-  const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
   validateImports(code, importPolicy);
 
-  // Create script for tracking if shell provided
-  let script: Script | undefined;
-  if (shell) {
-    script = createScript(shell, code, false, 0);
-    shell.scripts.set(script.id, script);
-    shell.lastActivityAt = new Date();
+  return { cwd, timeoutMs, importPolicy };
+}
+
+/**
+ * Phase 2: Create execution script
+ * Creates and registers script record for tracking if shell is provided
+ */
+function createExecutionScript(
+  code: string,
+  shell: Shell | undefined,
+): Script | undefined {
+  if (!shell) {
+    return undefined;
   }
 
+  const script = createScript(shell, code, false, 0);
+  shell.scripts.set(script.id, script);
+  shell.lastActivityAt = new Date();
+
+  return script;
+}
+
+/** Result of script file generation */
+interface ScriptFileInfo {
+  scriptPath: string;
+  preambleLineCount: number;
+}
+
+/**
+ * Phase 3: Generate script file
+ * Creates temp script file with preamble, user code, and error handler
+ */
+async function generateScriptFile(
+  code: string,
+  config: SafeShellConfig,
+  cwd: string,
+  shell: Shell | undefined,
+): Promise<ScriptFileInfo> {
   // Ensure temp directory exists
   await ensureDir(TEMP_SCRIPT_DIR);
 
@@ -694,6 +729,25 @@ export async function executeCode(
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
 
+  return { scriptPath, preambleLineCount };
+}
+
+/** Deno command configuration */
+interface DenoCommandConfig {
+  args: string[];
+  importMapPath: string;
+}
+
+/**
+ * Phase 4: Build Deno command
+ * Generates import map, permission flags, and command arguments
+ */
+async function buildDenoCommand(
+  scriptPath: string,
+  config: SafeShellConfig,
+  cwd: string,
+  importPolicy: ImportPolicy,
+): Promise<DenoCommandConfig> {
   // Generate import map and build command args
   const importMapPath = await generateImportMap(importPolicy);
   const permFlags = buildPermissionFlags(config, cwd);
@@ -710,16 +764,30 @@ export async function executeCode(
     denoFlags: config.denoFlags,
   });
 
-  // Spawn and collect output with callbacks for script tracking
-  const { status, stdout: rawStdout, stderr: rawStderr } = await spawnAndCollectOutput({
+  return { args, importMapPath };
+}
+
+/**
+ * Phase 5: Execute with tracking
+ * Spawns subprocess with real-time job event processing and script tracking
+ */
+async function executeWithTracking(
+  args: string[],
+  cwd: string,
+  config: SafeShellConfig,
+  timeoutMs: number,
+  shell: Shell | undefined,
+  script: Script | undefined,
+): Promise<SubprocessOutput> {
+  return await spawnAndCollectOutput({
     args,
     cwd,
     env: buildEnv(config, shell, script?.id),
     timeoutMs,
     onSpawn: (pid) => {
-      if (script) {
+      if (script && shell) {
         script.pid = pid;
-        shell!.scriptsByPid.set(pid, script.id);
+        shell.scriptsByPid.set(pid, script.id);
       }
     },
     onStderrLine: (line) => {
@@ -737,13 +805,25 @@ export async function executeCode(
       if (script) updateScriptFailure(script);
     },
   });
+}
 
+/**
+ * Phase 6: Process execution result
+ * Extracts state, events, enhances errors, and assembles final result
+ */
+function processExecutionResult(
+  output: SubprocessOutput,
+  config: SafeShellConfig,
+  cwd: string,
+  shell: Shell | undefined,
+  script: Script | undefined,
+): ExecResult {
   // Extract shell state from stdout and sync back
-  const { cleanOutput: stdout, ...extractedState } = extractShellState(rawStdout);
+  const { cleanOutput: stdout, ...extractedState } = extractShellState(output.stdout);
   syncShellState(shell, extractedState);
 
   // Extract job events and command errors from stderr
-  const { cleanStderr, jobEvents, cmdErrors, initErrors, netErrors } = extractStderrEvents(rawStderr);
+  const { cleanStderr, jobEvents, cmdErrors, initErrors, netErrors } = extractStderrEvents(output.stderr);
   if (shell && script && jobEvents.length > 0) {
     processJobEvents(shell, script, jobEvents);
   }
@@ -752,24 +832,59 @@ export async function executeCode(
   const stderr = enhancePermissionErrors(cleanStderr, cwd, config);
 
   // Extract blocked command info
-  const { blockedCommand, blockedCommands, notFoundCommands, blockedHost } = extractBlockedCommands(cmdErrors, initErrors, netErrors);
+  const { blockedCommand, blockedCommands, notFoundCommands, blockedHost } = extractBlockedCommands(
+    cmdErrors,
+    initErrors,
+    netErrors,
+  );
 
   // Update script with results
   if (script) {
-    updateScriptSuccess(script, status, stdout, stderr);
+    updateScriptSuccess(script, output.status, stdout, stderr);
   }
 
   return {
     stdout,
     stderr,
-    code: status.code,
-    success: status.code === 0,
+    code: output.status.code,
+    success: output.status.code === 0,
     scriptId: script?.id,
     blockedCommand,
     blockedCommands,
     notFoundCommands,
     blockedHost,
   };
+}
+
+/**
+ * Execute JS/TS code in a sandboxed Deno subprocess
+ *
+ * When an explicit shell is provided, automatically creates a script record
+ * for tracking execution history.
+ */
+export async function executeCode(
+  code: string,
+  config: SafeShellConfig,
+  options: ExecOptions = {},
+  shell?: Shell,
+): Promise<ExecResult> {
+  // Phase 1: Prepare execution context (validate, resolve options)
+  const { cwd, timeoutMs, importPolicy } = prepareExecutionContext(code, config, options, shell);
+
+  // Phase 2: Create script record for tracking
+  const script = createExecutionScript(code, shell);
+
+  // Phase 3: Generate script file with preamble and error handler
+  const { scriptPath } = await generateScriptFile(code, config, cwd, shell);
+
+  // Phase 4: Build Deno command with permissions and imports
+  const { args } = await buildDenoCommand(scriptPath, config, cwd, importPolicy);
+
+  // Phase 5: Execute subprocess with real-time tracking
+  const output = await executeWithTracking(args, cwd, config, timeoutMs, shell, script);
+
+  // Phase 6: Process result, extract events, enhance errors
+  return processExecutionResult(output, config, cwd, shell, script);
 }
 
 
