@@ -11,6 +11,7 @@ import { expandGlob } from "@std/fs/expand-glob";
 import type { OptionsMap, ParsedOptions } from "./types.ts";
 import type { SandboxOptions } from "../fs.ts";
 import type { SafeShellConfig } from "../../core/types.ts";
+import { getRealPathAsync } from "../../core/utils.ts";
 
 /**
  * Parse Unix-style command options
@@ -224,11 +225,7 @@ export async function checkPath(path: string): Promise<boolean> {
  * Get real path, handling symlinks
  */
 export async function realPath(path: string): Promise<string> {
-  try {
-    return await Deno.realPath(path);
-  } catch {
-    return path;
-  }
+  return await getRealPathAsync(path);
 }
 
 /**

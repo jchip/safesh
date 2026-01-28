@@ -12,6 +12,7 @@
 
 import { join, dirname } from "@std/path";
 import { ensureDir } from "@std/fs";
+import { getRealPath } from "../core/utils.ts";
 
 /**
  * Persisted shell metadata
@@ -377,7 +378,7 @@ const instances = new Map<string, StatePersistence>();
  * Get or create a StatePersistence instance for a project
  */
 export function getStatePersistence(projectDir: string): StatePersistence {
-  const normalized = Deno.realPathSync(projectDir);
+  const normalized = getRealPath(projectDir);
   let instance = instances.get(normalized);
   if (!instance) {
     instance = new StatePersistence(normalized);
