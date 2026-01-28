@@ -14,9 +14,9 @@ import {
   getSessionAllowedCommands,
 } from "../../src/core/session.ts";
 import { findProjectRoot } from "../../src/core/project-root.ts";
+import { REAL_TMP } from "../helpers.ts";
 
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-regression-test`;
+const testDir = `${REAL_TMP}/safesh-regression-test`;
 const projectDir = `${testDir}/project`;
 
 describe("SSH-378 session-allow regression", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -58,7 +58,7 @@ describe("SSH-378 session-allow regression", { sanitizeResources: false, sanitiz
     // Verify it's NOT in /tmp
     let tmpSessionExists = false;
     try {
-      Deno.statSync(`${realTmp}/safesh/session-regression-test-session.json`);
+      Deno.statSync(`${REAL_TMP}/safesh/session-regression-test-session.json`);
       tmpSessionExists = true;
     } catch {
       // Expected - file should not exist in /tmp
