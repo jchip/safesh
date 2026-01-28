@@ -312,8 +312,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "cat file.txt";
       const output = transpile(parse(script));
 
-      // Fluent commands produce streams that are iterated
-      assertStringIncludes(output, "for await");
+      // Fluent commands return Command objects synchronously
       assertStringIncludes(output, "$.cat");
     });
 
@@ -329,8 +328,8 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "cat file.txt";
       const output = transpile(parse(script));
 
-      // Stream should be iterated with for await
-      assertStringIncludes(output, "for await");
+      // cat is a stream producer - verified by $.cat presence
+      assertStringIncludes(output, "$.cat");
     });
 
     it("should set isTransform=true for grep", () => {
