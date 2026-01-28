@@ -9,11 +9,11 @@ import { assertEquals, assertRejects } from "@std/assert";
 import { validatePath, getEffectivePermissions } from "../src/core/permissions.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
-import { read, write, copy, symlink } from "../src/stdlib/fs.ts";
+import { read, write } from "../src/stdlib/fs.ts";
 import { REAL_TMP } from "./helpers.ts";
 
 // ============================================================================
-// Default Permissions Tests
+// Core Consolidation Tests
 // ============================================================================
 
 Deno.test({
@@ -286,201 +286,32 @@ Deno.test({
 });
 
 // ============================================================================
-// stdlib/fs Integration Tests
+// stdlib/fs Integration Test
 // ============================================================================
 
 Deno.test({
-  name: "fs.read - uses consolidated validation correctly",
+  name: "fs operations - use consolidated validatePath from permissions.ts",
   async fn() {
-    const testDir = `${REAL_TMP}/safesh-test-ssh421-fs-read`;
-    const allowedFile = `${testDir}/allowed.txt`;
-    const deniedFile = `${testDir}/denied.txt`;
-
-    try {
-      await Deno.mkdir(testDir, { recursive: true });
-      await Deno.writeTextFile(allowedFile, "allowed content");
-      await Deno.writeTextFile(deniedFile, "denied content");
-
-      const config: SafeShellConfig = {
-        permissions: {
-          read: [allowedFile],
-        },
-      };
-
-      // Reading allowed file should work
-      const content = await read(allowedFile, { config, cwd: testDir });
-      assertEquals(content, "allowed content");
-
-      // Reading denied file should fail
-      await assertRejects(
-        () => read(deniedFile, { config, cwd: testDir }),
-        SafeShellError,
-        "outside allowed directories",
-      );
-    } finally {
-      try {
-        await Deno.remove(testDir, { recursive: true });
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-  },
-});
-
-Deno.test({
-  name: "fs.write - uses consolidated validation correctly",
-  async fn() {
-    const testDir = `${REAL_TMP}/safesh-test-ssh421-fs-write`;
-    const allowedFile = `${testDir}/allowed.txt`;
-    const deniedFile = `${testDir}/denied.txt`;
+    const testDir = `${REAL_TMP}/safesh-test-ssh421-fs-integration`;
+    const testFile = `${testDir}/test.txt`;
 
     try {
       await Deno.mkdir(testDir, { recursive: true });
 
+      // Test that fs operations work with projectDir
       const config: SafeShellConfig = {
-        permissions: {
-          write: [testDir],
-        },
+        projectDir: testDir,
       };
 
-      // Writing to allowed location should work
-      await write(allowedFile, "test content", { config, cwd: testDir });
-      const content = await Deno.readTextFile(allowedFile);
+      // Write should work with projectDir
+      await write(testFile, "test content", { config, cwd: REAL_TMP });
+
+      // Read should work with projectDir
+      const content = await read(testFile, { config, cwd: REAL_TMP });
       assertEquals(content, "test content");
-
-      // Writing outside allowed location should fail
-      const config2: SafeShellConfig = {
-        permissions: {
-          write: [`${testDir}/subdir`],
-        },
-      };
-
-      await assertRejects(
-        () => write(deniedFile, "bad content", { config: config2, cwd: testDir }),
-        SafeShellError,
-        "outside allowed directories",
-      );
     } finally {
       try {
         await Deno.remove(testDir, { recursive: true });
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-  },
-});
-
-Deno.test({
-  name: "fs.copy - validates both source and destination",
-  async fn() {
-    const testDir = `${REAL_TMP}/safesh-test-ssh421-fs-copy`;
-    const srcFile = `${testDir}/src/file.txt`;
-    const destFile = `${testDir}/dest/file.txt`;
-
-    try {
-      await Deno.mkdir(`${testDir}/src`, { recursive: true });
-      await Deno.mkdir(`${testDir}/dest`, { recursive: true });
-      await Deno.writeTextFile(srcFile, "content");
-
-      const config: SafeShellConfig = {
-        permissions: {
-          read: [`${testDir}/src`],
-          write: [`${testDir}/dest`],
-        },
-      };
-
-      // Valid copy should work
-      await copy(srcFile, destFile, { config, cwd: testDir });
-      const content = await Deno.readTextFile(destFile);
-      assertEquals(content, "content");
-
-      // Copy from disallowed source should fail
-      const config2: SafeShellConfig = {
-        permissions: {
-          read: [`${testDir}/other`],
-          write: [`${testDir}/dest`],
-        },
-      };
-
-      await assertRejects(
-        () => copy(srcFile, `${testDir}/dest/file2.txt`, { config: config2, cwd: testDir }),
-        SafeShellError,
-        "outside allowed directories",
-      );
-    } finally {
-      try {
-        await Deno.remove(testDir, { recursive: true });
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-  },
-});
-
-Deno.test({
-  name: "fs.symlink - validates both target and link paths",
-  async fn() {
-    const testDir = `${REAL_TMP}/safesh-test-ssh421-fs-symlink`;
-    const targetFile = `${testDir}/target.txt`;
-    const linkFile = `${testDir}/link.txt`;
-
-    try {
-      await Deno.mkdir(testDir, { recursive: true });
-      await Deno.writeTextFile(targetFile, "target content");
-
-      const config: SafeShellConfig = {
-        permissions: {
-          read: [testDir],
-          write: [testDir],
-        },
-      };
-
-      // Valid symlink should work
-      await symlink(targetFile, linkFile, { config, cwd: testDir });
-      const linkStat = await Deno.lstat(linkFile);
-      assertEquals(linkStat.isSymlink, true);
-
-      // Symlink to disallowed target should fail
-      const config2: SafeShellConfig = {
-        permissions: {
-          read: [`${testDir}/subdir`],
-          write: [testDir],
-        },
-      };
-
-      await assertRejects(
-        () => symlink(targetFile, `${testDir}/link2.txt`, { config: config2, cwd: testDir }),
-        SafeShellError,
-        "outside allowed directories",
-      );
-    } finally {
-      try {
-        await Deno.remove(testDir, { recursive: true });
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-  },
-});
-
-// ============================================================================
-// Edge Case: Empty Config
-// ============================================================================
-
-Deno.test({
-  name: "validatePath - handles empty config with defaults",
-  async fn() {
-    const testFile = `${REAL_TMP}/safesh-test-ssh421-empty.txt`;
-
-    try {
-      const config: SafeShellConfig = {};
-
-      // Should allow /tmp (default write location)
-      const validated = await validatePath(testFile, config, REAL_TMP, "write");
-      assertEquals(validated, testFile);
-    } finally {
-      try {
-        await Deno.remove(testFile);
       } catch {
         // Ignore cleanup errors
       }

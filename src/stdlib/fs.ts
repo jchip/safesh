@@ -80,24 +80,8 @@ async function ensureDirSafe(path: string): Promise<void> {
 }
 
 /**
- * Resolve path (expand ~ and variables, make absolute)
- * Deno will enforce permission checks via --allow-read/--allow-write flags
- */
-function resolvePath(
-  path: string,
-  options: SandboxOptions = {},
-): string {
-  const cwd = options.cwd ?? Deno.cwd();
-  const config = options.config ?? getDefaultConfig(cwd);
-
-  // Expand tilde and path variables before resolving
-  const expandedPath = expandPath(path, cwd, config.workspace);
-  return resolve(cwd, expandedPath);
-}
-
-/**
  * Resolve and validate path against sandbox
- * This async version properly validates paths against the sandbox configuration
+ * All path operations go through core/permissions.ts for consistent security checks
  */
 async function resolveAndValidatePath(
   path: string,
@@ -107,14 +91,8 @@ async function resolveAndValidatePath(
   const cwd = options.cwd ?? Deno.cwd();
   const config = options.config ?? getDefaultConfig(cwd);
 
-  // If config has explicit permissions, validate the path
-  if (config.permissions?.read || config.permissions?.write) {
-    return await validatePath(path, config, cwd, operation);
-  }
-
-  // Otherwise just resolve the path (no sandbox validation needed)
-  const expandedPath = expandPath(path, cwd, config.workspace);
-  return resolve(cwd, expandedPath);
+  // Always use validatePath from core/permissions.ts for consistent security
+  return await validatePath(path, config, cwd, operation);
 }
 
 /**
