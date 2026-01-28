@@ -331,7 +331,7 @@ ${includeCommandCheck}  const errorMessage = error.message || String(error);
     };
 
     try {
-      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+      writeJsonFileSync(pendingFile, pending);
     } catch (e) {
       console.error("Warning: Could not write pending path file:", e);
     }
