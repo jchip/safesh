@@ -6,12 +6,11 @@
 
 import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
-import { deadline } from "@std/async";
-import { executionError, timeout as timeoutError } from "../core/errors.ts";
+import { executionError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
 import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job, ImportPolicy } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
-import { hashCode, buildEnv, collectStreamText, cleanupProcess, getRealPathBoth } from "../core/utils.ts";
+import { hashCode, buildEnv, getRealPathBoth } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
@@ -34,6 +33,8 @@ import {
   ERROR_NETWORK_BLOCKED,
 } from "../core/constants.ts";
 import { DEFAULT_TIMEOUT_MS, TEMP_SCRIPT_DIR } from "../core/defaults.ts";
+import { SubprocessManager, buildDenoArgs } from "./subprocess-manager.ts";
+import type { SubprocessOutput } from "./subprocess-manager.ts";
 
 // NOTE: filterExistingCommands cache and function removed since we now always
 // use unrestricted --allow-run. No need to filter commands anymore.
@@ -269,163 +270,10 @@ function processJobEvents(shell: Shell, script: Script, events: JobEvent[]): voi
   }
 }
 
-/** Options for building Deno command arguments */
-interface DenoArgsOptions {
-  /** Permission flags to include */
-  permFlags: string[];
-  /** Import map path */
-  importMapPath: string;
-  /** Config file path (deno.json) */
-  configPath?: string;
-  /** Script path to execute */
-  scriptPath: string;
-  /** Additional Deno CLI flags */
-  denoFlags?: string[];
-}
+// NOTE: DenoArgsOptions and buildDenoArgs moved to subprocess-manager.ts
 
-/**
- * Build Deno run command arguments
- */
-function buildDenoArgs(options: DenoArgsOptions): string[] {
-  const { permFlags, importMapPath, configPath, scriptPath, denoFlags } = options;
-  const args = [
-    "run",
-    "--no-prompt", // Never prompt for permissions
-    `--import-map=${importMapPath}`,
-    ...(denoFlags ?? []),
-    ...permFlags,
-  ];
-
-  if (configPath) {
-    args.push(`--config=${configPath}`);
-  }
-
-  args.push(scriptPath);
-  return args;
-}
-
-/** Options for spawning subprocess */
-
-/**
- * Collect a readable stream into a string, scanning for lines in real-time
- */
-async function collectAndScanStreamText(
-  stream: ReadableStream<Uint8Array>,
-  onLine?: (line: string) => void
-): Promise<string> {
-  if (!onLine) {
-    return collectStreamText(stream);
-  }
-
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        const chunk = decoder.decode(value, { stream: true });
-        text += chunk;
-        buffer += chunk;
-        
-        let idx;
-        while ((idx = buffer.indexOf("\n")) !== -1) {
-           const line = buffer.slice(0, idx);
-           onLine(line);
-           buffer = buffer.slice(idx + 1);
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  
-  // Process remaining buffer if it contains data
-  if (buffer.length > 0) {
-      onLine(buffer);
-  }
-
-  return text;
-}
-
-interface SpawnOptions {
-  /** Deno command arguments */
-  args: string[];
-  /** Working directory */
-  cwd: string;
-  /** Environment variables */
-  env: Record<string, string>;
-  /** Timeout in milliseconds */
-  timeoutMs: number;
-  /** Optional callback invoked with PID immediately after spawn */
-  onSpawn?: (pid: number) => void;
-  /** Optional callback invoked on timeout (before throwing) */
-  onTimeout?: () => void;
-  /** Optional callback invoked on error (before throwing) */
-  onError?: () => void;
-  /** Optional callback for stderr lines (real-time) */
-  onStderrLine?: (line: string) => void;
-}
-
-/** Raw output from subprocess */
-interface SubprocessOutput {
-  /** Process exit status */
-  status: Deno.CommandStatus;
-  /** Raw stdout text */
-  stdout: string;
-  /** Raw stderr text */
-  stderr: string;
-  /** Process ID */
-  pid: number;
-}
-
-/**
- * Spawn Deno subprocess and collect output with timeout
- */
-async function spawnAndCollectOutput(options: SpawnOptions): Promise<SubprocessOutput> {
-  const { args, cwd, env, timeoutMs, onSpawn, onTimeout, onError, onStderrLine } = options;
-
-  const command = new Deno.Command("deno", {
-    args,
-    cwd,
-    env,
-    stdout: "piped",
-    stderr: "piped",
-  });
-
-  const process = command.spawn();
-
-  // Notify caller of PID immediately after spawn
-  onSpawn?.(process.pid);
-
-  try {
-    const outputPromise = (async () => {
-      const [status, stdout, stderr] = await Promise.all([
-        process.status,
-        collectStreamText(process.stdout),
-        collectAndScanStreamText(process.stderr, onStderrLine),
-      ]);
-      return { status, stdout, stderr, pid: process.pid };
-    })();
-
-    return await deadline(outputPromise, timeoutMs);
-  } catch (error) {
-    // Kill the process and cancel streams on timeout or error
-    await cleanupProcess(process);
-
-    if (error instanceof DOMException && error.name === "TimeoutError") {
-      onTimeout?.();
-      throw timeoutError(timeoutMs, "exec");
-    }
-    onError?.();
-    throw executionError(
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-}
+// NOTE: SpawnOptions, SubprocessOutput, collectAndScanStreamText, and
+// spawnAndCollectOutput moved to subprocess-manager.ts
 
 /**
  * Sync extracted shell state back to shell object
@@ -736,6 +584,7 @@ async function generateScriptFile(
 interface DenoCommandConfig {
   args: string[];
   importMapPath: string;
+  subprocessManager: SubprocessManager;
 }
 
 /**
@@ -756,7 +605,8 @@ async function buildDenoCommand(
   const safeshRoot = new URL("../../", import.meta.url).pathname;
   const safeshConfig = join(safeshRoot, "deno.json");
 
-  const args = buildDenoArgs({
+  const subprocessManager = new SubprocessManager();
+  const args = subprocessManager.buildDenoArgs({
     permFlags,
     importMapPath,
     configPath: safeshConfig, // Use SafeShell's config for @std imports
@@ -764,7 +614,7 @@ async function buildDenoCommand(
     denoFlags: config.denoFlags,
   });
 
-  return { args, importMapPath };
+  return { args, importMapPath, subprocessManager };
 }
 
 /**
@@ -772,6 +622,7 @@ async function buildDenoCommand(
  * Spawns subprocess with real-time job event processing and script tracking
  */
 async function executeWithTracking(
+  subprocessManager: SubprocessManager,
   args: string[],
   cwd: string,
   config: SafeShellConfig,
@@ -779,7 +630,7 @@ async function executeWithTracking(
   shell: Shell | undefined,
   script: Script | undefined,
 ): Promise<SubprocessOutput> {
-  return await spawnAndCollectOutput({
+  return await subprocessManager.spawnAndCollectOutput({
     args,
     cwd,
     env: buildEnv(config, shell, script?.id),
@@ -878,10 +729,10 @@ export async function executeCode(
   const { scriptPath } = await generateScriptFile(code, config, cwd, shell);
 
   // Phase 4: Build Deno command with permissions and imports
-  const { args } = await buildDenoCommand(scriptPath, config, cwd, importPolicy);
+  const { args, subprocessManager } = await buildDenoCommand(scriptPath, config, cwd, importPolicy);
 
   // Phase 5: Execute subprocess with real-time tracking
-  const output = await executeWithTracking(args, cwd, config, timeoutMs, shell, script);
+  const output = await executeWithTracking(subprocessManager, args, cwd, config, timeoutMs, shell, script);
 
   // Phase 6: Process result, extract events, enhance errors
   return processExecutionResult(output, config, cwd, shell, script);
@@ -960,7 +811,8 @@ export async function executeFile(
   const permFlags = buildPermissionFlags(config, cwd);
   const configPath = await findConfig(cwd);
 
-  const args = buildDenoArgs({
+  const subprocessManager = new SubprocessManager();
+  const args = subprocessManager.buildDenoArgs({
     permFlags,
     importMapPath,
     configPath,
@@ -977,7 +829,7 @@ export async function executeFile(
   }
 
   // Spawn and collect output
-  const { status, stdout: rawStdout, stderr: rawStderr } = await spawnAndCollectOutput({
+  const { status, stdout: rawStdout, stderr: rawStderr } = await subprocessManager.spawnAndCollectOutput({
     args,
     cwd,
     env,
