@@ -24,6 +24,7 @@ import { resolveWorkspace } from "./permissions.ts";
 import { DEFAULT_TIMEOUT_MS } from "./defaults.ts";
 import { findProjectRoot } from "./project-root.ts";
 import { mergeSessionPermissions } from "./session.ts";
+import { ensureDir, readJsonFile, writeJsonFile } from "./io-utils.ts";
 
 // ============================================================================
 // Helper Functions
@@ -505,8 +506,7 @@ async function loadJsonConfigFile(path: string): Promise<SafeShellConfig | null>
   }
 
   try {
-    const content = await Deno.readTextFile(path);
-    return JSON.parse(content) as SafeShellConfig;
+    return await readJsonFile<SafeShellConfig>(path);
   } catch (error) {
     throw configError(
       `Failed to load config from ${path}: ${
@@ -718,8 +718,7 @@ async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null>
   }
 
   try {
-    const content = await Deno.readTextFile(jsonPath);
-    return JSON.parse(content) as LocalJsonConfig;
+    return await readJsonFile<LocalJsonConfig>(jsonPath);
   } catch (error) {
     console.warn(
       `⚠️  Failed to load local JSON config from ${jsonPath}: ${
@@ -737,16 +736,6 @@ async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null>
  */
 export async function saveToLocalJson(cwd: string, commands: string[]): Promise<void> {
   const jsonPath = getLocalJsonConfigPath(cwd);
-  const configDir = getProjectConfigDir(cwd);
-
-  // Ensure .config/safesh directory exists
-  try {
-    await Deno.mkdir(configDir, { recursive: true });
-  } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) {
-      throw error;
-    }
-  }
 
   // Load existing and merge
   const existing = await loadLocalJsonConfig(cwd);
@@ -760,7 +749,7 @@ export async function saveToLocalJson(cwd: string, commands: string[]): Promise<
     allowedCommands: Array.from(allCommands).sort(),
   };
 
-  await Deno.writeTextFile(jsonPath, JSON.stringify(config, null, 2) + "\n");
+  await writeJsonFile(jsonPath, config);
 }
 
 /** Options for loading config */

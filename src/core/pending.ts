@@ -6,6 +6,7 @@
  */
 
 import { generateTempId, getPendingFilePath as getTempFilePath, getPendingPathFilePath as getTempPathFilePath } from "./temp.ts";
+import { readJsonFileSync } from "./io-utils.ts";
 
 /**
  * Pending command structure - created when a command is blocked
@@ -69,8 +70,7 @@ export function writePendingPath(pending: PendingPathRequest): void {
 export function readPendingCommand(id: string): PendingCommand | null {
   try {
     const filePath = getTempFilePath(id);
-    const content = Deno.readTextFileSync(filePath);
-    return JSON.parse(content) as PendingCommand;
+    return readJsonFileSync<PendingCommand>(filePath);
   } catch {
     return null;
   }
@@ -83,8 +83,7 @@ export function readPendingCommand(id: string): PendingCommand | null {
 export function readPendingPath(id: string): PendingPathRequest | null {
   try {
     const filePath = getTempPathFilePath(id);
-    const content = Deno.readTextFileSync(filePath);
-    return JSON.parse(content) as PendingPathRequest;
+    return readJsonFileSync<PendingPathRequest>(filePath);
   } catch {
     return null;
   }
