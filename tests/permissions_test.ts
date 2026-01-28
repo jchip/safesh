@@ -10,6 +10,7 @@ import {
 } from "../src/core/permissions.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
+import { REAL_TMP } from "./helpers.ts";
 
 const testConfig: SafeShellConfig = {
   permissions: {
@@ -132,8 +133,7 @@ Deno.test({
   name: "validatePath - allows symlink within sandbox",
   async fn() {
     // Use realPath of /tmp to handle macOS symlink (/tmp -> /private/tmp)
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-test-symlink2`;
+    const testDir = `${REAL_TMP}/safesh-test-symlink2`;
     const targetFile = `${testDir}/target.txt`;
     const symlinkPath = `${testDir}/link.txt`;
 

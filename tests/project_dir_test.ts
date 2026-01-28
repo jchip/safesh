@@ -13,6 +13,7 @@ import { loadConfigWithArgs, mergeConfigs, type McpInitArgs } from "../src/core/
 import { createRegistry } from "../src/external/registry.ts";
 import { validateCommand } from "../src/external/validator.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
+import { REAL_TMP } from "./helpers.ts";
 
 // ============================================================================
 // isWithinProjectDir Tests
@@ -80,8 +81,7 @@ Deno.test("isCommandWithinProjectDir - returns false for command outside project
 Deno.test({
   name: "validatePath - allows paths within projectDir automatically",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-project-test`;
+    const testDir = `${REAL_TMP}/safesh-project-test`;
     const projectDir = testDir;
     const filePath = `${testDir}/src/file.ts`;
 
@@ -117,9 +117,8 @@ Deno.test({
 Deno.test({
   name: "validatePath - rejects paths outside projectDir",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const projectDir = `${realTmp}/safesh-project-test`;
-    const outsidePath = `${realTmp}/other/file.ts`;
+    const projectDir = `${REAL_TMP}/safesh-project-test`;
+    const outsidePath = `${REAL_TMP}/other/file.ts`;
 
     try {
       await Deno.mkdir(projectDir, { recursive: true });
@@ -311,8 +310,7 @@ Deno.test("mergeConfigs - merges denoFlags with union strategy", () => {
 Deno.test({
   name: "validatePath - allows read but blocks write when blockProjectDirWrite=true",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-blockwrite-test`;
+    const testDir = `${REAL_TMP}/safesh-blockwrite-test`;
     const projectDir = testDir;
     const filePath = `${testDir}/src/file.ts`;
 
@@ -354,8 +352,7 @@ Deno.test({
 Deno.test({
   name: "validatePath - allows both read and write when blockProjectDirWrite=false",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-allowwrite-test`;
+    const testDir = `${REAL_TMP}/safesh-allowwrite-test`;
     const projectDir = testDir;
     const filePath = `${testDir}/src/file.ts`;
 
@@ -392,8 +389,7 @@ Deno.test({
 Deno.test({
   name: "validatePath - allows both read and write when blockProjectDirWrite is undefined (default)",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-defaultwrite-test`;
+    const testDir = `${REAL_TMP}/safesh-defaultwrite-test`;
     const projectDir = testDir;
     const filePath = `${testDir}/src/file.ts`;
 
@@ -541,8 +537,7 @@ import { assertStringIncludes, assertMatch } from "@std/assert";
 Deno.test({
   name: "executor - reads file within projectDir successfully",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const projectDir = `${realTmp}/safesh-exec-read-test`;
+    const projectDir = `${REAL_TMP}/safesh-exec-read-test`;
     const testFile = `${projectDir}/data/test.txt`;
     const testContent = "projectDir read content";
 
@@ -580,8 +575,7 @@ Deno.test({
 Deno.test({
   name: "executor - writes file within projectDir successfully",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const projectDir = `${realTmp}/safesh-exec-write-test`;
+    const projectDir = `${REAL_TMP}/safesh-exec-write-test`;
     const testFile = `${projectDir}/output/result.txt`;
     const testContent = "projectDir write content";
 
@@ -623,9 +617,8 @@ Deno.test({
 Deno.test({
   name: "executor - blocks read outside projectDir when explicitly denied",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const projectDir = `${realTmp}/safesh-exec-block-read-test`;
-    const outsideDir = `${realTmp}/safesh-outside-read-test`;
+    const projectDir = `${REAL_TMP}/safesh-exec-block-read-test`;
+    const outsideDir = `${REAL_TMP}/safesh-outside-read-test`;
     const outsideFile = `${outsideDir}/secret.txt`;
 
     try {
@@ -667,9 +660,8 @@ Deno.test({
 Deno.test({
   name: "executor - blocks write outside projectDir when explicitly denied",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const projectDir = `${realTmp}/safesh-exec-block-write-test`;
-    const outsideDir = `${realTmp}/safesh-outside-write-test`;
+    const projectDir = `${REAL_TMP}/safesh-exec-block-write-test`;
+    const outsideDir = `${REAL_TMP}/safesh-outside-write-test`;
     const outsideFile = `${outsideDir}/output.txt`;
 
     try {
@@ -710,8 +702,7 @@ Deno.test({
 Deno.test({
   name: "executor - blockProjectDirWrite blocks writes to projectDir",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const projectDir = `${realTmp}/safesh-exec-blocked-write-test`;
+    const projectDir = `${REAL_TMP}/safesh-exec-blocked-write-test`;
     const testFile = `${projectDir}/blocked.txt`;
 
     try {
@@ -750,8 +741,7 @@ Deno.test({
 Deno.test({
   name: "executor - blockProjectDirWrite allows reads from projectDir",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const projectDir = `${realTmp}/safesh-exec-readonly-test`;
+    const projectDir = `${REAL_TMP}/safesh-exec-readonly-test`;
     const testFile = `${projectDir}/readable.txt`;
     const testContent = "readonly content";
 
