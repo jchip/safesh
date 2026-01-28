@@ -22,7 +22,7 @@ export * as shelljs from "./shelljs/mod.ts";
 
 // Re-export fluent shell API (as content for $.content())
 export { default as _ } from "./shell.ts";
-export { FluentShell } from "./shell.ts";
+export { FluentShell, extendFluentShell } from "./shell.ts";
 
 // Re-export command execution
 export {
