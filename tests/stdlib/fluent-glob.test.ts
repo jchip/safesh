@@ -6,10 +6,9 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it, beforeEach, afterEach } from "@std/testing/bdd";
 import { glob, src, type File } from "../../src/stdlib/fs-streams.ts";
+import { REAL_TMP } from "../helpers.ts";
 
-// Resolve /tmp to real path
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-fluent-glob-test`;
+const testDir = `${REAL_TMP}/safesh-fluent-glob-test`;
 
 describe("fluent streams - glob and file processing (SSH-197)", () => {
   beforeEach(async () => {
