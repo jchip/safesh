@@ -88,6 +88,9 @@ export enum TokenType {
   SELECT = "SELECT",
   TIME = "TIME",
   COPROC = "COPROC",
+  RETURN = "RETURN",
+  BREAK = "BREAK",
+  CONTINUE = "CONTINUE",
 
   // Words and identifiers
   WORD = "WORD",
@@ -151,6 +154,9 @@ const RESERVED_WORDS: Record<string, TokenType> = {
   select: TokenType.SELECT,
   time: TokenType.TIME,
   coproc: TokenType.COPROC,
+  return: TokenType.RETURN,
+  break: TokenType.BREAK,
+  continue: TokenType.CONTINUE,
 };
 
 // =============================================================================

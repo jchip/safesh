@@ -388,3 +388,54 @@ export function visitArithmeticCommand(
   const expr = ctx.visitArithmetic(stmt.expression);
   return { lines: [`${indent}${expr};`] };
 }
+
+// =============================================================================
+// Loop Control Statements
+// =============================================================================
+
+export function visitReturnStatement(
+  stmt: AST.ReturnStatement,
+  ctx: VisitorContext,
+): StatementResult {
+  const indent = ctx.getIndent();
+  const value = stmt.value !== undefined
+    ? ctx.visitArithmetic(stmt.value)
+    : "0";
+  return { lines: [`${indent}return ${value};`] };
+}
+
+export function visitBreakStatement(
+  stmt: AST.BreakStatement,
+  ctx: VisitorContext,
+): StatementResult {
+  const indent = ctx.getIndent();
+  // In TypeScript/JavaScript, we just use 'break' without a count
+  // The count parameter is a bash feature for breaking out of nested loops
+  if (stmt.count && stmt.count > 1) {
+    // For break N where N > 1, we need a different approach
+    // For now, just generate a comment and a simple break
+    return { lines: [
+      `${indent}// bash 'break ${stmt.count}' - breaking ${stmt.count} levels`,
+      `${indent}break;`
+    ]};
+  }
+  return { lines: [`${indent}break;`] };
+}
+
+export function visitContinueStatement(
+  stmt: AST.ContinueStatement,
+  ctx: VisitorContext,
+): StatementResult {
+  const indent = ctx.getIndent();
+  // In TypeScript/JavaScript, we just use 'continue' without a count
+  // The count parameter is a bash feature for continuing nested loops
+  if (stmt.count && stmt.count > 1) {
+    // For continue N where N > 1, we need a different approach
+    // For now, just generate a comment and a simple continue
+    return { lines: [
+      `${indent}// bash 'continue ${stmt.count}' - continuing ${stmt.count} levels`,
+      `${indent}continue;`
+    ]};
+  }
+  return { lines: [`${indent}continue;`] };
+}

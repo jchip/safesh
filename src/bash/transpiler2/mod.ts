@@ -205,6 +205,12 @@ export class BashTranspiler2 {
         return handlers.visitTestCommand(stmt, ctx);
       case "ArithmeticCommand":
         return handlers.visitArithmeticCommand(stmt, ctx);
+      case "ReturnStatement":
+        return handlers.visitReturnStatement(stmt, ctx);
+      case "BreakStatement":
+        return handlers.visitBreakStatement(stmt, ctx);
+      case "ContinueStatement":
+        return handlers.visitContinueStatement(stmt, ctx);
       default: {
         const _exhaustive: never = stmt;
         throw new Error(`Unknown statement type: ${JSON.stringify(stmt)}`);
