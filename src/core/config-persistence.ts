@@ -5,7 +5,7 @@
  * Consolidates the addToConfigLocal and addPathsToConfigLocal patterns.
  */
 
-import { join } from "@std/path";
+import { getProjectConfigDir, getLocalJsonConfigPath } from "./config.ts";
 
 /**
  * Configuration update to be applied
@@ -61,8 +61,8 @@ export async function updateConfigLocal(
 ): Promise<void> {
   const { merge = true, silent = false } = options;
 
-  const configDir = join(projectDir, ".config", "safesh");
-  const configPath = join(configDir, "config.local.json");
+  const configDir = getProjectConfigDir(projectDir);
+  const configPath = getLocalJsonConfigPath(projectDir);
 
   // Ensure directory exists
   try {
