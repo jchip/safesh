@@ -5,11 +5,21 @@
  * Supports common grep options including regex, context lines,
  * and various output modes.
  *
+ * Architecture:
+ * - Core Transform Logic: Pure pattern matching and filtering functions
+ * - Stream Transforms: Composable transform functions for pipelines
+ * - Formatting: Output formatting utilities
+ * - Multi-file Support: Utilities for processing multiple sources
+ *
  * @module
  */
 
 import type { Transform } from "../stdlib/stream.ts";
 import { createStream, type Stream } from "../stdlib/stream.ts";
+
+// =============================================================================
+// Types and Interfaces
+// =============================================================================
 
 /**
  * Result of a grep match
@@ -88,10 +98,28 @@ export interface GrepOptions {
   filename?: string;
 }
 
+// =============================================================================
+// Core Pattern Matching Logic (Pure Functions)
+// =============================================================================
+
 /**
  * Build a RegExp from a pattern string and options
+ *
+ * This is a pure function that constructs a regex based on the pattern
+ * and various grep options like case-insensitivity, fixed strings, etc.
+ *
+ * @param pattern - String or RegExp pattern to match
+ * @param options - Grep options affecting regex construction
+ * @returns Compiled RegExp
+ *
+ * @example
+ * ```ts
+ * const regex1 = buildRegex("error", { ignoreCase: true });
+ * const regex2 = buildRegex("TODO", { wholeWord: true });
+ * const regex3 = buildRegex("*.txt", { fixedStrings: true }); // Literal match
+ * ```
  */
-function buildRegex(
+export function buildRegex(
   pattern: string | RegExp,
   options: GrepOptions = {},
 ): RegExp {
@@ -132,8 +160,24 @@ function buildRegex(
 
 /**
  * Test if a line matches the pattern
+ *
+ * Pure function that tests a single line against a regex.
+ * Handles inverted matching (-v flag).
+ *
+ * @param line - Line to test
+ * @param regex - Compiled regular expression
+ * @param invert - Whether to invert the match (select non-matching lines)
+ * @returns True if the line should be included in results
+ *
+ * @example
+ * ```ts
+ * const regex = /error/i;
+ * testLine("Error occurred", regex, false); // true
+ * testLine("Success", regex, false); // false
+ * testLine("Success", regex, true); // true (inverted)
+ * ```
  */
-function testLine(line: string, regex: RegExp, invert: boolean): boolean {
+export function testLine(line: string, regex: RegExp, invert: boolean): boolean {
   regex.lastIndex = 0;
   const matches = regex.test(line);
   return invert ? !matches : matches;
@@ -141,8 +185,21 @@ function testLine(line: string, regex: RegExp, invert: boolean): boolean {
 
 /**
  * Get all matches in a line
+ *
+ * Pure function that extracts all matching substrings from a line.
+ * Used for the -o (only-matching) flag.
+ *
+ * @param line - Line to search
+ * @param regex - Compiled regular expression
+ * @returns Array of matched strings
+ *
+ * @example
+ * ```ts
+ * const regex = /\d+/g;
+ * getMatches("Port 8080 and 9090", regex); // ["8080", "9090"]
+ * ```
  */
-function getMatches(line: string, regex: RegExp): string[] {
+export function getMatches(line: string, regex: RegExp): string[] {
   regex.lastIndex = 0;
   const matches: string[] = [];
   let match: RegExpExecArray | null;
@@ -158,11 +215,18 @@ function getMatches(line: string, regex: RegExp): string[] {
   return matches;
 }
 
+// =============================================================================
+// Core Grep Transform (Main Implementation)
+// =============================================================================
+
 /**
  * Core grep function that works with async iterables
  *
- * Processes lines from an async iterable and yields GrepMatch objects
- * for matching lines. Supports all common grep options.
+ * This is the main grep implementation. It processes lines from an async
+ * iterable and yields GrepMatch objects for matching lines. Supports all
+ * common grep options including context lines, counting, inversion, etc.
+ *
+ * This is a pure async generator - no side effects, fully composable.
  *
  * @param pattern - String or RegExp pattern to match
  * @param input - Async iterable of strings (lines)
@@ -352,10 +416,15 @@ export async function* grep(
   }
 }
 
+// =============================================================================
+// Stream Transform Functions
+// =============================================================================
+
 /**
  * Grep transform for use with safesh Stream API
  *
- * Returns a Transform function that can be used with stream.pipe()
+ * Returns a Transform function that can be used with stream.pipe().
+ * This wraps the core grep() function for easy integration with streams.
  *
  * @param pattern - String or RegExp pattern to match
  * @param options - Grep options
@@ -393,6 +462,7 @@ export function grepTransform(
  *
  * A simpler version that just filters lines, similar to the
  * existing grep() in transforms.ts but with more options.
+ * This is useful when you don't need the full GrepMatch metadata.
  *
  * @param pattern - String or RegExp pattern to match
  * @param options - Grep options (subset: ignoreCase, invertMatch, wholeWord, wholeLine, fixedStrings)
@@ -431,14 +501,26 @@ export function grepLines(
   };
 }
 
+// =============================================================================
+// Formatting Functions
+// =============================================================================
+
 /**
  * Format a GrepMatch for output
  *
  * Produces output similar to GNU grep format.
+ * Handles filename prefixes, line numbers, and context line markers.
  *
  * @param match - The GrepMatch to format
  * @param options - Formatting options
  * @returns Formatted string
+ *
+ * @example
+ * ```ts
+ * const match = { line: "error found", lineNumber: 42, filename: "app.ts" };
+ * formatGrepMatch(match, { showLineNumbers: true, showFilename: true });
+ * // => "app.ts:42:error found"
+ * ```
  */
 export function formatGrepMatch(
   match: GrepMatch,
@@ -478,6 +560,7 @@ export function formatGrepMatch(
  * Format transform for grep output
  *
  * Transforms GrepMatch objects into formatted strings.
+ * This is useful for converting grep results to printable output.
  *
  * @param options - Formatting options
  * @returns Transform function
@@ -503,6 +586,10 @@ export function grepFormat(
     }
   };
 }
+
+// =============================================================================
+// Convenience Functions
+// =============================================================================
 
 /**
  * Create a Stream from grep results
