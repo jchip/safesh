@@ -85,6 +85,20 @@ safesh/
 
 SafeShell has comprehensive utility modules from DRY refactoring efforts:
 
+### Recent Refactorings (January 2026)
+
+| Ticket | Module | Purpose | Status |
+|--------|--------|---------|--------|
+| SSH-421 | `core/path-utils.ts` | Consolidate path validation logic | ✅ Complete |
+| SSH-420 | `commands/grep.ts` | Refactor Grep implementation | ✅ Complete |
+| SSH-419 | `core/arg-parser.ts` | Centralize command argument parsing | ✅ Complete |
+| SSH-418 | `runtime/subprocess-manager.ts` | Extract subprocess management | ✅ Complete |
+| SSH-417 | `stdlib/shell.ts` | FluentShell extensibility | ✅ Complete |
+| SSH-435 | `runtime/executor.ts` | Decompose executeCode() | ✅ Complete |
+| SSH-436 | `transpiler2/handlers/commands.ts` | Decompose buildCommand() | ✅ Complete |
+| SSH-439 | `transpiler2/handlers/commands.ts` | Refactor PipelineAssembler | ✅ Complete |
+| SSH-448 | `tests/` | Migrate tests to test-helpers | ✅ Complete |
+
 ### Phase 4: Core Utilities (SSH-400)
 **Status:** ✅ Complete (2026-01-27/28)
 
