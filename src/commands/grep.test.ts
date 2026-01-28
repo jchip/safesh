@@ -96,10 +96,13 @@ Deno.test("buildRegex() - handles whole line matching", () => {
   assertEquals(regex.test("not exact"), false);
 });
 
-Deno.test("buildRegex() - preserves existing RegExp", () => {
+Deno.test("buildRegex() - adds global flag to existing RegExp", () => {
   const original = /test/i;
   const result = buildRegex(original);
-  assertEquals(result, original);
+  // Should add global flag for getMatches()
+  assertEquals(result.source, original.source);
+  assertEquals(result.flags.includes("i"), true);
+  assertEquals(result.flags.includes("g"), true);
 });
 
 Deno.test("buildRegex() - adds case insensitive flag to existing RegExp", () => {

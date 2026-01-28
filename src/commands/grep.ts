@@ -125,10 +125,23 @@ export function buildRegex(
 ): RegExp {
   // If already a RegExp, handle appropriately
   if (pattern instanceof RegExp) {
-    // Apply case insensitive if needed
-    if (options.ignoreCase && !pattern.flags.includes("i")) {
-      return new RegExp(pattern.source, pattern.flags + "i");
+    let flags = pattern.flags;
+
+    // Ensure global flag for getMatches()
+    if (!flags.includes("g")) {
+      flags += "g";
     }
+
+    // Apply case insensitive if needed
+    if (options.ignoreCase && !flags.includes("i")) {
+      flags += "i";
+    }
+
+    // Return new regex if flags changed
+    if (flags !== pattern.flags) {
+      return new RegExp(pattern.source, flags);
+    }
+
     return pattern;
   }
 
@@ -136,7 +149,7 @@ export function buildRegex(
 
   // Handle fixed strings mode - escape all regex special chars
   if (options.fixedStrings) {
-    regexPattern = pattern.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+    regexPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   // Handle whole word matching
