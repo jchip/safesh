@@ -21,6 +21,9 @@ import {
   getBinaryTestOperator,
   getRedirectionOperator,
 } from "./operators.ts";
+import { Shell, getCapabilities, getDefaultShell, type ShellCapabilities } from "./shell-dialect.ts";
+import { IdGenerator, type TokenId } from "./token-id.ts";
+import { PositionMap } from "./position-map.ts";
 
 // =============================================================================
 // Parser Context (for better error messages)
@@ -50,8 +53,23 @@ export class Parser {
   private recoveryMode = false;
   private pendingHeredocs: AST.Redirection[] = [];
 
-  constructor(input: string) {
+  // Shell dialect support
+  private readonly shell: Shell;
+  private readonly capabilities: ShellCapabilities;
+
+  // Token tracking
+  private readonly idGen: IdGenerator;
+  private readonly positionMap: PositionMap;
+
+  constructor(input: string, shell?: Shell) {
     this.lexer = new Lexer(input);
+    this.shell = shell ?? getDefaultShell();
+    this.capabilities = getCapabilities(this.shell);
+
+    // Initialize ID generation and position tracking
+    this.idGen = new IdGenerator();
+    this.positionMap = new PositionMap();
+
     const first = this.lexer.next();
     const second = this.lexer.next();
 
@@ -59,9 +77,53 @@ export class Parser {
     this.peekToken = second ?? this.makeEOF();
   }
 
+  /** Get the target shell dialect. */
+  getShell(): Shell {
+    return this.shell;
+  }
+
+  /** Get capabilities of the target shell. */
+  getCapabilities(): ShellCapabilities {
+    return this.capabilities;
+  }
+
+  /** Check if the target shell has a specific capability. */
+  hasCapability(cap: keyof ShellCapabilities): boolean {
+    return this.capabilities[cap];
+  }
+
+  /** Get the position map (for external access). */
+  getPositionMap(): PositionMap {
+    return this.positionMap;
+  }
+
   // ===========================================================================
   // Token Management
   // ===========================================================================
+
+  /**
+   * Generate a new unique node ID.
+   */
+  private nextId(): TokenId {
+    return this.idGen.next();
+  }
+
+  /**
+   * Record a node's location in the position map.
+   */
+  private recordLocation(id: TokenId, loc: AST.SourceLocation): void {
+    this.positionMap.set(id, loc);
+  }
+
+  /**
+   * Create a source location from a token.
+   */
+  private tokenLoc(token: Token): AST.SourceLocation {
+    return {
+      start: { line: token.line, column: token.column, offset: token.start },
+      end: { line: token.line, column: token.column + token.value.length, offset: token.end },
+    };
+  }
 
   private makeEOF(): Token {
     return {
@@ -1426,8 +1488,14 @@ export class Parser {
       ? this.advance()
       : this.expect(TokenType.WORD);
 
+    const id = this.nextId();
+    const loc = this.tokenLoc(token);
+    this.recordLocation(id, loc);
+
     return {
       type: "Word",
+      id,
+      loc,
       value: token.value,
       quoted: token.quoted || false,
       singleQuoted: token.singleQuoted || false,
@@ -1849,8 +1917,8 @@ export class Parser {
 // Convenience Functions
 // =============================================================================
 
-export function parse(input: string): AST.Program {
-  const parser = new Parser(input);
+export function parse(input: string, shell?: Shell): AST.Program {
+  const parser = new Parser(input, shell);
   return parser.parse();
 }
 
@@ -1858,7 +1926,7 @@ export function parse(input: string): AST.Program {
  * Parse with error recovery - returns AST and diagnostics
  * Continues parsing after errors to collect multiple issues
  */
-export function parseWithRecovery(input: string): AST.ParseResult {
-  const parser = new Parser(input);
+export function parseWithRecovery(input: string, shell?: Shell): AST.ParseResult {
+  const parser = new Parser(input, shell);
   return parser.parseWithRecovery();
 }
