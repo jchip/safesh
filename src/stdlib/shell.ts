@@ -184,7 +184,7 @@ export class FluentShell {
    * $('log.txt').lines().head(10).print();
    * ```
    */
-  lines = createTransformMethod(transforms.lines);
+  lines: () => FluentShell = createTransformMethod(transforms.lines);
 
   /**
    * Filter lines matching a pattern
@@ -199,7 +199,7 @@ export class FluentShell {
    * $('app.log').lines().grep(/ERROR/).print();
    * ```
    */
-  grep = createTransformMethod(transforms.grep);
+  grep: (pattern: RegExp | string) => FluentShell = createTransformMethod(transforms.grep);
 
   /**
    * Take first n items
@@ -214,7 +214,7 @@ export class FluentShell {
    * $('data.txt').lines().head(5).print();
    * ```
    */
-  head = createTransformMethod(transforms.head);
+  head: (n?: number) => FluentShell = createTransformMethod(transforms.head);
 
   /**
    * Take last n items
@@ -231,7 +231,7 @@ export class FluentShell {
    * $('data.txt').lines().tail(5).print();
    * ```
    */
-  tail = createTransformMethod(transforms.tail);
+  tail: (n?: number) => FluentShell = createTransformMethod(transforms.tail);
 
   /**
    * Filter items using a predicate

@@ -46,7 +46,7 @@ export class SafeShellError extends Error {
     this.name = "SafeShellError";
   }
 
-  toJSON() {
+  toJSON(): { code: ErrorCode; message: string; details?: ErrorDetails; suggestion?: string } {
     return {
       code: this.code,
       message: this.message,

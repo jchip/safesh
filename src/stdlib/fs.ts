@@ -31,17 +31,17 @@ function str(value: unknown): string {
  * All functions accept ShellString or any string-like value
  */
 export const path = {
-  resolve: (...paths: unknown[]) => stdResolve(...(paths.map(str) as [string, ...string[]])),
-  dirname: (p: unknown) => stdDirname(str(p)),
-  basename: (p: unknown, suffix?: string) => stdBasename(str(p), suffix),
-  join: (...paths: unknown[]) => stdJoin(...(paths.map(str) as [string, ...string[]])),
-  extname: (p: unknown) => stdExtname(str(p)),
-  relative: (from: unknown, to: unknown) => stdRelative(str(from), str(to)),
-  normalize: (p: unknown) => stdNormalize(str(p)),
-  isAbsolute: (p: unknown) => stdIsAbsolute(str(p)),
-  parse: (p: unknown) => stdParse(str(p)),
+  resolve: (...paths: unknown[]): string => stdResolve(...(paths.map(str) as [string, ...string[]])),
+  dirname: (p: unknown): string => stdDirname(str(p)),
+  basename: (p: unknown, suffix?: string): string => stdBasename(str(p), suffix),
+  join: (...paths: unknown[]): string => stdJoin(...(paths.map(str) as [string, ...string[]])),
+  extname: (p: unknown): string => stdExtname(str(p)),
+  relative: (from: unknown, to: unknown): string => stdRelative(str(from), str(to)),
+  normalize: (p: unknown): string => stdNormalize(str(p)),
+  isAbsolute: (p: unknown): boolean => stdIsAbsolute(str(p)),
+  parse: (p: unknown): ReturnType<typeof stdParse> => stdParse(str(p)),
   format: stdFormat,
-  toFileUrl: (p: unknown) => stdToFileUrl(str(p)),
+  toFileUrl: (p: unknown): URL => stdToFileUrl(str(p)),
   fromFileUrl: stdFromFileUrl,
 };
 import { ensureDir as stdEnsureDir } from "@std/fs/ensure-dir";
