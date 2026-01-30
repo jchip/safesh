@@ -5,6 +5,8 @@
  * These nodes are produced by the parser and consumed by the transpiler.
  */
 
+import type { TokenId } from "./token-id.ts";
+
 // =============================================================================
 // Base Types
 // =============================================================================
@@ -17,6 +19,8 @@ export interface SourceLocation {
 export interface BaseNode {
   type: string;
   loc?: SourceLocation;
+  /** Unique identifier for this node (assigned during parsing) */
+  id?: TokenId;
 }
 
 // =============================================================================
