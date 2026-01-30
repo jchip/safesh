@@ -47,6 +47,28 @@ SafeShell is a security-first execution environment built on Deno that provides:
 
 - [Deno](https://deno.land/) 1.40 or later
 
+### Install as Library (JSR)
+
+Add SafeShell to your Deno project:
+
+```bash
+deno add @anthropic/safesh
+```
+
+Then import in your code:
+
+```typescript
+// Import core types and config
+import { defineConfig, type SafeShellConfig } from "@anthropic/safesh";
+
+// Import specific stdlib modules
+import * as fs from "@anthropic/safesh/fs";
+import * as text from "@anthropic/safesh/text";
+import * as glob from "@anthropic/safesh/glob";
+import $ from "@anthropic/safesh/shell";
+import { createStream } from "@anthropic/safesh/streams";
+```
+
 ### Install as MCP Server
 
 Add to your MCP settings (e.g., `~/.config/claude/mcp_config.json`):

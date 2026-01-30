@@ -15,10 +15,9 @@ import {
 } from "../src/stdlib/glob.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
+import { REAL_TMP } from "./helpers.ts";
 
-// Resolve /tmp to real path (on macOS, /tmp is a symlink to /private/tmp)
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-glob-test`;
+const testDir = `${REAL_TMP}/safesh-glob-test`;
 
 describe("glob", () => {
   beforeEach(async () => {

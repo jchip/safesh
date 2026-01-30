@@ -7,10 +7,9 @@ import { describe, it, beforeEach, afterEach } from "@std/testing/bdd";
 import * as fs from "../src/stdlib/fs.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
+import { REAL_TMP } from "./helpers.ts";
 
-// Resolve /tmp to real path (on macOS, /tmp is a symlink to /private/tmp)
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-fs-test`;
+const testDir = `${REAL_TMP}/safesh-fs-test`;
 
 describe("fs", () => {
   beforeEach(async () => {
@@ -305,7 +304,7 @@ describe("fs", () => {
     it("validates read operations against sandbox", async () => {
       const config: SafeShellConfig = {
         permissions: {
-          read: [`${realTmp}/allowed-only`],
+          read: [`${REAL_TMP}/allowed-only`],
           write: [],
         },
       };
@@ -321,7 +320,7 @@ describe("fs", () => {
       const config: SafeShellConfig = {
         permissions: {
           read: [testDir],
-          write: [`${realTmp}/write-only`],
+          write: [`${REAL_TMP}/write-only`],
         },
       };
 

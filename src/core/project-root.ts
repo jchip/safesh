@@ -5,6 +5,8 @@
  * Eliminates ~60 lines of duplication between bash-prehook.ts and desh.ts.
  */
 
+import { ensureDirSync } from "./io-utils.ts";
+
 /**
  * Project root markers - only truly reliable ones
  * Other markers like package.json can exist in subdirectories
@@ -92,7 +94,7 @@ export function findProjectRoot(
     // Create .config/safesh as fallback marker
     try {
       const configDir = `${cwd}/.config/safesh`;
-      Deno.mkdirSync(configDir, { recursive: true });
+      ensureDirSync(configDir);
       const configFile = `${configDir}/config.local.json`;
 
       // Only create config file if doesn't exist

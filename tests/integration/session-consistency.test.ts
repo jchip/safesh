@@ -14,9 +14,9 @@ import {
 } from "../../src/core/session.ts";
 import { findProjectRoot } from "../../src/core/project-root.ts";
 import type { SafeShellConfig } from "../../src/core/types.ts";
+import { REAL_TMP } from "../helpers.ts";
 
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-session-consistency-test`;
+const testDir = `${REAL_TMP}/safesh-session-consistency-test`;
 const projectDir = `${testDir}/project`;
 
 describe("Session consistency integration tests", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -88,7 +88,7 @@ describe("Session consistency integration tests", { sanitizeResources: false, sa
     await addSessionCommands(["ls", "cat"], undefined);
 
     // Verify session file was created in /tmp
-    const sessionFile = `${realTmp}/safesh/session-consistency-test-session.json`;
+    const sessionFile = `${REAL_TMP}/safesh/session-consistency-test-session.json`;
     const stat = Deno.statSync(sessionFile);
     assert(stat.isFile, "Session file should be created in /tmp/safesh when projectDir is undefined");
 

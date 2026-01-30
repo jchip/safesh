@@ -5,10 +5,9 @@
 import { assertEquals, assertArrayIncludes } from "@std/assert";
 import { describe, it, beforeEach, afterEach } from "@std/testing/bdd";
 import * as text from "../src/stdlib/text.ts";
+import { REAL_TMP } from "./helpers.ts";
 
-// Resolve /tmp to real path (on macOS, /tmp is a symlink to /private/tmp)
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-text-test`;
+const testDir = `${REAL_TMP}/safesh-text-test`;
 
 describe("text", () => {
   beforeEach(async () => {

@@ -24,6 +24,7 @@ import { resolveWorkspace } from "./permissions.ts";
 import { DEFAULT_TIMEOUT_MS } from "./defaults.ts";
 import { findProjectRoot } from "./project-root.ts";
 import { mergeSessionPermissions } from "./session.ts";
+import { ensureDir, readJsonFile, writeJsonFile } from "./io-utils.ts";
 
 // ============================================================================
 // Helper Functions
@@ -505,8 +506,7 @@ async function loadJsonConfigFile(path: string): Promise<SafeShellConfig | null>
   }
 
   try {
-    const content = await Deno.readTextFile(path);
-    return JSON.parse(content) as SafeShellConfig;
+    return await readJsonFile<SafeShellConfig>(path);
   } catch (error) {
     throw configError(
       `Failed to load config from ${path}: ${
@@ -535,7 +535,18 @@ async function loadConfigWithJsonOverride(
 }
 
 /**
- * Get the global config directory
+ * Get the global config directory path
+ *
+ * Returns the directory path where global SafeShell configuration files are stored.
+ * This is `~/.config/safesh` on Unix-like systems.
+ *
+ * @returns The global config directory path
+ * @example
+ * ```typescript
+ * const dir = getGlobalConfigDir();
+ * // Returns: "/Users/username/.config/safesh" (on macOS)
+ * // Returns: "/home/username/.config/safesh" (on Linux)
+ * ```
  */
 export function getGlobalConfigDir(): string {
   const home = Deno.env.get("HOME") ?? "";
@@ -557,10 +568,21 @@ export function getGlobalConfigJsonPath(): string {
 }
 
 /**
- * Get the project config directory
+ * Get the project config directory path
+ *
+ * Returns the directory path where project-specific SafeShell configuration files
+ * are stored. This is `{projectDir}/.config/safesh`.
+ *
+ * @param projectDir - The project root directory
+ * @returns The project config directory path
+ * @example
+ * ```typescript
+ * const dir = getProjectConfigDir("/Users/jc/dev/safesh");
+ * // Returns: "/Users/jc/dev/safesh/.config/safesh"
+ * ```
  */
-export function getProjectConfigDir(cwd: string): string {
-  return join(cwd, ".config", "safesh");
+export function getProjectConfigDir(projectDir: string): string {
+  return join(projectDir, ".config", "safesh");
 }
 
 /**
@@ -578,18 +600,42 @@ export function getProjectConfigJsonPath(cwd: string): string {
 }
 
 /**
- * Get the local config path (TS) - .config/safesh/config.local.ts
+ * Get the local TypeScript config file path
+ *
+ * Returns the path to the project's local TypeScript configuration file.
+ * This file is typically used for machine-specific settings that shouldn't
+ * be committed to version control.
+ *
+ * @param projectDir - The project root directory
+ * @returns Path to config.local.ts file
+ * @example
+ * ```typescript
+ * const path = getLocalConfigPath("/Users/jc/dev/safesh");
+ * // Returns: "/Users/jc/dev/safesh/.config/safesh/config.local.ts"
+ * ```
  */
-export function getLocalConfigPath(cwd: string): string {
-  return join(getProjectConfigDir(cwd), "config.local.ts");
+export function getLocalConfigPath(projectDir: string): string {
+  return join(getProjectConfigDir(projectDir), "config.local.ts");
 }
 
 /**
- * Get the local JSON config path - .config/safesh/config.local.json
- * This file has precedence over config.local.ts and is machine-writable
+ * Get the local JSON config file path
+ *
+ * Returns the path to the project's local JSON configuration file.
+ * This file has precedence over config.local.ts and is machine-writable,
+ * allowing the system to automatically persist permissions when users
+ * approve "always allow" prompts.
+ *
+ * @param projectDir - The project root directory
+ * @returns Path to config.local.json file
+ * @example
+ * ```typescript
+ * const path = getLocalJsonConfigPath("/Users/jc/dev/safesh");
+ * // Returns: "/Users/jc/dev/safesh/.config/safesh/config.local.json"
+ * ```
  */
-export function getLocalJsonConfigPath(cwd: string): string {
-  return join(getProjectConfigDir(cwd), "config.local.json");
+export function getLocalJsonConfigPath(projectDir: string): string {
+  return join(getProjectConfigDir(projectDir), "config.local.json");
 }
 
 /**
@@ -672,8 +718,7 @@ async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null>
   }
 
   try {
-    const content = await Deno.readTextFile(jsonPath);
-    return JSON.parse(content) as LocalJsonConfig;
+    return await readJsonFile<LocalJsonConfig>(jsonPath);
   } catch (error) {
     console.warn(
       `⚠️  Failed to load local JSON config from ${jsonPath}: ${
@@ -691,16 +736,6 @@ async function loadLocalJsonConfig(cwd: string): Promise<LocalJsonConfig | null>
  */
 export async function saveToLocalJson(cwd: string, commands: string[]): Promise<void> {
   const jsonPath = getLocalJsonConfigPath(cwd);
-  const configDir = getProjectConfigDir(cwd);
-
-  // Ensure .config/safesh directory exists
-  try {
-    await Deno.mkdir(configDir, { recursive: true });
-  } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) {
-      throw error;
-    }
-  }
 
   // Load existing and merge
   const existing = await loadLocalJsonConfig(cwd);
@@ -714,7 +749,7 @@ export async function saveToLocalJson(cwd: string, commands: string[]): Promise<
     allowedCommands: Array.from(allCommands).sort(),
   };
 
-  await Deno.writeTextFile(jsonPath, JSON.stringify(config, null, 2) + "\n");
+  await writeJsonFile(jsonPath, config);
 }
 
 /** Options for loading config */

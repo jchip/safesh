@@ -20,9 +20,9 @@ import {
   getSessionPathPermissions,
 } from "../../src/core/session.ts";
 import { saveToLocalJson, getLocalJsonConfigPath } from "../../src/core/config.ts";
+import { REAL_TMP } from "../helpers.ts";
 
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-permission-flow-test`;
+const testDir = `${REAL_TMP}/safesh-permission-flow-test`;
 const projectDir = `${testDir}/project`;
 
 describe("Permission flow integration tests", { sanitizeResources: false, sanitizeOps: false }, () => {

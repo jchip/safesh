@@ -13,6 +13,7 @@ import {
 } from "../src/external/path_validator.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
+import { REAL_TMP } from "./helpers.ts";
 
 // ============================================================================
 // isPathLike Tests
@@ -153,17 +154,16 @@ Deno.test("extractPaths - handles multiple paths", () => {
 Deno.test({
   name: "validatePathArgs - allows paths within sandbox",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
     const config: SafeShellConfig = {
       permissions: {
-        read: [realTmp],
-        write: [realTmp],
+        read: [REAL_TMP],
+        write: [REAL_TMP],
       },
     };
 
     // Should not throw
     await validatePathArgs(
-      ["add", `${realTmp}/file.txt`],
+      ["add", `${REAL_TMP}/file.txt`],
       "git",
       config,
       "/",

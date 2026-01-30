@@ -1,0 +1,29 @@
+{
+  "name": "@anthropic/safesh",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./fs": "./src/stdlib/fs.ts",
+    "./text": "./src/stdlib/text.ts",
+    "./glob": "./src/stdlib/glob.ts",
+    "./shell": "./src/stdlib/shell.ts",
+    "./streams": "./src/streams/mod.ts"
+  },
+  "exclude": [
+    ".temp",
+    ".claude",
+    ".coverage",
+    "coverage",
+    "dist",
+    "tmp",
+    "**/*.test.ts",
+    "**/*.test.js",
+    ".vscode",
+    ".idea",
+    "*.swp",
+    "*.swo",
+    ".DS_Store",
+    "deno.lock",
+    "notes"
+  ]
+}

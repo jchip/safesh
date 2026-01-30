@@ -46,7 +46,10 @@ export type Statement =
   | Subshell
   | BraceGroup
   | TestCommand
-  | ArithmeticCommand;
+  | ArithmeticCommand
+  | ReturnStatement
+  | BreakStatement
+  | ContinueStatement;
 
 // =============================================================================
 // Commands
@@ -116,6 +119,21 @@ export interface CaseClause extends BaseNode {
   type: "CaseClause";
   patterns: (Word | ParameterExpansion)[];
   body: Statement[];
+}
+
+export interface ReturnStatement extends BaseNode {
+  type: "ReturnStatement";
+  value?: ArithmeticExpression; // Optional exit code (default: 0)
+}
+
+export interface BreakStatement extends BaseNode {
+  type: "BreakStatement";
+  count?: number; // Optional: number of loop levels to break (default: 1)
+}
+
+export interface ContinueStatement extends BaseNode {
+  type: "ContinueStatement";
+  count?: number; // Optional: number of loop levels to continue (default: 1)
 }
 
 // =============================================================================

@@ -13,6 +13,7 @@ import { validatePath } from "../src/core/permissions.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import { validatePathArgs } from "../src/external/path_validator.ts";
+import { REAL_TMP } from "./helpers.ts";
 
 // ============================================================================
 // Workspace Path Resolution Tests
@@ -127,8 +128,7 @@ Deno.test({
   name: "validatePath - allows reading within workspace",
   async fn() {
     // Use realPath of /tmp to handle macOS symlink
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-workspace-test`;
+    const testDir = `${REAL_TMP}/safesh-workspace-test`;
     const testFile = `${testDir}/file.txt`;
 
     try {
@@ -157,8 +157,7 @@ Deno.test({
 Deno.test({
   name: "validatePath - rejects reading outside workspace",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-workspace-test2`;
+    const testDir = `${REAL_TMP}/safesh-workspace-test2`;
 
     try {
       await Deno.mkdir(testDir, { recursive: true });
@@ -188,8 +187,7 @@ Deno.test({
 Deno.test({
   name: "validatePath - allows writing within workspace",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-workspace-test3`;
+    const testDir = `${REAL_TMP}/safesh-workspace-test3`;
     const testFile = `${testDir}/newfile.txt`;
 
     try {
@@ -221,8 +219,7 @@ Deno.test({
 Deno.test({
   name: "validatePathArgs - allows paths within workspace",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-workspace-test4`;
+    const testDir = `${REAL_TMP}/safesh-workspace-test4`;
 
     try {
       await Deno.mkdir(testDir, { recursive: true });
@@ -256,8 +253,7 @@ Deno.test({
 Deno.test({
   name: "validatePathArgs - rejects paths outside workspace",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-workspace-test5`;
+    const testDir = `${REAL_TMP}/safesh-workspace-test5`;
 
     try {
       await Deno.mkdir(testDir, { recursive: true });
@@ -296,8 +292,7 @@ Deno.test({
 Deno.test({
   name: "validatePathArgs - workspace overrides explicit permissions",
   async fn() {
-    const realTmp = await Deno.realPath("/tmp");
-    const testDir = `${realTmp}/safesh-workspace-test6`;
+    const testDir = `${REAL_TMP}/safesh-workspace-test6`;
 
     try {
       await Deno.mkdir(testDir, { recursive: true });

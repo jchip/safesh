@@ -19,7 +19,8 @@ This directory contains design documents, implementation notes, and guides for S
 | `DESIGN.md` | Overall SafeShell architecture and design |
 | `STDLIB_DESIGN.md` | Standard library design (streams, commands, fs) |
 | `STREAMING_SHELL_DESIGN.md` | Streaming shell implementation |
-| `refactoring-summary.md` | DRY refactoring summary and core modules documentation |
+| `refactoring-summary.md` | Bash parser/transpiler DRY refactoring |
+| `phase4-dry-refactoring.md` | **Phase 4 utility consolidation** - io-utils, test-helpers, best practices |
 
 ### Implementation Guides
 
@@ -80,26 +81,48 @@ safesh/
 └── notes/              # This directory
 ```
 
-## Core Modules (DRY Refactoring)
+## Utility Modules & DRY Refactoring
 
-SafeShell has 4 unified core modules that eliminate ~600 lines of duplication:
+SafeShell has comprehensive utility modules from DRY refactoring efforts:
 
-| Module | Purpose | Tests | Used By |
-|--------|---------|-------|---------|
-| `project-root.ts` | Find project root directory | 13 | bash-prehook, desh |
-| `pending.ts` | Manage pending commands/paths | 23 | bash-prehook, desh |
-| `session.ts` | Session-based permissions | 32 | bash-prehook, desh |
-| `error-handlers.ts` | Error detection & handling | 45 | bash-prehook |
+### Recent Refactorings (January 2026)
+
+| Ticket | Module | Purpose | Status |
+|--------|--------|---------|--------|
+| SSH-421 | `core/path-utils.ts` | Consolidate path validation logic | ✅ Complete |
+| SSH-420 | `commands/grep.ts` | Refactor Grep implementation | ✅ Complete |
+| SSH-419 | `core/arg-parser.ts` | Centralize command argument parsing | ✅ Complete |
+| SSH-418 | `runtime/subprocess-manager.ts` | Extract subprocess management | ✅ Complete |
+| SSH-417 | `stdlib/shell.ts` | FluentShell extensibility | ✅ Complete |
+| SSH-435 | `runtime/executor.ts` | Decompose executeCode() | ✅ Complete |
+| SSH-436 | `transpiler2/handlers/commands.ts` | Decompose buildCommand() | ✅ Complete |
+| SSH-439 | `transpiler2/handlers/commands.ts` | Refactor PipelineAssembler | ✅ Complete |
+| SSH-448 | `tests/` | Migrate tests to test-helpers | ✅ Complete |
+
+### Phase 4: Core Utilities (SSH-400)
+**Status:** ✅ Complete (2026-01-27/28)
+
+| Module | Purpose | Key Functions |
+|--------|---------|---------------|
+| `core/io-utils.ts` | JSON & directory operations | `readJsonFile`, `writeJsonFile`, `ensureDir` |
+| `tests/helpers.ts` | Test utilities | `REAL_TMP`, `withTestDir`, `createTestDir` |
+| `core/config.ts` | Config path helpers | `getGlobalConfigDir`, `getProjectConfigDir` |
+
+**Impact:** ~200-250 lines eliminated, 35+ files migrated, 100% test coverage
+
+### Core Permission Modules
+**Status:** ✅ Complete
+
+| Module | Purpose | Tests |
+|--------|---------|-------|
+| `project-root.ts` | Find project root directory | 13 |
+| `pending.ts` | Manage pending commands/paths | 23 |
+| `session.ts` | Session-based permissions | 32 |
+| `error-handlers.ts` | Error detection & handling | 45 |
 
 **Total:** 113 unit tests, all passing in ~237ms
 
-**Key Benefits:**
-- Single source of truth for shared logic
-- Comprehensive test coverage prevents regressions
-- Consistent behavior across all components
-- Easy to maintain and extend
-
-See `.temp/phase5-verification-report.md` for complete DRY refactoring details.
+**See:** `phase4-dry-refactoring.md` for complete documentation and best practices.
 
 ## Current Status
 
