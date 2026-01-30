@@ -20,9 +20,23 @@ import * as path from "jsr:@std/path";
 export { fs, text, path };
 export * as shelljs from "./shelljs/mod.ts";
 
+// Re-export process management
+export {
+  spawn,
+  kill,
+  ps,
+  ports,
+  type SpawnOptions,
+  type ProcessHandle,
+  type ProcessStatus,
+  type ProcessInfo,
+  type PortInfo,
+  type Signal,
+} from "./process.ts";
+
 // Re-export fluent shell API (as content for $.content())
 export { default as _ } from "./shell.ts";
-export { FluentShell } from "./shell.ts";
+export { FluentShell, extendFluentShell } from "./shell.ts";
 
 // Re-export command execution
 export {
@@ -115,6 +129,8 @@ import { tree, treeLines, printTree } from "./fs.ts";
 import { default as wc } from "../commands/wc.ts";
 import { default as sort } from "../commands/sort.ts";
 import { default as uniq } from "../commands/uniq.ts";
+// Import process management
+import { spawn, kill, ps, ports } from "./process.ts";
 
 /**
  * Unified namespace for all SafeShell exports
@@ -146,6 +162,8 @@ const _$props = {
   echo, cd, pwd, pushd, popd, dirs, tempdir, env, test, which, chmod, ln, rm, rmdir, cp, mv, mkdir, touch, ls, ShellString,
   // Tree commands
   tree, treeLines, printTree,
+  // Process management
+  spawn, kill, ps, ports,
   // Timing
   sleep, delay: sleep,
   // Deno file aliases

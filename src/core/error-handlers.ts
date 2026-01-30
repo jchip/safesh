@@ -8,6 +8,7 @@
 import { getTempRoot } from "./temp.ts";
 import { getErrorLogPath } from "./temp.ts";
 import type { PendingPathRequest } from "./pending.ts";
+import { writeJsonFileSync } from "./io-utils.ts";
 
 /**
  * Information about a detected path violation
@@ -170,7 +171,7 @@ export function handlePathViolationAndExit(
   };
 
   try {
-    Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+    writeJsonFileSync(pendingFile, pending);
   } catch (e) {
     console.error("Warning: Could not write pending path file:", e);
   }
@@ -330,7 +331,7 @@ ${includeCommandCheck}  const errorMessage = error.message || String(error);
     };
 
     try {
-      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
+      writeJsonFileSync(pendingFile, pending);
     } catch (e) {
       console.error("Warning: Could not write pending path file:", e);
     }

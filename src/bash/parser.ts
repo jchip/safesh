@@ -299,6 +299,17 @@ export class Parser {
       return this.parseFunctionDeclaration();
     }
 
+    // Loop control statements
+    if (this.is(TokenType.RETURN)) {
+      return this.parseReturnStatement();
+    }
+    if (this.is(TokenType.BREAK)) {
+      return this.parseBreakStatement();
+    }
+    if (this.is(TokenType.CONTINUE)) {
+      return this.parseContinueStatement();
+    }
+
     // Check for function shorthand syntax: name() { ... }
     // Pattern: NAME followed by LPAREN
     if (this.is(TokenType.NAME) && this.peekToken.type === TokenType.LPAREN) {
@@ -889,6 +900,67 @@ export class Parser {
       return this.parseSubshell().body;
     }
     throw this.error("Expected function body ('{' or '(')");
+  }
+
+  // ===========================================================================
+  // Loop Control Statements
+  // ===========================================================================
+
+  private parseReturnStatement(): AST.ReturnStatement {
+    this.expect(TokenType.RETURN);
+
+    // Optional return value (exit code)
+    let value: AST.ArithmeticExpression | undefined;
+
+    if (!this.isAny(TokenType.NEWLINE, TokenType.SEMICOLON, TokenType.EOF) && !this.is(TokenType.PIPE) && !this.is(TokenType.AND_AND) && !this.is(TokenType.OR_OR)) {
+      // Parse the value as an arithmetic expression
+      const token = this.currentToken;
+      if (token.type === TokenType.NAME || token.type === TokenType.NUMBER) {
+        // Simple number or variable
+        const valueToken = this.advance();
+        value = {
+          type: "NumberLiteral",
+          value: parseInt(valueToken.value) || 0,
+        };
+      }
+    }
+
+    return {
+      type: "ReturnStatement",
+      value,
+    };
+  }
+
+  private parseBreakStatement(): AST.BreakStatement {
+    this.expect(TokenType.BREAK);
+
+    // Optional count (number of loop levels to break)
+    let count: number | undefined;
+
+    if (this.is(TokenType.NUMBER)) {
+      count = parseInt(this.advance().value);
+    }
+
+    return {
+      type: "BreakStatement",
+      count,
+    };
+  }
+
+  private parseContinueStatement(): AST.ContinueStatement {
+    this.expect(TokenType.CONTINUE);
+
+    // Optional count (number of loop levels to continue)
+    let count: number | undefined;
+
+    if (this.is(TokenType.NUMBER)) {
+      count = parseInt(this.advance().value);
+    }
+
+    return {
+      type: "ContinueStatement",
+      count,
+    };
   }
 
   // ===========================================================================

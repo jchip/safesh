@@ -4,10 +4,9 @@
 
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert";
 import { tree, treeLines } from "../../src/stdlib/fs.ts";
+import { REAL_TMP } from "../helpers.ts";
 
-// Resolve /tmp to real path (on macOS, /tmp is a symlink to /private/tmp)
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-tree-test-${Date.now()}`;
+const testDir = `${REAL_TMP}/safesh-tree-test-${Date.now()}`;
 
 Deno.test("tree", async (t) => {
   // Create test directory

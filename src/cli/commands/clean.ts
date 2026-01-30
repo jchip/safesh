@@ -6,6 +6,7 @@ import { loadState, isPidRunning } from "../lib/state.ts";
 import { getStateFilePath } from "../../runtime/state-persistence.ts";
 import type { PersistedState } from "../../runtime/state-persistence.ts";
 import { bold, yellow, green, red } from "@std/fmt/colors";
+import { writeJsonFile } from "../../core/io-utils.ts";
 
 export async function cleanCommand(): Promise<void> {
   const state = await loadState();
@@ -40,7 +41,7 @@ export async function cleanCommand(): Promise<void> {
   try {
     const stateFile = getStateFilePath(state.projectDir);
     state.updatedAt = new Date().toISOString();
-    await Deno.writeTextFile(stateFile, JSON.stringify(state, null, 2));
+    await writeJsonFile(stateFile, state);
     console.log("");
     console.log(green(`✓ Cleaned ${cleaned} stale script(s)`));
   } catch (error) {

@@ -11,9 +11,9 @@ import { assertEquals, assert } from "@std/assert";
 import { describe, it, beforeEach, afterEach } from "@std/testing/bdd";
 import { findProjectRoot } from "../../src/core/project-root.ts";
 import { getProjectConfigDir } from "../../src/core/config.ts";
+import { REAL_TMP } from "../helpers.ts";
 
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-project-root-test`;
+const testDir = `${REAL_TMP}/safesh-project-root-test`;
 const projectDir1 = `${testDir}/project1`;
 const projectDir2 = `${testDir}/project2`;
 

@@ -45,6 +45,10 @@ export type PermissionResult =
 
 /**
  * Check if a command exists at the given path
+ *
+ * Note: Similar existence checking logic can be found in:
+ * - stdlib/shelljs/test.ts - File/directory existence tests
+ * - core/io-utils.ts - File existence checks via Deno.stat
  */
 async function commandExists(path: string): Promise<boolean> {
   try {
@@ -109,6 +113,11 @@ export function isCommandAllowed(
  *                │                                   → No → allowed_check(resolved)
  *                └─ No → COMMAND_NOT_FOUND error
  * ```
+ *
+ * Note: Similar path resolution and validation patterns:
+ * - core/path-utils.ts - isPathWithin() for checking path containment
+ * - core/permissions.ts - Path validation with expand/resolve logic
+ * - stdlib/fs.ts - File operation path validation
  */
 export async function checkCommandPermission(
   command: string,

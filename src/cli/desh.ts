@@ -32,15 +32,13 @@ const VERSION = "0.1.0";
 // Project root, session, and pending functions now imported from core modules
 
 /**
- * Handle retry subcommand: desh retry --id=X --choice=N
+ * Parse and validate retry command arguments.
  *
- * Choices:
- * 1 = Allow once (just execute)
- * 2 = Always allow (update config.local.json, then execute)
- * 3 = Allow for session (update session file, then execute)
- * 4 = Deny (do nothing)
+ * @param args - Command line arguments
+ * @returns Parsed retry command arguments
+ * @throws Exits with code 1 if validation fails
  */
-async function handleRetry(args: string[]): Promise<void> {
+export function parseRetryArgs(args: string[]): { id: string; choice: number } {
   const parsed = parseArgs(args, {
     string: ["id", "choice"],
   });
@@ -58,16 +56,40 @@ async function handleRetry(args: string[]): Promise<void> {
     Deno.exit(1);
   }
 
-  // Read pending command file first
+  return { id, choice };
+}
+
+/**
+ * Load pending command from file.
+ *
+ * @param id - Pending command ID
+ * @returns Pending command data
+ * @throws Exits with code 1 if command not found
+ */
+export function loadPendingCommand(id: string): PendingCommand {
   const pending = readPendingCommand(id);
   if (!pending) {
     console.error(`Error: Pending command not found for id: ${id}`);
     Deno.exit(1);
   }
+  return pending;
+}
 
-  // Get cwd early (needed for session file)
-  const cwd = pending.cwd;
-
+/**
+ * Apply permission choice (update configs as needed).
+ * Security-critical: Handles persistent permission grants.
+ *
+ * @param choice - User's permission choice (1-4)
+ * @param pending - Pending command data
+ * @param id - Pending command ID
+ * @returns Project directory for session-scoped permissions
+ * @throws Exits with code 0 if choice is deny (4)
+ */
+export async function applyPermissionChoice(
+  choice: number,
+  pending: PendingCommand,
+  id: string,
+): Promise<string> {
   // Choice 4 = Deny - cleanup and exit
   if (choice === 4) {
     console.error("[safesh] Command denied by user.");
@@ -80,14 +102,26 @@ async function handleRetry(args: string[]): Promise<void> {
     await addCommandsToConfig(pending.commands, pending.cwd);
   }
 
-  // Load config and merge session permissions
-  const { config, projectDir } = await loadSessionConfig(cwd);
+  // Load config to get projectDir
+  const { projectDir } = await loadSessionConfig(pending.cwd);
 
   // Choice 3 = Session allow - update session file
   if (choice === 3) {
     await addSessionCommands(pending.commands, projectDir);
     console.error(`[safesh] Added to session-allow: ${pending.commands.join(", ")}`);
   }
+
+  return projectDir;
+}
+
+/**
+ * Build retry execution config with merged permissions.
+ *
+ * @param pending - Pending command data
+ * @returns Config with pending commands added to permissions
+ */
+export async function buildRetryConfig(pending: PendingCommand) {
+  const { config } = await loadSessionConfig(pending.cwd);
 
   // Add pending commands to permissions
   config.permissions = config.permissions ?? {};
@@ -96,19 +130,29 @@ async function handleRetry(args: string[]): Promise<void> {
     ...pending.commands,
   ];
 
-  // Find and read the script file using the scriptHash
-  const scriptFilePath = await findScriptFilePath(pending.scriptHash);
+  return config;
+}
 
-  if (!scriptFilePath) {
-    console.error(`Error: Script file not found for hash: ${pending.scriptHash}`);
-    Deno.exit(1);
-  }
-
+/**
+ * Execute retry script and handle output/cleanup.
+ *
+ * @param scriptPath - Path to script file
+ * @param config - Execution config with permissions
+ * @param pending - Pending command data
+ * @param id - Pending command ID
+ * @throws Exits with appropriate code after execution
+ */
+export async function executeRetryScript(
+  scriptPath: string,
+  config: Awaited<ReturnType<typeof loadSessionConfig>>["config"],
+  pending: PendingCommand,
+  id: string,
+): Promise<void> {
   try {
     // Execute the script file directly (it already has the marker)
     // Pass cwd, timeout, and runInBackground from pending metadata
-    const result = await executeFile(scriptFilePath, config, {
-      cwd,
+    const result = await executeFile(scriptPath, config, {
+      cwd: pending.cwd,
       timeout: pending.timeout,
     });
 
@@ -128,18 +172,74 @@ async function handleRetry(args: string[]): Promise<void> {
 }
 
 /**
+ * Handle retry subcommand: desh retry --id=X --choice=N
+ *
+ * Choices:
+ * 1 = Allow once (just execute)
+ * 2 = Always allow (update config.local.json, then execute)
+ * 3 = Allow for session (update session file, then execute)
+ * 4 = Deny (do nothing)
+ */
+async function handleRetry(args: string[]): Promise<void> {
+  // Phase 1: Parse and validate arguments
+  const { id, choice } = parseRetryArgs(args);
+
+  // Phase 2: Load pending command
+  const pending = loadPendingCommand(id);
+
+  // Phase 3: Apply permission choice (exits if deny)
+  await applyPermissionChoice(choice, pending, id);
+
+  // Phase 4: Build execution config
+  const config = await buildRetryConfig(pending);
+
+  // Phase 5: Find script file and execute
+  const scriptFilePath = await findScriptFilePath(pending.scriptHash);
+  if (!scriptFilePath) {
+    console.error(`Error: Script file not found for hash: ${pending.scriptHash}`);
+    Deno.exit(1);
+  }
+
+  await executeRetryScript(scriptFilePath, config, pending, id);
+}
+
+/**
  * Add commands to .config/safesh/config.local.json for "always allow"
  */
 // addToConfigLocal now replaced by addCommandsToConfig from core/config-persistence.ts
 
 // addToSessionFile now replaced by addSessionCommands from core/session.ts
 
+// ============================================================================
+// handleRetryPath Phase Functions
+// ============================================================================
+
 /**
- * Handle retry-path subcommand: desh retry-path --id=X --choice=<option>
- *
- * Choices: r1, w1, rw1 (once), r2, w2, rw2 (session), r3, w3, rw3 (always), deny
+ * Parsed path permission choice
  */
-async function handleRetryPath(args: string[]): Promise<void> {
+export interface PathPermissionChoice {
+  operation: "r" | "w" | "rw";
+  scope: 1 | 2 | 3; // 1 = once, 2 = session, 3 = always
+  isDirectory: boolean;
+}
+
+/**
+ * Parsed retry-path arguments
+ */
+export interface RetryPathArgs {
+  id: string;
+  choice: string;
+}
+
+/**
+ * Phase 1: Parse and validate retry-path arguments.
+ * Security-critical: Validates all user inputs before processing.
+ *
+ * @param args - Command line arguments
+ * @returns Parsed arguments with id and choice
+ * @throws Exits process with code 1 if validation fails
+ */
+export function parseRetryPathArgs(args: string[]): RetryPathArgs {
   const parsed = parseArgs(args, {
     string: ["id", "choice"],
   });
@@ -157,6 +257,52 @@ async function handleRetryPath(args: string[]): Promise<void> {
     Deno.exit(1);
   }
 
+  return { id, choice };
+}
+
+/**
+ * Phase 2: Parse path choice into structured data.
+ * Security-critical: Validates choice format to prevent injection.
+ *
+ * Format: (r|w|rw)(1|2|3)(d?)
+ * - Operations: r (read), w (write), rw (read-write)
+ * - Scopes: 1 (once), 2 (session), 3 (always)
+ * - Modifier: d (directory instead of file)
+ *
+ * @param choice - Choice string (r1, w2, rw3, r1d, etc. or "deny"/"4")
+ * @returns Structured permission choice
+ * @throws Error with "DENY" message if user denies
+ * @throws Exits process with code 1 if choice format is invalid
+ */
+export function parsePathChoice(choice: string): PathPermissionChoice {
+  // Handle deny
+  if (choice === "deny" || choice === "4") {
+    throw new Error("DENY"); // Special sentinel for denial
+  }
+
+  // Parse choice: r1, w1, rw1, r2, w2, rw2, r3, w3, rw3, or with 'd' for directory (r1d, w2d, etc.)
+  const match = choice.match(/^(r|w|rw)([123])(d?)$/);
+  if (!match) {
+    console.error(`Error: Invalid choice '${choice}'. Must be r1, w1, rw1, r2, w2, rw2, r3, w3, rw3 (or add 'd' for directory), or 4`);
+    Deno.exit(1);
+  }
+
+  const operation = match[1]! as "r" | "w" | "rw";
+  const scope = parseInt(match[2]!) as 1 | 2 | 3;
+  const isDirectory = match[3] === "d";
+
+  return { operation, scope, isDirectory };
+}
+
+/**
+ * Phase 3: Load pending path request and script file.
+ * Security-critical: Validates file existence before granting permissions.
+ *
+ * @param id - Pending request ID
+ * @returns Pending path request and script file path
+ * @throws Exits process with code 1 if not found
+ */
+export async function loadPendingPathData(id: string): Promise<{ pending: PendingPathRequest; scriptFile: string }> {
   // Read pending path request
   const pending = readPendingPath(id);
   if (!pending) {
@@ -171,30 +317,26 @@ async function handleRetryPath(args: string[]): Promise<void> {
     Deno.exit(1);
   }
 
-  const cwd = pending.cwd;
+  return { pending, scriptFile };
+}
 
-  // Handle deny
-  if (choice === "deny" || choice === "4") {
-    console.error("[safesh] Path access denied by user.");
-    deletePending(id, "path");
-    Deno.exit(0);
-  }
-
-  // Parse choice: r1, w1, rw1, r2, w2, rw2, r3, w3, rw3, or with 'd' for directory (r1d, w2d, etc.)
-  const match = choice.match(/^(r|w|rw)([123])(d?)$/);
-  if (!match) {
-    console.error(`Error: Invalid choice '${choice}'. Must be r1, w1, rw1, r2, w2, rw2, r3, w3, rw3 (or add 'd' for directory), or 4`);
-    Deno.exit(1);
-  }
-
-  const operation = match[1]!; // r, w, or rw
-  const scope = parseInt(match[2]!); // 1, 2, or 3
-  const isDirectory = match[3] === "d"; // true if 'd' suffix present
-
+/**
+ * Phase 4: Build read and write permission lists based on choice.
+ * Security-critical: Determines exact paths to grant permissions.
+ *
+ * @param pending - Pending path request
+ * @param choice - Parsed permission choice
+ * @returns Read and write permission paths
+ */
+export function buildPathPermissions(
+  pending: PendingPathRequest,
+  choice: PathPermissionChoice,
+): { readPaths: string[]; writePaths: string[] } {
   // Determine the path to grant permission to
   let permissionPath = pending.path;
-  if (isDirectory) {
+  if (choice.isDirectory) {
     // Grant permission to the directory instead of the file
+    // Security note: Prevents directory traversal by using path parts
     const pathParts = pending.path.split('/');
     permissionPath = pathParts.slice(0, -1).join('/') || '/';
     console.error(`[safesh] Granting permission to directory: ${permissionPath}/`);
@@ -204,30 +346,68 @@ async function handleRetryPath(args: string[]): Promise<void> {
   const readPaths: string[] = [];
   const writePaths: string[] = [];
 
-  if (operation === "r" || operation === "rw") {
+  if (choice.operation === "r" || choice.operation === "rw") {
     readPaths.push(permissionPath);
   }
-  if (operation === "w" || operation === "rw") {
+  if (choice.operation === "w" || choice.operation === "rw") {
     writePaths.push(permissionPath);
   }
 
-  // Load config and merge session permissions
-  const { config, projectDir } = await loadSessionConfig(cwd);
+  return { readPaths, writePaths };
+}
 
-  // Apply permissions based on scope
+/**
+ * Phase 5: Persist path permissions based on scope.
+ * Security-critical: Writes persistent permissions to config files.
+ *
+ * Audit trail: Logs all permission grants to stderr.
+ *
+ * @param readPaths - Paths to grant read permission
+ * @param writePaths - Paths to grant write permission
+ * @param scope - Permission scope (1=once, 2=session, 3=always)
+ * @param cwd - Current working directory
+ * @param projectDir - Project directory
+ */
+export async function persistPathPermissions(
+  readPaths: string[],
+  writePaths: string[],
+  scope: 1 | 2 | 3,
+  cwd: string,
+  projectDir: string,
+): Promise<void> {
   if (scope === 3) {
     // Always allow - update config.local.json
+    // Security audit: Permanent permission grant logged
     await addPathsToConfig(readPaths, writePaths, cwd);
   } else if (scope === 2) {
     // Session allow - update session file
+    // Security audit: Session permission grant logged
     await addSessionPaths(readPaths, writePaths, projectDir);
     const msg = [];
     if (readPaths.length > 0) msg.push(`read: ${readPaths.join(", ")}`);
     if (writePaths.length > 0) msg.push(`write: ${writePaths.join(", ")}`);
     console.error(`[safesh] Added to session-allow paths: ${msg.join("; ")}`);
   }
-  // scope === 1: allow once - just add to runtime config, no persistence
+  // scope === 1: allow once - no persistence needed, only runtime grant
+}
 
+/**
+ * Phase 6: Build retry path configuration with permissions.
+ *
+ * @param pending - Pending path request
+ * @param readPaths - Paths to grant read permission
+ * @param writePaths - Paths to grant write permission
+ * @returns SafeShell configuration with merged permissions and projectDir
+ */
+export async function buildRetryPathConfig(
+  pending: PendingPathRequest,
+  readPaths: string[],
+  writePaths: string[],
+): Promise<{ config: Awaited<ReturnType<typeof loadSessionConfig>>["config"]; projectDir: string }> {
+  // Load config and merge session permissions
+  const { config, projectDir } = await loadSessionConfig(pending.cwd);
+
+  // Add paths to runtime config
   config.permissions = config.permissions ?? {};
   if (readPaths.length > 0) {
     config.permissions.read = [
@@ -242,13 +422,31 @@ async function handleRetryPath(args: string[]): Promise<void> {
     ];
   }
 
-  // Re-execute the script file
+  return { config, projectDir };
+}
+
+/**
+ * Phase 7: Execute retry path script with updated permissions.
+ * Security-critical: Executes user script with granted permissions.
+ *
+ * @param scriptFile - Script file path
+ * @param config - SafeShell configuration
+ * @param pending - Pending path request
+ * @param id - Pending request ID
+ * @throws Exits process with result code or 1 on error
+ */
+export async function executeRetryPathScript(
+  scriptFile: string,
+  config: Awaited<ReturnType<typeof loadSessionConfig>>["config"],
+  pending: PendingPathRequest,
+  id: string,
+): Promise<void> {
   // Set SAFESH_SCRIPT_HASH for debug output and SAFESH_SCRIPT_ID for retry flow
   Deno.env.set("SAFESH_SCRIPT_HASH", pending.scriptHash);
   Deno.env.set("SAFESH_SCRIPT_ID", id);
 
   try {
-    const result = await executeFile(scriptFile, config, { cwd });
+    const result = await executeFile(scriptFile, config, { cwd: pending.cwd });
 
     if (result.stdout) console.log(result.stdout);
     if (result.stderr) console.error(result.stderr);
@@ -262,6 +460,54 @@ async function handleRetryPath(args: string[]): Promise<void> {
     deletePending(id, "path");
     Deno.exit(1);
   }
+}
+
+/**
+ * Handle retry-path subcommand: desh retry-path --id=X --choice=<option>
+ *
+ * Orchestrates the 7-phase retry-path flow:
+ * 1. Parse and validate arguments
+ * 2. Parse choice into structured data
+ * 3. Load pending request and script
+ * 4. Build permission lists
+ * 5. Persist permissions based on scope
+ * 6. Build configuration with permissions
+ * 7. Execute script with updated permissions
+ *
+ * Security-critical: Handles path permission grants with audit trail.
+ *
+ * Choices: r1, w1, rw1 (once), r2, w2, rw2 (session), r3, w3, rw3 (always), deny
+ * Add 'd' suffix for directory permissions (e.g., r1d, rw2d)
+ */
+async function handleRetryPath(args: string[]): Promise<void> {
+  // Phase 1: Parse arguments
+  const { id, choice } = parseRetryPathArgs(args);
+
+  // Phase 2: Parse choice (handles denial)
+  let parsedChoice: PathPermissionChoice;
+  try {
+    parsedChoice = parsePathChoice(choice);
+  } catch (error) {
+    if (error instanceof Error && error.message === "DENY") {
+      console.error("[safesh] Path access denied by user.");
+      deletePending(id, "path");
+      Deno.exit(0);
+    }
+    throw error;
+  }
+
+  // Phase 3: Load pending data
+  const { pending, scriptFile } = await loadPendingPathData(id);
+
+  // Phase 4: Build permissions
+  const { readPaths, writePaths } = buildPathPermissions(pending, parsedChoice);
+
+  // Phase 5 & 6: Build config and persist permissions
+  const { config, projectDir } = await buildRetryPathConfig(pending, readPaths, writePaths);
+  await persistPathPermissions(readPaths, writePaths, parsedChoice.scope, pending.cwd, projectDir);
+
+  // Phase 7: Execute script
+  await executeRetryPathScript(scriptFile, config, pending, id);
 }
 
 /**

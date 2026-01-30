@@ -4,27 +4,15 @@
  * All temporary files are organized under /tmp/safesh/
  */
 
-const SAFESH_TMP_ROOT = "/tmp/safesh";
+import { ensureDirSync } from "./io-utils.ts";
 
-/**
- * Ensure a directory exists, creating it if necessary
- */
-function ensureDir(path: string): void {
-  try {
-    Deno.mkdirSync(path, { recursive: true });
-  } catch (error) {
-    // Ignore if already exists
-    if (!(error instanceof Deno.errors.AlreadyExists)) {
-      throw error;
-    }
-  }
-}
+const SAFESH_TMP_ROOT = "/tmp/safesh";
 
 /**
  * Get the root temporary directory for safesh
  */
 export function getTempRoot(): string {
-  ensureDir(SAFESH_TMP_ROOT);
+  ensureDirSync(SAFESH_TMP_ROOT);
   return SAFESH_TMP_ROOT;
 }
 
@@ -33,7 +21,7 @@ export function getTempRoot(): string {
  */
 export function getErrorsDir(): string {
   const dir = `${SAFESH_TMP_ROOT}/errors`;
-  ensureDir(dir);
+  ensureDirSync(dir);
   return dir;
 }
 
@@ -42,7 +30,7 @@ export function getErrorsDir(): string {
  */
 export function getScriptsDir(): string {
   const dir = `${SAFESH_TMP_ROOT}/scripts`;
-  ensureDir(dir);
+  ensureDirSync(dir);
   return dir;
 }
 
@@ -51,7 +39,7 @@ export function getScriptsDir(): string {
  */
 export function getPendingDir(): string {
   const dir = `${SAFESH_TMP_ROOT}/pending`;
-  ensureDir(dir);
+  ensureDirSync(dir);
   return dir;
 }
 
@@ -128,7 +116,7 @@ export function getSessionFilePath(projectDir?: string, sessionId?: string): str
 
   if (projectDir) {
     const dir = `${projectDir}/.temp/safesh`;
-    ensureDir(dir);
+    ensureDirSync(dir);
     return `${dir}/session-${id}.json`;
   }
 
@@ -142,6 +130,6 @@ export function getSessionFilePath(projectDir?: string, sessionId?: string): str
  */
 export function getImportPolicyDir(): string {
   const dir = `${SAFESH_TMP_ROOT}/import-policy`;
-  ensureDir(dir);
+  ensureDirSync(dir);
   return dir;
 }

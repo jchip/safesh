@@ -28,11 +28,52 @@ function isFile(value: unknown): value is File {
 }
 
 /**
+ * Helper to create a FluentShell method from a transform factory
+ *
+ * This factory pattern allows transforms from transforms.ts to be used as
+ * FluentShell methods without hardcoding each one. The method maintains
+ * the 'this' context and delegates to the core .pipe() method.
+ *
+ * @param transformFactory - A function from transforms.ts (e.g., transforms.grep, transforms.head)
+ * @returns A method that can be called on FluentShell
+ *
+ * @example
+ * ```ts
+ * // Define a transform
+ * function uppercase(): Transform<string, string> {
+ *   return async function* (stream) {
+ *     for await (const item of stream) {
+ *       yield item.toUpperCase();
+ *     }
+ *   };
+ * }
+ *
+ * // Create a FluentShell method from it
+ * FluentShell.prototype.uppercase = createTransformMethod(uppercase);
+ *
+ * // Now use it
+ * await $('data.txt').lines().uppercase().collect();
+ * ```
+ */
+// deno-lint-ignore no-explicit-any
+function createTransformMethod<Args extends any[]>(
+  transformFactory: (...args: Args) => (stream: AsyncIterable<string>) => AsyncIterable<string>,
+): (...args: Args) => FluentShell {
+  return function (this: FluentShell, ...args: Args): FluentShell {
+    // deno-lint-ignore no-explicit-any
+    return this.pipe(transformFactory(...args as any) as any);
+  };
+}
+
+/**
  * FluentShell - A chainable API for file-based text processing
  *
  * Wraps Stream<string> internally and provides simplified methods
  * that delegate to existing transforms. All operations are lazy until
  * a terminal operation is called.
+ *
+ * This class uses a generic .pipe() mechanism for extensibility.
+ * All transform methods delegate to transforms.ts via .pipe().
  *
  * @example
  * ```ts
@@ -44,6 +85,14 @@ function isFile(value: unknown): value is File {
  *
  * // Count lines
  * const count = await $('data.txt').lines().count();
+ *
+ * // Extend with custom transforms via .pipe()
+ * const customTransform = async function* (stream) {
+ *   for await (const line of stream) {
+ *     yield line.toUpperCase();
+ *   }
+ * };
+ * await $('data.txt').lines().pipe(customTransform).collect();
  * ```
  */
 export class FluentShell {
@@ -72,118 +121,14 @@ export class FluentShell {
     }
   }
 
-  // ============== Transform Methods ==============
-
-  /**
-   * Split content into lines
-   *
-   * @returns FluentShell for chaining
-   *
-   * @example
-   * ```ts
-   * $('log.txt').lines().head(10).print();
-   * ```
-   */
-  lines(): FluentShell {
-    return new FluentShell(this._stream.pipe(transforms.lines()));
-  }
-
-  /**
-   * Filter lines matching a pattern
-   *
-   * @param pattern - String or RegExp pattern to match
-   * @returns FluentShell for chaining
-   *
-   * @example
-   * ```ts
-   * $('app.log').lines().grep(/ERROR/).print();
-   * ```
-   */
-  grep(pattern: RegExp | string): FluentShell {
-    return new FluentShell(this._stream.pipe(transforms.grep(pattern)));
-  }
-
-  /**
-   * Take first n items
-   *
-   * @param n - Number of items to take (default: 10)
-   * @returns FluentShell for chaining
-   *
-   * @example
-   * ```ts
-   * $('data.txt').lines().head(5).print();
-   * ```
-   */
-  head(n: number = 10): FluentShell {
-    return new FluentShell(this._stream.pipe(transforms.head(n)));
-  }
-
-  /**
-   * Take last n items
-   *
-   * Note: Buffers n items in memory.
-   *
-   * @param n - Number of items to keep (default: 10)
-   * @returns FluentShell for chaining
-   *
-   * @example
-   * ```ts
-   * $('data.txt').lines().tail(5).print();
-   * ```
-   */
-  tail(n: number = 10): FluentShell {
-    return new FluentShell(this._stream.pipe(transforms.tail(n)));
-  }
-
-  /**
-   * Filter items using a predicate
-   *
-   * @param predicate - Function returning true for items to keep (receives item and index)
-   * @returns FluentShell for chaining
-   *
-   * @example
-   * ```ts
-   * $('data.txt').lines().filter(line => line.length > 10).print();
-   * $('data.csv').lines().filter((line, idx) => idx > 0).print(); // skip header
-   * ```
-   */
-  filter(
-    predicate: (item: string, index: number) => boolean | Promise<boolean>,
-  ): FluentShell {
-    return new FluentShell(this._stream.pipe(transforms.filter(predicate)));
-  }
-
-  /**
-   * Transform each item
-   *
-   * @param fn - Transform function (receives item and index)
-   * @returns FluentShell for chaining
-   *
-   * @example
-   * ```ts
-   * $('data.txt').lines().map(line => line.toUpperCase()).print();
-   * $('data.txt').lines().map((line, idx) => `${idx}: ${line}`).print();
-   * ```
-   */
-  map(fn: (item: string, index: number) => string | Promise<string>): FluentShell {
-    return new FluentShell(this._stream.pipe(transforms.map(fn)));
-  }
-
-  /**
-   * Take first n items (alias for head)
-   *
-   * @param n - Number of items to take
-   * @returns FluentShell for chaining
-   */
-  take(n: number): FluentShell {
-    return this.head(n);
-  }
+  // ============== Core Extensibility Method ==============
 
   /**
    * Apply a transform function to the stream
    *
-   * This allows using stream transforms (like $.filter, $.map) with FluentShell,
-   * enabling interoperability between the fluent API and the transform-based API.
+   * This is the core extensibility mechanism for FluentShell. Any transform
+   * function can be applied via .pipe(), enabling unlimited extensibility
+   * without hardcoding methods.
    *
    * @param transform - A transform function that takes an AsyncIterable<string>
    *                    and returns an AsyncIterable<string>
@@ -200,6 +145,14 @@ export class FluentShell {
    *   .pipe(transforms.map(line => line.toUpperCase()))
    *   .print();
    *
+   * // Custom transform
+   * const addPrefix = async function* (stream) {
+   *   for await (const item of stream) {
+   *     yield `[LOG] ${item}`;
+   *   }
+   * };
+   * await $('data.txt').lines().pipe(addPrefix).collect();
+   *
    * // Mix fluent methods with pipe
    * await $('data.txt')
    *   .lines()
@@ -213,6 +166,119 @@ export class FluentShell {
     transform: (stream: AsyncIterable<string>) => AsyncIterable<string>,
   ): FluentShell {
     return new FluentShell(this._stream.pipe(transform));
+  }
+
+  // ============== Transform Methods (Convenience Wrappers) ==============
+  // All methods below delegate to transforms.ts via .pipe() for consistency
+  // and to avoid coupling FluentShell to specific command implementations.
+
+  /**
+   * Split content into lines
+   *
+   * Delegates to transforms.lines() via .pipe()
+   *
+   * @returns FluentShell for chaining
+   *
+   * @example
+   * ```ts
+   * $('log.txt').lines().head(10).print();
+   * ```
+   */
+  lines = createTransformMethod(transforms.lines);
+
+  /**
+   * Filter lines matching a pattern
+   *
+   * Delegates to transforms.grep() via .pipe()
+   *
+   * @param pattern - String or RegExp pattern to match
+   * @returns FluentShell for chaining
+   *
+   * @example
+   * ```ts
+   * $('app.log').lines().grep(/ERROR/).print();
+   * ```
+   */
+  grep = createTransformMethod(transforms.grep);
+
+  /**
+   * Take first n items
+   *
+   * Delegates to transforms.head() via .pipe()
+   *
+   * @param n - Number of items to take (default: 10)
+   * @returns FluentShell for chaining
+   *
+   * @example
+   * ```ts
+   * $('data.txt').lines().head(5).print();
+   * ```
+   */
+  head = createTransformMethod(transforms.head);
+
+  /**
+   * Take last n items
+   *
+   * Delegates to transforms.tail() via .pipe()
+   *
+   * Note: Buffers n items in memory.
+   *
+   * @param n - Number of items to keep (default: 10)
+   * @returns FluentShell for chaining
+   *
+   * @example
+   * ```ts
+   * $('data.txt').lines().tail(5).print();
+   * ```
+   */
+  tail = createTransformMethod(transforms.tail);
+
+  /**
+   * Filter items using a predicate
+   *
+   * Delegates to transforms.filter() via .pipe()
+   *
+   * @param predicate - Function returning true for items to keep (receives item and index)
+   * @returns FluentShell for chaining
+   *
+   * @example
+   * ```ts
+   * $('data.txt').lines().filter(line => line.length > 10).print();
+   * $('data.csv').lines().filter((line, idx) => idx > 0).print(); // skip header
+   * ```
+   */
+  filter(
+    predicate: (item: string, index: number) => boolean | Promise<boolean>,
+  ): FluentShell {
+    return this.pipe(transforms.filter(predicate));
+  }
+
+  /**
+   * Transform each item
+   *
+   * Delegates to transforms.map() via .pipe()
+   *
+   * @param fn - Transform function (receives item and index)
+   * @returns FluentShell for chaining
+   *
+   * @example
+   * ```ts
+   * $('data.txt').lines().map(line => line.toUpperCase()).print();
+   * $('data.txt').lines().map((line, idx) => `${idx}: ${line}`).print();
+   * ```
+   */
+  map(fn: (item: string, index: number) => string | Promise<string>): FluentShell {
+    return this.pipe(transforms.map(fn));
+  }
+
+  /**
+   * Take first n items (alias for head)
+   *
+   * @param n - Number of items to take
+   * @returns FluentShell for chaining
+   */
+  take(n: number): FluentShell {
+    return this.head(n);
   }
 
   // ============== Terminal Operations ==============
@@ -485,3 +551,40 @@ $.wrap = (stream: Stream<string>): FluentShell => {
 };
 
 export default $ as ShellFunction;
+
+/**
+ * Export the helper for extending FluentShell with custom transforms
+ *
+ * This allows users to add their own convenience methods to FluentShell
+ * by wrapping transform functions.
+ *
+ * @example
+ * ```ts
+ * import { FluentShell, extendFluentShell } from './shell.ts';
+ *
+ * // Define a custom transform
+ * function reverse(): Transform<string, string> {
+ *   return async function* (stream) {
+ *     const items = [];
+ *     for await (const item of stream) {
+ *       items.push(item);
+ *     }
+ *     for (let i = items.length - 1; i >= 0; i--) {
+ *       yield items[i];
+ *     }
+ *   };
+ * }
+ *
+ * // Add it to FluentShell
+ * declare module './shell.ts' {
+ *   interface FluentShell {
+ *     reverse(): FluentShell;
+ *   }
+ * }
+ * FluentShell.prototype.reverse = extendFluentShell(reverse);
+ *
+ * // Use it
+ * await $('data.txt').lines().reverse().collect();
+ * ```
+ */
+export const extendFluentShell = createTransformMethod;

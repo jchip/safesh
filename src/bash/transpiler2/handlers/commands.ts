@@ -19,7 +19,7 @@ import {
   collectFlagOptions,
   collectFlagOptionsAndFiles,
 } from "../utils/mod.ts";
-import { SHELL_BUILTINS } from "../builtins.ts";
+import { SHELL_BUILTINS, type BuiltinConfig } from "../builtins.ts";
 
 // =============================================================================
 // Helpers
@@ -218,34 +218,48 @@ function handleStandardCommand(
 }
 
 // =============================================================================
-// Command Handler
+// Command Handler - Phase-Based Decomposition
 // =============================================================================
 
-export function buildCommand(
+/**
+ * Analysis result for a command
+ */
+interface CommandAnalysis {
+  name: string;
+  args: string[];
+  hasAssignments: boolean;
+  hasRedirects: boolean;
+  hasMergeStreams: boolean;
+  hasDynamicArgs: boolean;
+  isVariableAssignmentOnly: boolean;
+}
+
+/**
+ * Command strategy types
+ */
+type CommandStrategy =
+  | { type: 'variable-assignment'; assignments: AST.VariableAssignment[] }
+  | { type: 'user-function'; name: string }
+  | { type: 'shell-builtin'; name: string; args: string[]; builtin: BuiltinConfig }
+  | { type: 'timeout'; args: string[] }
+  | { type: 'fluent'; name: string; args: string[] }
+  | { type: 'specialized'; name: string; args: string[]; hasMergeStreams: boolean }
+  | { type: 'standard'; name: string; args: string[]; hasAssignments: boolean; assignments: AST.VariableAssignment[]; hasMergeStreams: boolean };
+
+/**
+ * Phase 1: Analyze command structure
+ * Parses and analyzes the command to extract relevant metadata
+ */
+function analyzeCommand(
   command: AST.Command,
-  ctx: VisitorContext,
-  options?: { inPipeline?: boolean },
-): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean; isStream?: boolean } {
-  // Handle pure variable assignments (no command name)
-  const hasNoCommand =
-    command.name.type === "Word" && command.name.value === "";
-  if (command.assignments.length > 0 && hasNoCommand) {
-    const assignments = command.assignments
-      .map((a) => buildVariableAssignment(a, ctx))
-      .join(", ");
-    return { code: assignments, async: false };
-  }
+  ctx: VisitorContext
+): CommandAnalysis {
+  const hasNoCommand = command.name.type === "Word" && command.name.value === "";
+  const isVariableAssignmentOnly = command.assignments.length > 0 && hasNoCommand;
 
   const name = ctx.visitWord(command.name);
   const args = command.args.map((arg) => ctx.visitWord(arg));
 
-  let cmdExpr = "";
-  let isAsync = true;
-  let isUserFunction = false;
-  let isTransform = false;
-  let isStream = false;
-
-  // Analysis
   const hasAssignments = command.assignments.length > 0;
   const hasRedirects = command.redirects.length > 0;
   const hasMergeStreams = command.redirects.some(
@@ -253,73 +267,201 @@ export function buildCommand(
            typeof r.target === "number" && r.target === 1 &&
            r.fd === 2
   );
+  const hasDynamicArgs = args.some((arg) => arg.includes("${"));
 
-  // Strategy Dispatch
-  if (ctx.isFunction(name)) {
-    cmdExpr = handleUserFunction(name);
-    isAsync = true;
-    isUserFunction = true;
-  } else if (SHELL_BUILTINS[name] && !hasAssignments && !hasRedirects && !options?.inPipeline) {
-    const result = handleShellBuiltin(name, args, SHELL_BUILTINS[name]);
-    cmdExpr = result.code;
-    isAsync = result.async;
-  } else if (name === "timeout") {
-    // SSH-426: Handle timeout command specially
-    const timeoutResult = handleTimeoutCommand(args, ctx);
-    if (timeoutResult) {
-      cmdExpr = timeoutResult.code;
-      isAsync = timeoutResult.async;
-    } else {
-      // Invalid timeout syntax - fall through to standard command handling
-      // This will likely fail at runtime, but that's expected
-      cmdExpr = handleStandardCommand(name, args, hasAssignments, command.assignments, hasMergeStreams, ctx);
-      isAsync = true;
-    }
-  } else {
-    // Check constraints for fluent commands
-    const hasDynamicArgs = args.some((arg) => arg.includes("${"));
-    const hasAnyRedirects = command.redirects.length > 0; // Fluent doesn't support redirects
+  return {
+    name,
+    args,
+    hasAssignments,
+    hasRedirects,
+    hasMergeStreams,
+    hasDynamicArgs,
+    isVariableAssignmentOnly,
+  };
+}
 
-    let handled = false;
-
-    // Try fluent command strategy
-    if (isFluentCommand(name) && !hasDynamicArgs && !hasAssignments && !hasAnyRedirects) {
-      const fluentResult = buildFluentCommand(name, args, ctx);
-      if (fluentResult !== null) {
-        cmdExpr = fluentResult.code;
-        isTransform = fluentResult.isTransform;
-        isStream = fluentResult.isStream;
-        // SSH-424: Fluent commands return Command objects synchronously (no await needed)
-        isAsync = false;
-        handled = true;
-        // console.error(`[DEBUG] Fluent command ${name}: isAsync=${isAsync}, isStream=${isStream}, isTransform=${isTransform}`);
-      }
-    }
-
-    if (!handled) {
-      if (!hasAssignments && (SPECIALIZED_COMMANDS.has(name) || name === "tmux")) {
-        // Specialized commands (git, docker, tmux)
-        cmdExpr = handleSpecializedCommand(name, args, hasMergeStreams);
-        isAsync = true;
-      } else {
-        // Standard commands
-        cmdExpr = handleStandardCommand(name, args, hasAssignments, command.assignments, hasMergeStreams, ctx);
-        isAsync = true;
-      }
-    }
+/**
+ * Phase 2: Select appropriate command strategy
+ * Determines which strategy to use based on command analysis
+ */
+function selectCommandStrategy(
+  command: AST.Command,
+  analysis: CommandAnalysis,
+  ctx: VisitorContext,
+  options?: { inPipeline?: boolean }
+): CommandStrategy {
+  // Variable assignment only
+  if (analysis.isVariableAssignmentOnly) {
+    return { type: 'variable-assignment', assignments: command.assignments };
   }
 
+  // User function
+  if (ctx.isFunction(analysis.name)) {
+    return { type: 'user-function', name: analysis.name };
+  }
+
+  // Shell builtin
+  const builtin = SHELL_BUILTINS[analysis.name];
+  if (builtin && !analysis.hasAssignments && !analysis.hasRedirects && !options?.inPipeline) {
+    return {
+      type: 'shell-builtin',
+      name: analysis.name,
+      args: analysis.args,
+      builtin
+    };
+  }
+
+  // Timeout command
+  if (analysis.name === "timeout") {
+    return { type: 'timeout', args: analysis.args };
+  }
+
+  // Fluent command (with constraint checking)
+  if (isFluentCommand(analysis.name) && !analysis.hasDynamicArgs && !analysis.hasAssignments && !analysis.hasRedirects) {
+    return { type: 'fluent', name: analysis.name, args: analysis.args };
+  }
+
+  // Specialized command
+  if (!analysis.hasAssignments && (SPECIALIZED_COMMANDS.has(analysis.name) || analysis.name === "tmux")) {
+    return {
+      type: 'specialized',
+      name: analysis.name,
+      args: analysis.args,
+      hasMergeStreams: analysis.hasMergeStreams
+    };
+  }
+
+  // Standard command
+  return {
+    type: 'standard',
+    name: analysis.name,
+    args: analysis.args,
+    hasAssignments: analysis.hasAssignments,
+    assignments: command.assignments,
+    hasMergeStreams: analysis.hasMergeStreams
+  };
+}
+
+/**
+ * Phase 3: Execute the selected command strategy
+ * Generates the transpiled code based on the strategy
+ */
+function executeCommandStrategy(
+  strategy: CommandStrategy,
+  ctx: VisitorContext
+): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean; isStream?: boolean } {
+  switch (strategy.type) {
+    case 'variable-assignment': {
+      const assignments = strategy.assignments
+        .map((a) => buildVariableAssignment(a, ctx))
+        .join(", ");
+      return { code: assignments, async: false };
+    }
+
+    case 'user-function': {
+      const cmdExpr = handleUserFunction(strategy.name);
+      return { code: cmdExpr, async: true, isUserFunction: true };
+    }
+
+    case 'shell-builtin': {
+      const result = handleShellBuiltin(strategy.name, strategy.args, strategy.builtin);
+      return { code: result.code, async: result.async };
+    }
+
+    case 'timeout': {
+      const timeoutResult = handleTimeoutCommand(strategy.args, ctx);
+      if (timeoutResult) {
+        return { code: timeoutResult.code, async: timeoutResult.async };
+      }
+      // Invalid timeout syntax - fall through to standard command handling
+      // Extract command name and args from timeout args
+      const cmdName = strategy.args[1] ?? "";
+      const cmdArgs = strategy.args.slice(2);
+      const cmdExpr = handleStandardCommand(cmdName, cmdArgs, false, [], false, ctx);
+      return { code: cmdExpr, async: true };
+    }
+
+    case 'fluent': {
+      const fluentResult = buildFluentCommand(strategy.name, strategy.args, ctx);
+      if (fluentResult !== null) {
+        // SSH-424: Fluent commands return Command objects synchronously (no await needed)
+        return {
+          code: fluentResult.code,
+          async: false,
+          isTransform: fluentResult.isTransform,
+          isStream: fluentResult.isStream
+        };
+      }
+      // Fallback to standard if fluent returns null
+      const cmdExpr = handleStandardCommand(strategy.name, strategy.args, false, [], false, ctx);
+      return { code: cmdExpr, async: true };
+    }
+
+    case 'specialized': {
+      const cmdExpr = handleSpecializedCommand(strategy.name, strategy.args, strategy.hasMergeStreams);
+      return { code: cmdExpr, async: true };
+    }
+
+    case 'standard': {
+      const cmdExpr = handleStandardCommand(
+        strategy.name,
+        strategy.args,
+        strategy.hasAssignments,
+        strategy.assignments,
+        strategy.hasMergeStreams,
+        ctx
+      );
+      return { code: cmdExpr, async: true };
+    }
+  }
+}
+
+/**
+ * Phase 4: Apply command redirections
+ * Applies redirection operators to the command expression
+ */
+function applyCommandRedirections(
+  cmdExpr: string,
+  redirects: AST.Redirection[],
+  ctx: VisitorContext
+): string {
+  let result = cmdExpr;
+
   // Apply redirections (except 2>&1 which is handled via mergeStreams option)
-  for (const redirect of command.redirects) {
+  for (const redirect of redirects) {
     if ((redirect.operator === ">&" || redirect.operator === "<&") &&
         typeof redirect.target === "number" && redirect.target === 1 &&
         redirect.fd === 2) {
       continue;
     }
-    cmdExpr = applyRedirection(cmdExpr, redirect, ctx);
+    result = applyRedirection(result, redirect, ctx);
   }
 
-  return { code: cmdExpr, async: isAsync, isUserFunction, isTransform, isStream };
+  return result;
+}
+
+/**
+ * Build command - Main orchestrator
+ * Coordinates the 4 phases to transpile a command
+ */
+export function buildCommand(
+  command: AST.Command,
+  ctx: VisitorContext,
+  options?: { inPipeline?: boolean },
+): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean; isStream?: boolean } {
+  // Phase 1: Analyze command
+  const analysis = analyzeCommand(command, ctx);
+
+  // Phase 2: Select strategy
+  const strategy = selectCommandStrategy(command, analysis, ctx, options);
+
+  // Phase 3: Execute strategy
+  const result = executeCommandStrategy(strategy, ctx);
+
+  // Phase 4: Apply redirections
+  const finalCode = applyCommandRedirections(result.code, command.redirects, ctx);
+
+  return { ...result, code: finalCode };
 }
 
 /**
@@ -696,6 +838,15 @@ function analyzePipelineStructure(operators: (string | null)[]): PipelineAnalysi
 // Pipeline Assembler
 // =============================================================================
 
+/**
+ * PipelineAssembler orchestrates pipeline code generation.
+ * Each operator (&&, ||, |, ;) has its own focused handler method.
+ *
+ * Responsibilities:
+ * - Maintain pipeline state (code, printable, promise, stream)
+ * - Delegate to operator-specific handlers
+ * - Return assembled pipeline result
+ */
 class PipelineAssembler {
   private code: string;
   private isPrintable: boolean;
@@ -719,131 +870,228 @@ class PipelineAssembler {
     };
   }
 
+  /**
+   * Handle && operator: execute second part if first succeeds.
+   * SSH-361/362: Handle printable vs non-printable parts correctly.
+   *
+   * @param part - The pipeline part to append
+   * @param followedByPipe - Whether this && is eventually followed by a pipe
+   */
   appendAnd(part: PipelinePart, followedByPipe: boolean): void {
-    // SSH-361/362: Handle printable vs non-printable parts correctly
+    if (!this.isPrintable && !part.isPrintable) {
+      this.handleNonPrintableAnd(part);
+    } else if (this.isPrintable) {
+      this.handlePrintableAnd(part, followedByPipe);
+    } else {
+      this.handleMixedAnd(part, followedByPipe);
+    }
+    this.isPrintable = part.isPrintable;
+  }
+
+  /**
+   * Handle || operator: execute second part if first fails.
+   * SSH-361/362: Handle printable vs non-printable parts correctly.
+   */
+  appendOr(part: PipelinePart): void {
+    if (!this.isPrintable && !part.isPrintable) {
+      this.handleNonPrintableOr(part);
+    } else if (this.isPrintable) {
+      this.handlePrintableOr(part);
+    } else {
+      this.handleMixedOr(part);
+    }
+    this.resetPromiseState();
+    this.isPrintable = part.isPrintable;
+  }
+
+  /**
+   * Handle | operator: pipe output from first to second.
+   * SSH-364: Use appropriate method for transforms vs commands.
+   */
+  appendPipe(part: PipelinePart): void {
+    this.resolvePromiseIfNeeded();
+
+    if (part.isTransform) {
+      this.handleTransformPipe(part);
+    } else if (part.isStreamProducer) {
+      this.handleStreamProducerPipe(part);
+    } else {
+      this.handleCommandPipe(part);
+    }
+
+    this.isPrintable = true;
+    // SSH-409: isStream reflects whether result is actually a stream
+    this.isStream = part.isStreamProducer || part.isTransform;
+  }
+
+  /**
+   * Handle ; operator: execute parts sequentially.
+   * SSH-362: Handle non-printable parts correctly.
+   */
+  appendSequential(part: PipelinePart): void {
     if (!this.isPrintable && !part.isPrintable) {
       this.code = `${this.code}; ${part.code}`;
       this.isPromise = false;
-      this.isStream = false;
-      this.isLineStream = false;
     } else if (this.isPrintable) {
-      const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
-      if (followedByPipe) {
-        // Use comma operator to execute first command, then return second
-        this.code = `(await __printCmd(${resultExpr}), ${part.code})`;
-        this.isPromise = false;
-        // SSH-425: Preserve stream status from the second part for subsequent piping
-        this.isStream = part.isStreamProducer;
-        this.isLineStream = false;
-      } else {
-        this.code = `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`;
-        this.isPromise = true;
-        this.isStream = false;
-        this.isLineStream = false;
-      }
+      this.wrapInAsyncIIFE(
+        `await __printCmd(${this.isPromise ? `await ${this.code}` : this.code})`,
+        `return ${part.code}`
+      );
     } else {
-      // result is non-printable (like cd), part is printable
-      if (followedByPipe) {
-        this.code = `(${this.code}, ${part.code})`;
-        this.isPromise = false;
-        // SSH-425: Preserve stream status from the second part for subsequent piping
-        this.isStream = part.isStreamProducer;
-        this.isLineStream = false;
-      } else {
-        this.code = `(async () => { ${this.code}; return ${part.code}; })()`;
-        this.isPromise = true;
-        this.isStream = false;
-        this.isLineStream = false;
-      }
+      this.wrapInAsyncIIFE(this.code, `return ${part.code}`);
     }
 
+    this.updateStreamState(false, false);
     this.isPrintable = part.isPrintable;
   }
 
-  appendOr(part: PipelinePart): void {
-    // SSH-361/362: Handle printable vs non-printable parts correctly
-    if (!this.isPrintable && !part.isPrintable) {
-      this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${part.code}; return { code: 0, stdout: '', stderr: '', success: true }; } })()`;
-    } else if (this.isPrintable) {
-      const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
-      this.code = `(async () => { try { await __printCmd(${resultExpr}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
-    } else {
-      this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
-    }
+  // ----- Private Helper Methods -----
 
-    this.isPromise = true;
-    this.isPrintable = part.isPrintable;
-    this.isStream = false;
+  /**
+   * Handle && for non-printable parts (like cd && cd)
+   */
+  private handleNonPrintableAnd(part: PipelinePart): void {
+    this.code = `${this.code}; ${part.code}`;
+    this.updateStreamState(false, false);
+    this.isPromise = false;
+  }
+
+  /**
+   * Handle && for printable first part
+   */
+  private handlePrintableAnd(part: PipelinePart, followedByPipe: boolean): void {
+    const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
+    if (followedByPipe) {
+      // Use comma operator to execute first command, then return second
+      this.code = `(await __printCmd(${resultExpr}), ${part.code})`;
+      this.isPromise = false;
+      // SSH-425: Preserve stream status from second part for subsequent piping
+      this.isStream = part.isStreamProducer;
+      this.isLineStream = false;
+    } else {
+      this.wrapInAsyncIIFE(
+        `await __printCmd(${resultExpr})`,
+        `return ${part.code}`
+      );
+    }
+  }
+
+  /**
+   * Handle && for mixed printable/non-printable (cd && echo)
+   */
+  private handleMixedAnd(part: PipelinePart, followedByPipe: boolean): void {
+    if (followedByPipe) {
+      this.code = `(${this.code}, ${part.code})`;
+      this.isPromise = false;
+      // SSH-425: Preserve stream status from second part for subsequent piping
+      this.isStream = part.isStreamProducer;
+      this.isLineStream = false;
+    } else {
+      this.wrapInAsyncIIFE(this.code, `return ${part.code}`);
+    }
+  }
+
+  /**
+   * Handle || for non-printable parts
+   */
+  private handleNonPrintableOr(part: PipelinePart): void {
+    this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${part.code}; return { code: 0, stdout: '', stderr: '', success: true }; } })()`;
+  }
+
+  /**
+   * Handle || for printable first part
+   */
+  private handlePrintableOr(part: PipelinePart): void {
+    const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
+    this.code = `(async () => { try { await __printCmd(${resultExpr}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+  }
+
+  /**
+   * Handle || for mixed printable/non-printable
+   */
+  private handleMixedOr(part: PipelinePart): void {
+    this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+  }
+
+  /**
+   * Handle pipe to transform (like $.head, $.grep)
+   */
+  private handleTransformPipe(part: PipelinePart): void {
+    if (this.isLineStream) {
+      // SSH-408: Already a line stream, just pipe to the transform
+      this.code = `${this.code}.pipe(${part.code})`;
+      this.isLineStream = true;
+    } else if (this.isStream) {
+      // Stream producer (like $.cat) - need .lines() to split content into lines
+      this.code = `${this.code}.lines().pipe(${part.code})`;
+      this.isLineStream = true;
+    } else {
+      // Command - convert to line stream first, then apply transform
+      this.code = `${this.code}.stdout().lines().pipe(${part.code})`;
+      this.isLineStream = true;
+    }
+  }
+
+  /**
+   * Handle pipe to stream producer (like $.cat)
+   */
+  private handleStreamProducerPipe(part: PipelinePart): void {
+    this.code = `${this.code}.pipe(${part.code})`;
     this.isLineStream = false;
   }
 
-  appendPipe(part: PipelinePart): void {
-    // SSH-364: Use appropriate method for transforms vs commands
+  /**
+   * Handle pipe to command
+   */
+  private handleCommandPipe(part: PipelinePart): void {
+    if (this.isLineStream) {
+      // SSH-408: Piping from a line stream to a command needs toCmdLines
+      this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
+      this.isLineStream = true;
+    } else if (this.isStream) {
+      // When piping from a stream to a command, need to use toCmdLines transform
+      this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
+      this.isLineStream = true;
+    } else {
+      // When piping from a command to a command, can pipe directly
+      this.code = `${this.code}.pipe(${part.code})`;
+      this.isLineStream = false;
+    }
+  }
+
+  /**
+   * Resolve promise state if needed (await if promise)
+   */
+  private resolvePromiseIfNeeded(): void {
     if (this.isPromise) {
       this.code = `(await ${this.code})`;
       this.isPromise = false;
     }
-
-    // Transforms (like $.head, $.grep) need the output split into lines first
-    if (part.isTransform) {
-      if (this.isLineStream) {
-        // SSH-408: Already a line stream, just pipe to the transform
-        this.code = `${this.code}.pipe(${part.code})`;
-        this.isLineStream = true;
-      } else if (this.isStream) {
-        // Stream producer (like $.cat) - need .lines() to split content into lines
-        this.code = `${this.code}.lines().pipe(${part.code})`;
-        this.isLineStream = true;
-      } else {
-        // Command - convert to line stream first, then apply transform
-        this.code = `${this.code}.stdout().lines().pipe(${part.code})`;
-        this.isLineStream = true;
-      }
-    } else if (part.isStreamProducer) {
-      // Part is a stream producer (like $.cat) - it can receive piped input
-      this.code = `${this.code}.pipe(${part.code})`;
-      this.isLineStream = false;
-    } else {
-      // Part is a command - pipe to it
-      if (this.isLineStream) {
-        // SSH-408: Piping from a line stream to a command needs toCmdLines
-        this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
-        // toCmdLines returns a line stream (Transform<string, string>)
-        this.isLineStream = true;
-      } else if (this.isStream) {
-        // When piping from a stream to a command, need to use toCmdLines transform
-        this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
-        // toCmdLines returns a line stream (Transform<string, string>)
-        this.isLineStream = true;
-      } else {
-        // When piping from a command to a command, can pipe directly
-        this.code = `${this.code}.pipe(${part.code})`;
-        this.isLineStream = false;
-      }
-    }
-
-    this.isPrintable = true;
-    // SSH-409: isStream should reflect whether the result is actually a stream
-    this.isStream = part.isStreamProducer || part.isTransform;
   }
 
-  appendSequential(part: PipelinePart): void {
-    // SSH-362: Handle non-printable parts correctly
-    if (!this.isPrintable && !part.isPrintable) {
-      this.code = `${this.code}; ${part.code}`;
-      this.isPromise = false;
-    } else if (this.isPrintable) {
-      const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
-      this.code = `(async () => { await __printCmd(${resultExpr}); return ${part.code}; })()`;
-      this.isPromise = true;
-    } else {
-      this.code = `(async () => { ${this.code}; return ${part.code}; })()`;
-      this.isPromise = true;
-    }
+  /**
+   * Update stream state flags
+   */
+  private updateStreamState(isStream: boolean, isLineStream: boolean): void {
+    this.isStream = isStream;
+    this.isLineStream = isLineStream;
+  }
 
-    this.isPrintable = part.isPrintable;
-    this.isStream = false;
-    this.isLineStream = false;
+  /**
+   * Reset promise state and stream flags (used by || and ; operators)
+   */
+  private resetPromiseState(): void {
+    this.isPromise = true;
+    this.updateStreamState(false, false);
+  }
+
+  /**
+   * Wrap code in async IIFE
+   */
+  private wrapInAsyncIIFE(expr: string, returnExpr: string): void {
+    this.code = `(async () => { ${expr}; ${returnExpr}; })()`;
+    this.isPromise = true;
+    this.updateStreamState(false, false);
   }
 }
 

@@ -9,6 +9,7 @@
  */
 
 import { getSessionFilePath as getTempSessionFilePath } from "./temp.ts";
+import { readJsonFileSync, writeJsonFile } from "./io-utils.ts";
 
 /**
  * Session data structure stored in session-{id}.json
@@ -36,8 +37,7 @@ export function readSessionFile(
   const sessionFile = getTempSessionFilePath(projectDir, sessionId);
 
   try {
-    const content = Deno.readTextFileSync(sessionFile);
-    return JSON.parse(content) as SessionData;
+    return readJsonFileSync<SessionData>(sessionFile);
   } catch {
     // File doesn't exist or invalid JSON - return empty data
     return {};
@@ -69,8 +69,7 @@ export async function writeSessionFile(
   };
 
   // Write back
-  const content = JSON.stringify(merged, null, 2) + "\n";
-  await Deno.writeTextFile(sessionFile, content);
+  await writeJsonFile(sessionFile, merged);
 }
 
 /**
@@ -220,8 +219,7 @@ export function mergeSessionPermissions(
   const sessionFile = getTempSessionFilePath(projectDir, sessionId);
 
   try {
-    const sessionContent = Deno.readTextFileSync(sessionFile);
-    const session = JSON.parse(sessionContent) as SessionData;
+    const session = readJsonFileSync<SessionData>(sessionFile);
 
     // Merge read permissions
     if (session.permissions?.read) {

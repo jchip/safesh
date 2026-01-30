@@ -6,10 +6,9 @@
 import { assertEquals, assertStringIncludes, assertRejects } from "@std/assert";
 import { describe, it, beforeEach, afterEach } from "@std/testing/bdd";
 import { cmd, git, initCmds } from "../../src/stdlib/command.ts";
+import { REAL_TMP } from "../helpers.ts";
 
-// Resolve /tmp to real path
-const realTmp = Deno.realPathSync("/tmp");
-const testDir = `${realTmp}/safesh-command-test`;
+const testDir = `${REAL_TMP}/safesh-command-test`;
 
 describe("command execution (SSH-195)", { sanitizeResources: false, sanitizeOps: false }, () => {
   beforeEach(async () => {

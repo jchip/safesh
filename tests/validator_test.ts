@@ -13,6 +13,7 @@ import {
 } from "../src/external/validator.ts";
 import { CommandRegistry } from "../src/external/registry.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
+import { REAL_TMP } from "./helpers.ts";
 
 // ============================================================================
 // parseFlags Tests
@@ -196,18 +197,17 @@ Deno.test({
       pathArgs: { autoDetect: true, validateSandbox: true },
     });
 
-    const realTmp = await Deno.realPath("/tmp");
     const config: SafeShellConfig = {
       permissions: {
-        read: [realTmp],
-        write: [realTmp],
+        read: [REAL_TMP],
+        write: [REAL_TMP],
       },
     };
 
     // Valid command and path
     let result = await validateExternal(
       "git",
-      ["add", `${realTmp}/file.txt`],
+      ["add", `${REAL_TMP}/file.txt`],
       registry,
       config,
       "/",

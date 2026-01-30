@@ -400,3 +400,221 @@ Deno.test("save() - handles empty result", async (t) => {
     await cleanupTempDir();
   });
 });
+
+// ============== Extensibility Tests ==============
+
+Deno.test("extensibility - pipe() with custom transform", async () => {
+  // Custom transform that adds prefix to each line
+  const addPrefix = async function* (stream: AsyncIterable<string>) {
+    for await (const line of stream) {
+      yield `[PREFIX] ${line}`;
+    }
+  };
+
+  const result = await $.from(["line1", "line2", "line3"])
+    .pipe(addPrefix)
+    .collect();
+
+  assertEquals(result, [
+    "[PREFIX] line1",
+    "[PREFIX] line2",
+    "[PREFIX] line3",
+  ]);
+});
+
+Deno.test("extensibility - pipe() with multiple custom transforms", async () => {
+  // Transform 1: Filter long lines
+  const filterLong = async function* (stream: AsyncIterable<string>) {
+    for await (const line of stream) {
+      if (line.length > 3) {
+        yield line;
+      }
+    }
+  };
+
+  // Transform 2: Add line numbers
+  const addLineNumbers = async function* (stream: AsyncIterable<string>) {
+    let lineNum = 1;
+    for await (const line of stream) {
+      yield `${lineNum++}. ${line}`;
+    }
+  };
+
+  const result = await $.from(["a", "bb", "ccc", "dddd", "eeeee"])
+    .pipe(filterLong)
+    .pipe(addLineNumbers)
+    .collect();
+
+  assertEquals(result, ["1. dddd", "2. eeeee"]);
+});
+
+Deno.test("extensibility - pipe() mixed with built-in methods", async () => {
+  // Custom transform
+  const wrapInBrackets = async function* (stream: AsyncIterable<string>) {
+    for await (const line of stream) {
+      yield `[${line}]`;
+    }
+  };
+
+  const result = await $.from([
+    "ERROR: fail",
+    "INFO: ok",
+    "ERROR: timeout",
+    "DEBUG: test",
+  ])
+    .grep(/ERROR/)
+    .pipe(wrapInBrackets)
+    .map(line => line.toUpperCase())
+    .collect();
+
+  assertEquals(result, ["[ERROR: FAIL]", "[ERROR: TIMEOUT]"]);
+});
+
+Deno.test("extensibility - pipe() with async transforms", async () => {
+  // Async transform that delays each item
+  const delayedUppercase = async function* (stream: AsyncIterable<string>) {
+    for await (const line of stream) {
+      // Simulate async work
+      await new Promise(resolve => setTimeout(resolve, 1));
+      yield line.toUpperCase();
+    }
+  };
+
+  const result = await $.from(["hello", "world"])
+    .pipe(delayedUppercase)
+    .collect();
+
+  assertEquals(result, ["HELLO", "WORLD"]);
+});
+
+Deno.test("extensibility - pipe() with stateful transforms", async () => {
+  // Stateful transform that numbers lines
+  const numberLines = async function* (stream: AsyncIterable<string>) {
+    let counter = 0;
+    for await (const line of stream) {
+      yield `${++counter}: ${line}`;
+    }
+  };
+
+  const result = await $.from(["first", "second", "third"])
+    .pipe(numberLines)
+    .collect();
+
+  assertEquals(result, ["1: first", "2: second", "3: third"]);
+});
+
+Deno.test("extensibility - pipe() with transform composition", async () => {
+  // Helper to compose transforms
+  const compose = <T>(...transforms: Array<(s: AsyncIterable<T>) => AsyncIterable<T>>) => {
+    return async function* (stream: AsyncIterable<T>) {
+      let current = stream;
+      for (const transform of transforms) {
+        current = transform(current);
+      }
+      yield* current;
+    };
+  };
+
+  const uppercase = async function* (stream: AsyncIterable<string>) {
+    for await (const item of stream) {
+      yield item.toUpperCase();
+    }
+  };
+
+  const exclaim = async function* (stream: AsyncIterable<string>) {
+    for await (const item of stream) {
+      yield `${item}!`;
+    }
+  };
+
+  const result = await $.from(["hello", "world"])
+    .pipe(compose(uppercase, exclaim))
+    .collect();
+
+  assertEquals(result, ["HELLO!", "WORLD!"]);
+});
+
+Deno.test("extensibility - pipe() preserves stream laziness", async () => {
+  let processedCount = 0;
+
+  const countingTransform = async function* (stream: AsyncIterable<string>) {
+    for await (const item of stream) {
+      processedCount++;
+      yield item;
+    }
+  };
+
+  // Create pipeline but don't execute
+  const pipeline = $.from(["a", "b", "c", "d", "e"])
+    .pipe(countingTransform)
+    .head(2);
+
+  // No items should be processed yet
+  assertEquals(processedCount, 0);
+
+  // Execute and check only 2-3 items were processed (due to head(2))
+  // Note: head() may pull one extra item to check if stream is exhausted
+  const result = await pipeline.collect();
+  assertEquals(result, ["a", "b"]);
+  // Allow for implementation details - should be 2 or 3 max
+  assertEquals(processedCount <= 3, true, `Expected at most 3 items processed, got ${processedCount}`);
+});
+
+Deno.test("extensibility - custom transform with error handling", async () => {
+  // Transform that filters out invalid JSON
+  const parseValidJson = async function* (stream: AsyncIterable<string>) {
+    for await (const line of stream) {
+      try {
+        const parsed = JSON.parse(line);
+        yield JSON.stringify(parsed);
+      } catch {
+        // Skip invalid JSON lines
+        continue;
+      }
+    }
+  };
+
+  const result = await $.from([
+    '{"valid": true}',
+    'invalid json',
+    '{"another": "valid"}',
+    'also invalid',
+  ])
+    .pipe(parseValidJson)
+    .collect();
+
+  assertEquals(result, ['{"valid":true}', '{"another":"valid"}']);
+});
+
+Deno.test("extensibility - pipe() can access items multiple times with buffering", async () => {
+  // Transform that yields each item twice
+  const duplicate = async function* (stream: AsyncIterable<string>) {
+    for await (const item of stream) {
+      yield item;
+      yield item;
+    }
+  };
+
+  const result = await $.from(["a", "b"])
+    .pipe(duplicate)
+    .collect();
+
+  assertEquals(result, ["a", "a", "b", "b"]);
+});
+
+Deno.test("extensibility - pipe() with complex data transformation", async () => {
+  // Transform CSV line into fields and rejoin
+  const processCsv = async function* (stream: AsyncIterable<string>) {
+    for await (const line of stream) {
+      const fields = line.split(",");
+      // Reverse fields
+      yield fields.reverse().join(",");
+    }
+  };
+
+  const result = await $.from(["a,b,c", "1,2,3"])
+    .pipe(processCsv)
+    .collect();
+
+  assertEquals(result, ["c,b,a", "3,2,1"]);
+});

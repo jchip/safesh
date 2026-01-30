@@ -28,6 +28,9 @@ export {
   visitBraceGroup,
   visitTestCommand,
   visitArithmeticCommand,
+  visitReturnStatement,
+  visitBreakStatement,
+  visitContinueStatement,
 } from "./control.ts";
 
 // Word and expansion handlers

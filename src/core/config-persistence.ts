@@ -5,7 +5,8 @@
  * Consolidates the addToConfigLocal and addPathsToConfigLocal patterns.
  */
 
-import { join } from "@std/path";
+import { getProjectConfigDir, getLocalJsonConfigPath } from "./config.ts";
+import { readJsonFile, writeJsonFile } from "./io-utils.ts";
 
 /**
  * Configuration update to be applied
@@ -61,21 +62,12 @@ export async function updateConfigLocal(
 ): Promise<void> {
   const { merge = true, silent = false } = options;
 
-  const configDir = join(projectDir, ".config", "safesh");
-  const configPath = join(configDir, "config.local.json");
-
-  // Ensure directory exists
-  try {
-    await Deno.mkdir(configDir, { recursive: true });
-  } catch {
-    // Ignore if directory already exists
-  }
+  const configPath = getLocalJsonConfigPath(projectDir);
 
   // Load existing config or create new
   let config: LocalConfig = {};
   try {
-    const content = await Deno.readTextFile(configPath);
-    config = JSON.parse(content);
+    config = await readJsonFile<LocalConfig>(configPath);
   } catch {
     // File doesn't exist or is invalid, start fresh
   }
@@ -130,7 +122,7 @@ export async function updateConfigLocal(
   }
 
   // Write back to disk
-  await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2) + "\n");
+  await writeJsonFile(configPath, config);
 
   // Log changes unless silent
   if (!silent && messages.length > 0) {
