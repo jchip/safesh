@@ -13,6 +13,7 @@
 
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
+import type { Token } from "./lexer.ts";
 import { Lexer, tokenize, TokenType } from "./lexer.ts";
 
 // =============================================================================
@@ -59,6 +60,22 @@ describe("Lexer Public API", () => {
       const lexer = new Lexer("");
       const token = lexer.next();
       assertEquals(token?.type, TokenType.EOF);
+    });
+
+    it("should consume tokens from buffer before generating new ones", () => {
+      const lexer = new Lexer("cat <<EOF\nhello\nEOF\necho done");
+      // Consume tokens - heredoc handling puts content in buffer
+      const tokens: Token[] = [];
+      let tok = lexer.next();
+      while (tok && tok.type !== TokenType.EOF) {
+        tokens.push(tok);
+        tok = lexer.next();
+      }
+      // Verify we got all tokens including heredoc content
+      assert(tokens.some(t => t.type === TokenType.HEREDOC_CONTENT));
+      // Verify we got tokens after heredoc
+      assert(tokens.some(t => t.type === TokenType.NAME && t.value === "echo"));
+      assert(tokens.some(t => t.type === TokenType.DONE && t.value === "done"));
     });
   });
 
@@ -418,6 +435,55 @@ describe("Quote Handling Edge Cases", () => {
 
   it("should handle escaped single quote in unquoted context", () => {
     const tokens = tokenize("echo \\'test");
+    assertEquals(tokens[1]?.type, TokenType.WORD);
+  });
+});
+
+// =============================================================================
+// ANSI-C and Locale Quoting Tests
+// =============================================================================
+
+describe("ANSI-C and Locale Quoting", () => {
+  it("should tokenize ANSI-C quoting $'...'", () => {
+    const tokens = tokenize("echo $'hello\\nworld'");
+    assertEquals(tokens[1]?.type, TokenType.WORD);
+    assertEquals(tokens[1]?.value, "$'hello\\nworld'");
+  });
+
+  it("should tokenize ANSI-C quoting with tab escape", () => {
+    const tokens = tokenize("echo $'tab\\there'");
+    assert(tokens[1]?.value.includes("$'"));
+    assert(tokens[1]?.value.includes("\\t"));
+  });
+
+  it("should tokenize ANSI-C quoting with various escapes", () => {
+    const tokens = tokenize("echo $'line1\\nline2\\ttab'");
+    assertEquals(tokens[1]?.type, TokenType.WORD);
+    assertEquals(tokens[1]?.value, "$'line1\\nline2\\ttab'");
+  });
+
+  it("should tokenize locale quoting $\"...\"", () => {
+    const tokens = tokenize('echo $"localized"');
+    // Verify it tokenizes correctly
+    assertEquals(tokens.length, 3); // echo, localized, EOF
+    // Note: locale quoting produces a NAME token with the quoted content
+    assertEquals(tokens[1]?.type, TokenType.NAME);
+  });
+
+  it("should tokenize mixed quoting styles", () => {
+    const tokens = tokenize("echo 'single' \"double\" $'ansi' $\"locale\"");
+    const wordTokens = tokens.filter(t => t.type === TokenType.NAME || t.type === TokenType.WORD);
+    assertEquals(wordTokens.length, 5); // echo, 'single', "double", $'ansi', $"locale"
+  });
+
+  it("should tokenize ANSI-C quoting with escaped backslash", () => {
+    const tokens = tokenize("echo $'back\\\\slash'");
+    assertEquals(tokens[1]?.type, TokenType.WORD);
+    assert(tokens[1]?.value.includes("\\\\"));
+  });
+
+  it("should tokenize locale quoting with escaped characters", () => {
+    const tokens = tokenize('echo $"test\\"quote"');
     assertEquals(tokens[1]?.type, TokenType.WORD);
   });
 });

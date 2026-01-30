@@ -1122,4 +1122,42 @@ fi`);
       assertEquals(hasContext, true);
     });
   });
+
+  describe("Parser Error Context", () => {
+    it("should provide context for error in until loop", () => {
+      assertThrows(() => {
+        parse("until true; do fi; done");
+      }, Error, "until");
+    });
+
+    it("should provide context for error in case statement", () => {
+      assertThrows(() => {
+        parse("case $x in\n  a) fi;;\nesac");
+      }, Error, "case");
+    });
+
+    it("should provide context for error in function", () => {
+      assertThrows(() => {
+        parse("function foo { fi; }");
+      }, Error, "brace group");
+    });
+
+    it("should provide context for error in subshell", () => {
+      assertThrows(() => {
+        parse("( fi )");
+      }, Error, "subshell");
+    });
+
+    it("should provide context for error in brace group", () => {
+      assertThrows(() => {
+        parse("{ fi; }");
+      }, Error, "brace group");
+    });
+
+    it("should parse command substitution without error", () => {
+      const result = parse("echo $(cat file)");
+      assertEquals(result.type, "Program");
+      assertEquals(result.body.length, 1);
+    });
+  });
 });
