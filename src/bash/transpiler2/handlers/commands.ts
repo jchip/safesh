@@ -1132,9 +1132,22 @@ function assemblePipeline(
 }
 
 /**
- * Flatten a nested pipeline tree into arrays of commands and operators
- * For "cmd1 && cmd2 || cmd3" which parses as Pipeline(Pipeline(cmd1 && cmd2) || cmd3),
- * we want: parts=[cmd1, cmd2, cmd3], operators=[&&, ||]
+ * Flatten a nested pipeline tree into arrays of commands and operators.
+ *
+ * SSH-472: When the current operator is || or &&, and an operand is a | pipe chain,
+ * build the pipe chain as a complete expression (don't flatten it).
+ * But if the operand is another &&/|| chain or a single command, flatten it normally
+ * to preserve variable scoping.
+ *
+ * Example: "cat file | jq || cat file | head" parses as:
+ *   Pipeline(operator: ||)
+ *     - Pipeline(operator: |) [cat | jq]
+ *     - Pipeline(operator: |) [cat | head]
+ *
+ * We should NOT flatten this to [cat, jq, cat, head] with operators [|, ||, |].
+ * Instead, we should build each side of || as a complete pipeline expression.
+ *
+ * But for "A=1 && B=2 && echo $A $B", we SHOULD flatten to preserve variable scope.
  */
 function flattenPipeline(
   pipeline: AST.Pipeline,
@@ -1144,6 +1157,13 @@ function flattenPipeline(
 ): void {
   // Check if this pipeline uses pipe operator (|) - only then we're in a "true" pipeline
   const hasPipeOperator = pipeline.operator === "|";
+
+  // Helper to check if a nested pipeline should be built as a complete expression
+  // Only | pipe chains should be complete expressions within ||/&& operators
+  const shouldBuildAsExpression = (nested: AST.Pipeline): boolean => {
+    // If current operator is || or &&, and nested pipeline is a | pipe chain, build as expression
+    return (pipeline.operator === "||" || pipeline.operator === "&&") && nested.operator === "|";
+  };
 
   // Process left side (first command)
   const left = pipeline.commands[0];
@@ -1162,7 +1182,22 @@ function flattenPipeline(
         isAsync: result.async,
       });
     } else if (left.type === "Pipeline") {
-      flattenPipeline(left, parts, operators, ctx);
+      // SSH-472: Only build as complete expression if it's a | pipe chain within ||/&&
+      if (shouldBuildAsExpression(left)) {
+        const result = buildPipeline(left, ctx);
+        // Calculate isPrintable the same way as for commands
+        const isPrintable = result.isPrintable ?? (result.async || (result.isStream ?? false));
+        parts.push({
+          code: result.code,
+          isPrintable,
+          isTransform: false,
+          isStreamProducer: result.isStream ?? false,
+          isAsync: result.async,
+        });
+      } else {
+        // Flatten for &&/|| chains and single commands to preserve variable scope
+        flattenPipeline(left, parts, operators, ctx);
+      }
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
       parts.push({ code: buildStatementAsExpression(left, ctx), isPrintable: true, isTransform: false, isStreamProducer: false, isAsync: true });
@@ -1190,7 +1225,22 @@ function flattenPipeline(
         isAsync: result.async,
       });
     } else if (cmd.type === "Pipeline") {
-      flattenPipeline(cmd, parts, operators, ctx);
+      // SSH-472: Only build as complete expression if it's a | pipe chain within ||/&&
+      if (shouldBuildAsExpression(cmd)) {
+        const result = buildPipeline(cmd, ctx);
+        // Calculate isPrintable the same way as for commands
+        const isPrintable = result.isPrintable ?? (result.async || (result.isStream ?? false));
+        parts.push({
+          code: result.code,
+          isPrintable,
+          isTransform: false,
+          isStreamProducer: result.isStream ?? false,
+          isAsync: result.async,
+        });
+      } else {
+        // Flatten for &&/|| chains and single commands to preserve variable scope
+        flattenPipeline(cmd, parts, operators, ctx);
+      }
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
       parts.push({ code: buildStatementAsExpression(cmd, ctx), isPrintable: true, isTransform: false, isStreamProducer: false, isAsync: true });
@@ -1212,6 +1262,106 @@ function buildStatementAsExpression(stmt: AST.Statement, ctx: VisitorContext): s
 }
 
 /**
+ * Check if a command is a "safe" command for sequential execution in && chains.
+ * Safe commands always succeed, so we can emit them sequentially without
+ * breaking && semantics. This includes:
+ * - Variable assignments (A=1)
+ * - cd (changes directory, doesn't fail in typical use)
+ *
+ * Commands that might fail (test commands, regular commands) need proper
+ * && handling with exit code checks.
+ */
+function isSafeAndOperand(cmd: AST.Statement): boolean {
+  if (cmd.type === "Command") {
+    // Variable-only assignment (no command name)
+    if (cmd.assignments.length > 0 && cmd.name.type === "Word" && cmd.name.value === "") {
+      return true;
+    }
+    // cd is a safe builtin that typically doesn't fail
+    if (cmd.name.type === "Word" && cmd.name.value === "cd") {
+      return true;
+    }
+    return false;
+  }
+  if (cmd.type === "Pipeline") {
+    // Single-command pipeline - check the inner command
+    if (cmd.commands.length === 1 && cmd.operator === null) {
+      return isSafeAndOperand(cmd.commands[0]!);
+    }
+    // Nested && chain - all parts must be safe
+    if (cmd.operator === "&&") {
+      return cmd.commands.every(c => isSafeAndOperand(c));
+    }
+    return false;
+  }
+  // TestCommand, ArithmeticCommand, etc. might fail
+  return false;
+}
+
+/**
+ * Check if a pipeline is a "safe" && chain that can be emitted as sequential
+ * statements without breaking && semantics.
+ *
+ * A safe && chain has all non-final commands as "safe" (variable assignments, cd).
+ * The final command can be anything since we don't need to check its exit code.
+ */
+function isSafeAndChain(pipeline: AST.Pipeline): boolean {
+  if (pipeline.operator !== "&&") return false;
+
+  // Check all commands - they should be either Commands or single-command Pipelines (no pipes)
+  for (const cmd of pipeline.commands) {
+    if (cmd.type === "Pipeline") {
+      // If it's a nested pipeline with | or ||, not a safe && chain
+      if (cmd.operator === "|" || cmd.operator === "||") return false;
+      // If it's a nested && chain, check recursively
+      if (cmd.operator === "&&") {
+        if (!isSafeAndChain(cmd)) return false;
+      }
+      // operator === null is fine (single command wrapped in pipeline)
+    }
+  }
+
+  // Now check that all non-final commands are "safe"
+  const commands: AST.Statement[] = [];
+  flattenAndChain(pipeline, commands);
+
+  // All but the last command must be safe
+  for (let i = 0; i < commands.length - 1; i++) {
+    if (!isSafeAndOperand(commands[i]!)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Flatten a pure && chain into an array of statements
+ */
+function flattenAndChain(
+  pipeline: AST.Pipeline,
+  statements: Array<AST.Statement>,
+): void {
+  for (const cmd of pipeline.commands) {
+    if (cmd.type === "Pipeline") {
+      if (cmd.operator === "&&") {
+        // Recursively flatten nested && chains
+        flattenAndChain(cmd, statements);
+      } else {
+        // Single-command pipeline (operator === null)
+        const inner = cmd.commands[0];
+        if (inner) {
+          statements.push(inner);
+        }
+      }
+    } else {
+      // Command, TestCommand, ArithmeticCommand, BraceGroup, Subshell, etc.
+      statements.push(cmd);
+    }
+  }
+}
+
+/**
  * Visit a pipeline statement
  */
 export function visitPipeline(
@@ -1229,6 +1379,108 @@ export function visitPipeline(
       return visitCommand(cmd, ctx);
     }
     return ctx.visitStatement(cmd);
+  }
+
+  // SSH-472: For && chains, we need to preserve variable scope.
+  // First, check if this chain has any variable assignments that need hoisting.
+  // If so, emit them as separate statements first, then emit the pipeline.
+  if (pipeline.operator === "&&" && !pipeline.background) {
+    const statements: Array<AST.Statement> = [];
+    flattenAndChain(pipeline, statements);
+
+    // Find variable assignments that need hoisting
+    const hoistedVars: string[] = [];
+    const nonVarStatements: AST.Statement[] = [];
+
+    for (const stmt of statements) {
+      if (stmt.type === "Command" &&
+          stmt.assignments.length > 0 &&
+          stmt.name.type === "Word" &&
+          stmt.name.value === "") {
+        // Pure variable assignment - hoist it
+        const result = buildCommand(stmt, ctx);
+        hoistedVars.push(result.code);
+      } else {
+        nonVarStatements.push(stmt);
+      }
+    }
+
+    // If we have hoisted variables and remaining statements, emit them separately
+    if (hoistedVars.length > 0) {
+      const lines: string[] = [];
+
+      // First emit all variable assignments
+      for (const varCode of hoistedVars) {
+        lines.push(`${indent}${varCode};`);
+      }
+
+      // If there are no remaining statements, we're done
+      if (nonVarStatements.length === 0) {
+        return { lines };
+      }
+
+      // If remaining statements are all safe (cd), emit them directly
+      const allSafe = nonVarStatements.every(stmt => {
+        if (stmt.type === "Command" && stmt.name.type === "Word" && stmt.name.value === "cd") {
+          return true;
+        }
+        return false;
+      });
+
+      if (allSafe) {
+        for (const stmt of nonVarStatements) {
+          if (stmt.type === "Command") {
+            const result = buildCommand(stmt, ctx);
+            lines.push(`${indent}${result.code};`);
+          }
+        }
+        return { lines };
+      }
+
+      // Otherwise, build a new pipeline from remaining statements and emit it
+      if (nonVarStatements.length === 1) {
+        const stmt = nonVarStatements[0]!;
+        if (stmt.type === "Command") {
+          const result = buildCommand(stmt, ctx);
+          const isPrintable = result.async || (result.isStream ?? false) || (result.isTransform ?? false);
+          if (isPrintable) {
+            lines.push(`${indent}await __printCmd(${result.code});`);
+          } else {
+            lines.push(`${indent}${result.code};`);
+          }
+        } else {
+          const stmtResult = ctx.visitStatement(stmt);
+          lines.push(...stmtResult.lines);
+        }
+        return { lines };
+      }
+
+      // Multiple non-var statements: build as && chain
+      // Create a synthetic pipeline from the remaining statements
+      const syntheticPipeline: AST.Pipeline = {
+        type: "Pipeline",
+        commands: nonVarStatements.map(stmt => ({
+          type: "Pipeline" as const,
+          commands: [stmt],
+          operator: null,
+          background: false,
+          negated: false,
+        })),
+        operator: "&&",
+        background: false,
+        negated: false,
+      };
+
+      const result = buildPipeline(syntheticPipeline, ctx);
+      if (result.isStream) {
+        lines.push(`${indent}for await (const __line of ${result.code}) { console.log(__line); }`);
+      } else if (!result.isPrintable) {
+        lines.push(`${indent}${result.code};`);
+      } else {
+        lines.push(`${indent}await __printCmd(${result.code});`);
+      }
+      return { lines };
+    }
   }
 
   const result = buildPipeline(pipeline, ctx);

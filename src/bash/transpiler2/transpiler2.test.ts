@@ -456,6 +456,40 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, '$.echo');
   });
 
+  it("should preserve variable scope in && chains with multiple uses (SSH-472)", () => {
+    const ast = parse('mkdir -p dir && cd dir && SRC="/path/file.png" && sips -z 1 "$SRC" && sips -z 2 "$SRC"');
+    const output = transpile(ast);
+
+    // Variable should be hoisted to outer scope, not inside nested IIFEs
+    // The let SRC should come BEFORE the await __printCmd
+    const srcIndex = output.indexOf('let SRC');
+    const printCmdIndex = output.indexOf('await __printCmd');
+    assertEquals(srcIndex > 0, true, "Should have variable assignment");
+    assertEquals(printCmdIndex > 0, true, "Should have __printCmd");
+    assertEquals(srcIndex < printCmdIndex, true, "Variable should be defined before pipeline execution");
+
+    // Both sips commands should use SRC
+    const srcUsages = (output.match(/\$\{SRC\}/g) || []).length;
+    assertEquals(srcUsages, 2, "Both sips commands should reference SRC");
+  });
+
+  it("should handle pipe precedence over || correctly (SSH-472)", () => {
+    const ast = parse('cat file | jq "." || cat file | head -10');
+    const output = transpile(ast);
+
+    // Should have try/catch for ||
+    assertStringIncludes(output, "try {");
+    assertStringIncludes(output, "catch {");
+
+    // The fallback branch should include the full pipe chain (cat | head)
+    // not just "cat" which would then have .stdout() applied incorrectly
+    assertStringIncludes(output, "$.cat");
+    assertStringIncludes(output, ".head(10)");
+
+    // Should NOT have .stdout() called on the IIFE result
+    assertEquals(output.includes("})().stdout()"), false, "Should not call .stdout() on IIFE result");
+  });
+
   it("should use .stdout().lines().pipe() for command-to-transform pipelines (SSH-364)", () => {
     const ast = parse("ls | head -5");
     const output = transpile(ast);

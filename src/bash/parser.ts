@@ -394,42 +394,31 @@ export class Parser {
   // Pipelines and Logical Operators
   // ===========================================================================
 
+  /**
+   * Parse a pipeline (and-or list) with proper precedence.
+   * In bash, | has higher precedence than && and ||.
+   *
+   * Grammar:
+   *   and_or: pipeline (('&&' | '||') pipeline)*
+   *   pipeline: command ('|' command)*
+   */
   private parsePipeline(): AST.Pipeline {
-    // Handle negation operator (!)
+    // Handle negation operator (!) - applies to the first pipeline
     const negated = this.skip(TokenType.BANG);
 
-    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement = this.parseCommand();
+    // Parse the first pipeline (commands connected with |)
+    let left = this.parsePipelineOnly(negated);
 
-    // Only handle pipe and logical operators (|, |&, &&, ||)
-    // Do NOT handle ; or & here - those are statement separators/terminators
-    while (
-      this.isAny(
-        TokenType.PIPE,
-        TokenType.PIPE_AMP,
-        TokenType.AND_AND,
-        TokenType.OR_OR,
-      )
-    ) {
+    // Handle && and || operators (lower precedence than |)
+    while (this.isAny(TokenType.AND_AND, TokenType.OR_OR)) {
       const operator = this.advance();
       this.skipNewlines();
 
-      const right = this.parseCommand();
+      // Parse the right side as a complete pipeline
+      const right = this.parsePipelineOnly(false);
 
       // Determine operator
-      let op: AST.Pipeline["operator"] = null;
-
-      switch (operator.type) {
-        case TokenType.PIPE:
-        case TokenType.PIPE_AMP:
-          op = "|";
-          break;
-        case TokenType.AND_AND:
-          op = "&&";
-          break;
-        case TokenType.OR_OR:
-          op = "||";
-          break;
-      }
+      const op: AST.Pipeline["operator"] = operator.type === TokenType.AND_AND ? "&&" : "||";
 
       // Flatten pipelines with the same operator
       if (left.type === "Pipeline" && left.operator === op) {
@@ -462,6 +451,43 @@ export class Parser {
           commands: [left],
           operator: "&",
           background: true,
+          negated: negated,
+        };
+      }
+    }
+
+    return left;
+  }
+
+  /**
+   * Parse a pipeline of commands connected with | (pipe operator).
+   * This has higher precedence than && and ||.
+   */
+  private parsePipelineOnly(negated: boolean): AST.Pipeline {
+    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement = this.parseCommand();
+
+    // Handle pipe operators (| and |&)
+    while (this.isAny(TokenType.PIPE, TokenType.PIPE_AMP)) {
+      this.advance();
+      this.skipNewlines();
+
+      const right = this.parseCommand();
+
+      // Flatten pipelines with the same | operator
+      if (left.type === "Pipeline" && left.operator === "|") {
+        left = {
+          type: "Pipeline",
+          commands: [...left.commands, right],
+          operator: "|",
+          background: false,
+          negated: left.negated,
+        };
+      } else {
+        left = {
+          type: "Pipeline",
+          commands: [left, right],
+          operator: "|",
+          background: false,
           negated: negated,
         };
       }
