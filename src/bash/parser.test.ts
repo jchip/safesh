@@ -92,8 +92,11 @@ describe("Bash Parser", () => {
 
       assertEquals(pipeline.operator, "&&");
       assertEquals(pipeline.commands.length, 2);
-      assertEquals(((pipeline.commands[0] as AST.Command).name as AST.Word).value, "cmd1");
-      assertEquals(((pipeline.commands[1] as AST.Command).name as AST.Word).value, "cmd2");
+      // Each operand of && is now a Pipeline (for proper precedence handling)
+      const left = pipeline.commands[0] as AST.Pipeline;
+      const right = pipeline.commands[1] as AST.Pipeline;
+      assertEquals(((left.commands[0] as AST.Command).name as AST.Word).value, "cmd1");
+      assertEquals(((right.commands[0] as AST.Command).name as AST.Word).value, "cmd2");
     });
 
     it("should parse OR operator", () => {
@@ -120,7 +123,8 @@ describe("Bash Parser", () => {
       const pipeline = ast.body[0] as AST.Pipeline;
 
       assertEquals(pipeline.background, true);
-      assertEquals(pipeline.operator, "&");
+      // For single-command background, operator is null (& is a flag, not an operator)
+      assertEquals(pipeline.operator, null);
     });
   });
 
@@ -1031,8 +1035,11 @@ done`);
 
       assertEquals(pipeline.operator, "&&");
       assertEquals(pipeline.commands.length, 2);
-      assertEquals(pipeline.commands[0]?.type, "TestCommand");
-      assertEquals(pipeline.commands[1]?.type, "Command");
+      // Each operand of && is now a Pipeline (for proper precedence handling)
+      const left = pipeline.commands[0] as AST.Pipeline;
+      const right = pipeline.commands[1] as AST.Pipeline;
+      assertEquals(left.commands[0]?.type, "TestCommand");
+      assertEquals(right.commands[0]?.type, "Command");
     });
 
     it("should parse [[ ]] in pipeline with ||", () => {
@@ -1041,8 +1048,11 @@ done`);
 
       assertEquals(pipeline.operator, "||");
       assertEquals(pipeline.commands.length, 2);
-      assertEquals(pipeline.commands[0]?.type, "TestCommand");
-      assertEquals(pipeline.commands[1]?.type, "TestCommand");
+      // Each operand of || is now a Pipeline (for proper precedence handling)
+      const left = pipeline.commands[0] as AST.Pipeline;
+      const right = pipeline.commands[1] as AST.Pipeline;
+      assertEquals(left.commands[0]?.type, "TestCommand");
+      assertEquals(right.commands[0]?.type, "TestCommand");
     });
 
     it("should parse (( )) arithmetic command in if", () => {
@@ -1063,8 +1073,11 @@ fi`);
       const pipeline = ast.body[0] as AST.Pipeline;
 
       assertEquals(pipeline.commands.length, 2);
-      assertEquals(pipeline.commands[0]?.type, "TestCommand");
-      assertEquals(pipeline.commands[1]?.type, "ArithmeticCommand");
+      // Each operand of && is now a Pipeline (for proper precedence handling)
+      const left = pipeline.commands[0] as AST.Pipeline;
+      const right = pipeline.commands[1] as AST.Pipeline;
+      assertEquals(left.commands[0]?.type, "TestCommand");
+      assertEquals(right.commands[0]?.type, "ArithmeticCommand");
     });
   });
 
