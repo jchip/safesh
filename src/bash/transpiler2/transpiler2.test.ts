@@ -587,6 +587,26 @@ describe("Transpiler2 - Pipelines", () => {
     // Pattern: for await (const __line of await (async () => { ... })())
     assertStringIncludes(output, "for await (const __line of await");
   });
+
+  // SSH-482: cat with no args in pipeline should use $.cmd("cat"), not $.cat("-")
+  it("should use $.cmd for cat with no args in pipeline (SSH-482)", () => {
+    const ast = parse("flutter test 2>&1 | cat");
+    const output = transpile(ast);
+
+    // cat in pipeline should use $.cmd("cat"), not $.cat("-")
+    // because $.cat("-") returns a Stream which cannot be piped from a Command
+    assertStringIncludes(output, '$.cmd("cat")');
+    assertEquals(output.includes('$.cat("-")'), false, "Should not use $.cat(\"-\") in pipeline");
+  });
+
+  it("should use $.cmd for cat with stdin arg in pipeline (SSH-482)", () => {
+    const ast = parse("echo test | cat -");
+    const output = transpile(ast);
+
+    // cat - in pipeline should also use $.cmd("cat")
+    assertStringIncludes(output, '$.cmd("cat"');
+    assertEquals(output.includes('$.cat("-")'), false, "Should not use $.cat(\"-\") in pipeline");
+  });
 });
 
 // =============================================================================
