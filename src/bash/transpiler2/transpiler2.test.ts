@@ -572,6 +572,21 @@ describe("Transpiler2 - Pipelines", () => {
     assertEquals(output.includes("await __printCmd((async ()"), false,
       "Should not wrap stream-returning IIFE in __printCmd");
   });
+
+  it("should handle cd && cmd | grep pattern correctly (SSH-476)", () => {
+    // cd is non-printable, followed by a pipe chain that produces a stream
+    const ast = parse("cd dir && echo test 2>&1 | grep test");
+    const output = transpile(ast);
+
+    // Should use for await to iterate the stream result
+    assertStringIncludes(output, "for await");
+    assertStringIncludes(output, "$.cd");
+    assertStringIncludes(output, "$.grep");
+
+    // SSH-476: When the stream comes from an async IIFE, we need to await it first
+    // Pattern: for await (const __line of await (async () => { ... })())
+    assertStringIncludes(output, "for await (const __line of await");
+  });
 });
 
 // =============================================================================
