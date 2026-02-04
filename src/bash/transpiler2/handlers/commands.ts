@@ -1486,7 +1486,9 @@ export function visitPipeline(
 
       const result = buildPipeline(syntheticPipeline, ctx);
       if (result.isStream) {
-        lines.push(`${indent}for await (const __line of ${result.code}) { console.log(__line); }`);
+        // SSH-476: If the result is async (wrapped in IIFE), await it first before iterating
+        const streamExpr = result.async ? `await ${result.code}` : result.code;
+        lines.push(`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`);
       } else if (!result.isPrintable) {
         lines.push(`${indent}${result.code};`);
       } else {
@@ -1520,7 +1522,9 @@ export function visitPipeline(
   // SSH-364: Handle stream vs command output differently
   if (result.isStream) {
     // For streams (from .trans()), iterate and print each line
-    return { lines: [`${indent}for await (const __line of ${result.code}) { console.log(__line); }`] };
+    // SSH-476: If the result is async (wrapped in IIFE), await it first before iterating
+    const streamExpr = result.async ? `await ${result.code}` : result.code;
+    return { lines: [`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`] };
   }
 
   // SSH-372: Don't wrap non-printable results (like shell builtins) in __printCmd
