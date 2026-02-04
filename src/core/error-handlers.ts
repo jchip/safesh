@@ -377,8 +377,8 @@ AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>
   // SSH-475: Build detailed error log with transpiled code if available
   const errorLogParts = [
     "=== Execution Error ===",
-    ${options.includeCommand ? `"Original Bash Command:\\n" + ${escapedCommand ? `\`${escapedCommand}\`` : "fullCommand"},` : '""'}
-    ${escapedTranspiledCode ? '"\\nTranspiled TypeScript:\\n" + __TRANSPILED_CODE__,' : '""'}
+    ${options.includeCommand ? `"Original Bash Command:\\n" + ${escapedCommand ? `\`${escapedCommand}\`` : "fullCommand"}` : '""'},
+    ${escapedTranspiledCode ? '"\\nTranspiled TypeScript:\\n" + __TRANSPILED_CODE__' : '""'},
     \`\\nError: \${errorMessage}\`,
     error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
     "=========================\\n"
