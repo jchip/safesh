@@ -805,4 +805,158 @@ describe("error-handlers", () => {
       assertEquals(result, "/very/long/path/to/file.txt");
     });
   });
+
+  // SSH-480: Generated code syntax validation tests
+  describe("generated code syntax validation", () => {
+    /**
+     * Helper to validate that generated code is syntactically valid JavaScript
+     * Uses Function constructor to parse without executing
+     */
+    function validateJavaScriptSyntax(code: string): { valid: boolean; error?: string } {
+      try {
+        // Wrap in async function to allow await in the code
+        new Function(`return async function() { ${code} }`);
+        return { valid: true };
+      } catch (e) {
+        return { valid: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    it("SSH-479 regression: generates valid array syntax with includeCommand=true", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+        includeCommand: true,
+        originalCommand: "docker ps",
+      }, false);
+
+      const result = validateJavaScriptSyntax(code);
+      assertEquals(result.valid, true, `Generated code has syntax error: ${result.error}`);
+    });
+
+    it("SSH-479 regression: generates valid array syntax with transpiledCode", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+        transpiledCode: 'await $.cmd("sleep", "10");',
+      }, false);
+
+      const result = validateJavaScriptSyntax(code);
+      assertEquals(result.valid, true, `Generated code has syntax error: ${result.error}`);
+    });
+
+    it("SSH-479 regression: generates valid array syntax with both includeCommand and transpiledCode", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Bash Command Error",
+        includeCommand: true,
+        originalCommand: "for i in $(seq 1 10); do echo $i; done",
+        transpiledCode: 'for await (const i of $.seq(1, 10)) { console.log(i); }',
+      }, false);
+
+      const result = validateJavaScriptSyntax(code);
+      assertEquals(result.valid, true, `Generated code has syntax error: ${result.error}`);
+    });
+
+    it("SSH-479 regression: generates valid array syntax with errorLogPath", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+        errorLogPath: "/tmp/safesh/errors/test.log",
+        includeCommand: true,
+        originalCommand: "test command",
+      }, false);
+
+      const result = validateJavaScriptSyntax(code);
+      assertEquals(result.valid, true, `Generated code has syntax error: ${result.error}`);
+    });
+
+    it("SSH-479 regression: generates valid array syntax with all options combined", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Complex Error",
+        errorLogPath: "/tmp/safesh/errors/test.log",
+        includeCommand: true,
+        originalCommand: 'git commit -m "Fix bug"',
+        transpiledCode: 'await $.cmd("git", "commit", "-m", "Fix bug");',
+      }, false);
+
+      const result = validateJavaScriptSyntax(code);
+      assertEquals(result.valid, true, `Generated code has syntax error: ${result.error}`);
+    });
+
+    it("SSH-479 regression: generates valid array syntax with minimal options", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Minimal Error",
+      }, false);
+
+      const result = validateJavaScriptSyntax(code);
+      assertEquals(result.valid, true, `Generated code has syntax error: ${result.error}`);
+    });
+
+    it("generates valid code with event listeners included", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+        includeCommand: true,
+        originalCommand: "test",
+        transpiledCode: "console.log('test');",
+        errorLogPath: "/tmp/error.log",
+      }, true); // Include listeners
+
+      const result = validateJavaScriptSyntax(code);
+      assertEquals(result.valid, true, `Generated code has syntax error: ${result.error}`);
+    });
+
+    it("errorLogParts array has proper comma separation", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test",
+        includeCommand: true,
+        originalCommand: "test",
+        transpiledCode: "test",
+      }, false);
+
+      // Extract the errorLogParts array from the code
+      const arrayMatch = code.match(/const errorLogParts = \[([\s\S]*?)\]\.filter/);
+      assertEquals(arrayMatch !== null, true, "Should contain errorLogParts array");
+
+      // Each non-empty line in the array should end with a comma (except the last)
+      const arrayContent = arrayMatch![1]!;
+      const lines = arrayContent
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
+
+      // All lines except the last should end with comma
+      for (let i = 0; i < lines.length - 1; i++) {
+        assertEquals(
+          lines[i]!.endsWith(','),
+          true,
+          `Line ${i + 1} should end with comma: "${lines[i]}"`
+        );
+      }
+    });
+
+    it("consoleMsg array has proper comma separation", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test",
+        includeCommand: true,
+        originalCommand: "test",
+      }, false);
+
+      // Extract the consoleMsg array from the code
+      const arrayMatch = code.match(/const consoleMsg = \[([\s\S]*?)\]\.join/);
+      assertEquals(arrayMatch !== null, true, "Should contain consoleMsg array");
+
+      // Each non-empty line in the array should end with a comma (except the last)
+      const arrayContent = arrayMatch![1]!;
+      const lines = arrayContent
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
+
+      // All lines except the last should end with comma
+      for (let i = 0; i < lines.length - 1; i++) {
+        assertEquals(
+          lines[i]!.endsWith(','),
+          true,
+          `Line ${i + 1} should end with comma: "${lines[i]}"`
+        );
+      }
+    });
+  });
 });
