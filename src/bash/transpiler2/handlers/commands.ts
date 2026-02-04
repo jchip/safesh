@@ -932,16 +932,22 @@ class PipelineAssembler {
     if (!this.isPrintable && !part.isPrintable) {
       this.code = `${this.code}; ${part.code}`;
       this.isPromise = false;
+      this.updateStreamState(false, false);
     } else if (this.isPrintable) {
       this.wrapInAsyncIIFE(
         `await __printCmd(${this.isPromise ? `await ${this.code}` : this.code})`,
         `return ${part.code}`
       );
+      // SSH-474: Preserve stream status from the returning part
+      this.isStream = part.isStreamProducer;
+      this.isLineStream = false;
     } else {
       this.wrapInAsyncIIFE(this.code, `return ${part.code}`);
+      // SSH-474: Preserve stream status from the returning part
+      this.isStream = part.isStreamProducer;
+      this.isLineStream = false;
     }
 
-    this.updateStreamState(false, false);
     this.isPrintable = part.isPrintable;
   }
 
@@ -973,6 +979,10 @@ class PipelineAssembler {
         `await __printCmd(${resultExpr})`,
         `return ${part.code}`
       );
+      // SSH-474: Preserve stream status from the returning part
+      // The IIFE returns part.code, so stream state should match
+      this.isStream = part.isStreamProducer;
+      this.isLineStream = false;
     }
   }
 
@@ -988,6 +998,9 @@ class PipelineAssembler {
       this.isLineStream = false;
     } else {
       this.wrapInAsyncIIFE(this.code, `return ${part.code}`);
+      // SSH-474: Preserve stream status from the returning part
+      this.isStream = part.isStreamProducer;
+      this.isLineStream = false;
     }
   }
 

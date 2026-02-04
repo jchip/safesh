@@ -554,6 +554,24 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, '$.echo("test")');
     assertEquals(output.includes('$.cmd("echo"'), false, "Standalone echo should use $.echo builtin");
   });
+
+  it("should handle && chains with fluent commands that have file arguments (SSH-474)", () => {
+    // This was causing "too complex" errors because stream state was lost
+    const ast = parse("sleep 20 && wc -l file.txt && tail -20 file.txt");
+    const output = transpile(ast);
+
+    // The stream commands (wc, tail with file args) should use for-await iteration
+    // NOT be wrapped in __printCmd which expects CommandResult
+    assertStringIncludes(output, "for await");
+    assertStringIncludes(output, "$.cat");
+    assertStringIncludes(output, "$.wc");
+    assertStringIncludes(output, "$.tail");
+
+    // Should NOT have invalid patterns like __printCmd returning a stream
+    // The final output should iterate the stream, not pass it to __printCmd
+    assertEquals(output.includes("await __printCmd((async ()"), false,
+      "Should not wrap stream-returning IIFE in __printCmd");
+  });
 });
 
 // =============================================================================
