@@ -644,6 +644,40 @@ EOF`);
       assertEquals(stmt.body.length, 2);
     });
 
+    // SSH-481: Subshell with trailing redirections
+    it("should parse subshell with redirections", () => {
+      const ast = parse("(cd /tmp && echo test) 2>&1");
+
+      const stmt = getFirstStatement(ast) as AST.Subshell;
+
+      assertEquals(stmt.type, "Subshell");
+      assertEquals(stmt.body.length, 1); // The && chain is one statement
+      assertExists(stmt.redirections);
+      assertEquals(stmt.redirections!.length, 1);
+      assertEquals(stmt.redirections![0]!.operator, ">&");
+      assertEquals(stmt.redirections![0]!.fd, 2);
+    });
+
+    it("should parse subshell with multiple redirections", () => {
+      const ast = parse("(echo test) >out.txt 2>&1");
+
+      const stmt = getFirstStatement(ast) as AST.Subshell;
+
+      assertEquals(stmt.type, "Subshell");
+      assertExists(stmt.redirections);
+      assertEquals(stmt.redirections!.length, 2);
+    });
+
+    it("should parse brace group with redirections", () => {
+      const ast = parse("{ echo test; } 2>&1");
+
+      const stmt = getFirstStatement(ast) as AST.BraceGroup;
+
+      assertEquals(stmt.type, "BraceGroup");
+      assertExists(stmt.redirections);
+      assertEquals(stmt.redirections!.length, 1);
+    });
+
     it("should parse brace group", () => {
       const ast = parse("{ echo hello; echo world; }");
 
