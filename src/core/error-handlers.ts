@@ -197,6 +197,9 @@ export interface ErrorHandlerOptions {
 
   /** Original command text (required if includeCommand is true) */
   originalCommand?: string;
+
+  /** Transpiled TypeScript code (for detailed error logs) - SSH-475 */
+  transpiledCode?: string;
 }
 
 /**
@@ -279,6 +282,8 @@ export function generateInlineErrorHandler(
 ): string {
   // Escape command for embedding in template literal
   const escapedCommand = options.originalCommand?.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  // SSH-475: Escape transpiled code for embedding
+  const escapedTranspiledCode = options.transpiledCode?.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
 
   const includeCommandCheck = options.includeCommand
     ? `  const fullCommand = ${escapedCommand ? `\`${escapedCommand}\`` : "__ORIGINAL_BASH_COMMAND__"};\n`
@@ -288,7 +293,12 @@ export function generateInlineErrorHandler(
     ? `    "Command: " + ${escapedCommand ? `\`${escapedCommand}\`` : "fullCommand"},\n`
     : "";
 
-  const handlerCode = `const __handleError = (error) => {
+  // SSH-475: Include transpiled code constant if provided
+  const transpiledCodeConst = escapedTranspiledCode
+    ? `const __TRANSPILED_CODE__ = \`${escapedTranspiledCode}\`;\n`
+    : "";
+
+  const handlerCode = `${transpiledCodeConst}const __handleError = (error) => {
 ${includeCommandCheck}  const errorMessage = error.message || String(error);
   const errorCode = error.code || "";
 
@@ -364,7 +374,18 @@ AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>
     errorMessage.includes("command exited with code") ||
     errorMessage.includes("Command failed with exit code");
 
-  const errorMsg = [
+  // SSH-475: Build detailed error log with transpiled code if available
+  const errorLogParts = [
+    "=== Execution Error ===",
+    ${options.includeCommand ? `"Original Bash Command:\\n" + ${escapedCommand ? `\`${escapedCommand}\`` : "fullCommand"},` : '""'}
+    ${escapedTranspiledCode ? '"\\nTranspiled TypeScript:\\n" + __TRANSPILED_CODE__,' : '""'}
+    \`\\nError: \${errorMessage}\`,
+    error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
+    "=========================\\n"
+  ].filter(Boolean).join("\\n");
+
+  // Console message is shorter
+  const consoleMsg = [
     "=== ${options.prefix} ===",
 ${commandInMessage}    \`\\nError: \${errorMessage}\`,
     error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
@@ -374,14 +395,14 @@ ${commandInMessage}    \`\\nError: \${errorMessage}\`,
   if (!isCommandFailure${options.errorLogPath ? ` && "${options.errorLogPath}"` : ""}) {
     ${options.errorLogPath ? `const errorFile = \`${options.errorLogPath}\`;` : ""}
     try {
-      ${options.errorLogPath ? 'Deno.writeTextFileSync(errorFile, errorMsg);' : ""}
-      ${options.errorLogPath ? 'console.error(\`\\nError log: \${errorFile}\`);' : ""}
+      ${options.errorLogPath ? 'Deno.writeTextFileSync(errorFile, errorLogParts);' : ""}
+      ${options.errorLogPath ? 'console.error(\`\\nFull details saved to: \${errorFile}\`);' : ""}
     } catch (e) {
       console.error("Warning: Could not write error log:", e);
     }
   }
 
-  console.error(errorMsg);
+  console.error(consoleMsg);
   Deno.exit(1);
 };`;
 

@@ -1378,13 +1378,18 @@ Example:
     // Prepend original bash command as a constant for error messages and wrap in error handler
     const bashCommandEscaped = parsed.command.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
 
+    // SSH-475: Save transpiled code before wrapping with error handler
+    const transpiledCodeForErrorLog = tsCode;
+
     // Add global error handlers to catch all errors (sync and async)
+    // SSH-475: Include transpiled code in error handler for detailed error logs
     tsCode = `const __ORIGINAL_BASH_COMMAND__ = \`${bashCommandEscaped}\`;
 ${generateInlineErrorHandler({
         prefix: "Bash Command Error",
         errorLogPath: getErrorLogPath(),
         includeCommand: true,
         originalCommand: bashCommandEscaped,
+        transpiledCode: transpiledCodeForErrorLog,
       })}
 ${tsCode}
 `;

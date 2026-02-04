@@ -330,6 +330,29 @@ describe("error-handlers", () => {
       assertMatch(code, /error\.log/);
     });
 
+    it("includes transpiled code when provided (SSH-475)", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+        transpiledCode: '$.cmd("sleep", "10")',
+      }, false);
+
+      // Should include the transpiled code constant
+      assertMatch(code, /const __TRANSPILED_CODE__/);
+      assertMatch(code, /sleep/);
+      // Should reference transpiled code in error log parts
+      assertMatch(code, /Transpiled TypeScript/);
+    });
+
+    it("excludes transpiled code when not provided (SSH-475)", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+      }, false);
+
+      // Should NOT include the transpiled code constant
+      assertEquals(code.includes("__TRANSPILED_CODE__"), false);
+      assertEquals(code.includes("Transpiled TypeScript"), false);
+    });
+
     it("handles errors without stack traces", () => {
       const code = generateInlineErrorHandler({
         prefix: "Test Error",
