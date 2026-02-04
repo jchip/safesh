@@ -7,6 +7,20 @@ import { describe, it } from "@std/testing/bdd";
 import { parse, parseWithRecovery } from "./parser.ts";
 import type * as AST from "./ast.ts";
 
+/**
+ * Helper to extract the first command from a program's body.
+ * Control flow statements (if, for, while, etc.) are now wrapped in Pipelines
+ * so they can participate in logical operators (&&, ||) and pipes (|).
+ */
+function getFirstStatement(ast: AST.Program): AST.Statement {
+  const first = ast.body[0];
+  if (!first) throw new Error("No statements in program");
+  if (first.type === "Pipeline" && first.commands.length === 1 && first.operator === null) {
+    return first.commands[0]! as AST.Statement;
+  }
+  return first;
+}
+
 describe("Bash Parser", () => {
   describe("Simple Commands", () => {
     it("should parse a simple command", () => {
@@ -384,7 +398,7 @@ EOF`);
         fi
       `);
 
-      const stmt = ast.body[0] as AST.IfStatement;
+      const stmt = getFirstStatement(ast) as AST.IfStatement;
       assertEquals(stmt.type, "IfStatement");
       assertExists(stmt.test);
       assertEquals(stmt.consequent.length, 1);
@@ -401,7 +415,7 @@ EOF`);
         fi
       `);
 
-      const stmt = ast.body[0] as AST.IfStatement;
+      const stmt = getFirstStatement(ast) as AST.IfStatement;
       assertEquals(Array.isArray(stmt.alternate), true);
       assertEquals((stmt.alternate as AST.Statement[]).length, 1);
     });
@@ -419,7 +433,7 @@ EOF`);
         fi
       `);
 
-      const stmt = ast.body[0] as AST.IfStatement;
+      const stmt = getFirstStatement(ast) as AST.IfStatement;
       assertExists(stmt.alternate);
       assertEquals((stmt.alternate as AST.IfStatement).type, "IfStatement");
 
@@ -437,7 +451,7 @@ EOF`);
         done
       `);
 
-      const stmt = ast.body[0] as AST.ForStatement;
+      const stmt = getFirstStatement(ast) as AST.ForStatement;
       assertEquals(stmt.type, "ForStatement");
       assertEquals(stmt.variable, "var");
       assertEquals(stmt.iterable.length, 3);
@@ -455,7 +469,7 @@ EOF`);
         done
       `);
 
-      const stmt = ast.body[0] as AST.ForStatement;
+      const stmt = getFirstStatement(ast) as AST.ForStatement;
       assertEquals(stmt.variable, "var");
       assertEquals(stmt.iterable.length, 0);
     });
@@ -468,7 +482,7 @@ EOF`);
         done
       `);
 
-      const stmt = ast.body[0] as AST.ForStatement;
+      const stmt = getFirstStatement(ast) as AST.ForStatement;
       assertEquals((stmt.iterable[0] as AST.Word).value, "*.ts");
     });
 
@@ -480,7 +494,7 @@ EOF`);
         done
       `);
 
-      const stmt = ast.body[0] as AST.ForStatement;
+      const stmt = getFirstStatement(ast) as AST.ForStatement;
       assertEquals(stmt.type, "ForStatement");
       assertEquals(stmt.variable, "i");
       assertEquals(stmt.iterable.length, 3);
@@ -500,7 +514,7 @@ EOF`);
         done
       `);
 
-      const stmt = ast.body[0] as AST.WhileStatement;
+      const stmt = getFirstStatement(ast) as AST.WhileStatement;
       assertEquals(stmt.type, "WhileStatement");
       assertExists(stmt.test);
       assertEquals(stmt.body.length, 1);
@@ -514,7 +528,7 @@ EOF`);
         done
       `);
 
-      const stmt = ast.body[0] as AST.WhileStatement;
+      const stmt = getFirstStatement(ast) as AST.WhileStatement;
       assertExists(stmt.test);
     });
   });
@@ -528,7 +542,7 @@ EOF`);
         done
       `);
 
-      const stmt = ast.body[0] as AST.UntilStatement;
+      const stmt = getFirstStatement(ast) as AST.UntilStatement;
       assertEquals(stmt.type, "UntilStatement");
       assertExists(stmt.test);
       assertEquals(stmt.body.length, 1);
@@ -548,7 +562,7 @@ EOF`);
         esac
       `);
 
-      const stmt = ast.body[0] as AST.CaseStatement;
+      const stmt = getFirstStatement(ast) as AST.CaseStatement;
       assertEquals(stmt.type, "CaseStatement");
       assertExists(stmt.word);
       assertEquals(stmt.cases.length, 2);
@@ -569,7 +583,7 @@ EOF`);
         esac
       `);
 
-      const stmt = ast.body[0] as AST.CaseStatement;
+      const stmt = getFirstStatement(ast) as AST.CaseStatement;
       assertEquals(stmt.cases[0]?.patterns.length, 3);
       assertEquals((stmt.cases[0]?.patterns[0] as AST.Word).value, "a");
       assertEquals((stmt.cases[0]?.patterns[1] as AST.Word).value, "b");
@@ -588,7 +602,7 @@ EOF`);
         esac
       `);
 
-      const stmt = ast.body[0] as AST.CaseStatement;
+      const stmt = getFirstStatement(ast) as AST.CaseStatement;
       assertEquals((stmt.cases[0]?.patterns[0] as AST.Word).value, "*.txt");
       assertEquals((stmt.cases[1]?.patterns[0] as AST.Word).value, "*");
     });
@@ -624,7 +638,7 @@ EOF`);
     it("should parse subshell", () => {
       const ast = parse("(echo hello; echo world)");
 
-      const stmt = ast.body[0] as AST.Subshell;
+      const stmt = getFirstStatement(ast) as AST.Subshell;
 
       assertEquals(stmt.type, "Subshell");
       assertEquals(stmt.body.length, 2);
@@ -633,7 +647,7 @@ EOF`);
     it("should parse brace group", () => {
       const ast = parse("{ echo hello; echo world; }");
 
-      const stmt = ast.body[0] as AST.BraceGroup;
+      const stmt = getFirstStatement(ast) as AST.BraceGroup;
 
       assertEquals(stmt.type, "BraceGroup");
       assertEquals(stmt.body.length, 2);
@@ -699,9 +713,11 @@ EOF`);
         done
       `);
 
-      const forStmt = ast.body[0] as AST.ForStatement;
+      const forStmt = getFirstStatement(ast) as AST.ForStatement;
       assertEquals(forStmt.body.length, 1);
-      assertEquals((forStmt.body[0] as AST.IfStatement).type, "IfStatement");
+      // The if statement inside the for loop body is also wrapped in a Pipeline
+      const ifPipeline = forStmt.body[0] as AST.Pipeline;
+      assertEquals((ifPipeline.commands[0] as AST.IfStatement).type, "IfStatement");
     });
 
     it("should parse pipeline in if condition", () => {
@@ -712,7 +728,7 @@ EOF`);
         fi
       `);
 
-      const stmt = ast.body[0] as AST.IfStatement;
+      const stmt = getFirstStatement(ast) as AST.IfStatement;
       assertEquals(stmt.test.type, "Pipeline");
       assertEquals((stmt.test as AST.Pipeline).commands.length, 2);
     });
@@ -940,7 +956,7 @@ EOF`);
 then
   echo yes
 fi`);
-      const ifStmt = ast.body[0] as AST.IfStatement;
+      const ifStmt = getFirstStatement(ast) as AST.IfStatement;
       assertEquals(ifStmt.type, "IfStatement");
 
       const testPipeline = ifStmt.test as AST.Pipeline;
@@ -959,7 +975,7 @@ fi`);
 do
   x=$((x + 1))
 done`);
-      const whileStmt = ast.body[0] as AST.WhileStatement;
+      const whileStmt = getFirstStatement(ast) as AST.WhileStatement;
       assertEquals(whileStmt.type, "WhileStatement");
 
       const testPipeline = whileStmt.test as AST.Pipeline;
@@ -972,7 +988,7 @@ done`);
 do
   x=$((x + 1))
 done`);
-      const untilStmt = ast.body[0] as AST.UntilStatement;
+      const untilStmt = getFirstStatement(ast) as AST.UntilStatement;
       assertEquals(untilStmt.type, "UntilStatement");
 
       const testPipeline = untilStmt.test as AST.Pipeline;
@@ -1060,7 +1076,7 @@ done`);
 then
   echo yes
 fi`);
-      const ifStmt = ast.body[0] as AST.IfStatement;
+      const ifStmt = getFirstStatement(ast) as AST.IfStatement;
       const testPipeline = ifStmt.test as AST.Pipeline;
       const arithCmd = testPipeline.commands[0] as AST.ArithmeticCommand;
 

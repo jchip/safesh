@@ -341,27 +341,18 @@ export class Parser {
   // ===========================================================================
 
   private parseStatement(): AST.Statement {
-    // Control flow statements
-    if (this.is(TokenType.IF)) {
-      return this.parseIfStatement();
-    }
-    if (this.is(TokenType.FOR)) {
-      return this.parseForStatement();
-    }
-    if (this.is(TokenType.WHILE)) {
-      return this.parseWhileStatement();
-    }
-    if (this.is(TokenType.UNTIL)) {
-      return this.parseUntilStatement();
-    }
-    if (this.is(TokenType.CASE)) {
-      return this.parseCaseStatement();
-    }
+    // Function declarations - these are NOT part of pipelines
     if (this.is(TokenType.FUNCTION)) {
       return this.parseFunctionDeclaration();
     }
 
-    // Loop control statements
+    // Check for function shorthand syntax: name() { ... }
+    // Pattern: NAME followed by LPAREN
+    if (this.is(TokenType.NAME) && this.peekToken.type === TokenType.LPAREN) {
+      return this.parseFunctionShorthand();
+    }
+
+    // Loop control statements - these are NOT part of pipelines
     if (this.is(TokenType.RETURN)) {
       return this.parseReturnStatement();
     }
@@ -372,21 +363,11 @@ export class Parser {
       return this.parseContinueStatement();
     }
 
-    // Check for function shorthand syntax: name() { ... }
-    // Pattern: NAME followed by LPAREN
-    if (this.is(TokenType.NAME) && this.peekToken.type === TokenType.LPAREN) {
-      return this.parseFunctionShorthand();
-    }
-
-    // Grouping
-    if (this.is(TokenType.LPAREN)) {
-      return this.parseSubshell();
-    }
-    if (this.is(TokenType.LBRACE)) {
-      return this.parseBraceGroup();
-    }
-
-    // Default: parse as pipeline (handles assignments as part of commands)
+    // All other statements go through parsePipeline(), which handles:
+    // - Simple commands
+    // - Control flow (if, for, while, until, case) that can be part of pipelines
+    // - Grouping (subshell, brace group) that can be part of pipelines
+    // - Logical operators (&&, ||) and pipe (|)
     return this.parsePipeline();
   }
 
@@ -464,7 +445,7 @@ export class Parser {
    * This has higher precedence than && and ||.
    */
   private parsePipelineOnly(negated: boolean): AST.Pipeline {
-    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement = this.parseCommand();
+    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement | AST.CaseStatement = this.parseCommand();
 
     // Handle pipe operators (| and |&)
     while (this.isAny(TokenType.PIPE, TokenType.PIPE_AMP)) {
@@ -511,7 +492,7 @@ export class Parser {
   // Commands
   // ===========================================================================
 
-  private parseCommand(): AST.Command | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement {
+  private parseCommand(): AST.Command | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement | AST.CaseStatement {
     const assignments: AST.VariableAssignment[] = [];
     const redirects: AST.Redirection[] = [];
 
@@ -520,8 +501,8 @@ export class Parser {
       assignments.push(this.parseVariableAssignment());
     }
 
-    // Check for loop keywords in pipeline context (e.g., "cmd | while read line")
-    // Delegate to specific loop parsers for proper handling
+    // Check for control flow keywords - these can be part of pipelines
+    // e.g., "cmd | while read line" or "for i in 1 2 3; do echo $i; done && echo finished"
     if (this.is(TokenType.WHILE)) {
       return this.parseWhileStatement();
     }
@@ -533,6 +514,9 @@ export class Parser {
     }
     if (this.is(TokenType.IF)) {
       return this.parseIfStatement();
+    }
+    if (this.is(TokenType.CASE)) {
+      return this.parseCaseStatement();
     }
 
     // Check for test command [[ ... ]]

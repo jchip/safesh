@@ -14,6 +14,19 @@ import { parse } from "./parser.ts";
 import { parseArithmetic } from "./arithmetic-parser.ts";
 import type * as AST from "./ast.ts";
 
+/**
+ * Helper to extract the first command from a program's body.
+ * Control flow statements are now wrapped in Pipelines.
+ */
+function getFirstStatement(ast: AST.Program): AST.Statement {
+  const first = ast.body[0];
+  if (!first) throw new Error("No statements in program");
+  if (first.type === "Pipeline" && first.commands.length === 1 && first.operator === null) {
+    return first.commands[0]! as AST.Statement;
+  }
+  return first;
+}
+
 describe("New Parser Features", () => {
   describe("SSH-253: [[ ... ]] test expressions", () => {
     it("should parse unary file test -f", () => {
@@ -122,7 +135,7 @@ describe("New Parser Features", () => {
 
     it("should parse C-style for loop", () => {
       const ast = parse("for (( i=0; i<10; i++ )); do\n  echo loop\ndone");
-      const stmt = ast.body[0] as AST.CStyleForStatement;
+      const stmt = getFirstStatement(ast) as AST.CStyleForStatement;
 
       assertEquals(stmt.type, "CStyleForStatement");
       assertExists(stmt.init);
@@ -133,7 +146,7 @@ describe("New Parser Features", () => {
 
     it("should parse C-style for loop with empty parts", () => {
       const ast = parse("for (( ; ; )); do\n  echo infinite\ndone");
-      const stmt = ast.body[0] as AST.CStyleForStatement;
+      const stmt = getFirstStatement(ast) as AST.CStyleForStatement;
 
       assertEquals(stmt.init, null);
       assertEquals(stmt.test, null);
