@@ -150,6 +150,16 @@ export class BashTranspiler2 {
           return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: false };
         }
         if (test.type === "Pipeline") {
+          // Handle && and || chains (e.g., [ $x -gt 0 ] && [ $x -lt 10 ])
+          if (test.commands.length > 1 && (test.operator === "&&" || test.operator === "||")) {
+            const jsOp = test.operator === "&&" ? "&&" : "||";
+            const parts: string[] = [];
+            for (const cmd of test.commands) {
+              const inner = this.buildTestExpression(cmd as AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand);
+              parts.push(`(await ${inner.code}).code === 0`);
+            }
+            return { code: `{ code: (${parts.join(` ${jsOp} `)}) ? 0 : 1, stdout: '', stderr: '' }`, async: true };
+          }
           // For pipelines, check the first command
           const firstCmd = test.commands[0];
           if (firstCmd?.type === "TestCommand") {
@@ -160,6 +170,9 @@ export class BashTranspiler2 {
             return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: false };
           } else if (firstCmd?.type === "Command") {
             return handlers.buildCommand(firstCmd, this);
+          } else if (firstCmd?.type === "Pipeline") {
+            // Handle nested Pipeline (common when single commands are wrapped)
+            return this.buildTestExpression(firstCmd);
           }
         } else if (test.type === "Command") {
           return handlers.buildCommand(test, this);
