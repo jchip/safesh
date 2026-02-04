@@ -37,6 +37,11 @@ import { generatePendingId, writePendingCommand, writePendingPath } from "../src
 import { getSessionAllowedCommands } from "../src/core/session.ts";
 import { generateInlineErrorHandler } from "../src/core/error-handlers.ts";
 import { readStdinFully } from "../src/core/io-utils.ts";
+import {
+  detectHybridCommand,
+  detectTypeScript,
+  SAFESH_SIGNATURE,
+} from "../src/hooks/detection.ts";
 
 // =============================================================================
 // Configuration
@@ -714,75 +719,8 @@ function outputPassthrough(): void {
   // Cleaner than returning "allow" which might bypass permission checks
 }
 
-/**
- * SafeShell TypeScript signature prefix
- * Agent must prefix code with this to indicate it's SafeShell TypeScript
- */
-const SAFESH_SIGNATURE = "/*#*/";
-
-/**
- * Detect if the command is SafeShell TypeScript
- * Returns the TypeScript code if detected, null otherwise
- *
- * Detection methods:
- * 1. Signature prefix: /\*$*\/ followed by TypeScript code
- * 2. .ts file path: path/to/script.ts (reads and returns file contents)
- */
-/**
- * Detect if command is hybrid bash | TypeScript
- * Returns {bashPart, tsPart} if detected, null otherwise
- *
- * Example: "echo test | /\*#*\/ const data = await $.text.lines(Deno.stdin); etc"
- * Returns: {bashPart: "echo test", tsPart: "const data = await $.text.lines(Deno.stdin); etc"}
- */
-function detectHybridCommand(command: string): { bashPart: string; tsPart: string } | null {
-  const pipeSignature = `| ${SAFESH_SIGNATURE}`;
-  const index = command.indexOf(pipeSignature);
-
-  if (index === -1) {
-    return null;
-  }
-
-  const bashPart = command.slice(0, index).trim();
-  const tsPart = command.slice(index + pipeSignature.length).trim();
-
-  if (!bashPart || !tsPart) {
-    return null;
-  }
-
-  debug(`Detected hybrid command: bash="${bashPart.slice(0, 50)}..." | ts="${tsPart.slice(0, 50)}..."`);
-  return { bashPart, tsPart };
-}
-
-function detectTypeScript(command: string): string | null {
-  const trimmed = command.trim();
-
-  // Check for SafeShell signature prefix: /*#*/
-  if (trimmed.startsWith(SAFESH_SIGNATURE)) {
-    const code = trimmed.slice(SAFESH_SIGNATURE.length).trim();
-    if (!code) {
-      debug("SafeShell signature with empty code, returning no-op");
-      return "// empty";  // No-op TypeScript
-    }
-    debug(`Detected SafeShell signature, code: ${code}`);
-    return code;
-  }
-
-  // Check if it's a .ts file path (execute the file)
-  if (trimmed.endsWith(".ts") && !trimmed.includes(" ")) {
-    // Single .ts file path - read and return its contents
-    try {
-      const code = Deno.readTextFileSync(trimmed);
-      debug(`Detected .ts file: ${trimmed}`);
-      return code;
-    } catch {
-      // File doesn't exist or can't be read, fall through to transpilation
-      debug(`Could not read .ts file: ${trimmed}`);
-    }
-  }
-
-  return null;
-}
+// detectTypeScript, detectHybridCommand, and SAFESH_SIGNATURE are imported from
+// src/hooks/detection.ts for shared logic between bash-prehook and tests (SSH-480)
 
 /**
  * Execution result with captured output
