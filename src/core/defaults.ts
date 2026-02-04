@@ -11,11 +11,11 @@ import { getScriptsDir } from "./temp.ts";
 // Timeout Defaults
 // ============================================================================
 
-/** Default timeout for script execution in milliseconds */
-export const DEFAULT_TIMEOUT_MS = 30000;
+/** Default timeout for script execution in milliseconds (2 minutes) */
+export const DEFAULT_TIMEOUT_MS = 120000;
 
-/** Default timeout for waiting on scripts in milliseconds */
-export const DEFAULT_WAIT_TIMEOUT_MS = 30000;
+/** Default timeout for waiting on scripts in milliseconds (2 minutes) */
+export const DEFAULT_WAIT_TIMEOUT_MS = 120000;
 
 /** Polling interval when waiting for script completion in milliseconds */
 export const SCRIPT_POLL_INTERVAL_MS = 100;
