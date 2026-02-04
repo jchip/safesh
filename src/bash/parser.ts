@@ -1042,7 +1042,7 @@ export class Parser {
   private parseSubshell(): AST.Subshell {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
-    
+
     return this.runInContext({ type: "subshell", startLine, startColumn }, () => {
       this.expect(TokenType.LPAREN);
       this.skipNewlines();
@@ -1051,17 +1051,24 @@ export class Parser {
 
       this.expect(TokenType.RPAREN);
 
-      return {
+      // SSH-481: Collect trailing redirections like (cmd) 2>&1
+      const redirections = this.collectTrailingRedirections();
+
+      const result: AST.Subshell = {
         type: "Subshell",
         body,
       };
+      if (redirections.length > 0) {
+        result.redirections = redirections;
+      }
+      return result;
     });
   }
 
   private parseBraceGroup(): AST.BraceGroup {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
-    
+
     return this.runInContext({ type: "brace_group", startLine, startColumn }, () => {
       this.expect(TokenType.LBRACE);
       this.skipNewlines();
@@ -1070,11 +1077,30 @@ export class Parser {
 
       this.expect(TokenType.RBRACE);
 
-      return {
+      // SSH-481: Collect trailing redirections like { cmd; } 2>&1
+      const redirections = this.collectTrailingRedirections();
+
+      const result: AST.BraceGroup = {
         type: "BraceGroup",
         body,
       };
+      if (redirections.length > 0) {
+        result.redirections = redirections;
+      }
+      return result;
     });
+  }
+
+  /**
+   * SSH-481: Collect trailing redirections after compound commands
+   * Used for subshells and brace groups: (cmd) 2>&1, { cmd; } >out.txt
+   */
+  private collectTrailingRedirections(): AST.Redirection[] {
+    const redirections: AST.Redirection[] = [];
+    while (this.isRedirectionOperator() || this.isFdVarRedirection()) {
+      redirections.push(this.parseRedirection());
+    }
+    return redirections;
   }
 
   // ===========================================================================

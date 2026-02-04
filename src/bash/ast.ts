@@ -153,11 +153,13 @@ export interface FunctionDeclaration extends BaseNode {
 export interface Subshell extends BaseNode {
   type: "Subshell";
   body: Statement[];
+  redirections?: Redirection[];
 }
 
 export interface BraceGroup extends BaseNode {
   type: "BraceGroup";
   body: Statement[];
+  redirections?: Redirection[];
 }
 
 export interface TestCommand extends BaseNode {

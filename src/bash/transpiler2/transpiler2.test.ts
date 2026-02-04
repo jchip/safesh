@@ -1407,12 +1407,31 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
     assertStringIncludes(output, '$.echo("subshell")');
   });
 
+  // SSH-481: Subshell with trailing redirections
+  it("should handle Subshell with redirections", () => {
+    const script = "(cd /tmp && echo test) 2>&1";
+    const ast = parse(script);
+    const output = transpile(ast);
+    // Should parse and transpile without error
+    assertStringIncludes(output, "$.cd");
+    assertStringIncludes(output, '$.echo("test")');
+  });
+
   it("should handle BraceGroup", () => {
     const script = "{ echo group; }";
     const ast = parse(script);
     const output = transpile(ast);
     // SSH-372: Now uses $.echo builtin
     assertStringIncludes(output, '$.echo("group")');
+  });
+
+  // SSH-481: BraceGroup with trailing redirections
+  it("should handle BraceGroup with redirections", () => {
+    const script = "{ echo test; } >out.txt 2>&1";
+    const ast = parse(script);
+    const output = transpile(ast);
+    // Should parse and transpile without error
+    assertStringIncludes(output, '$.echo("test")');
   });
 
   it("should handle TestCommand", () => {
