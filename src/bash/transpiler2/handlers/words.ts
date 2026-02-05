@@ -287,8 +287,9 @@ export function visitParameterExpansion(
 
   if (!modifier) {
     // Simple expansion: ${VAR} or $VAR
-    // Variable lookup: local var first, then $.ENV (for env vars)
-    return `\${${param}}`;
+    // SSH-484: Variable lookup order: local JS var > $.ENV (env vars) > $.VARS (shell vars)
+    // Use typeof check to avoid ReferenceError for undefined variables
+    return `\${typeof ${param} !== "undefined" ? ${param} : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`;
   }
 
   // Handle modifiers
