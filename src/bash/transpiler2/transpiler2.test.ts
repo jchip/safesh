@@ -242,8 +242,10 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("$ANDROID_HOME/platform-tools/adb install app.apk");
     const output = transpile(ast);
 
-    // Command name should use template literal for variable expansion
-    assertStringIncludes(output, "$.cmd(`${ANDROID_HOME}/platform-tools/adb`");
+    // Command name should use template literal with proper env var lookup
+    assertStringIncludes(output, "$.cmd(`${");
+    assertStringIncludes(output, "$.ENV.ANDROID_HOME");
+    assertStringIncludes(output, "/platform-tools/adb`");
     assertStringIncludes(output, '"install"');
     assertStringIncludes(output, '"app.apk"');
   });
@@ -252,8 +254,9 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("${HOME}/bin/cmd arg");
     const output = transpile(ast);
 
-    // ${VAR} style should also use template literal
-    assertStringIncludes(output, "$.cmd(`${HOME}/bin/cmd`");
+    // ${VAR} style should also use template literal with env var lookup
+    assertStringIncludes(output, "$.cmd(`${");
+    assertStringIncludes(output, "$.ENV.HOME");
   });
 });
 
@@ -487,8 +490,9 @@ describe("Transpiler2 - Pipelines", () => {
     assertEquals(printCmdIndex > 0, true, "Should have __printCmd");
     assertEquals(srcIndex < printCmdIndex, true, "Variable should be defined before pipeline execution");
 
-    // Both sips commands should use SRC
-    const srcUsages = (output.match(/\$\{SRC\}/g) || []).length;
+    // Both sips commands should use SRC with proper variable lookup
+    // SSH-484: Now uses typeof check for local var then $.ENV/$.VARS fallback
+    const srcUsages = (output.match(/typeof SRC !== "undefined"/g) || []).length;
     assertEquals(srcUsages, 2, "Both sips commands should reference SRC");
   });
 
@@ -796,7 +800,8 @@ describe("Transpiler2 - Variable Expansion", () => {
     const ast = parse('echo "$VAR"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "${VAR}");
+    // SSH-484: Variable lookup checks local var, then $.ENV, then $.VARS
+    assertStringIncludes(output, "$.ENV.VAR");
   });
 
   it("should transpile default value expansion", () => {
@@ -859,7 +864,10 @@ describe("Transpiler2 - Array Assignments", () => {
     const ast = parse("arr=(one $VAR three)");
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let arr = ["one", "${VAR}", "three"]');
+    // SSH-484: Variable expansion now includes proper lookup chain
+    assertStringIncludes(output, 'let arr = ["one"');
+    assertStringIncludes(output, '$.ENV.VAR');
+    assertStringIncludes(output, '"three"]');
   });
 
   it("should transpile array reassignment", () => {

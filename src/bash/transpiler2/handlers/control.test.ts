@@ -98,8 +98,9 @@ describe("For Loop with Command Substitution (SSH-375)", () => {
 
     // Should use temp variable because of parameter expansion
     assertStringIncludes(output, "const _tmp");
-    // Should push the expanded value as a single item (not split)
-    assertStringIncludes(output, "_tmp0.push(`${FILES}`)");
+    // SSH-484: Should push with proper variable lookup chain
+    assertStringIncludes(output, "_tmp0.push(`${");
+    assertStringIncludes(output, "typeof FILES");
   });
 
   it("should handle empty command substitution result", () => {
