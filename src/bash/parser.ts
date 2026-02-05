@@ -551,12 +551,13 @@ export class Parser {
     let name: AST.Word;
     if (this.is(TokenType.WORD) || this.is(TokenType.NAME)) {
       const token = this.advance();
+      // SSH-484: Parse word parts for variable expansion in command names
       name = {
         type: "Word",
         value: token.value,
         quoted: token.quoted || false,
         singleQuoted: token.singleQuoted || false,
-        parts: [{ type: "LiteralPart", value: token.value }],
+        parts: this.parseWordParts(token.value, token.quoted || false, token.singleQuoted || false),
       };
     } else {
       name = { type: "Word", value: "", quoted: false, singleQuoted: false, parts: [] };

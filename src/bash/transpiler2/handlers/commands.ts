@@ -198,6 +198,9 @@ function handleStandardCommand(
   hasMergeStreams: boolean,
   ctx: VisitorContext
 ): string {
+  // SSH-484: Use formatArg for command name to support variable expansion
+  const formattedName = formatArg(name);
+
   if (hasAssignments) {
     const envEntries = assignments
       .map((a) => {
@@ -207,14 +210,14 @@ function handleStandardCommand(
       })
       .join(", ");
     const argsArray = args.map(formatArg).join(", ");
-    return `$.cmd({ env: { ${envEntries} } }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+    return `$.cmd({ env: { ${envEntries} } }, ${formattedName}${argsArray ? `, ${argsArray}` : ""})`;
   }
 
   const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
   if (hasMergeStreams) {
-    return `$.cmd({ mergeStreams: true }, "${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+    return `$.cmd({ mergeStreams: true }, ${formattedName}${argsArray ? `, ${argsArray}` : ""})`;
   }
-  return `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`;
+  return `$.cmd(${formattedName}${argsArray ? `, ${argsArray}` : ""})`;
 }
 
 // =============================================================================

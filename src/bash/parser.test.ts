@@ -860,6 +860,33 @@ EOF`);
       assertEquals(arg.parts[2]?.type, "LiteralPart");
     });
 
+    // SSH-484: Variable expansion in command names
+    it("should parse $VAR in command name", () => {
+      const ast = parse("$HOME/bin/cmd arg");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const name = cmd.name as AST.Word;
+      assertEquals(name.parts.length, 2);
+      assertEquals(name.parts[0]?.type, "ParameterExpansion");
+      assertEquals((name.parts[0] as AST.ParameterExpansion).parameter, "HOME");
+      assertEquals(name.parts[1]?.type, "LiteralPart");
+      assertEquals((name.parts[1] as AST.LiteralPart).value, "/bin/cmd");
+    });
+
+    it("should parse ${VAR} in command name", () => {
+      const ast = parse("${ANDROID_HOME}/platform-tools/adb install app.apk");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      const name = cmd.name as AST.Word;
+      assertEquals(name.parts.length, 2);
+      assertEquals(name.parts[0]?.type, "ParameterExpansion");
+      assertEquals((name.parts[0] as AST.ParameterExpansion).parameter, "ANDROID_HOME");
+      assertEquals(name.parts[1]?.type, "LiteralPart");
+      assertEquals((name.parts[1] as AST.LiteralPart).value, "/platform-tools/adb");
+    });
+
     it("should parse special variables $?, $$, $#", () => {
       const ast = parse("echo $? $$ $#");
       const pipeline = ast.body[0] as AST.Pipeline;
