@@ -236,6 +236,25 @@ describe("Transpiler2 - Simple Commands", () => {
 
     assertEquals(output.includes('import { $ }'), false);
   });
+
+  // SSH-484: Variable expansion in command names
+  it("should transpile command name with variable expansion", () => {
+    const ast = parse("$ANDROID_HOME/platform-tools/adb install app.apk");
+    const output = transpile(ast);
+
+    // Command name should use template literal for variable expansion
+    assertStringIncludes(output, "$.cmd(`${ANDROID_HOME}/platform-tools/adb`");
+    assertStringIncludes(output, '"install"');
+    assertStringIncludes(output, '"app.apk"');
+  });
+
+  it("should transpile command name with ${VAR} expansion", () => {
+    const ast = parse("${HOME}/bin/cmd arg");
+    const output = transpile(ast);
+
+    // ${VAR} style should also use template literal
+    assertStringIncludes(output, "$.cmd(`${HOME}/bin/cmd`");
+  });
 });
 
 // =============================================================================
