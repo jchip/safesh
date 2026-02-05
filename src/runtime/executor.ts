@@ -10,7 +10,7 @@ import { executionError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
 import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job, ImportPolicy } from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
-import { hashCode, buildEnv, getRealPathBoth } from "../core/utils.ts";
+import { hashCode, buildEnv, getRealPathBoth, getLoginShellPath } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildPreamble,
@@ -719,6 +719,10 @@ export async function executeCode(
   options: ExecOptions = {},
   shell?: Shell,
 ): Promise<ExecResult> {
+  // SSH-483: Initialize login shell PATH cache to include user's full PATH
+  // This ensures commands available in user's shell are also found by SafeShell
+  await getLoginShellPath();
+
   // Phase 1: Prepare execution context (validate, resolve options)
   const { cwd, timeoutMs, importPolicy } = prepareExecutionContext(code, config, options, shell);
 

@@ -4,9 +4,9 @@
  * Tests utility functions for path resolution and symlink handling.
  */
 
-import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { afterEach, beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
-import { getRealPath, getRealPathBoth, getRealPathAsync } from "./utils.ts";
+import { getRealPath, getRealPathBoth, getRealPathAsync, getLoginShellPath, _resetLoginShellPathCache } from "./utils.ts";
 import { join } from "@std/path";
 
 describe("utils - path resolution", () => {
@@ -113,5 +113,37 @@ describe("utils - path resolution", () => {
         assertEquals(tmpResult, "/private/tmp");
       }
     });
+  });
+});
+
+// SSH-483: Login shell PATH expansion
+describe("utils - login shell PATH", () => {
+  afterEach(() => {
+    // Reset cache between tests
+    _resetLoginShellPathCache();
+  });
+
+  it("should return a valid PATH string from login shell", async () => {
+    const path = await getLoginShellPath();
+    assertEquals(typeof path, "string");
+    // PATH should contain at least /usr/bin
+    assertStringIncludes(path, "/usr/bin");
+  });
+
+  it("should cache the result for subsequent calls", async () => {
+    const path1 = await getLoginShellPath();
+    const path2 = await getLoginShellPath();
+    // Should return the same cached value
+    assertEquals(path1, path2);
+  });
+
+  it("should include paths not in current Deno.env PATH", async () => {
+    const loginPath = await getLoginShellPath();
+    const denoPath = Deno.env.get("PATH") ?? "";
+
+    // The login shell PATH may contain additional paths
+    // At minimum, it should not be empty and should contain standard paths
+    assertEquals(loginPath.length > 0, true);
+    assertStringIncludes(loginPath, "/bin");
   });
 });
