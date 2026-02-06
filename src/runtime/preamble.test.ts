@@ -6,7 +6,8 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
-import { buildPreamble, type PreambleConfig } from "./preamble.ts";
+import { buildPreamble, extractPreambleConfig, type PreambleConfig } from "./preamble.ts";
+import type { SafeShellConfig } from "../core/types.ts";
 
 describe("preamble", () => {
   describe("buildPreamble", () => {
@@ -160,6 +161,113 @@ describe("preamble", () => {
 
       assertEquals(typeof preamble, "string");
       assertEquals(preamble.length > 0, true);
+    });
+  });
+
+  describe("extractPreambleConfig", () => {
+    it("includes sessionAllowedCommands in config when present", async () => {
+      const tmpDir = await Deno.makeTempDir();
+
+      try {
+        const config: SafeShellConfig = {
+          projectDir: tmpDir,
+          permissions: { run: ["git"] },
+          external: { curl: { allow: true } },
+        };
+        const result = extractPreambleConfig(config, tmpDir);
+
+        assertEquals(result.allowedCommands.includes("git"), true);
+        assertEquals(result.allowedCommands.includes("curl"), true);
+        // sessionAllowedCommands is undefined when no session file exists
+        assertEquals(result.sessionAllowedCommands, undefined);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("defaults allowProjectCommands to true when CLAUDE_SESSION_ID is set", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const original = Deno.env.get("CLAUDE_SESSION_ID");
+      Deno.env.set("CLAUDE_SESSION_ID", "test-preamble-session");
+
+      try {
+        const config: SafeShellConfig = {
+          projectDir: tmpDir,
+          permissions: { run: [] },
+        };
+        const result = extractPreambleConfig(config, tmpDir);
+
+        assertEquals(result.allowProjectCommands, true);
+      } finally {
+        if (original !== undefined) {
+          Deno.env.set("CLAUDE_SESSION_ID", original);
+        } else {
+          Deno.env.delete("CLAUDE_SESSION_ID");
+        }
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("defaults allowProjectCommands to false without CLAUDE_SESSION_ID", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const original = Deno.env.get("CLAUDE_SESSION_ID");
+      Deno.env.delete("CLAUDE_SESSION_ID");
+
+      try {
+        const config: SafeShellConfig = {
+          projectDir: tmpDir,
+          permissions: { run: [] },
+        };
+        const result = extractPreambleConfig(config, tmpDir);
+
+        assertEquals(result.allowProjectCommands, false);
+      } finally {
+        if (original !== undefined) {
+          Deno.env.set("CLAUDE_SESSION_ID", original);
+        }
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("preserves explicit allowProjectCommands from config", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const original = Deno.env.get("CLAUDE_SESSION_ID");
+      Deno.env.set("CLAUDE_SESSION_ID", "test-preamble-override");
+
+      try {
+        const config: SafeShellConfig = {
+          projectDir: tmpDir,
+          allowProjectCommands: false, // Explicit false
+          permissions: { run: [] },
+        };
+        const result = extractPreambleConfig(config, tmpDir);
+
+        // Explicit false should override the CLAUDE_SESSION_ID default
+        assertEquals(result.allowProjectCommands, false);
+      } finally {
+        if (original !== undefined) {
+          Deno.env.set("CLAUDE_SESSION_ID", original);
+        } else {
+          Deno.env.delete("CLAUDE_SESSION_ID");
+        }
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("serializes sessionAllowedCommands into preamble config JSON", () => {
+      const preambleConfig: PreambleConfig = {
+        projectDir: "/test/project",
+        allowedCommands: ["git"],
+        sessionAllowedCommands: ["cargo", "rustc"],
+        cwd: "/test",
+      };
+      const { preamble } = buildPreamble(undefined, preambleConfig);
+
+      // The config is serialized via JSON.stringify and injected via Symbol.for('safesh.config')
+      // Verify sessionAllowedCommands appears in the serialized config
+      assertEquals(preamble.includes('"sessionAllowedCommands"'), true);
+      assertEquals(preamble.includes('"cargo"'), true);
+      assertEquals(preamble.includes('"rustc"'), true);
     });
   });
 });

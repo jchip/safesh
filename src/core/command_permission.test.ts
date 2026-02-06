@@ -5,6 +5,7 @@
 import { assertEquals } from "@std/assert";
 import {
   checkCommandPermission,
+  checkCommandPermissionWithSession,
   checkMultipleCommands,
   getAllowedCommands,
   isCommandAllowed,
@@ -376,5 +377,32 @@ Deno.test("checkCommandPermission - explicit allowProjectCommands=false override
     } else {
       Deno.env.delete("CLAUDE_SESSION_ID");
     }
+  }
+});
+
+// ============================================================================
+// checkCommandPermissionWithSession wrapper tests
+// ============================================================================
+
+Deno.test("checkCommandPermissionWithSession - allows config-permitted commands", async () => {
+  const config = makeConfig({ permissions: { run: ["git"] } });
+
+  const result = await checkCommandPermissionWithSession("git", config, "/home/user");
+
+  assertEquals(result.allowed, true);
+  if (result.allowed) {
+    assertEquals(result.resolvedPath, "git");
+  }
+});
+
+Deno.test("checkCommandPermissionWithSession - blocks non-permitted commands without session", async () => {
+  const config = makeConfig({ permissions: { run: ["git"] } });
+
+  // No session file exists, so "curl" should be blocked
+  const result = await checkCommandPermissionWithSession("curl", config, "/home/user");
+
+  assertEquals(result.allowed, false);
+  if (!result.allowed) {
+    assertEquals(result.error, ERROR_COMMAND_NOT_ALLOWED);
   }
 });
