@@ -937,6 +937,8 @@ export class Lexer {
     let inCasePattern = false;
     let wordBuffer = "";
     const isArithmetic = input[pos] === "(";
+    // SSH-495: Track pending heredoc delimiters to skip body content
+    const pendingHeredocs: Array<{ delimiter: string; stripTabs: boolean }> = [];
 
     while (depth > 0 && pos < len) {
       const c = input[pos]!;
@@ -953,6 +955,63 @@ export class Lexer {
           inDoubleQuote = false;
         }
       } else {
+        // SSH-495: Detect heredoc operator (<<) and parse delimiter without
+        // affecting quote state, so quotes in the heredoc body don't corrupt parsing
+        if (c === "<" && pos + 1 < len && input[pos + 1] === "<") {
+          // Consume second <
+          pos++; col++;
+          value += input[pos]!;
+
+          // Check for <<- (tab-stripping)
+          let stripTabs = false;
+          if (pos + 1 < len && input[pos + 1] === "-") {
+            pos++; col++;
+            value += input[pos]!;
+            stripTabs = true;
+          }
+
+          // Skip whitespace before delimiter
+          while (pos + 1 < len && (input[pos + 1] === " " || input[pos + 1] === "\t")) {
+            pos++; col++;
+            value += input[pos]!;
+          }
+
+          // Parse the delimiter without affecting inSingleQuote/inDoubleQuote
+          let delimiter = "";
+          if (pos + 1 < len && (input[pos + 1] === "'" || input[pos + 1] === '"')) {
+            const qc = input[pos + 1]!;
+            pos++; col++;
+            value += input[pos]!; // opening quote
+            while (pos + 1 < len && input[pos + 1] !== qc) {
+              pos++; col++;
+              value += input[pos]!;
+              delimiter += input[pos]!;
+            }
+            if (pos + 1 < len) {
+              pos++; col++;
+              value += input[pos]!; // closing quote
+            }
+          } else {
+            // Unquoted delimiter (may have \ or $ prefix)
+            if (pos + 1 < len && (input[pos + 1] === "\\" || input[pos + 1] === "$")) {
+              pos++; col++;
+              value += input[pos]!;
+            }
+            while (pos + 1 < len && /[a-zA-Z0-9_]/.test(input[pos + 1]!)) {
+              pos++; col++;
+              value += input[pos]!;
+              delimiter += input[pos]!;
+            }
+          }
+
+          if (delimiter) {
+            pendingHeredocs.push({ delimiter, stripTabs });
+          }
+          wordBuffer = "";
+          pos++; col++;
+          continue;
+        }
+
         if (c === "'") {
           inSingleQuote = true;
           wordBuffer = "";
@@ -1009,6 +1068,34 @@ export class Lexer {
         ln++;
         col = 0;
         wordBuffer = "";
+
+        // SSH-495: After a newline, consume pending heredoc bodies as raw text
+        // without running them through the quote state machine
+        while (pendingHeredocs.length > 0 && pos + 1 < len) {
+          const hd = pendingHeredocs.shift()!;
+          let foundDelimiter = false;
+          while (!foundDelimiter && pos + 1 < len) {
+            // Read one line from pos+1
+            let line = "";
+            while (pos + 1 < len && input[pos + 1] !== "\n") {
+              pos++; col++;
+              value += input[pos]!;
+              line += input[pos]!;
+            }
+            // Check if this line is the delimiter
+            const checkLine = hd.stripTabs ? line.replace(/^\t+/, "") : line;
+            if (checkLine === hd.delimiter) {
+              foundDelimiter = true;
+            }
+            // Consume the newline at end of line
+            if (pos + 1 < len && input[pos + 1] === "\n") {
+              pos++; col++;
+              value += input[pos]!;
+              ln++;
+              col = 0;
+            }
+          }
+        }
       }
       pos++;
       col++;
