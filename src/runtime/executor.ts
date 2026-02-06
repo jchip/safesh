@@ -856,6 +856,78 @@ export async function executeFile(
 }
 
 /**
+ * Execute a file with inherited stdio for real-time output passthrough.
+ * Unlike executeFile which buffers all output, this spawns the subprocess
+ * with stdout/stderr inherited so output appears immediately.
+ * Returns the exit code.
+ */
+export async function executeFilePassthrough(
+  filePath: string,
+  config: SafeShellConfig,
+  options: ExecOptions = {},
+): Promise<number> {
+  const cwd = options.cwd ?? Deno.cwd();
+
+  // Resolve file path
+  const absolutePath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
+
+  // Read and validate file imports
+  let fileCode: string;
+  try {
+    fileCode = await Deno.readTextFile(absolutePath);
+  } catch (error) {
+    throw executionError(
+      `Failed to read file '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
+  validateImports(fileCode, importPolicy);
+
+  // Build preamble (no shell state needed for passthrough)
+  const preambleConfig = extractPreambleConfig(config, cwd);
+  const filePreamble = buildFilePreamble(undefined, preambleConfig);
+  const filePostamble = buildFilePostamble(false);
+  const wrappedCode = filePreamble + fileCode + filePostamble;
+
+  // Write wrapped code to temp file
+  await ensureDir(TEMP_SCRIPT_DIR);
+  const hash = await hashCode(wrappedCode);
+  const tempPath = join(TEMP_SCRIPT_DIR, `file_${hash}.ts`);
+  await Deno.writeTextFile(tempPath, wrappedCode);
+
+  // Build subprocess args
+  const importMapPath = await generateImportMap(importPolicy);
+  const permFlags = buildPermissionFlags(config, cwd);
+  const configPath = await findConfig(cwd);
+
+  const subprocessManager = new SubprocessManager();
+  const args = subprocessManager.buildDenoArgs({
+    permFlags,
+    importMapPath,
+    configPath,
+    scriptPath: tempPath,
+    denoFlags: config.denoFlags,
+  });
+
+  const env = buildEnv(config);
+
+  // Spawn with inherited stdio for real-time output
+  const command = new Deno.Command("deno", {
+    args,
+    cwd,
+    env,
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+  });
+
+  const process = command.spawn();
+  const status = await process.status;
+  return status.code;
+}
+
+/**
  * Properly merge stdout and stderr streams concurrently using Promise.race
  */
 async function* mergeStreams(
