@@ -341,7 +341,8 @@ ${includeCommandCheck}  const errorMessage = error.message || String(error);
     };
 
     try {
-      writeJsonFileSync(pendingFile, pending);
+      try { Deno.mkdirSync(\`${getTempRoot()}\`, { recursive: true }); } catch {}
+      Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
     } catch (e) {
       console.error("Warning: Could not write pending path file:", e);
     }
