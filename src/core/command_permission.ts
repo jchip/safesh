@@ -11,6 +11,7 @@ import { basename, resolve, join } from "@std/path";
 import type { SafeShellConfig } from "./types.ts";
 import { ERROR_COMMAND_NOT_ALLOWED, ERROR_COMMAND_NOT_FOUND } from "./constants.ts";
 import { isPathWithin } from "./path-utils.ts";
+import { getSessionAllowedCommands } from "./session.ts";
 
 /**
  * Result of permission check - allowed with resolved path
@@ -123,10 +124,21 @@ export async function checkCommandPermission(
   command: string,
   config: SafeShellConfig,
   cwd: string,
+  sessionCommands?: Set<string>,
 ): Promise<PermissionResult> {
   const allowedCommands = getAllowedCommands(config);
+
+  // Merge session commands into effective allowed set
+  if (sessionCommands) {
+    for (const cmd of sessionCommands) {
+      allowedCommands.add(cmd);
+    }
+  }
+
   const projectDir = config.projectDir;
-  const allowProjectCommands = config.allowProjectCommands ?? false;
+  // Default allowProjectCommands to true when running under Claude Code session
+  const allowProjectCommands = config.allowProjectCommands ??
+    (Deno.env.get("CLAUDE_SESSION_ID") !== undefined ? true : false);
 
   // Is command basic name only (no `/`)?
   if (!command.includes("/")) {
@@ -211,6 +223,19 @@ export interface MultiCommandResult {
 }
 
 /**
+ * Convenience wrapper that auto-loads session commands and checks permission.
+ * Use this when you want session commands included without managing them manually.
+ */
+export async function checkCommandPermissionWithSession(
+  command: string,
+  config: SafeShellConfig,
+  cwd: string,
+): Promise<PermissionResult> {
+  const sessionCmds = getSessionAllowedCommands(config.projectDir);
+  return checkCommandPermission(command, config, cwd, sessionCmds);
+}
+
+/**
  * Check permissions for multiple commands
  * Returns results for ALL commands, not just the first failure
  */
@@ -218,6 +243,7 @@ export async function checkMultipleCommands(
   commands: Record<string, string>,
   config: SafeShellConfig,
   cwd: string,
+  sessionCommands?: Set<string>,
 ): Promise<MultiCommandResult> {
   const results: Record<string, PermissionResult> = {};
   const notAllowed: string[] = [];
@@ -227,7 +253,7 @@ export async function checkMultipleCommands(
   const entries = Object.entries(commands);
   const checks = await Promise.all(
     entries.map(async ([name, path]) => {
-      const result = await checkCommandPermission(path, config, cwd);
+      const result = await checkCommandPermission(path, config, cwd, sessionCommands);
       return { name, path, result };
     }),
   );

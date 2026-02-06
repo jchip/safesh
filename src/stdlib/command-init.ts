@@ -18,12 +18,18 @@ import { isPathWithin } from "../core/path-utils.ts";
 import { readPendingCommand, writePendingCommand, type PendingCommand } from "../core/pending.ts";
 
 /**
- * Config interface injected by preamble for permission checking
+ * Config interface injected by preamble for permission checking.
+ * Must stay in sync with PreambleConfig in src/runtime/preamble.ts.
+ * Canonical permission logic lives in src/core/command_permission.ts.
+ *
+ * Note: This file uses its own path utils (getBasename, resolvePath) because
+ * the sandbox can't import @std/path. The decision tree mirrors checkCommandPermission().
  */
 interface PreambleConfig {
   projectDir?: string;
   allowProjectCommands?: boolean;
   allowedCommands: string[];
+  sessionAllowedCommands?: string[];
   cwd: string;
 }
 
@@ -88,7 +94,11 @@ async function checkPermission(
   command: string,
   config: PreambleConfig,
 ): Promise<PermResult> {
-  const { allowedCommands, projectDir, allowProjectCommands, cwd } = config;
+  // Merge session-allowed commands into effective allowed list
+  const allowedCommands = config.sessionAllowedCommands
+    ? [...config.allowedCommands, ...config.sessionAllowedCommands]
+    : config.allowedCommands;
+  const { projectDir, allowProjectCommands, cwd } = config;
 
   // Validate command is actually a string
   if (typeof command !== "string") {

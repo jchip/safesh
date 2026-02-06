@@ -9,6 +9,7 @@
 
 import type { Shell, SafeShellConfig } from "../core/types.ts";
 import { SHELL_STATE_MARKER } from "../core/constants.ts";
+import { getSessionAllowedCommandsArray } from "../core/session.ts";
 
 // Re-export for backward compatibility
 export { SHELL_STATE_MARKER };
@@ -27,6 +28,7 @@ export interface PreambleConfig {
   projectDir?: string;
   allowProjectCommands?: boolean;
   allowedCommands: string[]; // Merged from permissions.run + external keys
+  sessionAllowedCommands?: string[]; // Session-allowed commands (from session file)
   cwd: string;
   /** Project temp directory config: true=.temp (default), false=/tmp, string=custom path */
   projectTemp?: boolean | string;
@@ -67,10 +69,18 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
     }
   }
 
+  // Load session-allowed commands
+  const sessionAllowedCommands = getSessionAllowedCommandsArray(config.projectDir);
+
+  // Default allowProjectCommands to true when running under Claude Code session
+  const allowProjectCommands = config.allowProjectCommands ??
+    (Deno.env.get("CLAUDE_SESSION_ID") !== undefined ? true : false);
+
   return {
     projectDir: config.projectDir,
-    allowProjectCommands: config.allowProjectCommands,
+    allowProjectCommands,
     allowedCommands: Array.from(allowedCommands),
+    sessionAllowedCommands: sessionAllowedCommands.length > 0 ? sessionAllowedCommands : undefined,
     cwd,
     projectTemp: config.projectTemp,
     vfs: config.vfs,
