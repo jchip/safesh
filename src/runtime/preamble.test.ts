@@ -137,6 +137,19 @@ describe("preamble", () => {
       assertEquals(preamble.includes("return 1"), true, "Should return 1 for null");
       assertEquals(preamble.includes("return result.code ?? 1"), true, "Should return actual code or 1");
     });
+
+    it("handles mergeStreams output via result.output", () => {
+      const config: PreambleConfig = {
+        projectDir: "/test/project",
+        allowedCommands: [],
+        cwd: "/test/project",
+      };
+      const { preamble } = buildPreamble(undefined, config);
+
+      // When mergeStreams is true, command result has .output instead of .stdout/.stderr
+      // __printCmd should check result.output first and print it to stdout
+      assertEquals(preamble.includes("if (result.output)"), true, "Should check for merged output");
+    });
   });
 
   describe("edge cases", () => {
