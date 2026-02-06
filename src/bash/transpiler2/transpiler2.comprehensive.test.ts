@@ -1961,55 +1961,49 @@ describe("Bug Fixes", () => {
     // });
   });
 
-  // NOTE: SSH-306 Export flag tests disabled because parser doesn't yet
-  // recognize 'export' as a special command that sets the 'exported' flag
-  // on variable assignments. The transpiler code is ready, but parser support
-  // is required first. When parser is updated, uncomment these tests.
+  // SSH-493: Parser now supports export/readonly/local/declare with assignments
+  describe("SSH-306: Export flag on variable assignments", () => {
+    it("should export variable with export keyword", () => {
+      const ast = parse("export VAR=value");
+      const output = transpile(ast);
+      assertStringIncludes(output, "let VAR");
+      assertStringIncludes(output, "Deno.env.set");
+      assertStringIncludes(output, '"VAR"');
+    });
 
-  // describe("SSH-306: Export flag on variable assignments", () => {
-  //   it("should export variable with export keyword", () => {
-  //     const ast = parse("export VAR=value");
-  //     const output = transpile(ast);
-  //     assertStringIncludes(output, "let VAR");
-  //     assertStringIncludes(output, "Deno.env.set");
-  //     assertStringIncludes(output, '"VAR"');
-  //   });
+    it("should export multiple variables", () => {
+      const ast = parse("export VAR1=value1; export VAR2=value2");
+      const output = transpile(ast);
+      assertStringIncludes(output, "let VAR1");
+      assertStringIncludes(output, "let VAR2");
+      assertStringIncludes(output, "Deno.env.set");
+    });
 
-  //   it("should export multiple variables", () => {
-  //     const ast = parse("export VAR1=value1; export VAR2=value2");
-  //     const output = transpile(ast);
-  //     assertStringIncludes(output, "let VAR1");
-  //     assertStringIncludes(output, "let VAR2");
-  //     assertStringIncludes(output, "Deno.env.set");
-  //   });
+    it("should export already declared variable", () => {
+      const ast = parse("VAR=initial; export VAR=updated");
+      const output = transpile(ast);
+      assertStringIncludes(output, "let VAR");
+      assertStringIncludes(output, "Deno.env.set");
+    });
 
-  //   it("should export already declared variable", () => {
-  //     const ast = parse("VAR=initial; export VAR=updated");
-  //     const output = transpile(ast);
-  //     assertStringIncludes(output, "let VAR");
-  //     assertStringIncludes(output, "Deno.env.set");
-  //   });
-
-  //   it("should handle non-exported variable assignment normally", () => {
-  //     const ast = parse("VAR=value");
-  //     const output = transpile(ast);
-  //     assertStringIncludes(output, "let VAR");
-  //     // Should NOT include Deno.env.set for non-exported vars
-  //     if (output.includes("Deno.env.set")) {
-  //       throw new Error("Non-exported variable should not call Deno.env.set");
-  //     }
-  //   });
-  // });
+    it("should handle non-exported variable assignment normally", () => {
+      const ast = parse("VAR=value");
+      const output = transpile(ast);
+      assertStringIncludes(output, "let VAR");
+      // Should NOT include Deno.env.set for non-exported vars
+      if (output.includes("Deno.env.set")) {
+        throw new Error("Non-exported variable should not call Deno.env.set");
+      }
+    });
+  });
 
   describe("Integration: Multiple bug fixes together", () => {
-    // NOTE: Export-related tests commented out due to parser limitations
-    // it("should handle export with stderr redirection", () => {
-    //   const ast = parse("export DEBUG=1; command 2>error.log");
-    //   const output = transpile(ast);
-    //   assertStringIncludes(output, "let DEBUG");
-    //   assertStringIncludes(output, "Deno.env.set");
-    //   assertStringIncludes(output, ".stderr(");
-    // });
+    it("should handle export with stderr redirection", () => {
+      const ast = parse("export DEBUG=1; command 2>error.log");
+      const output = transpile(ast);
+      assertStringIncludes(output, "let DEBUG");
+      assertStringIncludes(output, "Deno.env.set");
+    });
 
     it("should handle stderr append with force overwrite", () => {
       const ast = parse("command 2>>error.log; another >|output.txt");
