@@ -150,6 +150,22 @@ describe("preamble", () => {
       // __printCmd should check result.output first and print it to stdout
       assertEquals(preamble.includes("if (result.output)"), true, "Should check for merged output");
     });
+
+    it("uses streaming when cmd has .stream() method", () => {
+      const config: PreambleConfig = {
+        projectDir: "/test/project",
+        allowedCommands: [],
+        cwd: "/test/project",
+      };
+      const { preamble } = buildPreamble(undefined, config);
+
+      // __printCmd should use cmd.stream() for real-time output when available
+      assertEquals(preamble.includes("typeof cmd.stream === 'function'"), true, "Should check for stream method");
+      assertEquals(preamble.includes("for await"), true, "Should iterate stream chunks");
+      assertEquals(preamble.includes("__chunk.type === 'stdout'"), true, "Should handle stdout chunks");
+      assertEquals(preamble.includes("__chunk.type === 'stderr'"), true, "Should handle stderr chunks");
+      assertEquals(preamble.includes("__chunk.type === 'exit'"), true, "Should handle exit chunks");
+    });
   });
 
   describe("edge cases", () => {

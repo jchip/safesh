@@ -102,16 +102,34 @@ async function __test(...args: string[]): Promise<{ code: number; stdout: string
 
 // Helper function to execute commands and print their output (matches preamble)
 async function __printCmd(cmd: any): Promise<number> {
+  const __enc = new TextEncoder();
+  if (cmd && typeof cmd.stream === 'function') {
+    let __code = 1;
+    for await (const __chunk of cmd.stream()) {
+      if (__chunk.type === 'stdout' && __chunk.data) {
+        await Deno.stdout.write(__enc.encode(__chunk.data));
+      } else if (__chunk.type === 'stderr' && __chunk.data) {
+        await Deno.stderr.write(__enc.encode(__chunk.data));
+      } else if (__chunk.type === 'exit') {
+        __code = __chunk.code ?? 1;
+      }
+    }
+    return __code;
+  }
   const result = await cmd;
   if (typeof result === 'boolean') return result ? 0 : 1;
   if (!result) return 1;
-  if (result.stdout) {
-    await Deno.stdout.write(new TextEncoder().encode(result.stdout));
+  if (result.output) {
+    await Deno.stdout.write(__enc.encode(result.output));
+  } else {
+    if (result.stdout) {
+      await Deno.stdout.write(__enc.encode(result.stdout));
+    }
+    if (result.stderr) {
+      await Deno.stderr.write(__enc.encode(result.stderr));
+    }
   }
-  if (result.stderr) {
-    await Deno.stderr.write(new TextEncoder().encode(result.stderr));
-  }
-  return result.code;
+  return result.code ?? 1;
 }
 
 // Helper for command substitution text extraction
