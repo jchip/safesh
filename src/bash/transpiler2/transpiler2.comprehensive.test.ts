@@ -1425,6 +1425,31 @@ EOF
     assertStringIncludes(output, '`${await __cmdSubText');
   });
 
+  // SSH-495: Apostrophe in heredoc body inside $() should not corrupt parser state
+  it("should handle apostrophe in heredoc body inside command substitution (SSH-495)", () => {
+    const input = `git commit -m "$(cat <<'EOF'
+Don't wrap stream producers in __printCmd
+EOF
+)"`;
+    const ast = parse(input);
+    const output = transpile(ast);
+    assertStringIncludes(output, ".stdin(");
+    assertStringIncludes(output, "Don't wrap stream producers");
+    assertStringIncludes(output, '`${await __cmdSubText');
+  });
+
+  it("should handle double-quote in heredoc body inside command substitution (SSH-495)", () => {
+    const input = `echo "$(cat <<'EOF'
+She said "hello"
+EOF
+)"`;
+    const ast = parse(input);
+    const output = transpile(ast);
+    assertStringIncludes(output, ".stdin(");
+    // Double quotes in heredoc body are escaped in the JS output string
+    assertStringIncludes(output, 'She said \\"hello\\"');
+  });
+
   // SSH-359: Heredoc should generate valid code (not $.cat().stdin() which doesn't exist)
   it("should handle standalone heredoc with cat", () => {
     const input = `cat <<'EOF'
