@@ -162,12 +162,14 @@ describe("SSH-303: Array Variable Support", () => {
   describe("Array indices", () => {
     it("should support ${!arr[@]} for array indices", () => {
       const code = transpileBash('echo ${!arr[@]}');
-      // Transpiler ready for indirection: true with subscript: "@"
+      // Should generate Object.keys(arr).join(" ") to get array indices
+      assertStringIncludes(code, 'Object.keys');
     });
 
     it("should support ${!arr[*]} for array indices", () => {
       const code = transpileBash('echo ${!arr[*]}');
-      // Transpiler ready
+      // Should generate Object.keys(arr).join(" ") to get array indices
+      assertStringIncludes(code, 'Object.keys');
     });
   });
 });

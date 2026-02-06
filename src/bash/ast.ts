@@ -271,7 +271,8 @@ export type ParameterModifier =
   | "," // ${var,pattern} Lowercase first char
   | ",," // ${var,,pattern} Lowercase all
   | "@" // ${var@operator}
-  | "length"; // ${#var}
+  | "length" // ${#var}
+  | "substring"; // ${var:offset:length}
 
 export interface CommandSubstitution extends BaseNode {
   type: "CommandSubstitution";

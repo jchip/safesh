@@ -11,6 +11,7 @@ import {
   escapeForQuotes,
   escapeForTemplate,
   escapeRegex,
+  sanitizeVarName,
 } from "../utils/escape.ts";
 
 // =============================================================================
@@ -213,6 +214,10 @@ export function visitParameterExpansion(
   const subscript = expansion.subscript;
   const indirection = expansion.indirection;
 
+  // SSH-489: Sanitize variable names that collide with JS reserved words
+  // Use sanitized name for JS identifiers, original param for $.ENV/$.VARS lookups
+  const jsParam = sanitizeVarName(param);
+
   // Handle bash special variables first
   if (param === "!") {
     // $! - PID of last background process
@@ -288,8 +293,8 @@ export function visitParameterExpansion(
   if (!modifier) {
     // Simple expansion: ${VAR} or $VAR
     // SSH-484: Variable lookup order: local JS var > $.ENV (env vars) > $.VARS (shell vars)
-    // Use typeof check to avoid ReferenceError for undefined variables
-    return `\${typeof ${param} !== "undefined" ? ${param} : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`;
+    // SSH-489: Use sanitized name for JS identifiers, original for ENV/VARS property access
+    return `\${typeof ${jsParam} !== "undefined" ? ${jsParam} : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`;
   }
 
   // Handle modifiers
@@ -302,64 +307,64 @@ export function visitParameterExpansion(
       // ${#VAR} - length of variable
       // SSH-303: Handle array length ${#arr[@]}
       if (subscript === "@" || subscript === "*") {
-        return `\${Array.isArray(${param}) ? ${param}.length : 0}`;
+        return `\${Array.isArray(${jsParam}) ? ${jsParam}.length : 0}`;
       }
-      return `\${${param}.length}`;
+      return `\${${jsParam}.length}`;
 
     case ":-":
       // ${VAR:-default} - use default if unset OR empty
-      return `\${(${param} === undefined || ${param} === "") ? "${escapeForQuotes(modifierArg)}" : ${param}}`;
+      return `\${(${jsParam} === undefined || ${jsParam} === "") ? "${escapeForQuotes(modifierArg)}" : ${jsParam}}`;
 
     case "-":
       // ${VAR-default} - use default only if unset
-      return `\${${param} !== undefined ? ${param} : "${escapeForQuotes(modifierArg)}"}`;
+      return `\${${jsParam} !== undefined ? ${jsParam} : "${escapeForQuotes(modifierArg)}"}`;
 
     case ":=":
     case "=":
       // ${VAR:=default} - assign default if unset
-      return `\${${param} ??= "${escapeForQuotes(modifierArg)}"}`;
+      return `\${${jsParam} ??= "${escapeForQuotes(modifierArg)}"}`;
 
     case ":?":
     case "?":
       // ${VAR:?error} - error if unset
-      return `\${${param} ?? (() => { throw new Error("${escapeForQuotes(modifierArg)}"); })()}`;
+      return `\${${jsParam} ?? (() => { throw new Error("${escapeForQuotes(modifierArg)}"); })()}`;
 
     case ":+":
     case "+":
       // ${VAR:+alternate} - use alternate if set
-      return `\${${param} ? "${escapeForQuotes(modifierArg)}" : ""}`;
+      return `\${${jsParam} ? "${escapeForQuotes(modifierArg)}" : ""}`;
 
     case "#":
       // ${VAR#pattern} - remove shortest prefix
-      return `\${${param}.replace(/^${escapeRegex(modifierArg)}/, "")}`;
+      return `\${${jsParam}.replace(/^${escapeRegex(modifierArg)}/, "")}`;
 
     case "##":
       // ${VAR##pattern} - remove longest prefix
-      return `\${${param}.replace(/^${escapeRegex(modifierArg)}.*?/, "")}`;
+      return `\${${jsParam}.replace(/^${escapeRegex(modifierArg)}.*?/, "")}`;
 
     case "%":
       // ${VAR%pattern} - remove shortest suffix
-      return `\${${param}.replace(/${escapeRegex(modifierArg)}$/, "")}`;
+      return `\${${jsParam}.replace(/${escapeRegex(modifierArg)}$/, "")}`;
 
     case "%%":
       // ${VAR%%pattern} - remove longest suffix
-      return `\${${param}.replace(/.*?${escapeRegex(modifierArg)}$/, "")}`;
+      return `\${${jsParam}.replace(/.*?${escapeRegex(modifierArg)}$/, "")}`;
 
     case "^":
       // ${VAR^} - uppercase first char
-      return `\${${param}.charAt(0).toUpperCase() + ${param}.slice(1)}`;
+      return `\${${jsParam}.charAt(0).toUpperCase() + ${jsParam}.slice(1)}`;
 
     case "^^":
       // ${VAR^^} - uppercase all
-      return `\${${param}.toUpperCase()}`;
+      return `\${${jsParam}.toUpperCase()}`;
 
     case ",":
       // ${VAR,} - lowercase first char
-      return `\${${param}.charAt(0).toLowerCase() + ${param}.slice(1)}`;
+      return `\${${jsParam}.charAt(0).toLowerCase() + ${jsParam}.slice(1)}`;
 
     case ",,":
       // ${VAR,,} - lowercase all
-      return `\${${param}.toLowerCase()}`;
+      return `\${${jsParam}.toLowerCase()}`;
 
     case "/": {
       // ${VAR/pattern/replacement} - replace first
@@ -367,7 +372,7 @@ export function visitParameterExpansion(
       const idx = findFirstUnescapedSlash(modifierArg);
       const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${param}.replace("${escapeForQuotes(pattern)}", "${escapeForQuotes(replacement)}")}`;
+      return `\${${jsParam}.replace("${escapeForQuotes(pattern)}", "${escapeForQuotes(replacement)}")}`;
     }
 
     case "//": {
@@ -376,7 +381,25 @@ export function visitParameterExpansion(
       const idx = findFirstUnescapedSlash(modifierArg);
       const pat = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const rep = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${param}.replaceAll("${escapeForQuotes(pat)}", "${escapeForQuotes(rep)}")}`;
+      return `\${${jsParam}.replaceAll("${escapeForQuotes(pat)}", "${escapeForQuotes(rep)}")}`;
+    }
+
+    case "substring": {
+      // ${VAR:offset} or ${VAR:offset:length}
+      // modifierArg contains "offset" or "offset:length"
+      const colonIdx = modifierArg.indexOf(":");
+      const offset = colonIdx >= 0 ? modifierArg.slice(0, colonIdx).trim() : modifierArg.trim();
+      const length = colonIdx >= 0 ? modifierArg.slice(colonIdx + 1).trim() : undefined;
+      // SSH-489: Use jsParam for local var, original param for ENV/VARS
+      const varExpr = `(typeof ${jsParam} !== "undefined" ? String(${jsParam}) : ($.ENV.${param} ?? $.VARS?.${param} ?? ""))`;
+      if (length !== undefined) {
+        // Negative length means "remove last N chars" in bash
+        if (length.startsWith("-")) {
+          return `\${${varExpr}.slice(${offset}, ${length})}`;
+        }
+        return `\${${varExpr}.slice(${offset}, Number(${offset}) + Number(${length}))}`;
+      }
+      return `\${${varExpr}.slice(${offset})}`;
     }
 
     case "/#": {
@@ -384,7 +407,7 @@ export function visitParameterExpansion(
       const idx = findFirstUnescapedSlash(modifierArg);
       const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${param}.replace(/^${escapeRegex(pattern)}/, "${escapeForQuotes(replacement)}")}`;
+      return `\${${jsParam}.replace(/^${escapeRegex(pattern)}/, "${escapeForQuotes(replacement)}")}`;
     }
 
     case "/%": {
@@ -392,13 +415,13 @@ export function visitParameterExpansion(
       const idx = findFirstUnescapedSlash(modifierArg);
       const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${param}.replace(/${escapeRegex(pattern)}$/, "${escapeForQuotes(replacement)}")}`;
+      return `\${${jsParam}.replace(/${escapeRegex(pattern)}$/, "${escapeForQuotes(replacement)}")}`;
     }
 
     default:
       // Unknown modifier, emit warning and use simple expansion
       ctx.addDiagnostic({ level: 'warning', message: `Unsupported parameter modifier: ${modifier}` });
-      return `\${${param}}`;
+      return `\${${jsParam}}`;
   }
 }
 

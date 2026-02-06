@@ -101,6 +101,36 @@ export function escapeRegex(str: string): string {
 }
 
 /**
+ * SSH-489: JavaScript reserved words that cannot be used as variable names.
+ * When a bash variable name collides with one of these, prefix with __ to avoid syntax errors.
+ */
+const JS_RESERVED_WORDS = new Set([
+  // ECMAScript reserved words
+  "break", "case", "catch", "continue", "debugger", "default", "delete",
+  "do", "else", "finally", "for", "function", "if", "in", "instanceof",
+  "new", "return", "switch", "this", "throw", "try", "typeof", "var",
+  "void", "while", "with",
+  // Strict mode reserved words
+  "class", "const", "enum", "export", "extends", "import", "super",
+  // Future reserved in strict mode
+  "implements", "interface", "let", "package", "private", "protected",
+  "public", "static", "yield",
+  // Contextual keywords that cause issues
+  "await", "async",
+]);
+
+/**
+ * SSH-489: Sanitize a bash variable name for use as a JavaScript identifier.
+ * Prefixes JS reserved words with __ to prevent syntax errors.
+ */
+export function sanitizeVarName(name: string): string {
+  if (JS_RESERVED_WORDS.has(name)) {
+    return `__${name}`;
+  }
+  return name;
+}
+
+/**
  * Convert a glob pattern to a JavaScript regex pattern.
  * Handles *, ?, and character classes.
  */
