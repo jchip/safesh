@@ -609,6 +609,41 @@ describe("Transpiler2 - Pipelines", () => {
     // SSH-476: When the stream comes from an async IIFE, we need to await it first
     // Pattern: for await (const __line of await (async () => { ... })())
     assertStringIncludes(output, "for await (const __line of await");
+
+    // SSH-494: The IIFE must NOT wrap the stream return in __printCmd,
+    // because __printCmd consumes the stream and returns a number (exit code),
+    // making the for-await fail with "is not async iterable"
+    assertEquals(output.includes("return await __printCmd"), false,
+      "Stream return in IIFE should not be wrapped in __printCmd");
+  });
+
+  it("should not wrap stream in __printCmd inside && IIFE (SSH-494)", () => {
+    // Bug: cd /dir && cmd 2>/dev/null | head -20
+    // Was generating: for await (... of await (async () => { ...; return await __printCmd(<stream>); })())
+    // __printCmd returns a number, causing "is not async iterable"
+    const variants = [
+      "cd /tmp && echo hello 2>/dev/null | head -20",
+      "cd /tmp && ls | head -5",
+      "cd /tmp && ls 2>/dev/null | tail -5",
+      "mkdir -p /tmp/test && cat file.txt | head -10",
+    ];
+
+    for (const cmd of variants) {
+      const ast = parse(cmd);
+      const output = transpile(ast);
+
+      // Should iterate stream with for-await
+      assertStringIncludes(output, "for await",
+        `${cmd}: should use for-await to iterate stream`);
+
+      // The IIFE should return the stream directly, NOT wrapped in __printCmd
+      assertEquals(output.includes("return await __printCmd"), false,
+        `${cmd}: IIFE should not wrap stream return in __printCmd`);
+
+      // Should still have the stream pipeline
+      assertStringIncludes(output, ".pipe(",
+        `${cmd}: should have pipe in the stream chain`);
+    }
   });
 
   // SSH-482: cat with no args in pipeline should use $.cmd("cat"), not $.cat("-")
