@@ -18,6 +18,7 @@ import {
   parseCountArg,
   collectFlagOptions,
   collectFlagOptionsAndFiles,
+  sanitizeVarName,
 } from "../utils/mod.ts";
 import { SHELL_BUILTINS, type BuiltinConfig } from "../builtins.ts";
 
@@ -1555,6 +1556,9 @@ export function buildVariableAssignment(
   stmt: AST.VariableAssignment,
   ctx: VisitorContext,
 ): string {
+  // SSH-489: Sanitize variable names that collide with JS reserved words
+  const jsName = sanitizeVarName(stmt.name);
+
   let value: string;
   let isArray = false;
 
@@ -1595,24 +1599,25 @@ export function buildVariableAssignment(
   // SSH-306: Handle exported variables
   if (stmt.exported) {
     // Exported variables need to be set in both local scope and environment
+    // Use original name for Deno.env.set (env var name), sanitized for JS identifier
     if (ctx.isDeclared(stmt.name)) {
       // Already declared, just update value and export
-      return `${stmt.name} = ${value}; Deno.env.set("${stmt.name}", ${stmt.name})`;
+      return `${jsName} = ${value}; Deno.env.set("${stmt.name}", ${jsName})`;
     } else {
       // First assignment - declare, set value, and export
       ctx.declareVariable(stmt.name, "let");
-      return `let ${stmt.name} = ${value}; Deno.env.set("${stmt.name}", ${stmt.name})`;
+      return `let ${jsName} = ${value}; Deno.env.set("${stmt.name}", ${jsName})`;
     }
   }
 
   // Check if variable is already declared
   if (ctx.isDeclared(stmt.name)) {
     // Reassignment - no declaration keyword needed
-    return `${stmt.name} = ${value}`;
+    return `${jsName} = ${value}`;
   } else {
     // First assignment - declare with let (bash variables are mutable)
     ctx.declareVariable(stmt.name, "let");
-    return `let ${stmt.name} = ${value}`;
+    return `let ${jsName} = ${value}`;
   }
 }
 

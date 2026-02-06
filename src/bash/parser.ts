@@ -1618,6 +1618,17 @@ export class Parser {
     while (pos < value.length) {
       const char = value[pos];
 
+      // SSH-486/487: Handle escape sequences in double-quoted context
+      // \$ → literal $, \` → literal ` (no expansion)
+      if (char === "\\" && pos + 1 < value.length) {
+        const nextChar = value[pos + 1];
+        if (nextChar === "$" || nextChar === "`") {
+          literal += nextChar;
+          pos += 2;
+          continue;
+        }
+      }
+
       // Handle $ expansions
       if (char === "$") {
         const result = this.tryParseDollarExpansion(value, pos);
@@ -1882,6 +1893,21 @@ export class Parser {
           result.modifierArg = modifierArg(arg);
         }
         return result;
+      }
+    }
+
+    // SSH-488: Substring expansion: ${VAR:offset} or ${VAR:offset:length}
+    // Must come after two-char modifiers to not conflict with :-, :=, :?, :+
+    if (remaining[0] === ":" && remaining.length > 1) {
+      const afterColon = remaining.slice(1);
+      // Substring: starts with digit, minus (negative offset), space+minus, or variable
+      if (/^[\s]*-?\d/.test(afterColon) || /^[a-zA-Z_]/.test(afterColon)) {
+        return {
+          type: "ParameterExpansion",
+          parameter: paramName,
+          modifier: "substring",
+          modifierArg: modifierArg(afterColon),
+        };
       }
     }
 

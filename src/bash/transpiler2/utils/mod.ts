@@ -10,6 +10,7 @@ export {
   escapeForSingleQuotes,
   escapeRegex,
   globToRegex,
+  sanitizeVarName,
 } from "./escape.ts";
 
 export {

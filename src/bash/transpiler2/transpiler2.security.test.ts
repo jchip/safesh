@@ -154,7 +154,7 @@ describe("Security - Command Injection Prevention", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'let VAR = "value & background_cmd"');
-    // Should not create background execution
+    assert(!output.includes(".background"), "Should not create background execution");
   });
 
   it("should safely handle pipes in variable values", () => {
@@ -162,15 +162,17 @@ describe("Security - Command Injection Prevention", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'let VAR = "value | grep secret"');
-    // Pipe should not create a pipeline
+    assert(!output.includes(".pipe("), "Pipe should not create a pipeline");
   });
 
   it("should safely handle backticks in variable values", () => {
     const ast = parse('VAR="value `malicious`"');
     const output = transpile(ast);
 
-    // Backticks in quotes should be treated as command substitution by parser
-    // but should be properly escaped in output
+    // Backticks in double-quoted assignments are command substitution in bash
+    // The transpiled output should have the substitution safely wrapped
+    assertStringIncludes(output, "VAR");
+    assertStringIncludes(output, "__cmdSubText");
   });
 
   it("should escape dollar signs in literal strings", () => {
@@ -206,7 +208,7 @@ describe("Security - Command Injection Prevention", () => {
 
     // Should be passed as a single argument
     assertStringIncludes(output, "test;whoami");
-    // Should not execute whoami
+    assert(!output.includes('$.cmd("whoami")'), "Should not execute whoami as separate command");
   });
 });
 
@@ -242,6 +244,7 @@ describe("Security - Path Traversal Prevention", () => {
     const output = transpile(ast);
 
     // Escaped newline in path should be preserved
+    assertStringIncludes(output, "$.cat(");
     assertStringIncludes(output, "file");
   });
 
@@ -250,6 +253,7 @@ describe("Security - Path Traversal Prevention", () => {
     const output = transpile(ast);
 
     // Null bytes should be handled (though bash parser may reject)
+    assertStringIncludes(output, "$.cat(");
     assertStringIncludes(output, "file.txt");
   });
 
@@ -313,7 +317,7 @@ describe("Security - Parameter Expansion Safety", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, ".toUpperCase()");
-    // Should not allow arbitrary code execution
+    assert(!output.includes("eval("), "Should not allow arbitrary code execution");
   });
 
   it("should handle array expansion safely", () => {
@@ -418,6 +422,7 @@ describe("Security - Quote Escaping", () => {
     const output = transpile(ast);
 
     // Escaped quotes should be preserved in the output
+    assertStringIncludes(output, "$.echo(");
     assertStringIncludes(output, "say");
     assertStringIncludes(output, "hello");
   });
@@ -443,7 +448,8 @@ describe("Security - Quote Escaping", () => {
 
     // Everything should be in the string value
     assertStringIncludes(output, 'let VAR = ');
-    // Should not create separate statements
+    assertStringIncludes(output, '"; malicious; #"');
+    assert(!output.includes('$.cmd("malicious")'), "Should not create separate statements");
   });
 
   it("should handle backslash escaping in strings", () => {
@@ -461,18 +467,18 @@ describe("Security - Quote Escaping", () => {
     const ast = parse('echo "\\$VAR"');
     const output = transpile(ast);
 
-    // Escaped dollar produces backslash-escaped expansion in template literal
-    assertStringIncludes(output, "\\\\${");
-    assertStringIncludes(output, "$.ENV.VAR");
+    // SSH-486: Escaped dollar should produce literal $VAR, no variable expansion
+    assertStringIncludes(output, "\\$VAR");
+    assert(!output.includes("$.ENV.VAR"), "Should NOT trigger variable expansion");
   });
 
   it("should handle backtick escaping in strings", () => {
     const ast = parse('echo "\\`cmd\\`"');
     const output = transpile(ast);
 
-    // Escaped backticks in double quotes are treated as command substitution
-    assertStringIncludes(output, "__cmdSubText");
-    assertStringIncludes(output, "cmd");
+    // SSH-487: Escaped backticks should be literal, no command substitution
+    assertStringIncludes(output, "\\\\`cmd\\\\`");
+    assert(!output.includes("__cmdSubText"), "Should NOT trigger command substitution");
   });
 });
 
@@ -687,7 +693,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "(1 + 2)");
-    // Should not allow arbitrary code
+    assert(!output.includes("eval("), "Should not allow arbitrary code execution");
   });
 
   it("should prevent injection through case patterns", () => {
@@ -695,7 +701,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "test;malicious");
-    // Pattern should be safe
+    assert(!output.includes('$.cmd("malicious")'), "Malicious should not be a separate command");
   });
 
   it("should handle injection attempts in function names", () => {
@@ -736,6 +742,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const output = transpile(ast);
 
     // Brace expansion should be safe
+    assertStringIncludes(output, "$.echo(");
     assertStringIncludes(output, "echo");
   });
 
@@ -779,6 +786,7 @@ describe("Security - Escaping Edge Cases", () => {
     const ast = parse('echo "test\u200Bhidden"');
     const output = transpile(ast);
 
+    assertStringIncludes(output, "$.echo(");
     assertStringIncludes(output, "test");
   });
 
@@ -810,6 +818,7 @@ describe("Security - Escaping Edge Cases", () => {
     const ast = parse('echo "test\\x00null"');
     const output = transpile(ast);
 
+    assertStringIncludes(output, "$.echo(");
     assertStringIncludes(output, "test");
   });
 
