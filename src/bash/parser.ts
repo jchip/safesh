@@ -563,6 +563,29 @@ export class Parser {
       name = { type: "Word", value: "", quoted: false, singleQuoted: false, parts: [] };
     }
 
+    // SSH-493: Handle variable modifier builtins (export, readonly, local, declare)
+    // When followed by ASSIGNMENT_WORD, parse as variable assignments with flags
+    const VAR_MODIFIER_KEYWORDS = ["export", "readonly", "local", "declare"];
+    if (VAR_MODIFIER_KEYWORDS.includes(name.value) && this.is(TokenType.ASSIGNMENT_WORD)) {
+      while (this.is(TokenType.ASSIGNMENT_WORD)) {
+        const assignment = this.parseVariableAssignment();
+        if (name.value === "export") assignment.exported = true;
+        assignments.push(assignment);
+      }
+      // Parse any trailing redirections
+      while (this.isRedirectionOperator() || this.isFdVarRedirection()) {
+        redirects.push(this.parseRedirection());
+      }
+      // Return as variable-assignment-only command (empty name)
+      return {
+        type: "Command",
+        name: { type: "Word", value: "", quoted: false, singleQuoted: false, parts: [] },
+        args: [],
+        redirects,
+        assignments,
+      };
+    }
+
     // Parse arguments and redirections
     const args: (AST.Word | AST.ParameterExpansion | AST.CommandSubstitution)[] = [];
 
