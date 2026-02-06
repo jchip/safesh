@@ -25,12 +25,11 @@
 import { parse, transpile } from "../src/bash/mod.ts";
 import type * as AST from "../src/bash/ast.ts";
 import { loadConfig, mergeConfigs } from "../src/core/config.ts";
-import { getAllowedCommands } from "../src/core/command_permission.ts";
+import { checkCommandPermission } from "../src/core/command_permission.ts";
 import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath, getSessionFilePath, getScriptsDir, getTempRoot, getPendingDir } from "../src/core/temp.ts";
 import type { SafeShellConfig, PendingCommand } from "../src/core/types.ts";
-import { isCommandWithinProjectDir } from "../src/core/permissions.ts";
 // New unified core modules (DRY refactoring)
 import { findProjectRoot, PROJECT_MARKERS } from "../src/core/project-root.ts";
 import { generatePendingId, writePendingCommand, writePendingPath } from "../src/core/pending.ts";
@@ -575,33 +574,30 @@ function hasDangerousCommands(ast: AST.Program): boolean {
 // getSessionAllowedCommands now imported from core/session.ts
 
 /**
- * Check which commands are not in the allowed list
- * Also checks session-allowed commands and project directory commands
+ * Check which commands are not in the allowed list.
+ * Delegates to the canonical checkCommandPermission() in core/command_permission.ts,
+ * passing session commands to ensure consistent behavior across all entry paths.
  */
-function getDisallowedCommands(
+async function getDisallowedCommands(
   commands: Set<string>,
   config: SafeShellConfig,
   cwd: string,
-): string[] {
-  const allowed = getAllowedCommands(config);
-  const sessionAllowed = getSessionAllowedCommands(config.projectDir);
+): Promise<string[]> {
+  const sessionCmds = getSessionAllowedCommands(config.projectDir);
   const disallowed: string[] = [];
 
-  for (const cmd of commands) {
-    // Check if command is in allowed list or session allowed
-    if (allowed.has(cmd) || sessionAllowed.has(cmd)) {
-      continue;
-    }
+  // Check all commands in parallel via canonical permission checker
+  const checks = await Promise.all(
+    [...commands].map(async (cmd) => {
+      const result = await checkCommandPermission(cmd, config, cwd, sessionCmds);
+      return { cmd, result };
+    }),
+  );
 
-    // Check if allowProjectCommands is enabled and command is within project
-    if (config.allowProjectCommands && config.projectDir) {
-      if (isCommandWithinProjectDir(cmd, config.projectDir, cwd)) {
-        continue; // Allow project commands
-      }
+  for (const { cmd, result } of checks) {
+    if (!result.allowed) {
+      disallowed.push(cmd);
     }
-
-    // Command is not allowed
-    disallowed.push(cmd);
   }
 
   return disallowed;
@@ -1262,7 +1258,7 @@ ${tsCode}
     debug(`Extracted commands: ${[...commands].join(", ") || "(none)"}`);
 
     // Check which commands are not allowed
-    const disallowed = getDisallowedCommands(commands, config, cwd);
+    const disallowed = await getDisallowedCommands(commands, config, cwd);
 
     // Transpile AST to TypeScript (needed for both ask and allow)
     tsCode = transpile(ast, {

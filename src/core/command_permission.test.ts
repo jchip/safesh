@@ -211,3 +211,170 @@ Deno.test("checkMultipleCommands - some not found", async () => {
   assertEquals(result.notFound.includes("./missing.sh"), true);
   assertEquals(result.results["git"]?.allowed, true);
 });
+
+// ============================================================================
+// Session command integration tests
+// ============================================================================
+
+Deno.test("checkCommandPermission - session commands allow otherwise blocked command", async () => {
+  const config = makeConfig({ permissions: { run: ["git"] } });
+  const sessionCmds = new Set(["curl", "cargo"]);
+
+  const result = await checkCommandPermission("curl", config, "/home/user", sessionCmds);
+
+  assertEquals(result.allowed, true);
+  if (result.allowed) {
+    assertEquals(result.resolvedPath, "curl");
+  }
+});
+
+Deno.test("checkCommandPermission - session commands don't interfere with config-allowed", async () => {
+  const config = makeConfig({ permissions: { run: ["git"] } });
+  const sessionCmds = new Set(["curl"]);
+
+  // git is in config, not session - should still work
+  const result = await checkCommandPermission("git", config, "/home/user", sessionCmds);
+
+  assertEquals(result.allowed, true);
+  if (result.allowed) {
+    assertEquals(result.resolvedPath, "git");
+  }
+});
+
+Deno.test("checkCommandPermission - empty session commands don't break anything", async () => {
+  const config = makeConfig({ permissions: { run: ["git"] } });
+  const sessionCmds = new Set<string>();
+
+  const result = await checkCommandPermission("curl", config, "/home/user", sessionCmds);
+
+  assertEquals(result.allowed, false);
+  if (!result.allowed) {
+    assertEquals(result.error, ERROR_COMMAND_NOT_ALLOWED);
+  }
+});
+
+Deno.test("checkCommandPermission - session commands work with path-based commands", async () => {
+  const config = makeConfig({ permissions: { run: [] } });
+  const sessionCmds = new Set(["custom-tool"]);
+
+  // /usr/bin/custom-tool should be allowed because basename matches session commands
+  const result = await checkCommandPermission("/usr/bin/custom-tool", config, "/home/user", sessionCmds);
+
+  assertEquals(result.allowed, true);
+  if (result.allowed) {
+    assertEquals(result.resolvedPath, "/usr/bin/custom-tool");
+  }
+});
+
+Deno.test("checkMultipleCommands - session commands passed through", async () => {
+  const config = makeConfig({ permissions: { run: ["git"] } });
+  const sessionCmds = new Set(["cargo"]);
+
+  const result = await checkMultipleCommands(
+    { git: "git", cargo: "cargo", curl: "curl" },
+    config,
+    "/home/user",
+    sessionCmds,
+  );
+
+  assertEquals(result.results["git"]?.allowed, true);
+  assertEquals(result.results["cargo"]?.allowed, true);
+  assertEquals(result.results["curl"]?.allowed, false);
+  assertEquals(result.notAllowed.includes("curl"), true);
+});
+
+Deno.test("checkCommandPermission - allowProjectCommands defaults true under CLAUDE_SESSION_ID", async () => {
+  const tmpDir = await Deno.makeTempDir();
+  const projectDir = `${tmpDir}/project`;
+  const scriptPath = `${projectDir}/scripts/build.sh`;
+
+  await Deno.mkdir(`${projectDir}/scripts`, { recursive: true });
+  await Deno.writeTextFile(scriptPath, "#!/bin/bash\necho hello");
+
+  // Set CLAUDE_SESSION_ID to simulate Claude Code environment
+  const originalSessionId = Deno.env.get("CLAUDE_SESSION_ID");
+  Deno.env.set("CLAUDE_SESSION_ID", "test-session-for-default");
+
+  try {
+    // Config does NOT explicitly set allowProjectCommands
+    const config = makeConfig({ projectDir });
+
+    const result = await checkCommandPermission("scripts/build.sh", config, projectDir);
+
+    // Should be allowed because CLAUDE_SESSION_ID causes allowProjectCommands to default to true
+    assertEquals(result.allowed, true);
+    if (result.allowed) {
+      assertEquals(result.resolvedPath, scriptPath);
+    }
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+    if (originalSessionId !== undefined) {
+      Deno.env.set("CLAUDE_SESSION_ID", originalSessionId);
+    } else {
+      Deno.env.delete("CLAUDE_SESSION_ID");
+    }
+  }
+});
+
+Deno.test("checkCommandPermission - allowProjectCommands defaults false without CLAUDE_SESSION_ID", async () => {
+  const tmpDir = await Deno.makeTempDir();
+  const projectDir = `${tmpDir}/project`;
+  const scriptPath = `${projectDir}/scripts/build.sh`;
+
+  await Deno.mkdir(`${projectDir}/scripts`, { recursive: true });
+  await Deno.writeTextFile(scriptPath, "#!/bin/bash\necho hello");
+
+  // Ensure CLAUDE_SESSION_ID is NOT set
+  const originalSessionId = Deno.env.get("CLAUDE_SESSION_ID");
+  Deno.env.delete("CLAUDE_SESSION_ID");
+
+  try {
+    // Config does NOT explicitly set allowProjectCommands
+    const config = makeConfig({ projectDir });
+
+    const result = await checkCommandPermission("scripts/build.sh", config, projectDir);
+
+    // Should NOT be allowed because no CLAUDE_SESSION_ID, so allowProjectCommands defaults to false
+    assertEquals(result.allowed, false);
+    if (!result.allowed) {
+      assertEquals(result.error, ERROR_COMMAND_NOT_ALLOWED);
+    }
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+    if (originalSessionId !== undefined) {
+      Deno.env.set("CLAUDE_SESSION_ID", originalSessionId);
+    }
+  }
+});
+
+Deno.test("checkCommandPermission - explicit allowProjectCommands=false overrides CLAUDE_SESSION_ID", async () => {
+  const tmpDir = await Deno.makeTempDir();
+  const projectDir = `${tmpDir}/project`;
+  const scriptPath = `${projectDir}/scripts/build.sh`;
+
+  await Deno.mkdir(`${projectDir}/scripts`, { recursive: true });
+  await Deno.writeTextFile(scriptPath, "#!/bin/bash\necho hello");
+
+  const originalSessionId = Deno.env.get("CLAUDE_SESSION_ID");
+  Deno.env.set("CLAUDE_SESSION_ID", "test-session-override");
+
+  try {
+    // Config explicitly disables allowProjectCommands
+    const config = makeConfig({ projectDir, allowProjectCommands: false });
+
+    const result = await checkCommandPermission("scripts/build.sh", config, projectDir);
+
+    // Should NOT be allowed because explicit false overrides CLAUDE_SESSION_ID default
+    assertEquals(result.allowed, false);
+    if (!result.allowed) {
+      assertEquals(result.error, ERROR_COMMAND_NOT_ALLOWED);
+    }
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+    if (originalSessionId !== undefined) {
+      Deno.env.set("CLAUDE_SESSION_ID", originalSessionId);
+    } else {
+      Deno.env.delete("CLAUDE_SESSION_ID");
+    }
+  }
+});
