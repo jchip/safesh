@@ -718,6 +718,29 @@ describe("error-handlers", () => {
       });
     });
 
+    it("uses Deno.writeTextFileSync for pending file, not writeJsonFileSync", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+      }, false);
+
+      // The inline handler must use Deno.writeTextFileSync + JSON.stringify
+      // because writeJsonFileSync is not available in the generated script context
+      assertEquals(code.includes("Deno.writeTextFileSync(pendingFile, JSON.stringify(pending"), true,
+        "Should use Deno.writeTextFileSync with JSON.stringify");
+      assertEquals(code.includes("writeJsonFileSync"), false,
+        "Should NOT reference writeJsonFileSync which is unavailable at runtime");
+    });
+
+    it("ensures temp directory exists before writing pending file", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+      }, false);
+
+      // Should mkdir the temp root before writing
+      assertEquals(code.includes("Deno.mkdirSync("), true,
+        "Should ensure directory exists before writing pending file");
+    });
+
     describe("includeListeners parameter", () => {
       it("includes event listeners when includeListeners is true (default)", () => {
         const code = generateInlineErrorHandler({
