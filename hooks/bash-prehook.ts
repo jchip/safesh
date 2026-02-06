@@ -66,10 +66,18 @@ function debug(message: string): void {
 }
 
 /**
+ * Transpiler cache version. Bump this whenever the transpiler or preamble
+ * output changes to invalidate cached scripts.
+ */
+const TRANSPILER_VERSION = 2;
+
+/**
  * Generate SHA-256 hash for content-based script caching
  * Returns the first 16 chars of the URL-safe Base64 encoded SHA-256 hash.
+ * Includes TRANSPILER_VERSION so cache invalidates when transpiler changes.
  */
 async function hashContent(content: string): Promise<string> {
+  content = `v${TRANSPILER_VERSION}:${content}`;
   const data = new TextEncoder().encode(content);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   
@@ -773,6 +781,7 @@ async function outputRewriteToDeshFile(tsCode: string, projectDir: string, optio
   // Generate hash-based ID for caching and retry
   // For bash: hash original command to cache transpiled result
   // For /*#*/ scripts: hash TypeScript code directly
+  // TRANSPILER_VERSION in hashContent ensures cache busts when transpiler changes
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
   const prefix = options?.isDirectTs ? "script" : "tx-script";
@@ -836,6 +845,7 @@ async function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, op
   // Generate hash-based ID for caching and retry
   // For bash: hash original command to cache transpiled result
   // For /*#*/ scripts: hash TypeScript code directly
+  // TRANSPILER_VERSION in hashContent ensures cache busts when transpiler changes
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
 
@@ -925,7 +935,7 @@ async function outputDenyWithRetry(
 
   // Generate hash for script caching
   // For bash: hash original command to cache transpiled result
-  // For /*#*/ scripts: hash TypeScript code directly
+  // TRANSPILER_VERSION in hashContent ensures cache busts when transpiler changes
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
   const prefix = "tx-script"; // Denied commands are always transpiled bash
