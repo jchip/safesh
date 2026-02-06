@@ -425,7 +425,7 @@ describe("Parameter Expansion - Edge Cases", () => {
     const script = 'echo "$VAR"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "${VAR}");
+    assertStringIncludes(result, "$.ENV.VAR");
   });
 
   it("should handle direct CommandSubstitution in visitWord", () => {
@@ -443,8 +443,8 @@ describe("Parameter Expansion - Edge Cases", () => {
     const script = 'var="test"; echo "${var}"';
     const ast = parse(script);
     const result = transpile(ast);
-    // Simple expansion should work without diagnostics
-    assertStringIncludes(result, "${var}");
+    // Simple expansion should work without diagnostics - resolved through ENV proxy
+    assertStringIncludes(result, "$.ENV.var");
   });
 });
 
