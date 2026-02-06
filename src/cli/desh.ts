@@ -16,7 +16,7 @@
 
 import { parseArgs } from "@std/cli/parse-args";
 import { loadConfig, loadSessionConfig, mergeConfigs, validateConfig } from "../core/config.ts";
-import { executeCode, executeFile, executeCodeStreaming } from "../runtime/executor.ts";
+import { executeCode, executeFile, executeCodeStreaming, executeFilePassthrough } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
 import { getPendingFilePath, getSessionFilePath, findScriptFilePath, getTempRoot } from "../core/temp.ts";
@@ -797,16 +797,8 @@ async function executeFileCode(
   if (verbose) console.error(`Executing file: ${filePath}`);
 
   try {
-    const result = await executeFile(filePath, config);
-
-    if (result.stdout) {
-      console.log(result.stdout);
-    }
-    if (result.stderr) {
-      console.error(result.stderr);
-    }
-
-    Deno.exit(result.code);
+    const result = await executeFilePassthrough(filePath, config);
+    Deno.exit(result);
   } catch (error) {
     if (error instanceof SafeShellError) {
       console.error(`Error: ${error.message}`);
