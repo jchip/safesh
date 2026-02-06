@@ -253,14 +253,21 @@ export function visitParameterExpansion(
   // SSH-330: Handle indirect variable reference ${!ref}
   // The parser prefixes the parameter name with '!' for indirection
   if (param.startsWith("!")) {
-    const refVar = param.slice(1); // Remove the '!' prefix
+    let refVar = param.slice(1); // Remove the '!' prefix
 
     // SSH-303: Handle array indirection ${!arr[@]} for array indices
-    if (subscript) {
-      if (subscript === "@" || subscript === "*") {
-        // ${!arr[@]} - get array indices/keys
-        return `\${Object.keys(${refVar}).join(" ")}`;
-      }
+    // The parser may embed the subscript in the parameter name (e.g., "!arr[@]")
+    // so we need to check both the separate subscript field and the embedded form
+    let effectiveSubscript = subscript;
+    const bracketIdx = refVar.indexOf("[");
+    if (bracketIdx !== -1) {
+      effectiveSubscript = refVar.slice(bracketIdx + 1, -1); // extract e.g. "@" from "arr[@]"
+      refVar = refVar.slice(0, bracketIdx); // extract e.g. "arr" from "arr[@]"
+    }
+
+    if (effectiveSubscript === "@" || effectiveSubscript === "*") {
+      // ${!arr[@]} - get array indices/keys
+      return `\${Object.keys(${refVar}).join(" ")}`;
     }
 
     // Simple indirect reference: ${!ref}
