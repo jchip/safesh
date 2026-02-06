@@ -889,12 +889,14 @@ class PipelineAssembler {
   appendAnd(part: PipelinePart, followedByPipe: boolean): void {
     if (!this.isPrintable && !part.isPrintable) {
       this.handleNonPrintableAnd(part);
+      this.isPrintable = part.isPrintable;
     } else if (this.isPrintable) {
       this.handlePrintableAnd(part, followedByPipe);
+      // isPrintable already set by handler (false when __printCmd moved inside IIFE)
     } else {
       this.handleMixedAnd(part, followedByPipe);
+      // isPrintable already set by handler (false when __printCmd moved inside IIFE)
     }
-    this.isPrintable = part.isPrintable;
   }
 
   /**
@@ -904,13 +906,15 @@ class PipelineAssembler {
   appendOr(part: PipelinePart): void {
     if (!this.isPrintable && !part.isPrintable) {
       this.handleNonPrintableOr(part);
+      this.isPrintable = part.isPrintable;
     } else if (this.isPrintable) {
       this.handlePrintableOr(part);
+      // isPrintable already set by handler (false when __printCmd moved inside IIFE)
     } else {
       this.handleMixedOr(part);
+      // isPrintable already set by handler (false when __printCmd moved inside IIFE)
     }
     this.resetPromiseState();
-    this.isPrintable = part.isPrintable;
   }
 
   /**
@@ -943,21 +947,30 @@ class PipelineAssembler {
       this.isPromise = false;
       this.updateStreamState(false, false);
     } else if (this.isPrintable) {
+      // Use __printCmd inside IIFE for printable last part to enable streaming output.
+      const returnExpr = part.isPrintable
+        ? `return await __printCmd(${part.code})`
+        : `return ${part.code}`;
       this.wrapInAsyncIIFE(
         `await __printCmd(${this.isPromise ? `await ${this.code}` : this.code})`,
-        `return ${part.code}`
+        returnExpr
       );
       // SSH-474: Preserve stream status from the returning part
       this.isStream = part.isStreamProducer;
       this.isLineStream = false;
     } else {
-      this.wrapInAsyncIIFE(this.code, `return ${part.code}`);
+      // Use __printCmd inside IIFE for printable last part to enable streaming output.
+      const returnExpr = part.isPrintable
+        ? `return await __printCmd(${part.code})`
+        : `return ${part.code}`;
+      this.wrapInAsyncIIFE(this.code, returnExpr);
       // SSH-474: Preserve stream status from the returning part
       this.isStream = part.isStreamProducer;
       this.isLineStream = false;
     }
 
-    this.isPrintable = part.isPrintable;
+    // isPrintable set to false inside branches when __printCmd moved inside IIFE
+    if (!part.isPrintable) this.isPrintable = false;
   }
 
   // ----- Private Helper Methods -----
@@ -984,10 +997,16 @@ class PipelineAssembler {
       this.isStream = part.isStreamProducer;
       this.isLineStream = false;
     } else {
+      // Use __printCmd inside IIFE for both parts to enable streaming output.
+      // Returning a Command from async IIFE would auto-await its thenable, buffering output.
+      const returnExpr = part.isPrintable
+        ? `return await __printCmd(${part.code})`
+        : `return ${part.code}`;
       this.wrapInAsyncIIFE(
         `await __printCmd(${resultExpr})`,
-        `return ${part.code}`
+        returnExpr
       );
+      if (part.isPrintable) this.isPrintable = false;
       // SSH-474: Preserve stream status from the returning part
       // The IIFE returns part.code, so stream state should match
       this.isStream = part.isStreamProducer;
@@ -1006,7 +1025,13 @@ class PipelineAssembler {
       this.isStream = part.isStreamProducer;
       this.isLineStream = false;
     } else {
-      this.wrapInAsyncIIFE(this.code, `return ${part.code}`);
+      // Use __printCmd inside IIFE for printable last part to enable streaming output.
+      // Returning a Command from async IIFE would auto-await its thenable, buffering output.
+      const returnExpr = part.isPrintable
+        ? `return await __printCmd(${part.code})`
+        : `return ${part.code}`;
+      this.wrapInAsyncIIFE(this.code, returnExpr);
+      if (part.isPrintable) this.isPrintable = false;
       // SSH-474: Preserve stream status from the returning part
       this.isStream = part.isStreamProducer;
       this.isLineStream = false;
@@ -1025,14 +1050,22 @@ class PipelineAssembler {
    */
   private handlePrintableOr(part: PipelinePart): void {
     const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
-    this.code = `(async () => { try { await __printCmd(${resultExpr}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+    const catchExpr = part.isPrintable
+      ? `return await __printCmd(${part.code})`
+      : `return ${part.code}`;
+    this.code = `(async () => { try { await __printCmd(${resultExpr}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${catchExpr}; } })()`;
+    if (part.isPrintable) this.isPrintable = false;
   }
 
   /**
    * Handle || for mixed printable/non-printable
    */
   private handleMixedOr(part: PipelinePart): void {
-    this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { return ${part.code}; } })()`;
+    const catchExpr = part.isPrintable
+      ? `return await __printCmd(${part.code})`
+      : `return ${part.code}`;
+    this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${catchExpr}; } })()`;
+    if (part.isPrintable) this.isPrintable = false;
   }
 
   /**
@@ -1499,7 +1532,8 @@ export function visitPipeline(
         const streamExpr = result.async ? `await ${result.code}` : result.code;
         lines.push(`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`);
       } else if (!result.isPrintable) {
-        lines.push(`${indent}${result.code};`);
+        const prefix = result.async ? "await " : "";
+        lines.push(`${indent}${prefix}${result.code};`);
       } else {
         lines.push(`${indent}await __printCmd(${result.code});`);
       }
@@ -1537,8 +1571,10 @@ export function visitPipeline(
   }
 
   // SSH-372: Don't wrap non-printable results (like shell builtins) in __printCmd
+  // But still await async results (IIFEs that handle their own printing)
   if (!result.isPrintable) {
-    return { lines: [`${indent}${result.code};`] };
+    const prefix = result.async ? "await " : "";
+    return { lines: [`${indent}${prefix}${result.code};`] };
   }
 
   // Wrap pipeline execution with __printCmd to print output
