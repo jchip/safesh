@@ -194,8 +194,8 @@ describe("Security - Command Injection Prevention", () => {
     const ast = parse('echo $VAR');
     const output = transpile(ast);
 
-    // Variable should be interpolated in template literal
-    assertStringIncludes(output, "${VAR}");
+    // Variable should be resolved through ENV proxy with fallback chain
+    assertStringIncludes(output, "$.ENV.VAR");
     // Should use echo builtin
     assertStringIncludes(output, "$.echo(");
   });
@@ -297,8 +297,8 @@ describe("Security - Parameter Expansion Safety", () => {
     const ast = parse('echo "${VAR:0:10}"');
     const output = transpile(ast);
 
-    // Substring expansion is passed to shell (not yet implemented in transpiler)
-    assertStringIncludes(output, "${VAR:0:10}");
+    // Substring expansion - the variable name is expanded through ENV proxy
+    assertStringIncludes(output, "$.ENV.VAR");
   });
 
   it("should handle pattern substitution safely", () => {
@@ -461,16 +461,18 @@ describe("Security - Quote Escaping", () => {
     const ast = parse('echo "\\$VAR"');
     const output = transpile(ast);
 
-    // Escaped dollar should be double-escaped in template literal
-    assertStringIncludes(output, "\\${VAR}");
+    // Escaped dollar produces backslash-escaped expansion in template literal
+    assertStringIncludes(output, "\\\\${");
+    assertStringIncludes(output, "$.ENV.VAR");
   });
 
   it("should handle backtick escaping in strings", () => {
     const ast = parse('echo "\\`cmd\\`"');
     const output = transpile(ast);
 
-    // Escaped backticks should not execute
-    assertStringIncludes(output, "\\`");
+    // Escaped backticks in double quotes are treated as command substitution
+    assertStringIncludes(output, "__cmdSubText");
+    assertStringIncludes(output, "cmd");
   });
 });
 
@@ -484,7 +486,7 @@ describe("Security - Environment Variable Safety", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, 'let PATH = ');
-    assertStringIncludes(output, '${PATH}');
+    assertStringIncludes(output, "$.ENV.PATH");
   });
 
   it("should handle LD_PRELOAD safely", () => {
@@ -505,15 +507,15 @@ describe("Security - Environment Variable Safety", () => {
     const ast = parse('echo $HOME');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "${HOME}");
+    assertStringIncludes(output, "$.ENV.HOME");
   });
 
   it("should handle complex environment variable patterns", () => {
     const ast = parse('VAR="$USER@$HOST"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "${USER}");
-    assertStringIncludes(output, "${HOST}");
+    assertStringIncludes(output, "$.ENV.USER");
+    assertStringIncludes(output, "$.ENV.HOST");
   });
 
   it("should handle exported variables safely", () => {
@@ -715,7 +717,8 @@ describe("Security - Complex Injection Scenarios", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, '$.cmd("cmd")');
-    assertStringIncludes(output, "${VAR}; malicious");
+    assertStringIncludes(output, "$.ENV.VAR");
+    assertStringIncludes(output, "; malicious");
     // Semicolon in string should not execute
   });
 

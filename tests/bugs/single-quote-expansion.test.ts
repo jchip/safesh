@@ -75,10 +75,8 @@ describe("Bug: Single-Quoted Strings", () => {
   it("SHOULD expand variables in double-quoted strings", () => {
     const code = transpileBash('echo "$HOME"');
 
-    // Double quotes should expand
-    // Note: SafeShell exposes env vars as globals in preamble,
-    // so $HOME becomes ${HOME} (JavaScript variable reference)
-    assertStringIncludes(code, "${HOME}");
+    // Double quotes should expand - variable resolved through ENV proxy with fallback
+    assertStringIncludes(code, "$.ENV.HOME");
 
     // Should NOT treat as literal
     assertEquals(code.includes('"$HOME"'), false);
