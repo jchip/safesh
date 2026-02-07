@@ -1283,8 +1283,8 @@ ${tsCode}
       /const\s+\w+\s+=\s+for\s+await/,  // "const x = for await" - invalid syntax
       /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,  // "for (const x of ["${await..." - template in array
       /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,  // Alternative: for (const x of ["...await
-      /\.pipe\(.{1,500}\)\.pipe\(.{1,500}\)\.stdout\(\)/,  // Calling stdout() after multiple pipes - invalid (with nested parens)
-      /\.lines\(\)\.pipe\(.{1,500}\)\.lines\(\)/,  // Calling .lines() twice with pipe - invalid
+      /\.pipe\((?:(?!\breturn\b).){1,500}\)\.pipe\((?:(?!\breturn\b).){1,500}\)\.stdout\(\)/,  // Calling stdout() after multiple pipes - invalid (SSH-496: exclude cross-IIFE matches)
+      /\.lines\(\)\.pipe\((?:(?!\breturn\b).){1,500}\)\.lines\(\)/,  // Calling .lines() twice with pipe - invalid (SSH-496: exclude cross-IIFE matches)
     ];
 
     for (const pattern of knownBadPatterns) {
