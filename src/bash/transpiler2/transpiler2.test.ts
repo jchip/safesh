@@ -665,6 +665,36 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, '$.cmd("cat"');
     assertEquals(output.includes('$.cat("-")'), false, "Should not use $.cat(\"-\") in pipeline");
   });
+
+  // SSH-496: knownBadPatterns false positive for && chains with piped grep
+  it("should not false-positive on knownBadPatterns for && chains with pipe+grep (SSH-496)", () => {
+    // These bash-prehook knownBadPatterns must not match valid transpiler output
+    const knownBadPatterns = [
+      /const\s+\w+\s+=\s+for\s+await/,
+      /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,
+      /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,
+      /\.pipe\((?:(?!\breturn\b).){1,500}\)\.pipe\((?:(?!\breturn\b).){1,500}\)\.stdout\(\)/,
+      /\.lines\(\)\.pipe\((?:(?!\breturn\b).){1,500}\)\.lines\(\)/,
+    ];
+
+    const validCommands = [
+      'go test ./relay/internal/schedevt/ -v -count=1 2>&1 | grep -E "PASS|FAIL" && echo "---" && go test ./relay/internal/store/ -count=1 2>&1 | grep -E "^(ok|FAIL)"',
+      'cmd1 | grep "a" && cmd2 | grep "b"',
+      'cmd1 2>&1 | grep "a" && echo "---" && cmd2 2>&1 | grep "b"',
+      'make test 2>&1 | tail -5 && echo "done" && make lint 2>&1 | head -10',
+    ];
+
+    for (const cmd of validCommands) {
+      const ast = parse(cmd);
+      const output = transpile(ast, { imports: false, strict: false });
+
+      for (let i = 0; i < knownBadPatterns.length; i++) {
+        const pattern = knownBadPatterns[i]!;
+        assertEquals(pattern.test(output), false,
+          `Pattern ${i} should NOT match valid output for: ${cmd}\nOutput: ${output}`);
+      }
+    }
+  });
 });
 
 // =============================================================================
