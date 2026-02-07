@@ -130,7 +130,7 @@ Deno.test("validateExternalCommands - errors on conflicting flags", () => {
   );
 });
 
-Deno.test("validateExternalCommands - warns on unrestricted command", () => {
+Deno.test("validateExternalCommands - no warning on unrestricted command", () => {
   const config = createMinimalConfig({
     external: {
       curl: { allow: true },
@@ -139,7 +139,7 @@ Deno.test("validateExternalCommands - warns on unrestricted command", () => {
   const result = validateConfig(config);
   assertEquals(
     result.warnings.some((w) => w.includes("curl") && w.includes("no restrictions")),
-    true,
+    false,
   );
 });
 

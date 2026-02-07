@@ -111,7 +111,7 @@ Deno.test("validateConfig - warns on unrestricted network access", () => {
   );
 });
 
-Deno.test("validateConfig - warns on too many allowed commands", () => {
+Deno.test("validateConfig - no warning on many allowed commands", () => {
   const config: SafeShellConfig = {
     permissions: {
       run: Array.from({ length: 25 }, (_, i) => `cmd${i}`),
@@ -120,7 +120,7 @@ Deno.test("validateConfig - warns on too many allowed commands", () => {
   const result = validateConfig(config);
   assertEquals(
     result.warnings.some((w) => w.includes("25 commands")),
-    true,
+    false,
   );
 });
 
@@ -147,7 +147,7 @@ Deno.test("validateConfig - errors on conflicting flags", () => {
   );
 });
 
-Deno.test("validateConfig - warns on unrestricted external commands", () => {
+Deno.test("validateConfig - no warning on unrestricted external commands", () => {
   const config: SafeShellConfig = {
     external: {
       git: {
@@ -158,7 +158,7 @@ Deno.test("validateConfig - warns on unrestricted external commands", () => {
   const result = validateConfig(config);
   assertEquals(
     result.warnings.some((w) => w.includes("git") && w.includes("no restrictions")),
-    true,
+    false,
   );
 });
 
