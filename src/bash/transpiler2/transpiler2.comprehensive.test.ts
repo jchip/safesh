@@ -185,6 +185,13 @@ describe("Fluent Commands - Comprehensive", () => {
       const output = transpile(ast);
       assertStringIncludes(output, "$.grep(/pattern/)");
     });
+
+    it("should handle grep -v without file (as invert transform)", () => {
+      const ast = parse('echo "hello" | grep -v pattern');
+      const output = transpile(ast);
+      assertStringIncludes(output, "$.filter(");
+      assertStringIncludes(output, "!/pattern/.test");
+    });
   });
 
   describe("cut command", () => {
