@@ -1040,13 +1040,6 @@ function validatePermissions(config: SafeShellConfig): ConfigValidation {
     );
   }
 
-  // Check for too many allowed commands (might indicate misconfiguration)
-  if (Array.isArray(perms.run) && perms.run.length > 20) {
-    result.warnings.push(
-      `permissions.run: ${perms.run.length} commands allowed - this might be too permissive`,
-    );
-  }
-
   return result;
 }
 
@@ -1070,17 +1063,6 @@ function validateExternalCommands(config: SafeShellConfig): ConfigValidation {
       }
     }
 
-    // Warn about commands with no restrictions
-    if (
-      cmdConfig.allow === true &&
-      (deny.length === 0) &&
-      (require.length === 0) &&
-      !cmdConfig.pathArgs
-    ) {
-      result.warnings.push(
-        `external.${cmd}: has no restrictions - consider adding flag controls or path validation`,
-      );
-    }
   }
 
   return result;
