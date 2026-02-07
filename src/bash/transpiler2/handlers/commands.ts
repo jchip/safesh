@@ -639,6 +639,9 @@ function buildFluentCommand(
       }
 
       // grep as a transform
+      if (invert) {
+        return { code: `$.filter((line) => !${regexPattern}.test(line))`, isTransform: true, isStream: false };
+      }
       return { code: `$.grep(${regexPattern})`, isTransform: true, isStream: false };
     }
 

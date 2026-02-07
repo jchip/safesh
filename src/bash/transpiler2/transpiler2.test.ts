@@ -667,21 +667,25 @@ describe("Transpiler2 - Pipelines", () => {
   });
 
   // SSH-496: knownBadPatterns false positive for && chains with piped grep
-  it("should not false-positive on knownBadPatterns for && chains with pipe+grep (SSH-496)", () => {
+  // SSH-498: knownBadPatterns false positive for command substitution in template literals
+  it("should not false-positive on knownBadPatterns for valid transpiler output (SSH-496, SSH-498)", () => {
     // These bash-prehook knownBadPatterns must not match valid transpiler output
     const knownBadPatterns = [
       /const\s+\w+\s+=\s+for\s+await/,
       /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,
       /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,
-      /\.pipe\((?:(?!\breturn\b).){1,500}\)\.pipe\((?:(?!\breturn\b).){1,500}\)\.stdout\(\)/,
-      /\.lines\(\)\.pipe\((?:(?!\breturn\b).){1,500}\)\.lines\(\)/,
+      /\.pipe\((?:(?!\breturn\b)[^`]){1,500}\)\.pipe\((?:(?!\breturn\b)[^`]){1,500}\)\.stdout\(\)/,
+      /\.lines\(\)\.pipe\((?:(?!\breturn\b)[^`]){1,500}\)\.lines\(\)/,
     ];
 
     const validCommands = [
+      // SSH-496: && chains with piped grep
       'go test ./relay/internal/schedevt/ -v -count=1 2>&1 | grep -E "PASS|FAIL" && echo "---" && go test ./relay/internal/store/ -count=1 2>&1 | grep -E "^(ok|FAIL)"',
       'cmd1 | grep "a" && cmd2 | grep "b"',
       'cmd1 2>&1 | grep "a" && echo "---" && cmd2 2>&1 | grep "b"',
       'make test 2>&1 | tail -5 && echo "done" && make lint 2>&1 | head -10',
+      // SSH-498: command substitution with pipeline inside double-quoted arg
+      'curl -sk https://example.com -H "Cookie: $(cat config.toml 2>/dev/null | grep -v cookie)" 2>&1 | head -5',
     ];
 
     for (const cmd of validCommands) {

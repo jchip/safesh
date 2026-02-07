@@ -16,7 +16,7 @@
 
 import { parseArgs } from "@std/cli/parse-args";
 import { loadConfig, loadSessionConfig, mergeConfigs, validateConfig } from "../core/config.ts";
-import { executeCode, executeFile, executeCodeStreaming, executeFilePassthrough } from "../runtime/executor.ts";
+import { executeCode, executeCodeStreaming, executeFilePassthrough } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
 import { getPendingFilePath, getSessionFilePath, findScriptFilePath, getTempRoot } from "../core/temp.ts";
@@ -149,20 +149,16 @@ export async function executeRetryScript(
   id: string,
 ): Promise<void> {
   try {
-    // Execute the script file directly (it already has the marker)
-    // Pass cwd, timeout, and runInBackground from pending metadata
-    const result = await executeFile(scriptPath, config, {
+    // Execute with inherited stdio for real-time output passthrough
+    const exitCode = await executeFilePassthrough(scriptPath, config, {
       cwd: pending.cwd,
       timeout: pending.timeout,
     });
 
-    if (result.stdout) console.log(result.stdout);
-    if (result.stderr) console.error(result.stderr);
-
     // Cleanup pending file on success (keep script file for caching)
     deletePending(id, "command");
 
-    Deno.exit(result.code);
+    Deno.exit(exitCode);
   } catch (error) {
     console.error(`Execution failed: ${error}`);
     // Cleanup pending file on failure too
@@ -446,15 +442,13 @@ export async function executeRetryPathScript(
   Deno.env.set("SAFESH_SCRIPT_ID", id);
 
   try {
-    const result = await executeFile(scriptFile, config, { cwd: pending.cwd });
-
-    if (result.stdout) console.log(result.stdout);
-    if (result.stderr) console.error(result.stderr);
+    // Execute with inherited stdio for real-time output passthrough
+    const exitCode = await executeFilePassthrough(scriptFile, config, { cwd: pending.cwd });
 
     // Don't cleanup pending file yet - it may be needed for command retries
     // The file will be cleaned up by subsequent retries or manual cleanup
 
-    Deno.exit(result.code);
+    Deno.exit(exitCode);
   } catch (error) {
     console.error(`Execution failed: ${error}`);
     deletePending(id, "path");
