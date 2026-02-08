@@ -6,11 +6,13 @@
  * @module
  */
 
-import { join, basename, dirname } from "@std/path";
+import { join, basename, dirname, resolve } from "@std/path";
 import { copy as fsCopy } from "jsr:@std/fs";
 import { ShellString } from "./types.ts";
 import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
+import { validatePath } from "../../core/permissions.ts";
+import { getDefaultConfig } from "../../core/utils.ts";
 
 /** Options for cp command */
 export interface CpOptions {
@@ -103,10 +105,14 @@ export async function cp(
     return new ShellString("", "cp: target is not a directory", 1);
   }
 
+  const cwd = Deno.cwd();
+  const config = getDefaultConfig(cwd);
   for (const src of sources) {
     try {
-      const srcStat = await Deno.stat(src);
-      const targetPath = destIsDir ? join(dest, basename(src)) : dest;
+      const validatedSrc = await validatePath(src, config, cwd, "read");
+      const validatedDest = await validatePath(dest, config, cwd, "write");
+      const srcStat = await Deno.stat(validatedSrc);
+      const targetPath = destIsDir ? join(validatedDest, basename(validatedSrc)) : validatedDest;
 
       // Check if target exists
       let targetExists = false;

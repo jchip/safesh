@@ -6,7 +6,7 @@
  * @module
  */
 
-import { resolve, join, DELIMITER } from "@std/path";
+import { resolve, DELIMITER } from "@std/path";
 import { expandGlob } from "@std/fs/expand-glob";
 import type { OptionsMap, ParsedOptions } from "./types.ts";
 import type { SandboxOptions } from "../fs.ts";
@@ -258,12 +258,9 @@ export async function statNoFollowLinks(
  * Random filename for temp files
  */
 export function randomFileName(): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "safesh_";
-  for (let i = 0; i < 16; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return result;
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  return "safesh_" + Array.from(array, b => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -296,14 +293,5 @@ export function flattenArgs(...args: (string | string[])[]): string[] {
   return args.flat();
 }
 
-/**
- * Create default config for sandbox
- */
-export function getDefaultConfig(cwd: string): SafeShellConfig {
-  return {
-    permissions: {
-      read: [cwd, "/tmp"],
-      write: [cwd, "/tmp"],
-    },
-  };
-}
+// getDefaultConfig is imported from core/utils.ts
+export { getDefaultConfig } from "../../core/utils.ts";

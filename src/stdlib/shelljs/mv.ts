@@ -6,10 +6,12 @@
  * @module
  */
 
-import { join, basename, dirname } from "@std/path";
+import { join, basename, dirname, resolve } from "@std/path";
 import { ShellString } from "./types.ts";
 import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
+import { validatePath } from "../../core/permissions.ts";
+import { getDefaultConfig } from "../../core/utils.ts";
 
 /** Options for mv command */
 export interface MvOptions {
@@ -95,9 +97,13 @@ export async function mv(
     return new ShellString("", "mv: target is not a directory", 1);
   }
 
+  const cwd = Deno.cwd();
+  const config = getDefaultConfig(cwd);
   for (const src of sources) {
     try {
-      const targetPath = destIsDir ? join(dest, basename(src)) : dest;
+      const validatedSrc = await validatePath(src, config, cwd, "write");
+      const validatedDest = await validatePath(dest, config, cwd, "write");
+      const targetPath = destIsDir ? join(validatedDest, basename(validatedSrc)) : validatedDest;
 
       // Check if target exists
       let targetExists = false;
