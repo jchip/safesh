@@ -9,6 +9,8 @@
 
 import type { Transform } from "../stdlib/stream.ts";
 
+const textEncoder = new TextEncoder();
+
 /**
  * Options for wc command
  */
@@ -299,7 +301,7 @@ export function wcM(): Transform<string, string> {
  */
 export async function wcWithOptions(
   input: AsyncIterable<string>,
-  _options: WcOptions = {},
+  options: WcOptions = {},
 ): Promise<WcStats> {
   return wcCount(input);
 }

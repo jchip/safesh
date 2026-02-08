@@ -205,11 +205,25 @@ function processText(text: string, options: TrOptions): string {
   } else if (set2) {
     // Translate mode: map set1 to set2
     if (complement) {
-      // In complement mode, all chars NOT in set1 map to last char of set2
-      const targetChar = set2.length > 0 ? set2[set2.length - 1] : "";
+      // Complement translate: enumerate complement set in code-point order
+      const complementChars: string[] = [];
+      const seen = new Set<string>();
+      for (const char of text) {
+        if (!set1Chars.has(char) && !seen.has(char)) {
+          seen.add(char);
+          complementChars.push(char);
+        }
+      }
+      complementChars.sort((a, b) => a.codePointAt(0)! - b.codePointAt(0)!);
+      const complementMap = new Map<string, string>();
+      const lastSet2Char = set2.length > 0 ? set2[set2.length - 1]! : "";
+      for (let i = 0; i < complementChars.length; i++) {
+        const target = i < set2.length ? set2[i]! : lastSet2Char;
+        complementMap.set(complementChars[i]!, target);
+      }
       for (const char of text) {
         if (!set1Chars.has(char)) {
-          output += targetChar;
+          output += complementMap.get(char) ?? lastSet2Char;
         } else {
           output += char;
         }

@@ -110,15 +110,18 @@ export async function* headBytes(
 ): AsyncIterable<string> {
   if (n <= 0) return;
 
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
   let remaining = n;
   for await (const chunk of input) {
     if (remaining <= 0) break;
 
-    if (chunk.length <= remaining) {
+    const bytes = encoder.encode(chunk);
+    if (bytes.length <= remaining) {
       yield chunk;
-      remaining -= chunk.length;
+      remaining -= bytes.length;
     } else {
-      yield chunk.slice(0, remaining);
+      yield decoder.decode(bytes.slice(0, remaining));
       break;
     }
   }

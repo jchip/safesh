@@ -116,9 +116,36 @@ function processLine(line: string, options: CutOptions): string | null {
 
   const outDelim = outputDelimiter ?? delimiter;
 
-  if (characters || bytes) {
-    // Character/byte mode (treat as equivalent for UTF-8 simplicity)
-    const spec = characters || bytes || "1";
+  if (bytes) {
+    // Byte mode: extract actual byte ranges using TextEncoder/TextDecoder
+    const spec = bytes;
+    const ranges = parseRange(spec);
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const encoded = encoder.encode(line);
+    const selected = new Set<number>();
+
+    for (const range of ranges) {
+      const start = range.start - 1;
+      const end = range.end === null ? encoded.length : range.end;
+      for (let i = start; i < end && i < encoded.length; i++) {
+        if (i >= 0) selected.add(i);
+      }
+    }
+
+    const resultBytes: number[] = [];
+    for (let i = 0; i < encoded.length; i++) {
+      const isSelected = selected.has(i);
+      if (complement ? !isSelected : isSelected) {
+        resultBytes.push(encoded[i]!);
+      }
+    }
+    return decoder.decode(new Uint8Array(resultBytes));
+  }
+
+  if (characters) {
+    // Character mode: handle Unicode properly via code points
+    const spec = characters;
     const ranges = parseRange(spec);
     const chars = [...line]; // Handle Unicode properly
     const selected = extractByRanges(chars, ranges, complement);

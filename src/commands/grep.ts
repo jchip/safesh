@@ -127,14 +127,14 @@ export function buildRegex(
   if (pattern instanceof RegExp) {
     let flags = pattern.flags;
 
-    // Ensure global flag for getMatches()
-    if (!flags.includes("g")) {
-      flags += "g";
-    }
-
     // Apply case insensitive if needed
     if (options.ignoreCase && !flags.includes("i")) {
       flags += "i";
+    }
+
+    // Remove global flag - getMatches adds it when needed
+    if (flags.includes("g")) {
+      flags = flags.replace("g", "");
     }
 
     // Return new regex if flags changed
@@ -213,15 +213,19 @@ export function testLine(line: string, regex: RegExp, invert: boolean): boolean 
  * ```
  */
 export function getMatches(line: string, regex: RegExp): string[] {
-  regex.lastIndex = 0;
+  // Ensure global flag for iterating all matches
+  const gRegex = regex.flags.includes("g")
+    ? regex
+    : new RegExp(regex.source, regex.flags + "g");
+  gRegex.lastIndex = 0;
   const matches: string[] = [];
   let match: RegExpExecArray | null;
 
-  while ((match = regex.exec(line)) !== null) {
+  while ((match = gRegex.exec(line)) !== null) {
     matches.push(match[0]);
     // Prevent infinite loop on zero-width matches
     if (match[0].length === 0) {
-      regex.lastIndex++;
+      gRegex.lastIndex++;
     }
   }
 
@@ -362,11 +366,15 @@ export async function* grep(
       if (
         (beforeContext > 0 || afterContext > 0) &&
         lastMatchLineNumber > 0 &&
-        lineNumber > lastMatchLineNumber + afterContext + 1 &&
-        beforeBuffer.length > 0 &&
-        beforeBuffer[0]!.lineNumber > lastMatchLineNumber + afterContext
+        lineNumber > lastMatchLineNumber + afterContext + 1
       ) {
-        yield { line: "--", lineNumber: 0, isSeparator: true };
+        if (
+          beforeContext === 0 ||
+          (beforeBuffer.length > 0 &&
+            beforeBuffer[0]!.lineNumber > lastMatchLineNumber + afterContext)
+        ) {
+          yield { line: "--", lineNumber: 0, isSeparator: true };
+        }
       }
 
       // Emit before context lines
