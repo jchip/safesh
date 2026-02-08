@@ -86,6 +86,7 @@ export enum TokenType {
   PIPE = "PIPE",
 
   EOF = "EOF",
+  UNKNOWN = "UNKNOWN",
 }
 
 const KEYWORDS: Record<string, TokenType> = {
@@ -121,20 +122,69 @@ export interface Token {
  * Expand POSIX character classes in regex patterns
  */
 function expandPosixClasses(pattern: string): string {
-  return pattern
-    .replace(/[[:space:]]/g, "[ \t\n\r\f\v]")
-    .replace(/[[:blank:]]/g, "[ \t]")
-    .replace(/[[:alpha:]]/g, "[a-zA-Z]")
-    .replace(/[[:digit:]]/g, "[0-9]")
-    .replace(/[[:alnum:]]/g, "[a-zA-Z0-9]")
-    .replace(/[[:upper:]]/g, "[A-Z]")
-    .replace(/[[:lower:]]/g, "[a-z]")
-    .replace(/[[:punct:]]/g, "[!\"#$%&'()*+,\\-./:;<=>?@\\[\\]\\\\^_`{|}~]")
-    .replace(/[[:xdigit:]]/g, "[0-9A-Fa-f]")
-    .replace(/[[:graph:]]/g, "[!-~]")
-    .replace(/[[:print:]]/g, "[ -~]")
-    .replace(/[[:cntrl:]]/g, "[\x00-\x1f\x7f]");
+  return pattern.replace(/\[:(\w+):\]/g, (_, className: string) => {
+    switch (className) {
+      case "space": return "\s";
+      case "digit": return "\d";
+      case "alpha": return "a-zA-Z";
+      case "alnum": return "a-zA-Z0-9";
+      case "upper": return "A-Z";
+      case "lower": return "a-z";
+      case "print": case "graph": return "\x20-\x7E";
+      case "punct": return "\x21-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E";
+      case "blank": return " \t";
+      case "cntrl": return "\x00-\x1F\x7F";
+      case "xdigit": return "0-9a-fA-F";
+      default: return _;
+    }
+  });
 }
+
+/**
+ * Token types that can precede a regex literal (module-level constant).
+ */
+const REGEX_PRECEDERS: ReadonlySet<TokenType | null> = new Set([
+  null,
+  TokenType.NEWLINE,
+  TokenType.SEMICOLON,
+  TokenType.LBRACE,
+  TokenType.RBRACE,
+  TokenType.LPAREN,
+  TokenType.LBRACKET,
+  TokenType.COMMA,
+  TokenType.ASSIGN,
+  TokenType.PLUS_ASSIGN,
+  TokenType.MINUS_ASSIGN,
+  TokenType.STAR_ASSIGN,
+  TokenType.SLASH_ASSIGN,
+  TokenType.PERCENT_ASSIGN,
+  TokenType.CARET_ASSIGN,
+  TokenType.AND,
+  TokenType.OR,
+  TokenType.NOT,
+  TokenType.MATCH,
+  TokenType.NOT_MATCH,
+  TokenType.QUESTION,
+  TokenType.COLON,
+  TokenType.LT,
+  TokenType.GT,
+  TokenType.LE,
+  TokenType.GE,
+  TokenType.EQ,
+  TokenType.NE,
+  TokenType.PLUS,
+  TokenType.MINUS,
+  TokenType.STAR,
+  TokenType.PERCENT,
+  TokenType.CARET,
+  TokenType.PRINT,
+  TokenType.PRINTF,
+  TokenType.IF,
+  TokenType.WHILE,
+  TokenType.DO,
+  TokenType.FOR,
+  TokenType.RETURN,
+]);
 
 export class AwkLexer {
   private input: string;
@@ -250,50 +300,7 @@ export class AwkLexer {
   }
 
   private canBeRegex(): boolean {
-    // Regex can appear after these tokens (or at start)
-    const regexPreceders = new Set([
-      null,
-      TokenType.NEWLINE,
-      TokenType.SEMICOLON,
-      TokenType.LBRACE,
-      TokenType.RBRACE,
-      TokenType.LPAREN,
-      TokenType.LBRACKET,
-      TokenType.COMMA,
-      TokenType.ASSIGN,
-      TokenType.PLUS_ASSIGN,
-      TokenType.MINUS_ASSIGN,
-      TokenType.STAR_ASSIGN,
-      TokenType.SLASH_ASSIGN,
-      TokenType.PERCENT_ASSIGN,
-      TokenType.CARET_ASSIGN,
-      TokenType.AND,
-      TokenType.OR,
-      TokenType.NOT,
-      TokenType.MATCH,
-      TokenType.NOT_MATCH,
-      TokenType.QUESTION,
-      TokenType.COLON,
-      TokenType.LT,
-      TokenType.GT,
-      TokenType.LE,
-      TokenType.GE,
-      TokenType.EQ,
-      TokenType.NE,
-      TokenType.PLUS,
-      TokenType.MINUS,
-      TokenType.STAR,
-      TokenType.PERCENT,
-      TokenType.CARET,
-      TokenType.PRINT,
-      TokenType.PRINTF,
-      TokenType.IF,
-      TokenType.WHILE,
-      TokenType.DO,
-      TokenType.FOR,
-      TokenType.RETURN,
-    ]);
-    return regexPreceders.has(this.lastTokenType);
+    return REGEX_PRECEDERS.has(this.lastTokenType);
   }
 
   private readString(): Token {
@@ -546,7 +553,7 @@ export class AwkLexer {
           this.advance();
           return { type: TokenType.AND, value: "&&", line: startLine, column: startColumn };
         }
-        return { type: TokenType.IDENT, value: "&", line: startLine, column: startColumn };
+        return { type: TokenType.UNKNOWN, value: "&", line: startLine, column: startColumn };
 
       case "|":
         if (next === "|") {

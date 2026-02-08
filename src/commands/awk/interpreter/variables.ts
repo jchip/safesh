@@ -20,6 +20,8 @@ export function getVariable(ctx: AwkRuntimeContext, name: string): AwkValue {
       return ctx.OFS;
     case "ORS":
       return ctx.ORS;
+    case "RS":
+      return ctx.RS;
     case "NR":
       return ctx.NR;
     case "NF":
@@ -58,6 +60,9 @@ export function setVariable(
       return;
     case "ORS":
       ctx.ORS = toAwkString(value);
+      return;
+    case "RS":
+      ctx.RS = toAwkString(value);
       return;
     case "NR":
       ctx.NR = Math.floor(toNumber(value));

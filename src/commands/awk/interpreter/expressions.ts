@@ -20,6 +20,7 @@ import {
   matchRegex,
   toAwkString,
   toNumber,
+  getCachedRegex,
 } from "./helpers.ts";
 import type { AwkValue } from "./types.ts";
 import {
@@ -75,7 +76,7 @@ export async function evalExpr(
 
     case "regex":
       // Regex used as expression matches against $0
-      return matchRegex(expr.pattern, ctx.line) ? 1 : 0;
+      return matchRegex(expr.pattern, ctx.line, ctx) ? 1 : 0;
 
     case "field":
       return evalFieldRef(ctx, expr);
@@ -104,16 +105,16 @@ export async function evalExpr(
       return evalAssignment(ctx, expr);
 
     case "pre_increment":
-      return evalPreIncrement(ctx, expr.operand);
+      return evalIncrDecr(ctx, expr.operand, 1, false);
 
     case "pre_decrement":
-      return evalPreDecrement(ctx, expr.operand);
+      return evalIncrDecr(ctx, expr.operand, -1, false);
 
     case "post_increment":
-      return evalPostIncrement(ctx, expr.operand);
+      return evalIncrDecr(ctx, expr.operand, 1, true);
 
     case "post_decrement":
-      return evalPostDecrement(ctx, expr.operand);
+      return evalIncrDecr(ctx, expr.operand, -1, true);
 
     case "in":
       return evalInExpr(ctx, expr.key, expr.array);
@@ -173,7 +174,7 @@ async function evalBinaryOp(
         ? expr.right.pattern
         : toAwkString(await evalExpr(ctx, expr.right));
     try {
-      return new RegExp(pattern).test(toAwkString(left)) ? 1 : 0;
+      return getCachedRegex(ctx, pattern).test(toAwkString(left)) ? 1 : 0;
     } catch {
       return 0;
     }
@@ -185,7 +186,7 @@ async function evalBinaryOp(
         ? expr.right.pattern
         : toAwkString(await evalExpr(ctx, expr.right));
     try {
-      return new RegExp(pattern).test(toAwkString(left)) ? 0 : 1;
+      return getCachedRegex(ctx, pattern).test(toAwkString(left)) ? 0 : 1;
     } catch {
       return 1;
     }
@@ -265,9 +266,11 @@ function applyNumericBinaryOp(left: number, right: number, op: string): number {
     case "*":
       return left * right;
     case "/":
-      return right !== 0 ? left / right : 0;
+      if (right === 0) throw new Error("awk: fatal: division by zero attempted");
+      return left / right;
     case "%":
-      return right !== 0 ? left % right : 0;
+      if (right === 0) throw new Error("awk: fatal: division by zero attempted");
+      return left % right;
     case "^":
       return Math.pow(left, right);
     default:
@@ -330,8 +333,11 @@ async function callUserFunction(
 
   // Save only parameter variables (they are local in AWK)
   const savedParams: Record<string, AwkValue | undefined> = {};
+  const savedArrays: Record<string, Record<string, AwkValue> | undefined> = {};
   for (const param of func.params) {
     savedParams[param] = ctx.vars[param];
+    savedArrays[param] = ctx.arrays[param];
+    delete ctx.arrays[param]; // clean for local scope
   }
 
   // Set up parameters
@@ -351,12 +357,17 @@ async function callUserFunction(
 
   const result = ctx.returnValue ?? "";
 
-  // Restore only parameter variables
+  // Restore only parameter variables and arrays
   for (const param of func.params) {
     if (savedParams[param] !== undefined) {
       ctx.vars[param] = savedParams[param];
     } else {
       delete ctx.vars[param];
+    }
+    if (savedArrays[param] !== undefined) {
+      ctx.arrays[param] = savedArrays[param]!;
+    } else {
+      delete ctx.arrays[param];
     }
   }
 
@@ -437,92 +448,34 @@ async function evalAssignment(
   return finalValue;
 }
 
-async function evalPreIncrement(
+/**
+ * Unified increment/decrement evaluator.
+ * delta: +1 for increment, -1 for decrement
+ * returnOld: true for post-increment/decrement (return old value),
+ *            false for pre-increment/decrement (return new value)
+ */
+async function evalIncrDecr(
   ctx: AwkRuntimeContext,
   operand: AwkVariable | AwkArrayAccess | AwkFieldRef,
-): Promise<AwkValue> {
-  let val: number;
-
-  if (operand.type === "field") {
-    const index = Math.floor(toNumber(await evalExpr(ctx, operand.index)));
-    val = toNumber(getField(ctx, index)) + 1;
-    setField(ctx, index, val);
-  } else if (operand.type === "variable") {
-    val = toNumber(getVariable(ctx, operand.name)) + 1;
-    setVariable(ctx, operand.name, val);
-  } else {
-    const key = toAwkString(await evalExpr(ctx, operand.key));
-    val = toNumber(getArrayElement(ctx, operand.array, key)) + 1;
-    setArrayElement(ctx, operand.array, key, val);
-  }
-
-  return val;
-}
-
-async function evalPreDecrement(
-  ctx: AwkRuntimeContext,
-  operand: AwkVariable | AwkArrayAccess | AwkFieldRef,
-): Promise<AwkValue> {
-  let val: number;
-
-  if (operand.type === "field") {
-    const index = Math.floor(toNumber(await evalExpr(ctx, operand.index)));
-    val = toNumber(getField(ctx, index)) - 1;
-    setField(ctx, index, val);
-  } else if (operand.type === "variable") {
-    val = toNumber(getVariable(ctx, operand.name)) - 1;
-    setVariable(ctx, operand.name, val);
-  } else {
-    const key = toAwkString(await evalExpr(ctx, operand.key));
-    val = toNumber(getArrayElement(ctx, operand.array, key)) - 1;
-    setArrayElement(ctx, operand.array, key, val);
-  }
-
-  return val;
-}
-
-async function evalPostIncrement(
-  ctx: AwkRuntimeContext,
-  operand: AwkVariable | AwkArrayAccess | AwkFieldRef,
+  delta: number,
+  returnOld: boolean,
 ): Promise<AwkValue> {
   let oldVal: number;
 
   if (operand.type === "field") {
     const index = Math.floor(toNumber(await evalExpr(ctx, operand.index)));
     oldVal = toNumber(getField(ctx, index));
-    setField(ctx, index, oldVal + 1);
+    setField(ctx, index, oldVal + delta);
   } else if (operand.type === "variable") {
     oldVal = toNumber(getVariable(ctx, operand.name));
-    setVariable(ctx, operand.name, oldVal + 1);
+    setVariable(ctx, operand.name, oldVal + delta);
   } else {
     const key = toAwkString(await evalExpr(ctx, operand.key));
     oldVal = toNumber(getArrayElement(ctx, operand.array, key));
-    setArrayElement(ctx, operand.array, key, oldVal + 1);
+    setArrayElement(ctx, operand.array, key, oldVal + delta);
   }
 
-  return oldVal;
-}
-
-async function evalPostDecrement(
-  ctx: AwkRuntimeContext,
-  operand: AwkVariable | AwkArrayAccess | AwkFieldRef,
-): Promise<AwkValue> {
-  let oldVal: number;
-
-  if (operand.type === "field") {
-    const index = Math.floor(toNumber(await evalExpr(ctx, operand.index)));
-    oldVal = toNumber(getField(ctx, index));
-    setField(ctx, index, oldVal - 1);
-  } else if (operand.type === "variable") {
-    oldVal = toNumber(getVariable(ctx, operand.name));
-    setVariable(ctx, operand.name, oldVal - 1);
-  } else {
-    const key = toAwkString(await evalExpr(ctx, operand.key));
-    oldVal = toNumber(getArrayElement(ctx, operand.array, key));
-    setArrayElement(ctx, operand.array, key, oldVal - 1);
-  }
-
-  return oldVal;
+  return returnOld ? oldVal : oldVal + delta;
 }
 
 async function evalInExpr(
@@ -596,37 +549,29 @@ async function evalGetlineFromFile(
   const filename = toAwkString(await evalExpr(ctx, fileExpr));
   const filePath = ctx.fs.resolvePath(ctx.cwd, filename);
 
-  const cacheKey = `__fc_${filePath}`;
-  const indexKey = `__fi_${filePath}`;
+  let cached = ctx.fileCache.get(filePath);
 
-  let lines: string[];
-  let lineIndex: number;
-
-  if (ctx.vars[cacheKey] === undefined) {
+  if (!cached) {
     try {
       const content = await ctx.fs.readFile(filePath);
-      lines = content.split("\n");
+      const lines = content.split("\n");
       if (lines.length > 0 && lines[lines.length - 1] === "") {
         lines.pop();
       }
-      ctx.vars[cacheKey] = JSON.stringify(lines);
-      ctx.vars[indexKey] = -1;
-      lineIndex = -1;
+      cached = { lines, index: -1 };
+      ctx.fileCache.set(filePath, cached);
     } catch {
       return -1;
     }
-  } else {
-    lines = JSON.parse(ctx.vars[cacheKey] as string);
-    lineIndex = ctx.vars[indexKey] as number;
   }
 
-  const nextIndex = lineIndex + 1;
-  if (nextIndex >= lines.length) {
+  const nextIndex = cached.index + 1;
+  if (nextIndex >= cached.lines.length) {
     return 0;
   }
 
-  const line = lines[nextIndex]!;
-  ctx.vars[indexKey] = nextIndex;
+  const line = cached.lines[nextIndex]!;
+  cached.index = nextIndex;
 
   if (variable) {
     setVariable(ctx, variable, line);

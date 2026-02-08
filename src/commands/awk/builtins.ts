@@ -6,6 +6,7 @@
 
 import type { AwkExpr } from "./ast.ts";
 import type { AwkRuntimeContext } from "./interpreter/context.ts";
+import { toNumber, toAwkString } from "./interpreter/helpers.ts";
 import type { AwkValue } from "./interpreter/types.ts";
 
 /**
@@ -20,19 +21,6 @@ export type AwkBuiltinFn = (
   ctx: AwkRuntimeContext,
   evaluator: AwkEvaluator,
 ) => AwkValue | Promise<AwkValue>;
-
-// Helper functions for type conversion
-function toNumber(val: AwkValue): number {
-  if (typeof val === "number") return val;
-  const n = parseFloat(val);
-  return Number.isNaN(n) ? 0 : n;
-}
-
-function toAwkString(val: AwkValue): string {
-  if (typeof val === "string") return val;
-  if (Number.isInteger(val)) return String(val);
-  return String(val);
-}
 
 // String Functions
 
@@ -98,7 +86,11 @@ async function awkSplit(
     sep = /\s+/;
   }
 
-  const parts = str.split(sep);
+  // When using default FS (space/\s+), trim and filter empty (POSIX behavior)
+  const isDefaultFS = sep instanceof RegExp && sep.source === "\\s+";
+  const parts = isDefaultFS
+    ? str.trim().split(sep).filter(Boolean)
+    : str.split(sep);
 
   ctx.arrays[arrayName] = {};
   for (let i = 0; i < parts.length; i++) {
@@ -108,10 +100,14 @@ async function awkSplit(
   return parts.length;
 }
 
-async function awkSub(
+/**
+ * Shared implementation for sub() and gsub().
+ */
+async function awkSubImpl(
   args: AwkExpr[],
   ctx: AwkRuntimeContext,
   evaluator: AwkEvaluator,
+  global: boolean,
 ): Promise<number> {
   if (args.length < 2) return 0;
 
@@ -136,7 +132,7 @@ async function awkSub(
       const idx = Math.floor(
         toNumber(await evaluator.evalExpr(targetExpr.index)),
       );
-      targetName = `$${idx}`;
+      targetName = "$" + idx;
     }
   }
 
@@ -151,79 +147,15 @@ async function awkSub(
   }
 
   try {
-    const regex = new RegExp(pattern);
-    const newTarget = target.replace(regex, createSubReplacer(replacement));
-    const changed = newTarget !== target ? 1 : 0;
-
-    if (targetName === "$0") {
-      ctx.line = newTarget;
-      ctx.fields =
-        ctx.FS === " "
-          ? newTarget.trim().split(/\s+/).filter(Boolean)
-          : newTarget.split(ctx.fieldSep);
-      ctx.NF = ctx.fields.length;
-    } else if (targetName.startsWith("$")) {
-      const idx = parseInt(targetName.slice(1), 10) - 1;
-      while (ctx.fields.length <= idx) ctx.fields.push("");
-      ctx.fields[idx] = newTarget;
-      ctx.NF = ctx.fields.length;
-      ctx.line = ctx.fields.join(ctx.OFS);
+    const regex = new RegExp(pattern, global ? "g" : "");
+    let count: number;
+    if (global) {
+      const matches = target.match(regex);
+      count = matches ? matches.length : 0;
     } else {
-      ctx.vars[targetName] = newTarget;
+      const testTarget = target.replace(regex, createSubReplacer(replacement));
+      count = testTarget !== target ? 1 : 0;
     }
-
-    return changed;
-  } catch {
-    return 0;
-  }
-}
-
-async function awkGsub(
-  args: AwkExpr[],
-  ctx: AwkRuntimeContext,
-  evaluator: AwkEvaluator,
-): Promise<number> {
-  if (args.length < 2) return 0;
-
-  let pattern: string;
-  if (args[0]!.type === "regex") {
-    pattern = args[0]!.pattern;
-  } else {
-    pattern = toAwkString(await evaluator.evalExpr(args[0]!));
-    if (pattern.startsWith("/") && pattern.endsWith("/")) {
-      pattern = pattern.slice(1, -1);
-    }
-  }
-
-  const replacement = toAwkString(await evaluator.evalExpr(args[1]!));
-
-  let targetName = "$0";
-  if (args.length >= 3) {
-    const targetExpr = args[2]!;
-    if (targetExpr.type === "variable") {
-      targetName = targetExpr.name;
-    } else if (targetExpr.type === "field") {
-      const idx = Math.floor(
-        toNumber(await evaluator.evalExpr(targetExpr.index)),
-      );
-      targetName = `$${idx}`;
-    }
-  }
-
-  let target: string;
-  if (targetName === "$0") {
-    target = ctx.line;
-  } else if (targetName.startsWith("$")) {
-    const idx = parseInt(targetName.slice(1), 10) - 1;
-    target = ctx.fields[idx] || "";
-  } else {
-    target = toAwkString(ctx.vars[targetName] ?? "");
-  }
-
-  try {
-    const regex = new RegExp(pattern, "g");
-    const matches = target.match(regex);
-    const count = matches ? matches.length : 0;
     const newTarget = target.replace(regex, createSubReplacer(replacement));
 
     if (targetName === "$0") {
@@ -247,6 +179,22 @@ async function awkGsub(
   } catch {
     return 0;
   }
+}
+
+async function awkSub(
+  args: AwkExpr[],
+  ctx: AwkRuntimeContext,
+  evaluator: AwkEvaluator,
+): Promise<number> {
+  return awkSubImpl(args, ctx, evaluator, false);
+}
+
+async function awkGsub(
+  args: AwkExpr[],
+  ctx: AwkRuntimeContext,
+  evaluator: AwkEvaluator,
+): Promise<number> {
+  return awkSubImpl(args, ctx, evaluator, true);
 }
 
 function createSubReplacer(replacement: string): (match: string) => string {
@@ -514,6 +462,16 @@ function awkRand(
   return ctx.random ? ctx.random() : Math.random();
 }
 
+function createSeededRandom(seed: number): () => number {
+  let state = seed | 0 || 1; // ensure non-zero
+  return () => {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return (state >>> 0) / 4294967296;
+  };
+}
+
 async function awkSrand(
   args: AwkExpr[],
   ctx: AwkRuntimeContext,
@@ -522,20 +480,18 @@ async function awkSrand(
   const seed =
     args.length > 0 ? toNumber(await evaluator.evalExpr(args[0]!)) : Date.now();
   ctx.vars._srand_seed = seed;
+  ctx.random = createSeededRandom(seed);
   return seed;
 }
 
 // Unsupported Functions
 
-function unsupported(name: string, reason: string): AwkBuiltinFn {
+function unavailableBuiltin(name: string, reason?: string): AwkBuiltinFn {
   return () => {
-    throw new Error(`${name}() is not supported - ${reason}`);
-  };
-}
-
-function unimplemented(name: string): AwkBuiltinFn {
-  return () => {
-    throw new Error(`function '${name}()' is not implemented`);
+    const msg = reason
+      ? name + "() is not supported - " + reason
+      : "function '" + name + "()' is not implemented";
+    throw new Error(msg);
   };
 }
 
@@ -798,15 +754,15 @@ export const awkBuiltins: Record<string, AwkBuiltinFn> = {
   srand: awkSrand,
 
   // Unsupported functions (security/sandboxing)
-  system: unsupported(
+  system: unavailableBuiltin(
     "system",
     "shell execution not allowed in sandboxed environment",
   ),
-  close: unsupported("close", "file operations not allowed"),
-  fflush: unsupported("fflush", "file operations not allowed"),
+  close: unavailableBuiltin("close", "file operations not allowed"),
+  fflush: unavailableBuiltin("fflush", "file operations not allowed"),
 
   // Unimplemented functions
-  systime: unimplemented("systime"),
-  mktime: unimplemented("mktime"),
-  strftime: unimplemented("strftime"),
+  systime: unavailableBuiltin("systime"),
+  mktime: unavailableBuiltin("mktime"),
+  strftime: unavailableBuiltin("strftime"),
 };

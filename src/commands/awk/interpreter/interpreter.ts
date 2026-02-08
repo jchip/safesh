@@ -24,7 +24,7 @@ export class AwkInterpreter {
    * Initialize the interpreter with a program.
    * Must be called before executeBegin/executeLine/executeEnd.
    */
-  execute(program: AwkProgram): void {
+  initialize(program: AwkProgram): void {
     this.program = program;
     this.ctx.output = "";
 
@@ -83,13 +83,28 @@ export class AwkInterpreter {
   /**
    * Execute all END blocks.
    */
+  /**
+   * Execute all END blocks.
+   * Always runs END blocks if exit was called from a rule (not from END).
+   * If exit is called from within an END block, skip remaining END blocks.
+   */
   async executeEnd(): Promise<void> {
-    if (!this.program || this.ctx.shouldExit) return;
+    if (!this.program) return;
+
+    // If exit was set from a rule (not from END), clear it so END blocks run
+    if (this.ctx.shouldExit && !this.ctx.exitFromEnd) {
+      this.ctx.shouldExit = false;
+    }
 
     for (const rule of this.program.rules) {
+      if (this.ctx.shouldExit) break;
+
       if (rule.pattern?.type === "end") {
         await executeBlock(this.ctx, rule.action.statements);
-        if (this.ctx.shouldExit) break;
+        // If exit was called from within an END block, mark it
+        if (this.ctx.shouldExit) {
+          this.ctx.exitFromEnd = true;
+        }
       }
     }
   }
@@ -133,29 +148,24 @@ export class AwkInterpreter {
         return false;
 
       case "regex_pattern":
-        return matchRegex(pattern.pattern, this.ctx.line);
+        return matchRegex(pattern.pattern, this.ctx.line, this.ctx);
 
       case "expr_pattern":
         return isTruthy(await evalExpr(this.ctx, pattern.expression));
 
       case "range": {
-        const startMatches = await this.matchPattern(pattern.start);
-        const endMatches = await this.matchPattern(pattern.end);
-
         if (!this.rangeStates[ruleIndex]) {
+          const startMatches = await this.matchPattern(pattern.start);
           if (startMatches) {
             this.rangeStates[ruleIndex] = true;
-            // Check if end also matches (single line range)
-            if (endMatches) {
-              this.rangeStates[ruleIndex] = false;
-            }
-            return true;
+            return true; // match this line, don't check end yet
           }
           return false;
         } else {
-          // In range
+          // In range - check if end pattern matches
+          const endMatches = await this.matchPattern(pattern.end);
           if (endMatches) {
-            this.rangeStates[ruleIndex] = false;
+            this.rangeStates[ruleIndex] = false; // inclusive end
           }
           return true;
         }
@@ -172,7 +182,7 @@ export class AwkInterpreter {
   private async matchPattern(pattern: AwkPattern): Promise<boolean> {
     switch (pattern.type) {
       case "regex_pattern":
-        return matchRegex(pattern.pattern, this.ctx.line);
+        return matchRegex(pattern.pattern, this.ctx.line, this.ctx);
       case "expr_pattern":
         return isTruthy(await evalExpr(this.ctx, pattern.expression));
       default:

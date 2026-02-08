@@ -5,9 +5,10 @@
  * Supports pattern-action rules, built-in variables, functions, and more.
  */
 
-import { createStream, type Stream, type Transform } from "../../stdlib/stream.ts";
+import type { Transform } from "../../stdlib/stream.ts";
 import { AwkParser } from "./parser.ts";
 import { AwkInterpreter } from "./interpreter/interpreter.ts";
+import { ExecutionLimitError } from "./interpreter/expressions.ts";
 import { createRuntimeContext, type CreateContextOptions } from "./interpreter/context.ts";
 
 // =============================================================================
@@ -86,6 +87,10 @@ export async function awkExec(
       ctx.ORS = options.ors;
     }
 
+    if (options.rs !== undefined) {
+      ctx.RS = options.rs;
+    }
+
     // Set user variables
     if (options.variables) {
       for (const [key, value] of Object.entries(options.variables)) {
@@ -93,22 +98,23 @@ export async function awkExec(
       }
     }
 
-    // Create interpreter and execute
+    // Create interpreter and initialize
     const interpreter = new AwkInterpreter(ctx);
-    interpreter.execute(program);
+    interpreter.initialize(program);
 
     // Execute BEGIN blocks
     await interpreter.executeBegin();
 
-    // Process input lines (use ORS for record separator, default to newline)
-    const rs = options.rs ?? "\n";
+    // After BEGIN blocks, read RS from context (may have been changed in BEGIN)
+    const rs = ctx.RS;
     const lines = input.split(rs);
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
       if (ctx.shouldExit) break;
 
-      // Skip empty lines at end
-      if (line === "" && lines.indexOf(line) === lines.length - 1) {
+      // Skip empty trailing line from split
+      if (line === "" && i === lines.length - 1) {
         continue;
       }
 
@@ -131,8 +137,14 @@ export async function awkExec(
       exitCode: ctx.exitCode ?? 0,
     };
   } catch (error) {
+    if (error instanceof ExecutionLimitError) {
+      return {
+        output: error.partialOutput,
+        exitCode: 2,
+      };
+    }
     return {
-      output: `AWK error: ${error instanceof Error ? error.message : String(error)}`,
+      output: "AWK error: " + (error instanceof Error ? error.message : String(error)),
       exitCode: 1,
     };
   }
@@ -161,8 +173,9 @@ export function awk(
 
     // Yield output lines
     const lines = result.output.split("\n");
-    for (const line of lines) {
-      if (line !== "" || lines.indexOf(line) !== lines.length - 1) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (line !== "" || i !== lines.length - 1) {
         yield line;
       }
     }
@@ -186,9 +199,10 @@ export function awkTransform(
     const result = await awkExec(script, buffer, options);
     const lines = result.output.split("\n");
 
-    for (const line of lines) {
-      if (line !== "") {
-        yield line;
+    // Only skip the very last empty line from split, not all empty lines
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i] !== "" || i !== lines.length - 1) {
+        yield lines[i]!;
       }
     }
   };
