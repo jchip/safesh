@@ -124,16 +124,16 @@ export interface Token {
 function expandPosixClasses(pattern: string): string {
   return pattern.replace(/\[:(\w+):\]/g, (_, className: string) => {
     switch (className) {
-      case "space": return "\s";
-      case "digit": return "\d";
+      case "space": return "\\s";
+      case "digit": return "\\d";
       case "alpha": return "a-zA-Z";
       case "alnum": return "a-zA-Z0-9";
       case "upper": return "A-Z";
       case "lower": return "a-z";
-      case "print": case "graph": return "\x20-\x7E";
-      case "punct": return "\x21-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E";
-      case "blank": return " \t";
-      case "cntrl": return "\x00-\x1F\x7F";
+      case "print": case "graph": return "\\x20-\\x7E";
+      case "punct": return "\\x21-\\x2F\\x3A-\\x40\\x5B-\\x60\\x7B-\\x7E";
+      case "blank": return " \\t";
+      case "cntrl": return "\\x00-\\x1F\\x7F";
       case "xdigit": return "0-9a-fA-F";
       default: return _;
     }
