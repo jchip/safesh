@@ -4,6 +4,7 @@
  * Pure functions for type conversion and truthiness checking.
  */
 
+import type { AwkRuntimeContext } from "./context.ts";
 import type { AwkValue } from "./types.ts";
 
 /**
@@ -29,11 +30,9 @@ export function toNumber(val: AwkValue): number {
 
 /**
  * Convert an AWK value to a string.
- * Numbers are formatted without trailing zeros.
  */
 export function toAwkString(val: AwkValue): string {
   if (typeof val === "string") return val;
-  if (Number.isInteger(val)) return String(val);
   return String(val);
 }
 
@@ -49,11 +48,34 @@ export function looksLikeNumber(val: AwkValue): boolean {
 
 /**
  * Test if a string matches a regex pattern.
+ * Uses a per-context cache for compiled RegExp objects when ctx is provided.
  */
-export function matchRegex(pattern: string, text: string): boolean {
+export function matchRegex(
+  pattern: string,
+  text: string,
+  ctx?: AwkRuntimeContext,
+): boolean {
   try {
-    return new RegExp(pattern).test(text);
+    const regex = ctx ? getCachedRegex(ctx, pattern) : new RegExp(pattern);
+    return regex.test(text);
   } catch {
     return false;
   }
+}
+
+/**
+ * Get a cached RegExp from the context cache, or compile and cache it.
+ */
+export function getCachedRegex(
+  ctx: AwkRuntimeContext,
+  pattern: string,
+  flags?: string,
+): RegExp {
+  const cacheKey = flags ? pattern + "/" + flags : pattern;
+  let regex = ctx.regexCache.get(cacheKey);
+  if (!regex) {
+    regex = new RegExp(pattern, flags);
+    ctx.regexCache.set(cacheKey, regex);
+  }
+  return regex;
 }

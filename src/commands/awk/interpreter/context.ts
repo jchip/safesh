@@ -15,6 +15,7 @@ export interface AwkRuntimeContext {
   FS: string;
   OFS: string;
   ORS: string;
+  RS: string;
   NR: number;
   NF: number;
   FNR: number;
@@ -51,6 +52,7 @@ export interface AwkRuntimeContext {
   // Control flow
   exitCode: number;
   shouldExit: boolean;
+  exitFromEnd: boolean;
   shouldNext: boolean;
   shouldNextFile: boolean;
   loopBreak: boolean;
@@ -70,6 +72,12 @@ export interface AwkRuntimeContext {
 
   // Random function override for testing
   random?: () => number;
+
+  // Compiled regex cache
+  regexCache: Map<string, RegExp>;
+
+  // File cache for getline < file (separate from vars)
+  fileCache: Map<string, { lines: string[]; index: number }>;
 }
 
 export interface CreateContextOptions {
@@ -95,6 +103,7 @@ export function createRuntimeContext(
     FS: " ",
     OFS: " ",
     ORS: "\n",
+    RS: "\n",
     NR: 0,
     NF: 0,
     FNR: 0,
@@ -121,6 +130,7 @@ export function createRuntimeContext(
 
     exitCode: 0,
     shouldExit: false,
+    exitFromEnd: false,
     shouldNext: false,
     shouldNextFile: false,
     loopBreak: false,
@@ -132,5 +142,8 @@ export function createRuntimeContext(
 
     fs,
     cwd,
+
+    regexCache: new Map(),
+    fileCache: new Map(),
   };
 }
