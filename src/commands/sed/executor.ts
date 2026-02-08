@@ -99,7 +99,7 @@ function isInRange(
   line: string,
   rangeStates?: Map<string, import("./types.js").RangeState>,
 ): boolean {
-  if (!range || (!range.start && !range.end)) {
+  if (!range || (range.start === undefined && range.end === undefined)) {
     return true; // No address means match all lines
   }
 
@@ -214,7 +214,9 @@ function breToEre(pattern: string): string {
       pattern[i] === "?" ||
       pattern[i] === "|" ||
       pattern[i] === "(" ||
-      pattern[i] === ")"
+      pattern[i] === ")" ||
+      pattern[i] === "{" ||
+      pattern[i] === "}"
     ) {
       result += `\\${pattern[i]}`; // Add backslash to make it literal
       i++;
@@ -318,6 +320,15 @@ function processReplacement(
   return result;
 }
 
+/**
+ * SSH-547 Fix 2: Handle named groups in replace callback.
+ */
+function extractCaptureGroups(args: unknown[]): string[] {
+  const lastArg = args[args.length - 1];
+  const sliceEnd = typeof lastArg === "object" && lastArg !== null ? -3 : -2;
+  return args.slice(0, sliceEnd) as string[];
+}
+
 function executeCommand(cmd: SedCommand, state: SedState): void {
   const { lineNumber, totalLines, patternSpace } = state;
 
@@ -379,7 +390,7 @@ function executeCommand(cmd: SedCommand, state: SedState): void {
               (match, ...args) => {
                 count++;
                 if (count === nth) {
-                  const groups = args.slice(0, -2) as string[];
+                  const groups = extractCaptureGroups(args);
                   return processReplacement(subCmd.replacement, match, groups);
                 }
                 return match;
@@ -389,8 +400,7 @@ function executeCommand(cmd: SedCommand, state: SedState): void {
             state.patternSpace = state.patternSpace.replace(
               regex,
               (match, ...args) => {
-                // Extract captured groups (all args before the last two which are offset and string)
-                const groups = args.slice(0, -2) as string[];
+                const groups = extractCaptureGroups(args);
                 return processReplacement(subCmd.replacement, match, groups);
               },
             );
@@ -444,20 +454,17 @@ function executeCommand(cmd: SedCommand, state: SedState): void {
       break;
 
     case "append":
-      state.appendBuffer.push(cmd.text);
+      state.appendBuffer.push({ type: "append", text: cmd.text });
       break;
 
     case "insert":
-      // Insert happens before the current line
-      // We'll handle this in the main loop by prepending
-      state.appendBuffer.unshift(`__INSERT__${cmd.text}`);
+      state.appendBuffer.unshift({ type: "insert", text: cmd.text });
       break;
 
     case "change":
-      // Replace the current line entirely
       state.patternSpace = cmd.text;
-      state.deleted = true; // Don't print original
-      state.appendBuffer.push(cmd.text);
+      state.deleted = true;
+      state.appendBuffer.push({ type: "append", text: cmd.text });
       break;
 
     case "hold":
@@ -467,11 +474,8 @@ function executeCommand(cmd: SedCommand, state: SedState): void {
 
     case "holdAppend":
       // H - Append pattern space to hold space (with newline)
-      if (state.holdSpace) {
-        state.holdSpace += `\n${state.patternSpace}`;
-      } else {
-        state.holdSpace = state.patternSpace;
-      }
+      // SSH-547 Fix 1: POSIX - always prepend newline
+      state.holdSpace += `\n${state.patternSpace}`;
       break;
 
     case "get":
@@ -655,7 +659,7 @@ export function executeCommands(
     if (totalIterations > maxIterations) {
       throw new Error(
         `sed: command execution exceeded maximum iterations (${maxIterations})`,
-        "iterations",
+        { cause: "iterations" },
       );
     }
 
@@ -688,6 +692,36 @@ export function executeCommands(
           // This matches real bash behavior
           state.quit = true;
           state.deleted = true;
+          break;
+        }
+      }
+      i++;
+      continue;
+    }
+
+    // SSH-547 Fix 3: n command reads next input line
+    if (cmd.type === "next") {
+      if (
+        isInRange(
+          cmd.address,
+          state.lineNumber,
+          state.totalLines,
+          state.patternSpace,
+          state.rangeStates,
+        )
+      ) {
+        if (!state.silentMode) {
+          state.lineNumberOutput.push(state.patternSpace);
+        }
+        if (
+          ctx &&
+          ctx.currentLineIndex + linesConsumed + 1 < ctx.lines.length
+        ) {
+          linesConsumed++;
+          state.patternSpace = ctx.lines[ctx.currentLineIndex + linesConsumed]!;
+          state.lineNumber = ctx.currentLineIndex + linesConsumed + 1;
+        } else {
+          state.quit = true;
           break;
         }
       }

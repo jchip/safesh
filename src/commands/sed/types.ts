@@ -273,6 +273,11 @@ export type SedCommand =
   | WriteFirstLineCommand
   | ExecuteCommand;
 
+export interface AppendBufferItem {
+  type: "append" | "insert";
+  text: string;
+}
+
 export interface SedState {
   patternSpace: string;
   holdSpace: string;
@@ -283,10 +288,11 @@ export interface SedState {
   quit: boolean;
   quitSilent: boolean; // For Q command: quit without printing
   exitCode?: number; // Exit code from q/Q command
-  appendBuffer: string[]; // Lines to append after current line
+  appendBuffer: AppendBufferItem[]; // Lines to append after current line
   substitutionMade: boolean; // Track if substitution was made (for 't' command)
   lineNumberOutput: string[]; // Output from '=' command
   restartCycle: boolean; // For D command: restart cycle without reading new line
+  silentMode?: boolean; // Whether -n flag is active
   currentFilename?: string; // For F command
   // For file I/O commands (deferred execution)
   pendingFileReads: Array<{ filename: string; wholeFile: boolean }>;
