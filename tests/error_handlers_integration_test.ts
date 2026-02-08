@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
 import {
   createErrorHandler,
   detectPathViolation,
+  extractOperationFromError,
   generatePathPromptMessage,
   handlePathViolationAndExit,
 } from "../src/core/error-handlers.ts";
@@ -286,6 +287,75 @@ describe("Error Handler Integration Tests", () => {
         (path) => path.includes("pending-path-")
       );
       assertEquals(pendingFiles.length, 1);
+
+      // SSH-502: Verify operation is "write" not "read"
+      const pendingContent = mockState.filesWritten.get(pendingFiles[0]!);
+      const pending = JSON.parse(pendingContent!) as PendingPathRequest;
+      assertEquals(pending.operation, "write");
+    });
+
+    it("SSH-502: sets operation to 'read' for read access violations", async () => {
+      const error = {
+        code: "NotCapable",
+        message: 'Requires read access to "/var/log/app.log", run again with --allow-read',
+      };
+
+      try {
+        handlePathViolationAndExit(error, { cwd: "/app" });
+      } catch (e) {
+        assertEquals((e as Error).message, "MOCKED_EXIT");
+      }
+
+      const pendingFiles = Array.from(mockState.filesWritten.keys()).filter(
+        (path) => path.includes("pending-path-")
+      );
+      assertEquals(pendingFiles.length, 1);
+
+      const pendingContent = mockState.filesWritten.get(pendingFiles[0]!);
+      const pending = JSON.parse(pendingContent!) as PendingPathRequest;
+      assertEquals(pending.operation, "read");
+    });
+
+    it("SSH-502: sets operation to 'write' for write access violations via Deno NotCapable", async () => {
+      const error = {
+        name: "NotCapable",
+        message: 'Requires write access to "/tmp/output.txt", run again with --allow-write',
+      };
+
+      try {
+        handlePathViolationAndExit(error, { cwd: "/app" });
+      } catch (e) {
+        assertEquals((e as Error).message, "MOCKED_EXIT");
+      }
+
+      const pendingFiles = Array.from(mockState.filesWritten.keys()).filter(
+        (path) => path.includes("pending-path-")
+      );
+      assertEquals(pendingFiles.length, 1);
+
+      const pendingContent = mockState.filesWritten.get(pendingFiles[0]!);
+      const pending = JSON.parse(pendingContent!) as PendingPathRequest;
+      assertEquals(pending.operation, "write");
+    });
+
+    it("SSH-502: defaults to 'read' for SafeShell PATH_VIOLATION errors", async () => {
+      const error = {
+        code: "PATH_VIOLATION",
+        message: "Path '/etc/passwd' is outside allowed directories",
+      };
+
+      try {
+        handlePathViolationAndExit(error, { cwd: "/test" });
+      } catch (e) {
+        assertEquals((e as Error).message, "MOCKED_EXIT");
+      }
+
+      const pendingFiles = Array.from(mockState.filesWritten.keys()).filter(
+        (path) => path.includes("pending-path-")
+      );
+      const pendingContent = mockState.filesWritten.get(pendingFiles[0]!);
+      const pending = JSON.parse(pendingContent!) as PendingPathRequest;
+      assertEquals(pending.operation, "read");
     });
 
     it("handles path with spaces correctly", async () => {
@@ -871,6 +941,75 @@ describe("Error Handler Integration Tests", () => {
 
       const output = mockState.consoleErrorCalls.join("\n");
       assertStringIncludes(output, "PATH BLOCKED: /etc/shadow");
+    });
+  });
+
+  describe("SSH-502: extractOperationFromError", () => {
+    it("returns 'write' for Deno write access error", () => {
+      assertEquals(
+        extractOperationFromError('Requires write access to "/tmp/file.txt"'),
+        "write",
+      );
+    });
+
+    it("returns 'read' for Deno read access error", () => {
+      assertEquals(
+        extractOperationFromError('Requires read access to "/etc/passwd"'),
+        "read",
+      );
+    });
+
+    it("returns 'read' for SafeShell PATH_VIOLATION", () => {
+      assertEquals(
+        extractOperationFromError("Path '/etc/hosts' is outside allowed directories"),
+        "read",
+      );
+    });
+
+    it("returns 'read' for unknown error format", () => {
+      assertEquals(
+        extractOperationFromError("Some unknown error"),
+        "read",
+      );
+    });
+  });
+
+  describe("SSH-502: detectPathViolation includes operation", () => {
+    it("sets operation to 'read' for read access Deno error", () => {
+      const error = {
+        code: "NotCapable",
+        message: 'Requires read access to "/var/log/app.log"',
+      };
+      const result = detectPathViolation(error);
+      assertEquals(result.isPathViolation, true);
+      assertEquals(result.operation, "read");
+    });
+
+    it("sets operation to 'write' for write access Deno error", () => {
+      const error = {
+        name: "NotCapable",
+        message: 'Requires write access to "/tmp/output.txt"',
+      };
+      const result = detectPathViolation(error);
+      assertEquals(result.isPathViolation, true);
+      assertEquals(result.operation, "write");
+    });
+
+    it("sets operation to 'read' for PATH_VIOLATION (no write indicator)", () => {
+      const error = {
+        code: "PATH_VIOLATION",
+        message: "Path '/etc/passwd' is outside allowed directories",
+      };
+      const result = detectPathViolation(error);
+      assertEquals(result.isPathViolation, true);
+      assertEquals(result.operation, "read");
+    });
+
+    it("does not set operation when not a path violation", () => {
+      const error = { message: "Regular error" };
+      const result = detectPathViolation(error);
+      assertEquals(result.isPathViolation, false);
+      assertEquals(result.operation, undefined);
     });
   });
 });

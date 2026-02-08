@@ -9,6 +9,7 @@ import { assertEquals, assert } from "@std/assert";
 import { describe, it, beforeEach, afterEach } from "@std/testing/bdd";
 import {
   addSessionCommands,
+  addSessionPaths,
   getSessionAllowedCommands,
   mergeSessionPermissions,
 } from "../../src/core/session.ts";
@@ -132,5 +133,67 @@ describe("Session consistency integration tests", { sanitizeResources: false, sa
     // Verify existing permissions are preserved
     assert(config.permissions?.read?.includes("/existing/read"), "Existing read permissions should be preserved");
     assert(config.permissions?.write?.includes("/existing/write"), "Existing write permissions should be preserved");
+  });
+
+  it("SSH-505: mergeSessionPermissions deduplicates read permissions", async () => {
+    const config: SafeShellConfig = {
+      permissions: {
+        read: ["/existing/read", "/shared/path"],
+        write: [],
+        run: [],
+      },
+    };
+
+    // Add session paths that overlap with config
+    await addSessionPaths(["/shared/path", "/new/read"], [], projectDir);
+
+    mergeSessionPermissions(config, projectDir);
+
+    // /shared/path should appear only once
+    const readPaths = config.permissions?.read ?? [];
+    const sharedCount = readPaths.filter((p) => p === "/shared/path").length;
+    assertEquals(sharedCount, 1, "/shared/path should not be duplicated");
+    assert(readPaths.includes("/existing/read"), "existing path preserved");
+    assert(readPaths.includes("/new/read"), "new path added");
+  });
+
+  it("SSH-505: mergeSessionPermissions deduplicates write permissions", async () => {
+    const config: SafeShellConfig = {
+      permissions: {
+        read: [],
+        write: ["/existing/write", "/shared/write"],
+        run: [],
+      },
+    };
+
+    await addSessionPaths([], ["/shared/write", "/new/write"], projectDir);
+
+    mergeSessionPermissions(config, projectDir);
+
+    const writePaths = config.permissions?.write ?? [];
+    const sharedCount = writePaths.filter((p) => p === "/shared/write").length;
+    assertEquals(sharedCount, 1, "/shared/write should not be duplicated");
+    assert(writePaths.includes("/existing/write"), "existing write path preserved");
+    assert(writePaths.includes("/new/write"), "new write path added");
+  });
+
+  it("SSH-505: mergeSessionPermissions deduplicates run permissions", async () => {
+    const config: SafeShellConfig = {
+      permissions: {
+        read: [],
+        write: [],
+        run: ["existing-cmd", "shared-cmd"],
+      },
+    };
+
+    await addSessionCommands(["shared-cmd", "new-cmd"], projectDir);
+
+    mergeSessionPermissions(config, projectDir);
+
+    const runCmds = config.permissions?.run ?? [];
+    const sharedCount = runCmds.filter((c) => c === "shared-cmd").length;
+    assertEquals(sharedCount, 1, "shared-cmd should not be duplicated");
+    assert(runCmds.includes("existing-cmd"), "existing cmd preserved");
+    assert(runCmds.includes("new-cmd"), "new cmd added");
   });
 });

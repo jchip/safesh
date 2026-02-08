@@ -350,6 +350,7 @@ function mergeEnvConfig(
   return {
     allow: unionArrays(base.allow, override.allow),
     mask: unionArrays(base.mask, override.mask),
+    allowReadAll: override.allowReadAll ?? base.allowReadAll,
   };
 }
 

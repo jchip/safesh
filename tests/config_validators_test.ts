@@ -10,7 +10,7 @@ import type { SafeShellConfig } from "../src/core/types.ts";
 
 // Import the validator functions - note these are not exported, so we import from the module
 // and use the public validateConfig interface to test behavior
-import { validateConfig } from "../src/core/config.ts";
+import { validateConfig, mergeConfigs } from "../src/core/config.ts";
 
 // ============================================================================
 // Helper to create minimal configs for testing
@@ -342,4 +342,63 @@ Deno.test("validateConfig - empty config returns only default warnings", () => {
     result.warnings.some((w) => w.includes("imports.blocked: empty")),
     true,
   );
+});
+
+// ============================================================================
+// SSH-506: mergeEnvConfig preserves allowReadAll
+// ============================================================================
+
+Deno.test("SSH-506: mergeConfigs preserves allowReadAll from base when override is undefined", () => {
+  const base = createMinimalConfig({
+    env: { allow: ["HOME"], mask: [], allowReadAll: false },
+  });
+  const override = createMinimalConfig({
+    env: { allow: ["PATH"], mask: [] },
+  });
+  const merged = mergeConfigs(base, override);
+  assertEquals(merged.env?.allowReadAll, false);
+});
+
+Deno.test("SSH-506: mergeConfigs uses override allowReadAll when provided", () => {
+  const base = createMinimalConfig({
+    env: { allow: ["HOME"], mask: [], allowReadAll: true },
+  });
+  const override = createMinimalConfig({
+    env: { allow: ["PATH"], mask: [], allowReadAll: false },
+  });
+  const merged = mergeConfigs(base, override);
+  assertEquals(merged.env?.allowReadAll, false);
+});
+
+Deno.test("SSH-506: mergeConfigs preserves allowReadAll true from base", () => {
+  const base = createMinimalConfig({
+    env: { allow: [], mask: [], allowReadAll: true },
+  });
+  const override = createMinimalConfig({
+    env: { allow: [], mask: [] },
+  });
+  const merged = mergeConfigs(base, override);
+  assertEquals(merged.env?.allowReadAll, true);
+});
+
+Deno.test("SSH-506: mergeConfigs allows override to set allowReadAll to true", () => {
+  const base = createMinimalConfig({
+    env: { allow: [], mask: [], allowReadAll: false },
+  });
+  const override = createMinimalConfig({
+    env: { allow: [], mask: [], allowReadAll: true },
+  });
+  const merged = mergeConfigs(base, override);
+  assertEquals(merged.env?.allowReadAll, true);
+});
+
+Deno.test("SSH-506: mergeConfigs - allowReadAll is undefined when neither sets it", () => {
+  const base = createMinimalConfig({
+    env: { allow: [], mask: [] },
+  });
+  const override = createMinimalConfig({
+    env: { allow: [], mask: [] },
+  });
+  const merged = mergeConfigs(base, override);
+  assertEquals(merged.env?.allowReadAll, undefined);
 });
