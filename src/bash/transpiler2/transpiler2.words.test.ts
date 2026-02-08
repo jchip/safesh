@@ -303,7 +303,8 @@ describe("Parameter Expansion - Pattern Removal", () => {
     const script = 'var="hello world"; echo "${var##hello }"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, 'var.replace(/^hello .*?/, "")');
+    // SSH-501: ## uses greedy .* (not .*?) for longest prefix removal
+    assertStringIncludes(result, 'var.replace(/^hello .*/, "")');
   });
 
   it("should remove shortest suffix with %", () => {

@@ -346,8 +346,8 @@ export function visitParameterExpansion(
       return `\${${jsParam}.replace(/^${escapeRegex(modifierArg)}/, "")}`;
 
     case "##":
-      // ${VAR##pattern} - remove longest prefix
-      return `\${${jsParam}.replace(/^${escapeRegex(modifierArg)}.*?/, "")}`;
+      // ${VAR##pattern} - remove longest prefix (greedy .* to match as much as possible)
+      return `\${${jsParam}.replace(/^${escapeRegex(modifierArg)}.*/, "")}`;
 
     case "%":
       // ${VAR%pattern} - remove shortest suffix
@@ -518,11 +518,16 @@ export function visitProcessSubstitution(
     return `\${await (async () => { const __tmpFile = await Deno.makeTempFile(); const __cmd = ${innerCode}; await Deno.writeTextFile(__tmpFile, await __cmd.text()); return __tmpFile; })()}`;
   } else {
     // Output process substitution >(cmd) - starts background process
+    // Uses Deno.watchFs to reliably wait for the parent to write the file
+    // instead of an arbitrary setTimeout which is a race condition
     return `\${await (async () => {
       const __tmpFile = await Deno.makeTempFile();
-      // Background: read from tmpFile and pipe to command
+      // Background: watch for file modification, then read and pipe to command
       (async () => {
-        await new Promise(r => setTimeout(r, 100));  // Let parent write first
+        const __watcher = Deno.watchFs(__tmpFile);
+        for await (const __evt of __watcher) {
+          if (__evt.kind === "modify") { __watcher.close(); break; }
+        }
         const __content = await Deno.readTextFile(__tmpFile);
         ${innerCode}.stdin(__content);
       })();
