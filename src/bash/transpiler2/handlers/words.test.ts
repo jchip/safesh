@@ -203,6 +203,89 @@ describe("SSH-330: Indirect Variable Reference", () => {
   });
 });
 
+describe("SSH-500: Output Process Substitution Race Condition Fix", () => {
+  it("should use Deno.watchFs instead of setTimeout for output process substitution", () => {
+    const code = transpileBash('tee >(cat)');
+    // Should NOT contain setTimeout - the old race condition
+    assertEquals(code.includes('setTimeout'), false, 'Should not use setTimeout');
+    // Should use Deno.watchFs for reliable synchronization
+    assertStringIncludes(code, 'Deno.watchFs');
+    assertStringIncludes(code, 'makeTempFile');
+  });
+
+  it("should still use temp file mechanism for output process substitution", () => {
+    const code = transpileBash('echo hello >(cat)');
+    assertStringIncludes(code, 'makeTempFile');
+    assertStringIncludes(code, 'readTextFile');
+  });
+
+  it("should wait for modify event before reading", () => {
+    const code = transpileBash('tee >(grep test)');
+    // Should watch for modify event
+    assertStringIncludes(code, '"modify"');
+    // Should close watcher after receiving event
+    assertStringIncludes(code, '__watcher.close()');
+  });
+
+  it("should not affect input process substitution", () => {
+    const code = transpileBash('cat <(echo test)');
+    // Input process substitution should NOT use watchFs
+    // It writes first then returns the path - no race
+    assertStringIncludes(code, 'writeTextFile');
+    assertEquals(code.includes('watchFs'), false, 'Input process sub should not use watchFs');
+  });
+});
+
+describe("SSH-501: ## Pattern Removal Greedy Fix", () => {
+  it("should use greedy .* for ## (longest prefix removal)", () => {
+    const code = transpileBash('echo "${var##prefix}"');
+    // ## should use greedy .* to match longest prefix
+    assertStringIncludes(code, 'var.replace(/^prefix.*/, "")');
+  });
+
+  it("should use non-greedy .*? for %% (longest suffix removal)", () => {
+    const code = transpileBash('echo "${var%%suffix}"');
+    // %% should use non-greedy .*? to match from earliest point
+    assertStringIncludes(code, 'var.replace(/.*?suffix$/, "")');
+  });
+
+  it("should NOT use greedy for # (shortest prefix removal)", () => {
+    const code = transpileBash('echo "${var#prefix}"');
+    // # should NOT have .* at all - just anchored pattern
+    assertStringIncludes(code, 'var.replace(/^prefix/, "")');
+    // Verify no .* follows
+    assertEquals(code.includes('/^prefix.*'), false, '# should not use .*');
+  });
+
+  it("should NOT use greedy for % (shortest suffix removal)", () => {
+    const code = transpileBash('echo "${var%suffix}"');
+    // % should NOT have .* at all - just anchored pattern
+    assertStringIncludes(code, 'var.replace(/suffix$/, "")');
+    // Verify no .* precedes
+    assertEquals(code.includes('.*suffix$/'), false, '% should not use .*');
+  });
+
+  it("## should generate different regex than #", () => {
+    const codeShort = transpileBash('echo "${var#pattern}"');
+    const codeLong = transpileBash('echo "${var##pattern}"');
+    // They must produce different output
+    assertEquals(codeShort === codeLong, false, '# and ## should generate different regexes');
+    // # = anchored only, ## = anchored + greedy
+    assertStringIncludes(codeShort, '/^pattern/');
+    assertStringIncludes(codeLong, '/^pattern.*/');
+  });
+
+  it("%% should generate different regex than %", () => {
+    const codeShort = transpileBash('echo "${var%pattern}"');
+    const codeLong = transpileBash('echo "${var%%pattern}"');
+    // They must produce different output
+    assertEquals(codeShort === codeLong, false, '% and %% should generate different regexes');
+    // % = anchored only, %% = non-greedy prefix + anchored
+    assertStringIncludes(codeShort, '/pattern$/');
+    assertStringIncludes(codeLong, '/.*?pattern$/');
+  });
+});
+
 describe("Integration tests", () => {
   it("should handle tilde in command with args", () => {
     const code = transpileBash('ls ~/Downloads ~/Documents');
