@@ -502,7 +502,7 @@ export class VirtualFileSystem {
     return {
       isFile: entry.type === "file",
       isDirectory: entry.type === "directory",
-      isSymlink: false,
+      isSymlink: entry.type === "symlink",
       size,
       mtime: entry.modified,
       atime: entry.accessed,
@@ -537,6 +537,11 @@ export class VirtualFileSystem {
 
     let entry = this.entries.get(normalized);
 
+    // Handle O_EXCL flag (fail if file already exists) - must check BEFORE O_CREAT
+    if (entry && (flags & O_EXCL) && (flags & O_CREAT)) {
+      throw new Error(`File exists: ${path}`);
+    }
+
     // Handle O_CREAT flag
     if (!entry && (flags & O_CREAT)) {
       // Create new file
@@ -560,11 +565,6 @@ export class VirtualFileSystem {
 
     if (entry.type !== "file") {
       throw new Error(`Not a file: ${path}`);
-    }
-
-    // Handle O_EXCL flag (fail if file exists)
-    if ((flags & O_EXCL) && (flags & O_CREAT)) {
-      throw new Error(`File exists: ${path}`);
     }
 
     // Handle O_TRUNC flag (truncate to zero length)
@@ -821,7 +821,7 @@ export class VirtualFileSystem {
               name: parts[0],
               isFile: childEntry.type === "file",
               isDirectory: childEntry.type === "directory",
-              isSymlink: false,
+              isSymlink: childEntry.type === "symlink",
             });
           }
         }

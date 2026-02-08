@@ -974,4 +974,114 @@ describe("Symlinks", () => {
       "Not a symlink",
     );
   });
+
+  it("should report isSymlink true in stat() for symlink entries", () => {
+    const vfs = new VirtualFileSystem();
+
+    vfs.write("/target.txt", new TextEncoder().encode("content"));
+    vfs.symlink("/target.txt", "/link.txt");
+
+    const stat = vfs.stat("/link.txt");
+    assertEquals(stat.isSymlink, true);
+    assertEquals(stat.isFile, false);
+    assertEquals(stat.isDirectory, false);
+  });
+
+  it("should report isSymlink false in stat() for non-symlink entries", () => {
+    const vfs = new VirtualFileSystem();
+
+    vfs.write("/file.txt", new TextEncoder().encode("content"));
+    vfs.mkdir("/dir");
+
+    const fileStat = vfs.stat("/file.txt");
+    assertEquals(fileStat.isSymlink, false);
+    assertEquals(fileStat.isFile, true);
+
+    const dirStat = vfs.stat("/dir");
+    assertEquals(dirStat.isSymlink, false);
+    assertEquals(dirStat.isDirectory, true);
+  });
+
+  it("should report isSymlink true in readDir() for symlink entries", () => {
+    const vfs = new VirtualFileSystem();
+
+    vfs.write("/dir/target.txt", new TextEncoder().encode("content"));
+    vfs.symlink("/dir/target.txt", "/dir/link.txt");
+
+    const entries = vfs.readDir("/dir");
+    const linkEntry = entries.find((e) => e.name === "link.txt");
+    const fileEntry = entries.find((e) => e.name === "target.txt");
+
+    assertEquals(linkEntry !== undefined, true);
+    assertEquals(linkEntry!.isSymlink, true);
+    assertEquals(linkEntry!.isFile, false);
+    assertEquals(linkEntry!.isDirectory, false);
+
+    assertEquals(fileEntry !== undefined, true);
+    assertEquals(fileEntry!.isSymlink, false);
+    assertEquals(fileEntry!.isFile, true);
+  });
+});
+
+describe("O_EXCL flag", () => {
+  it("should throw EEXIST when O_EXCL | O_CREAT and file already exists", () => {
+    const vfs = new VirtualFileSystem();
+
+    // Create a file first
+    vfs.write("/existing.txt", new TextEncoder().encode("exists"));
+
+    // Opening with O_EXCL | O_CREAT should fail because file exists
+    assertThrows(
+      () => vfs.open("/existing.txt", O_WRONLY | O_CREAT | O_EXCL),
+      Error,
+      "File exists",
+    );
+  });
+
+  it("should succeed with O_EXCL | O_CREAT when file does not exist", () => {
+    const vfs = new VirtualFileSystem();
+
+    // Opening a new file with O_EXCL | O_CREAT should succeed
+    const fd = vfs.open("/new.txt", O_WRONLY | O_CREAT | O_EXCL);
+    assertEquals(typeof fd, "number");
+    assertEquals(fd >= 3, true);
+
+    // Write some data and verify
+    vfs.writeFd(fd, new TextEncoder().encode("created exclusively"));
+    vfs.close(fd);
+
+    const content = new TextDecoder().decode(vfs.read("/new.txt"));
+    assertEquals(content, "created exclusively");
+  });
+
+  it("should not create the file when O_EXCL | O_CREAT fails", () => {
+    const vfs = new VirtualFileSystem();
+
+    // Create a file first
+    const originalData = new TextEncoder().encode("original");
+    vfs.write("/existing.txt", originalData);
+
+    // Attempt O_EXCL open should fail
+    assertThrows(
+      () => vfs.open("/existing.txt", O_WRONLY | O_CREAT | O_EXCL),
+      Error,
+      "File exists",
+    );
+
+    // Original file content should be unchanged
+    const content = new TextDecoder().decode(vfs.read("/existing.txt"));
+    assertEquals(content, "original");
+  });
+
+  it("should allow O_CREAT without O_EXCL on existing file", () => {
+    const vfs = new VirtualFileSystem();
+
+    vfs.write("/file.txt", new TextEncoder().encode("hello"));
+
+    // O_CREAT without O_EXCL should succeed on existing file
+    const fd = vfs.open("/file.txt", O_RDWR | O_CREAT);
+    assertEquals(typeof fd, "number");
+
+    vfs.close(fd);
+  });
 });
