@@ -43,10 +43,18 @@ interface UniqResult {
 function getCompareKey(line: string, options: UniqOptions): string {
   let key = line;
 
-  // Skip fields
+  // Skip fields: find byte offset past N whitespace-delimited fields
   if (options.skipFields && options.skipFields > 0) {
-    const parts = key.split(/\s+/);
-    key = parts.slice(options.skipFields).join(" ");
+    const trimmed = key.replace(/^\s+/, "");
+    const leadingWs = key.length - trimmed.length;
+    let pos = leadingWs;
+    let fieldsSkipped = 0;
+    while (fieldsSkipped < options.skipFields && pos < key.length) {
+      while (pos < key.length && !/\s/.test(key[pos]!)) pos++;
+      fieldsSkipped++;
+      while (pos < key.length && /\s/.test(key[pos]!)) pos++;
+    }
+    key = key.slice(pos);
   }
 
   // Skip characters

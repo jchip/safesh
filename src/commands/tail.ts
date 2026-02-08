@@ -109,17 +109,20 @@ export async function* tailBytes(
 ): AsyncIterable<string> {
   if (n <= 0) return;
 
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
   // Collect all input
   const chunks: string[] = [];
   for await (const chunk of input) {
     chunks.push(chunk);
   }
-  const content = chunks.join("");
+  const all = chunks.join("");
+  const allBytes = encoder.encode(all);
 
-  if (content.length <= n) {
-    yield content;
+  if (allBytes.length <= n) {
+    yield all;
   } else {
-    yield content.slice(-n);
+    yield decoder.decode(allBytes.slice(-n));
   }
 }
 
@@ -134,17 +137,20 @@ export async function* tailFromByte(
   input: AsyncIterable<string>,
   n: number,
 ): AsyncIterable<string> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
   // Collect all input
   const chunks: string[] = [];
   for await (const chunk of input) {
     chunks.push(chunk);
   }
-  const content = chunks.join("");
+  const all = chunks.join("");
+  const allBytes = encoder.encode(all);
 
   if (n <= 1) {
-    yield content;
-  } else if (n <= content.length) {
-    yield content.slice(n - 1);
+    yield all;
+  } else if (n <= allBytes.length) {
+    yield decoder.decode(allBytes.slice(n - 1));
   }
 }
 
