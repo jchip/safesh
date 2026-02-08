@@ -632,8 +632,15 @@ function buildFluentCommand(
       if (files.length > 0) {
         // grep pattern file -> $.cat(file).grep(pattern) - this is a stream chain
         const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+        if (invert) {
+          // SSH-503: grep -v with file - skip .grep() since it filters FOR the pattern,
+          // then .filter(x => !x.match) on the result would produce nothing.
+          // Instead, read lines and filter out matches directly.
+          let result = `$.cat(${file}).lines().filter(line => !${regexPattern}.test(line))`;
+          if (lineNumber) result += '.map((line, i) => `${i + 1}:${line}`)';
+          return { code: result, isTransform: false, isStream: true };
+        }
         let result = `$.cat(${file}).grep(${regexPattern})`;
-        if (invert) result += ".filter(x => !x.match)";
         if (lineNumber) result += '.map(m => `${m.line}:${m.content}`)';
         return { code: result, isTransform: false, isStream: true };
       }

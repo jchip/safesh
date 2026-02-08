@@ -342,6 +342,59 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
     });
   });
 
+  describe("grep -v with file argument (SSH-503)", () => {
+    it("should use .lines().filter() instead of .grep().filter() for grep -v with file", () => {
+      const script = "grep -v pattern file.txt";
+      const output = transpile(parse(script));
+
+      // Should NOT use .grep() followed by .filter(x => !x.match) which produces nothing
+      assertEquals(output.includes(".grep("), false,
+        "grep -v with file should NOT use .grep() method");
+      assertEquals(output.includes(".filter(x => !x.match)"), false,
+        "grep -v with file should NOT use .filter(x => !x.match)");
+
+      // Should use .lines().filter(line => !pattern.test(line))
+      assertStringIncludes(output, '$.cat("file.txt")');
+      assertStringIncludes(output, ".lines().filter(line => !/pattern/.test(line))");
+    });
+
+    it("should use .lines().filter() for grep -vi (invert + case-insensitive) with file", () => {
+      const script = "grep -v -i pattern file.txt";
+      const output = transpile(parse(script));
+
+      // Should use case-insensitive regex with filter
+      assertStringIncludes(output, '$.cat("file.txt")');
+      assertStringIncludes(output, ".lines().filter(line => !/pattern/i.test(line))");
+    });
+
+    it("should still use .grep() for non-inverted grep with file", () => {
+      const script = "grep pattern file.txt";
+      const output = transpile(parse(script));
+
+      // Normal grep with file should still use .grep()
+      assertStringIncludes(output, '$.cat("file.txt")');
+      assertStringIncludes(output, ".grep(/pattern/)");
+    });
+
+    it("should use filter transform for grep -v without file (in pipeline)", () => {
+      const script = "echo test | grep -v pattern";
+      const output = transpile(parse(script));
+
+      // grep -v as a transform should use $.filter()
+      assertStringIncludes(output, "$.filter((line) => !/pattern/.test(line))");
+    });
+
+    it("should handle grep -vn (invert + line numbers) with file", () => {
+      const script = "grep -v -n pattern file.txt";
+      const output = transpile(parse(script));
+
+      // Should use .lines().filter() with line number mapping
+      assertStringIncludes(output, '$.cat("file.txt")');
+      assertStringIncludes(output, ".lines().filter(line => !/pattern/.test(line))");
+      assertStringIncludes(output, ".map(");
+    });
+  });
+
   describe("Integration - Full buildCommand Orchestration", () => {
     it("should orchestrate all phases for simple command", () => {
       const script = "find .";
