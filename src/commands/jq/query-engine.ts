@@ -62,22 +62,28 @@ export function isIterationResult(result: QueryResult): result is IterationResul
 export function parseQuery(query: string): string[] {
   const tokens: string[] = [];
   let current = "";
-  let inBracket = false;
+  let bracketDepth = 0;
   let parenDepth = 0;
+  let inString = false;
 
   for (let i = 0; i < query.length; i++) {
     const char = query[i];
 
-    if (char === "|" && !inBracket && parenDepth === 0) {
+    if (char === '"' && (i === 0 || query[i - 1] !== '\\')) {
+      inString = !inString;
+      current += char;
+    } else if (inString) {
+      current += char;
+    } else if (char === "|" && bracketDepth === 0 && parenDepth === 0) {
       if (current.trim()) {
         tokens.push(current.trim());
       }
       current = "";
     } else if (char === "[") {
-      inBracket = true;
+      bracketDepth++;
       current += char;
     } else if (char === "]") {
-      inBracket = false;
+      bracketDepth = Math.max(0, bracketDepth - 1);
       current += char;
     } else if (char === "(") {
       parenDepth++;
@@ -165,10 +171,13 @@ function executeToken(data: JsonValue, token: string): TokenResult {
 
   // Array iteration: .[]
   if (token === ".[]") {
-    if (!Array.isArray(data)) {
-      throw new Error(".[] can only be used on arrays");
+    if (Array.isArray(data)) {
+      return data;
     }
-    return data;
+    if (data !== null && typeof data === "object") {
+      return Object.values(data);
+    }
+    throw new Error(".[] can only be used on arrays or objects");
   }
 
   // Array index: .[N]
@@ -262,7 +271,9 @@ function executeToken(data: JsonValue, token: string): TokenResult {
     const expr = mapMatch[1];
     return data.map((item) => {
       const result = executeQuery(item, expr);
-      // If result is an array with single element from non-iteration, unwrap it
+      if (isIterationResult(result)) {
+        return result.values.length === 1 ? result.values[0] : result.values;
+      }
       return Array.isArray(result) && result.length === 1 ? result[0] : result;
     }) as JsonValue[];
   }
@@ -310,7 +321,12 @@ function executeToken(data: JsonValue, token: string): TokenResult {
     if (!Array.isArray(data)) {
       throw new Error("unique can only be used on arrays");
     }
-    return [...new Set(data.map((v) => JSON.stringify(v)))].map((v) => JSON.parse(v));
+    const deduped = [...new Set(data.map((v) => JSON.stringify(v)))].map((v) => JSON.parse(v));
+    return deduped.sort((a: JsonValue, b: JsonValue) => {
+      if (typeof a === "number" && typeof b === "number") return a - b;
+      if (typeof a === "string" && typeof b === "string") return a.localeCompare(b);
+      return JSON.stringify(a).localeCompare(JSON.stringify(b));
+    });
   }
 
   // flatten - flatten array one level
@@ -446,21 +462,20 @@ function executeToken(data: JsonValue, token: string): TokenResult {
  * Evaluate a condition expression
  */
 function evaluateCondition(data: JsonValue, expr: string): boolean {
-  // Logical operators: and, or (check first, lowest precedence)
-  const andMatch = expr.match(/^(.+?)\s+and\s+(.+)$/);
+  // SSH-549 Fix 1: or first (lowest precedence), greedy left match
+  const orMatch = expr.match(/^(.+)\s+or\s+(.+)$/);
+  if (orMatch && orMatch[1] && orMatch[2]) {
+    return evaluateCondition(data, orMatch[1].trim()) ||
+           evaluateCondition(data, orMatch[2].trim());
+  }
+  const andMatch = expr.match(/^(.+)\s+and\s+(.+)$/);
   if (andMatch && andMatch[1] && andMatch[2]) {
     return evaluateCondition(data, andMatch[1].trim()) &&
            evaluateCondition(data, andMatch[2].trim());
   }
 
-  const orMatch = expr.match(/^(.+?)\s+or\s+(.+)$/);
-  if (orMatch && orMatch[1] && orMatch[2]) {
-    return evaluateCondition(data, orMatch[1].trim()) ||
-           evaluateCondition(data, orMatch[2].trim());
-  }
-
   // Comparison operators (check first before field existence)
-  const compMatch = expr.match(/^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+  const compMatch = expr.match(/^(.+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
   if (compMatch && compMatch[1] && compMatch[2] && compMatch[3]) {
     const left = compMatch[1].trim();
     const op = compMatch[2];
@@ -471,9 +486,9 @@ function evaluateCondition(data: JsonValue, expr: string): boolean {
 
     switch (op) {
       case "==":
-        return leftVal === rightVal;
+        return JSON.stringify(leftVal) === JSON.stringify(rightVal);
       case "!=":
-        return leftVal !== rightVal;
+        return JSON.stringify(leftVal) !== JSON.stringify(rightVal);
       case ">":
         return (leftVal as number) > (rightVal as number);
       case "<":
