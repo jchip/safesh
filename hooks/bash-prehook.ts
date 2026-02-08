@@ -49,8 +49,8 @@ import {
 const DEBUG = Deno.env.get("BASH_PREHOOK_DEBUG") === "1";
 const MODE = Deno.env.get("BASH_PREHOOK_MODE") || "streaming";
 const OVERRIDE_CWD = Deno.env.get("BASH_PREHOOK_CWD");
-// Path to desh executable - absolute path to safesh project
-const DESH_CMD = "/Users/jc/dev/safesh/src/cli/desh.ts";
+// Path to desh executable - derived dynamically from this file's location
+const DESH_CMD = new URL("../src/cli/desh.ts", import.meta.url).pathname;
 
 // =============================================================================
 // Helpers
