@@ -156,9 +156,9 @@ describe("Fluent Commands - Comprehensive", () => {
     it("should handle grep with -v (invert match)", () => {
       const ast = parse("grep -v pattern file.txt");
       const output = transpile(ast);
+      // SSH-503: grep -v with file now uses .lines().filter() instead of .grep().filter()
       assertStringIncludes(output, "$.cat");
-      assertStringIncludes(output, ".grep(");
-      assertStringIncludes(output, "filter");
+      assertStringIncludes(output, ".lines().filter(line => !/pattern/.test(line))");
     });
 
     it("should handle grep with -i (case insensitive)", () => {

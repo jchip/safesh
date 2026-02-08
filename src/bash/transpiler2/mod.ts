@@ -74,7 +74,11 @@ export class BashTranspiler2 {
     // Transpile statements
     for (const statement of program.body) {
       const result = this.visitStatement(statement, visitorCtx);
-      emitter.emitLines(result.lines.map((l) => l.replace(ctx.getIndent(), "")));
+      // SSH-507: Use startsWith+slice instead of String.replace to only strip
+      // leading indentation. String.replace removes the first occurrence anywhere
+      // in the line, which corrupts code if the indent string appears in content.
+      const indent = ctx.getIndent();
+      emitter.emitLines(result.lines.map((l) => l.startsWith(indent) ? l.slice(indent.length) : l));
     }
 
     ctx.dedent();

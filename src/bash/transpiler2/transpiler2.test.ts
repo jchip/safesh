@@ -1599,6 +1599,56 @@ describe("BashTranspiler2 - Diagnostic Path Coverage", () => {
 // Direct Statement Type Tests (Manual AST Construction)
 // =============================================================================
 
+describe("BashTranspiler2 - Indent Stripping Safety (SSH-507)", () => {
+  it("should not corrupt generated code when indent string appears in content", () => {
+    // The indent string is "  " (two spaces). If a string literal or variable value
+    // contains "  " (two spaces), the old String.replace() would remove it from
+    // the middle of the line, corrupting the output.
+    const script = 'echo "  hello"';
+    const ast = parse(script);
+    const output = transpile(ast);
+
+    // The "  hello" string should be preserved intact
+    assertStringIncludes(output, '  hello');
+    // Should still have proper indentation
+    assertStringIncludes(output, '$.echo("  hello")');
+  });
+
+  it("should strip only leading indentation, not content", () => {
+    // Test with a script that generates code containing the indent pattern in content
+    const script = 'VAR="  two spaces"';
+    const ast = parse(script);
+    const output = transpile(ast);
+
+    // The variable assignment should preserve the spaces in the string literal
+    assertStringIncludes(output, '"  two spaces"');
+  });
+
+  it("should handle lines that do not start with the expected indent", () => {
+    // Lines that don't start with the current indent prefix should be left unchanged
+    const script = "echo hello";
+    const ast = parse(script);
+    const output = transpile(ast);
+
+    // Basic verification that the output is valid
+    assertStringIncludes(output, '$.echo("hello")');
+  });
+
+  it("should not corrupt code with indent-like patterns in nested structures", () => {
+    // A more complex case: nested control flow where the indent appears in string content
+    const script = `
+      if true; then
+        echo "  indented content"
+      fi
+    `;
+    const ast = parse(script);
+    const output = transpile(ast);
+
+    // The string "  indented content" should survive indent stripping
+    assertStringIncludes(output, '  indented content');
+  });
+});
+
 describe("BashTranspiler2 - Direct Statement Types", () => {
   it("should handle direct Command statement (not wrapped in Pipeline)", () => {
     // Manually construct a Program with a direct Command statement
