@@ -397,6 +397,7 @@ export class AwkParser {
     this.expect(TokenType.LPAREN);
 
     // Check for for-in
+    const savedPos = this.pos;
     if (this.check(TokenType.IDENT)) {
       const varToken = this.advance();
       if (this.check(TokenType.IN)) {
@@ -412,8 +413,8 @@ export class AwkParser {
           body,
         };
       }
-      // Not for-in, backtrack
-      this.pos--;
+      // Not for-in, full restore
+      this.pos = savedPos;
     }
 
     // C-style for
@@ -568,13 +569,14 @@ export class AwkParser {
         TokenType.GE,
         TokenType.EQ,
         TokenType.NE,
-      )
+      ) || this.isGtInsideParens()
     ) {
       const opToken = this.advance();
       const right = this.parseConcatenation();
-      const opMap: Record<string, "<" | "<=" | ">=" | "==" | "!="> = {
+      const opMap: Record<string, "<" | "<=" | ">" | ">=" | "==" | "!="> = {
         "<": "<",
         "<=": "<=",
+        ">": ">",
         ">=": ">=",
         "==": "==",
         "!=": "!=",
@@ -588,6 +590,23 @@ export class AwkParser {
     }
 
     return left;
+  }
+
+  /**
+   * Check if a GT token is inside parentheses (comparison, not redirection).
+   */
+  private isGtInsideParens(): boolean {
+    if (!this.check(TokenType.GT)) return false;
+    // Walk backwards to count paren depth
+    let depth = 0;
+    for (let i = this.pos - 1; i >= 0; i--) {
+      const t = this.tokens[i]!;
+      if (t.type === TokenType.RPAREN) depth--;
+      if (t.type === TokenType.LPAREN) depth++;
+      // Stop at statement boundaries
+      if (t.type === TokenType.LBRACE || t.type === TokenType.SEMICOLON || t.type === TokenType.NEWLINE) break;
+    }
+    return depth > 0;
   }
 
   private parsePrintf(): AwkStmt {
