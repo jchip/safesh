@@ -10,6 +10,7 @@
 
 import { getSessionFilePath as getTempSessionFilePath } from "./temp.ts";
 import { readJsonFileSync, writeJsonFile } from "./io-utils.ts";
+import type { SafeShellConfig } from "./types.ts";
 
 /**
  * Session data structure stored in session-{id}.json
@@ -212,7 +213,7 @@ export function getSessionPathPermissions(
  * @param sessionId - Optional session ID (defaults to CLAUDE_SESSION_ID env var)
  */
 export function mergeSessionPermissions(
-  config: any,
+  config: SafeShellConfig,
   projectDir: string,
   sessionId?: string,
 ): void {
@@ -221,30 +222,36 @@ export function mergeSessionPermissions(
   try {
     const session = readJsonFileSync<SessionData>(sessionFile);
 
-    // Merge read permissions
+    // Merge read permissions (deduplicated)
     if (session.permissions?.read) {
       config.permissions = config.permissions ?? {};
       config.permissions.read = [
-        ...(config.permissions.read ?? []),
-        ...session.permissions.read,
+        ...new Set([
+          ...(config.permissions.read ?? []),
+          ...session.permissions.read,
+        ]),
       ];
     }
 
-    // Merge write permissions
+    // Merge write permissions (deduplicated)
     if (session.permissions?.write) {
       config.permissions = config.permissions ?? {};
       config.permissions.write = [
-        ...(config.permissions.write ?? []),
-        ...session.permissions.write,
+        ...new Set([
+          ...(config.permissions.write ?? []),
+          ...session.permissions.write,
+        ]),
       ];
     }
 
-    // Merge allowed commands into run permissions
+    // Merge allowed commands into run permissions (deduplicated)
     if (session.allowedCommands) {
       config.permissions = config.permissions ?? {};
       config.permissions.run = [
-        ...(config.permissions.run ?? []),
-        ...session.allowedCommands,
+        ...new Set([
+          ...(config.permissions.run ?? []),
+          ...session.allowedCommands,
+        ]),
       ];
     }
   } catch {

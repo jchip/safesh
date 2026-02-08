@@ -16,6 +16,7 @@ import { writeJsonFileSync } from "./io-utils.ts";
 export interface PathViolationInfo {
   isPathViolation: boolean;
   path?: string;
+  operation?: "read" | "write";
   errorCode?: string;
   errorMessage?: string;
 }
@@ -48,9 +49,11 @@ export function detectPathViolation(error: unknown): PathViolationInfo {
 
   if (isPathViolation) {
     const path = extractPathFromError(errorMessage, errorCode);
+    const operation = extractOperationFromError(errorMessage);
     return {
       isPathViolation: true,
       path,
+      operation,
       errorCode,
       errorMessage,
     };
@@ -101,6 +104,26 @@ export function extractPathFromError(
   }
 
   return "unknown";
+}
+
+/**
+ * Extract the operation type (read or write) from an error message.
+ *
+ * Looks for "write access" or "write" indicators in the error message.
+ * Defaults to "read" when the operation cannot be determined.
+ *
+ * @param errorMessage - The error message to parse
+ * @returns "read" or "write"
+ */
+export function extractOperationFromError(
+  errorMessage: string,
+): "read" | "write" {
+  if (errorMessage.includes("Requires write access to")) {
+    return "write";
+  }
+  // PATH_VIOLATION and SYMLINK_VIOLATION from SafeShell don't distinguish
+  // read vs write in their messages, so default to "read"
+  return "read";
 }
 
 /**
@@ -164,7 +187,7 @@ export function handlePathViolationAndExit(
   const pending: PendingPathRequest = {
     id: pendingId,
     path: violation.path,
-    operation: "read",
+    operation: violation.operation ?? "read",
     cwd: options.cwd || Deno.cwd(),
     scriptHash: options.scriptHash || "",
     createdAt: new Date().toISOString(),
@@ -329,12 +352,13 @@ ${includeCommandCheck}  const errorMessage = error.message || String(error);
       }
     }
 
+    const operation = errorMessage.includes("Requires write access to") ? "write" : "read";
     const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
     const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
     const pending = {
       id: pendingId,
       path: path,
-      operation: "read",
+      operation: operation,
       cwd: Deno.cwd(),
       ${options.includeCommand ? "command: fullCommand," : 'scriptHash: Deno.env.get("SAFESH_SCRIPT_HASH") || "",'}
       createdAt: new Date().toISOString()
