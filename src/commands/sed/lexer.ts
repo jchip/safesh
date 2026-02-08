@@ -607,7 +607,7 @@ export class SedLexer {
     return {
       type: SedTokenType.TEXT_CMD,
       value: cmd,
-      text: text.trim(),
+      text: text,
       line: startLine,
       column: startColumn,
     };

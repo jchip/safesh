@@ -72,9 +72,6 @@ async function processContent(
   let holdSpace = "";
   const rangeStates = new Map<string, RangeState>();
 
-  // Convert to SedExecutionLimits format
-  const sedLimits: SedExecutionLimits | undefined = limits;
-
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const state: SedState = {
       ...createInitialState(totalLines, undefined, rangeStates),
@@ -83,6 +80,7 @@ async function processContent(
       lineNumber: lineIndex + 1,
       totalLines,
       substitutionMade: false,
+      silentMode: silent,
     };
 
     const ctx: ExecuteContext = {
@@ -101,7 +99,7 @@ async function processContent(
 
       state.restartCycle = false;
 
-      const linesConsumed = executeCommands(commands, state, ctx, sedLimits);
+      const linesConsumed = executeCommands(commands, state, ctx, limits);
       totalLinesConsumed += linesConsumed;
 
       ctx.currentLineIndex += linesConsumed;
@@ -122,10 +120,10 @@ async function processContent(
     const inserts: string[] = [];
     const appends: string[] = [];
     for (const item of state.appendBuffer) {
-      if (item.startsWith("__INSERT__")) {
-        inserts.push(item.slice(10));
+      if (item.type === "insert") {
+        inserts.push(item.text);
       } else {
-        appends.push(item);
+        appends.push(item.text);
       }
     }
 
