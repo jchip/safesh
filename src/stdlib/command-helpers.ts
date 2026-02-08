@@ -33,6 +33,7 @@ export function createCommandFactory(commandName: string): OverloadedCommandFn {
     if (
       args.length > 0 &&
       typeof args[0] === "object" &&
+      args[0] !== null &&
       !Array.isArray(args[0])
     ) {
       const options = args[0] as CommandOptions;
@@ -109,17 +110,8 @@ export const tmux: OverloadedCommandFn = function (...args: unknown[]): Command 
     return result;
   };
 
-  // Also wrap then() since Command is thenable
-  const originalThen = command.then.bind(command);
-  command.then = (<TResult1, TResult2>(
-    onFulfilled?: ((value: CommandResult) => TResult1 | PromiseLike<TResult1>) | null,
-    onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-  ) => {
-    return originalThen(async (result) => {
-      await new Promise(r => setTimeout(r, TMUX_DELAY_MS));
-      return onFulfilled ? onFulfilled(result) : result as unknown as TResult1;
-    }, onRejected);
-  }) as typeof command.then;
+  // SSH-554: Do NOT wrap then() - Command.then() calls exec() internally,
+  // which already includes the delay. Wrapping both causes double delay (200ms).
 
   return command;
 } as OverloadedCommandFn;

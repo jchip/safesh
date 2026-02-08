@@ -181,13 +181,15 @@ export function take<T>(n: number): Transform<T, T> {
  */
 export function lines(): Transform<string, string> {
   return async function* (stream) {
+    let remainder = "";
     for await (const text of stream) {
-      for (const line of text.split("\n")) {
-        if (line) {
-          yield line;
-        }
+      const parts = (remainder + text).split("\n");
+      remainder = parts.pop() ?? "";
+      for (const line of parts) {
+        if (line) yield line;
       }
     }
+    if (remainder) yield remainder;
   };
 }
 

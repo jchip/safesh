@@ -9,6 +9,8 @@
 import { ShellString } from "./types.ts";
 import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
+import { validatePath } from "../../core/permissions.ts";
+import { getDefaultConfig } from "../../core/utils.ts";
 
 /** Options for rm command */
 export interface RmOptions {
@@ -106,10 +108,13 @@ export async function rm(
   }
 
   const errors: string[] = [];
+  const cwd = Deno.cwd();
+  const config = getDefaultConfig(cwd);
 
   for (const path of allPaths) {
     const expandedPath = expandTilde(path);
     try {
+      await validatePath(expandedPath, config, cwd, "write");
       const stat = await Deno.lstat(expandedPath);
 
       if (stat.isDirectory) {

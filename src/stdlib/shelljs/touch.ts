@@ -9,6 +9,8 @@
 import { ShellString } from "./types.ts";
 import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
+import { validatePath } from "../../core/permissions.ts";
+import { getDefaultConfig } from "../../core/utils.ts";
 
 /** Options for touch command */
 export interface TouchOptions {
@@ -100,12 +102,15 @@ export async function touch(
 
   const now = options.date ?? new Date();
 
+  const cwd = Deno.cwd();
+  const config = getDefaultConfig(cwd);
   for (const path of expandedPaths) {
     try {
+      const validatedPath = await validatePath(path, config, cwd, "write");
       // Check if file exists
       let exists = true;
       try {
-        await Deno.stat(path);
+        await Deno.stat(validatedPath);
       } catch {
         exists = false;
       }
@@ -115,7 +120,7 @@ export async function touch(
           continue;
         }
         // Create empty file
-        const file = await Deno.create(path);
+        const file = await Deno.create(validatedPath);
         file.close();
       }
 
@@ -133,7 +138,7 @@ export async function touch(
 
       // If only updating one time, get the other from the file
       if (options.accessOnly || options.modifyOnly) {
-        const stat = await Deno.stat(path);
+        const stat = await Deno.stat(validatedPath);
         if (options.accessOnly) {
           mtime = stat.mtime ?? now;
         }
@@ -142,7 +147,7 @@ export async function touch(
         }
       }
 
-      await Deno.utime(path, atime, mtime);
+      await Deno.utime(validatedPath, atime, mtime);
     } catch (error) {
       if (error instanceof Deno.errors.PermissionDenied) {
         errors.push(`touch: ${path}: Permission denied`);

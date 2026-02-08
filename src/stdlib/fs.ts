@@ -74,8 +74,10 @@ export { getDefaultConfig } from "../core/utils.ts";
 async function ensureDirSafe(path: string): Promise<void> {
   try {
     await ensureDir(path);
-  } catch {
-    // Directory already exists or parent path issue - safe to ignore
+  } catch (error) {
+    if (!(error instanceof Deno.errors.AlreadyExists)) {
+      throw error;
+    }
   }
 }
 

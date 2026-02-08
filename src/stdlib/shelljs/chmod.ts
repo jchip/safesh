@@ -9,6 +9,8 @@ import { ShellString } from "./types.ts";
 import { parseOptions, expand, PERMS } from "./common.ts";
 import * as fs from "../fs.ts";
 import type { SandboxOptions } from "../fs.ts";
+import { validatePath } from "../../core/permissions.ts";
+import { getDefaultConfig } from "../../core/utils.ts";
 
 /**
  * Options for chmod command
@@ -67,9 +69,12 @@ export async function chmod(
   const errors: string[] = [];
   const output: string[] = [];
 
+  const cwd = Deno.cwd();
+  const config = getDefaultConfig(cwd);
   for (const file of expandedFiles) {
     try {
       const resolvedPath = resolve(file);
+      await validatePath(resolvedPath, config, cwd, "write");
       const stat = await Deno.stat(resolvedPath);
 
       // Skip symlinks in recursive mode

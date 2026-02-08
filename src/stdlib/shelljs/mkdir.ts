@@ -9,6 +9,8 @@
 import { ShellString } from "./types.ts";
 import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
+import { validatePath } from "../../core/permissions.ts";
+import { getDefaultConfig } from "../../core/utils.ts";
 
 /** Options for mkdir command */
 export interface MkdirOptions {
@@ -83,11 +85,14 @@ export async function mkdir(
   }
 
   const errors: string[] = [];
+  const cwd = Deno.cwd();
+  const config = getDefaultConfig(cwd);
 
   for (const path of allPaths) {
     const expandedPath = expandTilde(path);
     try {
-      await Deno.mkdir(expandedPath, { recursive: options.parents });
+      const validatedPath = await validatePath(expandedPath, config, cwd, "write");
+      await Deno.mkdir(validatedPath, { recursive: options.parents });
     } catch (error) {
       if (error instanceof Deno.errors.AlreadyExists) {
         if (!options.parents) {
