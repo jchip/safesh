@@ -870,7 +870,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
           };
         }
       } else if (userChoice === 2) {
-        // Allow for session only
+        // Allow for session: update persistent configHolder so future requests also have access
         const existingNet = Array.isArray(currentNet) ? currentNet : [];
         const updatedNet = existingNet.includes(blockedHost)
           ? existingNet
@@ -878,8 +878,9 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         execConfig = mergeConfigs(configHolder.config, {
           permissions: { net: updatedNet },
         });
+        configHolder.config = execConfig;
       } else if (userChoice === 1) {
-        // Allow once
+        // Allow once: only update local execConfig for this execution, NOT configHolder.config
         const existingNet = Array.isArray(currentNet) ? currentNet : [];
         const updatedNet = existingNet.includes(blockedHost)
           ? existingNet
@@ -1104,7 +1105,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
               timeout: { type: "number" },
               env: { type: "object", additionalProperties: { type: "string" } },
               retry_id: { type: "string", description: "From COMMANDS_BLOCKED error" },
-              userChoice: { type: "number", enum: [1, 2, 3], description: "1=once, 2=session, 3=always" },
+              userChoice: { type: "number", enum: [1, 2, 3, 4, 5], description: "Permission choice: 1=allow once, 2=allow for session, 3=always (save to config), 4=deny (network only), 5=allow all network access" },
             },
           },
         },
