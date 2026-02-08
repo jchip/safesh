@@ -116,16 +116,18 @@ export async function jqExec(
 
       // Handle slurp mode - collect all JSON values into array
       if (options.slurp) {
-        const values: JsonValue[] = [];
-        const lines = trimmedInput.split("\n");
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              values.push(JSON.parse(line));
-            } catch {
-              // Try to parse multiple JSON values in the input
-              values.push(JSON.parse(trimmedInput));
-              break;
+        let values: JsonValue[];
+        try {
+          const parsed = JSON.parse(trimmedInput);
+          values = Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+          values = [];
+          const lines = trimmedInput.split("\n");
+          for (const line of lines) {
+            if (line.trim()) {
+              try {
+                values.push(JSON.parse(line));
+              } catch { /* skip */ }
             }
           }
         }
