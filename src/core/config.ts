@@ -128,8 +128,8 @@ const SAFE_COMMANDS = [
   "echo", "printf", "yes", "true", "false", "test", "[",
   "env", "printenv", "getconf",
   "sleep", "timeout", "time", "watch",
-  "xargs", "parallel",
-  "which", "whereis", "command", "type", "hash",
+  "parallel",
+  "which", "command", "hash",
   "tput", "clear", "reset",
 
   // ============================================================================
