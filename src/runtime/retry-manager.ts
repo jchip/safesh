@@ -27,16 +27,16 @@ export class RetryManager {
   private pendingRetries: Map<string, PendingRetry> = new Map();
 
   /**
-   * Create a pending retry for a blocked command (legacy single command)
+   * Create a retry record with common boilerplate: cleanup, eviction, and registration.
+   * Callers provide extra fields to merge into the base retry object.
    */
-  createPendingRetry(
+  private createRetryBase(
     code: string,
-    blockedCommand: string,
     context: PendingRetry["context"],
+    extra: Partial<PendingRetry>,
     shellId?: string,
     scriptHash?: string,
   ): PendingRetry {
-    // Cleanup expired retries first
     this.cleanupExpiredRetries();
 
     // Enforce limit with FIFO eviction
@@ -51,12 +51,25 @@ export class RetryManager {
       scriptHash,
       shellId,
       context,
-      blockedCommand,
       createdAt: new Date(),
+      ...extra,
     };
 
     this.pendingRetries.set(retry.id, retry);
     return retry;
+  }
+
+  /**
+   * Create a pending retry for a blocked command (legacy single command)
+   */
+  createPendingRetry(
+    code: string,
+    blockedCommand: string,
+    context: PendingRetry["context"],
+    shellId?: string,
+    scriptHash?: string,
+  ): PendingRetry {
+    return this.createRetryBase(code, context, { blockedCommand }, shellId, scriptHash);
   }
 
   /**
@@ -70,28 +83,7 @@ export class RetryManager {
     shellId?: string,
     scriptHash?: string,
   ): PendingRetry {
-    // Cleanup expired retries first
-    this.cleanupExpiredRetries();
-
-    // Enforce limit with FIFO eviction
-    if (this.pendingRetries.size >= MAX_PENDING_RETRIES) {
-      const oldest = this.pendingRetries.keys().next().value;
-      if (oldest) this.pendingRetries.delete(oldest);
-    }
-
-    const retry: PendingRetry = {
-      id: generateRetryId(),
-      code,
-      scriptHash,
-      shellId,
-      context,
-      blockedCommands,
-      notFoundCommands,
-      createdAt: new Date(),
-    };
-
-    this.pendingRetries.set(retry.id, retry);
-    return retry;
+    return this.createRetryBase(code, context, { blockedCommands, notFoundCommands }, shellId, scriptHash);
   }
 
   /**
@@ -104,27 +96,7 @@ export class RetryManager {
     shellId?: string,
     scriptHash?: string,
   ): PendingRetry {
-    // Cleanup expired retries first
-    this.cleanupExpiredRetries();
-
-    // Enforce limit with FIFO eviction
-    if (this.pendingRetries.size >= MAX_PENDING_RETRIES) {
-      const oldest = this.pendingRetries.keys().next().value;
-      if (oldest) this.pendingRetries.delete(oldest);
-    }
-
-    const retry: PendingRetry = {
-      id: generateRetryId(),
-      code,
-      scriptHash,
-      shellId,
-      context,
-      blockedHost,
-      createdAt: new Date(),
-    };
-
-    this.pendingRetries.set(retry.id, retry);
-    return retry;
+    return this.createRetryBase(code, context, { blockedHost }, shellId, scriptHash);
   }
 
   /**
