@@ -43,13 +43,13 @@ async function awkSubstr(
 ): Promise<string> {
   if (args.length < 2) return "";
   const str = toAwkString(await evaluator.evalExpr(args[0]!));
-  const start = Math.floor(toNumber(await evaluator.evalExpr(args[1]!))) - 1;
+  const start = Math.max(0, Math.floor(toNumber(await evaluator.evalExpr(args[1]!))) - 1);
 
   if (args.length >= 3) {
     const len = Math.floor(toNumber(await evaluator.evalExpr(args[2]!)));
-    return str.substr(Math.max(0, start), len);
+    return str.substring(start, start + len);
   }
-  return str.substr(Math.max(0, start));
+  return str.substring(start);
 }
 
 async function awkIndex(
