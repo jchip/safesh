@@ -22,11 +22,17 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
   const prefix = vfs.prefix;
 
   /**
+   * Extract path string consistently from string or URL
+   */
+  const extractPath = (path: string | URL): string => {
+    return path instanceof URL ? path.pathname : path.toString();
+  };
+
+  /**
    * Check if a path is within VFS
    */
   const isVfsPath = (path: string | URL): boolean => {
-    const pathStr = path instanceof URL ? path.pathname : path.toString();
-    return pathStr.startsWith(prefix);
+    return extractPath(path).startsWith(prefix);
   };
 
   /**
@@ -43,7 +49,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
       if (prop === "readFile") {
         return async (path: string | URL): Promise<Uint8Array> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             return vfs.read(pathStr);
           }
           return await original.call(target, path);
@@ -56,7 +62,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: { encoding?: string },
         ): Promise<string> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             const data = vfs.read(pathStr);
             return new TextDecoder(options?.encoding).decode(data);
           }
@@ -67,7 +73,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
       if (prop === "readFileSync") {
         return (path: string | URL): Uint8Array => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             return vfs.read(pathStr);
           }
           return original.call(target, path);
@@ -80,7 +86,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: { encoding?: string },
         ): string => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             const data = vfs.read(pathStr);
             return new TextDecoder(options?.encoding).decode(data);
           }
@@ -99,7 +105,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: Deno.WriteFileOptions,
         ): Promise<void> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
 
             // Handle ReadableStream
             if (data instanceof ReadableStream) {
@@ -140,7 +146,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: Deno.WriteFileOptions,
         ): Promise<void> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
 
             // Handle ReadableStream
             if (data instanceof ReadableStream) {
@@ -173,7 +179,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: Deno.WriteFileOptions,
         ): void => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             vfs.write(pathStr, data);
             return;
           }
@@ -188,7 +194,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: Deno.WriteFileOptions,
         ): void => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             const encoded = new TextEncoder().encode(data);
             vfs.write(pathStr, encoded);
             return;
@@ -204,7 +210,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
       if (prop === "stat") {
         return async (path: string | URL): Promise<Deno.FileInfo> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             return vfs.stat(pathStr);
           }
           return await original.call(target, path);
@@ -214,7 +220,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
       if (prop === "lstat") {
         return async (path: string | URL): Promise<Deno.FileInfo> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             return vfs.stat(pathStr); // No symlinks in VFS
           }
           return await original.call(target, path);
@@ -224,7 +230,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
       if (prop === "statSync") {
         return (path: string | URL): Deno.FileInfo => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             return vfs.stat(pathStr);
           }
           return original.call(target, path);
@@ -234,7 +240,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
       if (prop === "lstatSync") {
         return (path: string | URL): Deno.FileInfo => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             return vfs.stat(pathStr); // No symlinks in VFS
           }
           return original.call(target, path);
@@ -251,7 +257,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: { recursive?: boolean },
         ): Promise<void> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             vfs.remove(pathStr, options);
             return;
           }
@@ -265,7 +271,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: { recursive?: boolean },
         ): void => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             vfs.remove(pathStr, options);
             return;
           }
@@ -283,7 +289,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: { recursive?: boolean; mode?: number },
         ): Promise<void> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             vfs.mkdir(pathStr, { recursive: options?.recursive });
             return;
           }
@@ -297,7 +303,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
           options?: { recursive?: boolean; mode?: number },
         ): void => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             vfs.mkdir(pathStr, { recursive: options?.recursive });
             return;
           }
@@ -312,7 +318,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
       if (prop === "readDir") {
         return (path: string | URL): AsyncIterable<Deno.DirEntry> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             const entries = vfs.readDir(pathStr);
 
             // Return async iterator
@@ -331,7 +337,7 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
       if (prop === "readDirSync") {
         return (path: string | URL): Iterable<Deno.DirEntry> => {
           if (isVfsPath(path)) {
-            const pathStr = path.toString();
+            const pathStr = extractPath(path);
             const entries = vfs.readDir(pathStr);
 
             // Return iterator
@@ -342,6 +348,204 @@ export function setupVFS(vfs: VirtualFileSystem): () => void {
                 }
               },
             };
+          }
+          return original.call(target, path);
+        };
+      }
+
+      // ========================================================================
+      // rename
+      // ========================================================================
+
+      if (prop === "rename") {
+        return async (
+          oldpath: string | URL,
+          newpath: string | URL,
+        ): Promise<void> => {
+          const oldIsVfs = isVfsPath(oldpath);
+          const newIsVfs = isVfsPath(newpath);
+
+          if (oldIsVfs && newIsVfs) {
+            const oldStr = extractPath(oldpath);
+            const newStr = extractPath(newpath);
+            const data = vfs.read(oldStr);
+            vfs.write(newStr, data);
+            vfs.remove(oldStr);
+            return;
+          }
+
+          if (oldIsVfs || newIsVfs) {
+            throw new Error("Cannot rename between VFS and real filesystem");
+          }
+
+          return await original.call(target, oldpath, newpath);
+        };
+      }
+
+      if (prop === "renameSync") {
+        return (
+          oldpath: string | URL,
+          newpath: string | URL,
+        ): void => {
+          const oldIsVfs = isVfsPath(oldpath);
+          const newIsVfs = isVfsPath(newpath);
+
+          if (oldIsVfs && newIsVfs) {
+            const oldStr = extractPath(oldpath);
+            const newStr = extractPath(newpath);
+            const data = vfs.read(oldStr);
+            vfs.write(newStr, data);
+            vfs.remove(oldStr);
+            return;
+          }
+
+          if (oldIsVfs || newIsVfs) {
+            throw new Error("Cannot rename between VFS and real filesystem");
+          }
+
+          return original.call(target, oldpath, newpath);
+        };
+      }
+
+      // ========================================================================
+      // copyFile
+      // ========================================================================
+
+      if (prop === "copyFile") {
+        return async (
+          fromPath: string | URL,
+          toPath: string | URL,
+        ): Promise<void> => {
+          const fromIsVfs = isVfsPath(fromPath);
+          const toIsVfs = isVfsPath(toPath);
+
+          if (fromIsVfs && toIsVfs) {
+            const fromStr = extractPath(fromPath);
+            const toStr = extractPath(toPath);
+            const data = vfs.read(fromStr);
+            vfs.write(toStr, new Uint8Array(data));
+            return;
+          }
+
+          if (fromIsVfs || toIsVfs) {
+            throw new Error("Cannot copy between VFS and real filesystem");
+          }
+
+          return await original.call(target, fromPath, toPath);
+        };
+      }
+
+      if (prop === "copyFileSync") {
+        return (
+          fromPath: string | URL,
+          toPath: string | URL,
+        ): void => {
+          const fromIsVfs = isVfsPath(fromPath);
+          const toIsVfs = isVfsPath(toPath);
+
+          if (fromIsVfs && toIsVfs) {
+            const fromStr = extractPath(fromPath);
+            const toStr = extractPath(toPath);
+            const data = vfs.read(fromStr);
+            vfs.write(toStr, new Uint8Array(data));
+            return;
+          }
+
+          if (fromIsVfs || toIsVfs) {
+            throw new Error("Cannot copy between VFS and real filesystem");
+          }
+
+          return original.call(target, fromPath, toPath);
+        };
+      }
+
+      // ========================================================================
+      // open
+      // ========================================================================
+
+      if (prop === "open") {
+        return async (
+          path: string | URL,
+          options?: Deno.OpenOptions,
+        ): Promise<Deno.FsFile> => {
+          if (isVfsPath(path)) {
+            throw new Error(
+              `Deno.open() is not supported for VFS paths: ${extractPath(path)}. ` +
+                "Use Deno.readFile/writeFile instead.",
+            );
+          }
+          return await original.call(target, path, options);
+        };
+      }
+
+      if (prop === "openSync") {
+        return (
+          path: string | URL,
+          options?: Deno.OpenOptions,
+        ): Deno.FsFile => {
+          if (isVfsPath(path)) {
+            throw new Error(
+              `Deno.openSync() is not supported for VFS paths: ${extractPath(path)}. ` +
+                "Use Deno.readFileSync/writeFileSync instead.",
+            );
+          }
+          return original.call(target, path, options);
+        };
+      }
+
+      // ========================================================================
+      // symlink
+      // ========================================================================
+
+      if (prop === "symlink") {
+        return async (
+          oldpath: string | URL,
+          newpath: string | URL,
+        ): Promise<void> => {
+          if (isVfsPath(newpath)) {
+            const targetStr = extractPath(oldpath);
+            const linkStr = extractPath(newpath);
+            vfs.symlink(targetStr, linkStr);
+            return;
+          }
+          return await original.call(target, oldpath, newpath);
+        };
+      }
+
+      if (prop === "symlinkSync") {
+        return (
+          oldpath: string | URL,
+          newpath: string | URL,
+        ): void => {
+          if (isVfsPath(newpath)) {
+            const targetStr = extractPath(oldpath);
+            const linkStr = extractPath(newpath);
+            vfs.symlink(targetStr, linkStr);
+            return;
+          }
+          return original.call(target, oldpath, newpath);
+        };
+      }
+
+      // ========================================================================
+      // readLink
+      // ========================================================================
+
+      if (prop === "readLink") {
+        return async (path: string | URL): Promise<string> => {
+          if (isVfsPath(path)) {
+            const pathStr = extractPath(path);
+            return vfs.readlink(pathStr);
+          }
+          return await original.call(target, path);
+        };
+      }
+
+      if (prop === "readLinkSync") {
+        return (path: string | URL): string => {
+          if (isVfsPath(path)) {
+            const pathStr = extractPath(path);
+            return vfs.readlink(pathStr);
           }
           return original.call(target, path);
         };
