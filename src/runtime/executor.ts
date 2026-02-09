@@ -229,44 +229,8 @@ function processJobEvent(shell: Shell, script: Script, event: JobEvent): void {
 }
 
 function processJobEvents(shell: Shell, script: Script, events: JobEvent[]): void {
-  // Group events by job ID
-  const startEvents = new Map<string, JobEvent>();
-  const endEvents = new Map<string, JobEvent>();
-
   for (const event of events) {
-    if (event.type === "start") {
-      startEvents.set(event.id, event);
-    } else if (event.type === "end") {
-      endEvents.set(event.id, event);
-    }
-  }
-
-  // Create Job records from paired events
-  for (const [jobId, start] of startEvents) {
-    const end = endEvents.get(jobId);
-
-    const job: Job = {
-      id: jobId,
-      scriptId: script.id,
-      command: start.command ?? "unknown",
-      args: start.args ?? [],
-      pid: start.pid ?? 0,
-      status: end ? (end.exitCode === 0 ? "completed" : "failed") : "running",
-      exitCode: end?.exitCode,
-      stdout: "", // Not captured at this level
-      stderr: "", // Not captured at this level
-      startedAt: new Date(start.startedAt ?? Date.now()),
-      completedAt: end?.completedAt ? new Date(end.completedAt) : undefined,
-      duration: end?.duration,
-    };
-
-    // Add job to shell
-    shell.jobs.set(jobId, job);
-
-    // Link job to script
-    if (!script.jobIds.includes(jobId)) {
-      script.jobIds.push(jobId);
-    }
+    processJobEvent(shell, script, event);
   }
 }
 
