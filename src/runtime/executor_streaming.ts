@@ -96,6 +96,74 @@ function buildEnv(
 
 
 /**
+ * Stream stdout and stderr from a spawned process with timeout support.
+ * Common async generator used by both executeCodeStreaming and runCommandStreaming.
+ */
+async function* streamProcess(
+  process: Deno.ChildProcess,
+  timeoutMs: number,
+  label: string,
+): AsyncGenerator<StreamChunk> {
+  const decoder = new TextDecoder();
+  const startTime = Date.now();
+
+  try {
+    const stdoutReader = process.stdout.getReader();
+    const stderrReader = process.stderr.getReader();
+
+    let stdoutDone = false;
+    let stderrDone = false;
+
+    let stdoutPromise = stdoutReader.read();
+    let stderrPromise = stderrReader.read();
+
+    while (!stdoutDone || !stderrDone) {
+      if (Date.now() - startTime > timeoutMs) {
+        throw timeoutError(timeoutMs, `${label} (streaming)`);
+      }
+
+      const promises: Array<{ promise: Promise<ReadableStreamReadResult<Uint8Array>>; type: "stdout" | "stderr" }> = [];
+
+      if (!stdoutDone) {
+        promises.push({ promise: stdoutPromise, type: "stdout" });
+      }
+      if (!stderrDone) {
+        promises.push({ promise: stderrPromise, type: "stderr" });
+      }
+
+      const result = await Promise.race(
+        promises.map(async ({ promise, type }) => ({
+          result: await promise,
+          type,
+        }))
+      );
+
+      if (result.type === "stdout") {
+        if (result.result.done) {
+          stdoutDone = true;
+        } else if (result.result.value) {
+          yield { type: "stdout", data: decoder.decode(result.result.value, { stream: true }) };
+          stdoutPromise = stdoutReader.read();
+        }
+      } else {
+        if (result.result.done) {
+          stderrDone = true;
+        } else if (result.result.value) {
+          yield { type: "stderr", data: decoder.decode(result.result.value, { stream: true }) };
+          stderrPromise = stderrReader.read();
+        }
+      }
+    }
+
+    const status = await process.status;
+    yield { type: "exit", code: status.code };
+  } catch (error) {
+    await cleanupProcess(process);
+    throw error;
+  }
+}
+
+/**
  * Execute code with streaming output
  * Yields chunks as they arrive from stdout/stderr in real-time
  */
@@ -138,7 +206,6 @@ export async function* executeCodeStreaming(
 
   args.push(scriptPath);
 
-  // Create command
   const command = new Deno.Command("deno", {
     args,
     cwd,
@@ -147,77 +214,7 @@ export async function* executeCodeStreaming(
     stderr: "piped",
   });
 
-  const process = command.spawn();
-  const decoder = new TextDecoder();
-  const startTime = Date.now();
-
-  try {
-    // Read both stdout and stderr concurrently
-    const stdoutReader = process.stdout.getReader();
-    const stderrReader = process.stderr.getReader();
-
-    // Track pending reads
-    let stdoutDone = false;
-    let stderrDone = false;
-
-    // Initiate first reads
-    let stdoutPromise = stdoutReader.read();
-    let stderrPromise = stderrReader.read();
-
-    // Stream chunks as they arrive
-    while (!stdoutDone || !stderrDone) {
-      // Check timeout
-      if (Date.now() - startTime > timeoutMs) {
-        throw timeoutError(timeoutMs, "exec (streaming)");
-      }
-
-      // Race the pending reads
-      const promises: Array<{ promise: Promise<ReadableStreamReadResult<Uint8Array>>; type: "stdout" | "stderr" }> = [];
-
-      if (!stdoutDone) {
-        promises.push({ promise: stdoutPromise, type: "stdout" });
-      }
-      if (!stderrDone) {
-        promises.push({ promise: stderrPromise, type: "stderr" });
-      }
-
-      // Wait for first chunk
-      const result = await Promise.race(
-        promises.map(async ({ promise, type }) => ({
-          result: await promise,
-          type,
-        }))
-      );
-
-      // Handle the chunk
-      if (result.type === "stdout") {
-        if (result.result.done) {
-          stdoutDone = true;
-        } else if (result.result.value) {
-          yield { type: "stdout", data: decoder.decode(result.result.value, { stream: true }) };
-          // Start next read
-          stdoutPromise = stdoutReader.read();
-        }
-      } else {
-        if (result.result.done) {
-          stderrDone = true;
-        } else if (result.result.value) {
-          yield { type: "stderr", data: decoder.decode(result.result.value, { stream: true }) };
-          // Start next read
-          stderrPromise = stderrReader.read();
-        }
-      }
-    }
-
-    // Get exit status
-    const status = await process.status;
-    yield { type: "exit", code: status.code };
-  } catch (error) {
-    // Kill process and cancel streams on error/timeout
-    await cleanupProcess(process);
-
-    throw error;
-  }
+  yield* streamProcess(command.spawn(), timeoutMs, "exec");
 }
 
 /**
@@ -230,7 +227,6 @@ export async function* runCommandStreaming(
   timeoutMs: number,
   env: Record<string, string> = {},
 ): AsyncGenerator<StreamChunk> {
-  // Merge shell env with process env
   const processEnv = { ...Deno.env.toObject(), ...env };
 
   const cmd = new Deno.Command(command, {
@@ -241,75 +237,5 @@ export async function* runCommandStreaming(
     stderr: "piped",
   });
 
-  const process = cmd.spawn();
-  const decoder = new TextDecoder();
-  const startTime = Date.now();
-
-  try {
-    // Read both stdout and stderr concurrently
-    const stdoutReader = process.stdout.getReader();
-    const stderrReader = process.stderr.getReader();
-
-    // Track pending reads
-    let stdoutDone = false;
-    let stderrDone = false;
-
-    // Initiate first reads
-    let stdoutPromise = stdoutReader.read();
-    let stderrPromise = stderrReader.read();
-
-    // Stream chunks as they arrive
-    while (!stdoutDone || !stderrDone) {
-      // Check timeout
-      if (Date.now() - startTime > timeoutMs) {
-        throw timeoutError(timeoutMs, "run (streaming)");
-      }
-
-      // Race the pending reads
-      const promises: Array<{ promise: Promise<ReadableStreamReadResult<Uint8Array>>; type: "stdout" | "stderr" }> = [];
-
-      if (!stdoutDone) {
-        promises.push({ promise: stdoutPromise, type: "stdout" });
-      }
-      if (!stderrDone) {
-        promises.push({ promise: stderrPromise, type: "stderr" });
-      }
-
-      // Wait for first chunk
-      const result = await Promise.race(
-        promises.map(async ({ promise, type }) => ({
-          result: await promise,
-          type,
-        }))
-      );
-
-      // Handle the chunk
-      if (result.type === "stdout") {
-        if (result.result.done) {
-          stdoutDone = true;
-        } else if (result.result.value) {
-          yield { type: "stdout", data: decoder.decode(result.result.value, { stream: true }) };
-          // Start next read
-          stdoutPromise = stdoutReader.read();
-        }
-      } else {
-        if (result.result.done) {
-          stderrDone = true;
-        } else if (result.result.value) {
-          yield { type: "stderr", data: decoder.decode(result.result.value, { stream: true }) };
-          // Start next read
-          stderrPromise = stderrReader.read();
-        }
-      }
-    }
-
-    // Get exit status
-    const status = await process.status;
-    yield { type: "exit", code: status.code };
-  } catch (error) {
-    // Kill process and cancel streams on error/timeout
-    await cleanupProcess(process);
-
-    throw error;
-  }
+  yield* streamProcess(cmd.spawn(), timeoutMs, "run");
 }
