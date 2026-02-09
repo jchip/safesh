@@ -36,11 +36,6 @@ export class IterationResult {
 }
 
 /**
- * Token result - single value or array of values (from .[] or similar)
- */
-type TokenResult = JsonValue | JsonValue[];
-
-/**
  * Query result - can be single value or iteration result (multiple values)
  */
 export type QueryResult = JsonValue | IterationResult;
@@ -110,7 +105,7 @@ export function parseQuery(query: string): string[] {
 /**
  * Execute a single query token on data
  */
-function executeToken(data: JsonValue, token: string): TokenResult {
+function executeToken(data: JsonValue, token: string): JsonValue {
   // Identity - return the whole object
   if (token === ".") {
     return data;
