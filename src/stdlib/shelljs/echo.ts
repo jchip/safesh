@@ -77,23 +77,29 @@ export function echo(
  * Interpret backslash escape sequences
  */
 function interpretEscapes(str: string): string {
-  return str
-    .replace(/\\n/g, "\n")
-    .replace(/\\t/g, "\t")
-    .replace(/\\r/g, "\r")
-    .replace(/\\b/g, "\b")
-    .replace(/\\f/g, "\f")
-    .replace(/\\v/g, "\v")
-    .replace(/\\a/g, "\x07") // alert/bell
-    .replace(/\\\\/g, "\\")
-    .replace(/\\0([0-7]{1,3})?/g, (_, oct) => {
-      // Octal escape
-      return String.fromCharCode(parseInt(oct || "0", 8));
-    })
-    .replace(/\\x([0-9a-fA-F]{1,2})/g, (_, hex) => {
-      // Hex escape
-      return String.fromCharCode(parseInt(hex, 16));
-    });
+  // Single-pass replacement to handle ordering correctly
+  // (e.g., \\\\ must be consumed before \\n can match the second \\)
+  return str.replace(
+    /\\\\|\\n|\\t|\\r|\\b|\\f|\\v|\\a|\\0([0-7]{1,3})?|\\x([0-9a-fA-F]{1,2})/g,
+    (match, oct?: string, hex?: string) => {
+      switch (match) {
+        case "\\\\": return "\\";
+        case "\\n": return "\n";
+        case "\\t": return "\t";
+        case "\\r": return "\r";
+        case "\\b": return "\b";
+        case "\\f": return "\f";
+        case "\\v": return "\v";
+        case "\\a": return "\x07";
+        default:
+          if (hex !== undefined) {
+            return String.fromCharCode(parseInt(hex, 16));
+          }
+          // Octal: \0 or \0NNN
+          return String.fromCharCode(parseInt(oct || "0", 8));
+      }
+    },
+  );
 }
 
 /**

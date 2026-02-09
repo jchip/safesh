@@ -70,13 +70,28 @@ function getBasename(path: string): string {
 }
 
 /**
- * Resolve a path relative to a directory
+ * Resolve a path relative to a directory, normalizing . and .. segments
  */
 function resolvePath(base: string, relative: string): string {
-  if (relative.startsWith("/")) return relative;
-  // Simple path join
+  if (relative.startsWith("/")) return normalizePath(relative);
   const basePath = base.endsWith("/") ? base : base + "/";
-  return basePath + relative;
+  return normalizePath(basePath + relative);
+}
+
+/**
+ * Normalize path by resolving . and .. segments
+ */
+function normalizePath(path: string): string {
+  const parts = path.split("/");
+  const resolved: string[] = [];
+  for (const part of parts) {
+    if (part === "..") {
+      resolved.pop();
+    } else if (part !== "." && part !== "") {
+      resolved.push(part);
+    }
+  }
+  return (path.startsWith("/") ? "/" : "") + resolved.join("/");
 }
 
 /**

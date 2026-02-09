@@ -339,13 +339,9 @@ async function psWindows(): Promise<ProcessInfo[]> {
     throw new Error(`tasklist command failed: ${stderrText}`);
   }
 
-  const result = {
-    success: code === 0,
-    stdout: new TextDecoder().decode(stdout),
-    stderr: new TextDecoder().decode(stderr),
-  };
+  const stdoutText = new TextDecoder().decode(stdout);
 
-  const lines = result.stdout.trim().split("\n");
+  const lines = stdoutText.trim().split("\n");
   const processes: ProcessInfo[] = [];
 
   for (const line of lines) {
@@ -514,23 +510,19 @@ async function portsNetstat(port?: number): Promise<PortInfo[]> {
     stderr: "piped",
   });
 
-  const { code, stdout, stderr } = await command.output();
+  const { code, stdout } = await command.output();
 
   if (code !== 0) {
     throw new Error("Failed to get port information (lsof and netstat unavailable)");
   }
 
-  const result = {
-    success: code === 0,
-    stdout: new TextDecoder().decode(stdout),
-    stderr: new TextDecoder().decode(stderr),
-  };
+  const stdoutText = new TextDecoder().decode(stdout);
 
-  const lines = result.stdout.trim().split("\n");
+  const lines = stdoutText.trim().split("\n");
   const ports: PortInfo[] = [];
 
   for (const line of lines) {
-    if (!line.includes("LISTEN") && port !== undefined) continue;
+    if (port === undefined && !line.includes("LISTEN")) continue;
 
     // Parse netstat output (varies by platform, this is a best-effort)
     // Example: tcp 0 0 0.0.0.0:8080 0.0.0.0:* LISTEN 12345/node
@@ -575,17 +567,13 @@ async function portsWindows(port?: number): Promise<PortInfo[]> {
     throw new Error(`netstat command failed: ${stderrText}`);
   }
 
-  const result = {
-    success: code === 0,
-    stdout: new TextDecoder().decode(stdout),
-    stderr: new TextDecoder().decode(stderr),
-  };
+  const stdoutText = new TextDecoder().decode(stdout);
 
-  const lines = result.stdout.trim().split("\n");
+  const lines = stdoutText.trim().split("\n");
   const ports: PortInfo[] = [];
 
   for (const line of lines) {
-    if (!line.includes("LISTENING") && port !== undefined) continue;
+    if (port === undefined && !line.includes("LISTENING")) continue;
 
     // Parse netstat output
     // Example: TCP 0.0.0.0:8080 0.0.0.0:0 LISTENING 12345

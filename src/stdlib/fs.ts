@@ -391,7 +391,7 @@ export async function move(
   dest: string,
   options: SandboxOptions = {},
 ): Promise<void> {
-  const resolvedSrc = await resolveAndValidatePath(src, "write", options);
+  const resolvedSrc = await resolveAndValidatePath(src, "read", options);
   const resolvedDest = await resolveAndValidatePath(dest, "write", options);
 
   const destDir = dirname(resolvedDest);

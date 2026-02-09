@@ -16,6 +16,7 @@ import { expandGlob, type ExpandGlobOptions } from "@std/fs/expand-glob";
 import { resolve, dirname, relative, join } from "@std/path";
 import { ensureDir } from "@std/fs/ensure-dir";
 import { getRealPath, getDefaultConfig } from "../core/utils.ts";
+import { getGlobBase as getGlobBaseRaw } from "./glob.ts";
 
 /**
  * File object - represents a file with metadata (like Vinyl from Gulp)
@@ -64,25 +65,11 @@ export interface GlobOptions {
 }
 
 /**
- * Get base directory from a glob pattern
- * Used to determine the base for relative path calculation
+ * Get base directory from a glob pattern, resolved against cwd.
+ * Delegates to the shared getGlobBase in glob.ts.
  */
 function getGlobBase(pattern: string, cwd: string): string {
-  // Find the first segment without wildcards
-  const segments = pattern.split("/");
-  const baseSegments: string[] = [];
-
-  for (const segment of segments) {
-    if (
-      segment.includes("*") || segment.includes("?") || segment.includes("[")
-    ) {
-      break;
-    }
-    baseSegments.push(segment);
-  }
-
-  const base = baseSegments.join("/") || ".";
-  return resolve(cwd, base);
+  return resolve(cwd, getGlobBaseRaw(pattern));
 }
 
 /**
@@ -273,18 +260,13 @@ export function cat(path: string, options: GlobOptions = {}): Stream<string> {
   const config = options.config ?? getDefaultConfig(cwd);
 
   const iterable = (async function* () {
-    try {
-      // Validate path is within sandbox
-      const validPath = await validatePath(path, config, cwd, "read");
+    // Validate path is within sandbox
+    const validPath = await validatePath(path, config, cwd, "read");
 
-      // Read file contents
-      const contents = await Deno.readTextFile(validPath);
+    // Read file contents
+    const contents = await Deno.readTextFile(validPath);
 
-      yield contents;
-    } catch (error) {
-      // Propagate the error
-      throw error;
-    }
+    yield contents;
   })();
 
   return createStream(iterable);

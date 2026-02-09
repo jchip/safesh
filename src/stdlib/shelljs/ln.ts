@@ -4,7 +4,7 @@
  * @module
  */
 
-import { resolve, dirname } from "@std/path";
+import { resolve } from "@std/path";
 import { ShellString } from "./types.ts";
 import { parseOptions, expandTilde } from "./common.ts";
 import type { SandboxOptions } from "../fs.ts";
@@ -49,8 +49,11 @@ export async function ln(
 
   try {
     // Expand tilde in paths
-    const resolvedSource = resolve(expandTilde(source));
+    const expandedSource = expandTilde(source);
     const resolvedDest = resolve(expandTilde(dest));
+
+    // For hard links, resolve source to absolute; for symlinks, keep as-given
+    const resolvedSource = symbolic ? expandedSource : resolve(expandedSource);
 
     // Check if source exists (for hard links, must exist)
     if (!symbolic) {
