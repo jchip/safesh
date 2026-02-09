@@ -10,8 +10,16 @@ import { expandTilde } from "./common.ts";
 
 /**
  * Directory stack state
+ * Module-level, but resettable via resetDirStack() for testing
  */
 const dirStack: string[] = [];
+
+/**
+ * Reset the directory stack (for testing)
+ */
+export function resetDirStack(): void {
+  dirStack.length = 0;
+}
 
 /**
  * Get current working directory

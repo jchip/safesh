@@ -163,11 +163,10 @@ export class FluentStream<T> implements AsyncIterable<T> {
    * stream.grep('warning').collect();
    * ```
    */
-  grep(pattern: RegExp | string): FluentStream<string> {
-    // Type assertion since grep only works on strings
+  grep(this: FluentStream<string>, pattern: RegExp | string): FluentStream<string> {
     return new FluentStream(
-      (this._stream as unknown as Stream<string>).pipe(transforms.grep(pattern))
-    ) as unknown as FluentStream<string>;
+      this._stream.pipe(transforms.grep(pattern))
+    );
   }
 
   /**
@@ -182,10 +181,10 @@ export class FluentStream<T> implements AsyncIterable<T> {
    * stream.lines().collect();
    * ```
    */
-  lines(): FluentStream<string> {
+  lines(this: FluentStream<string>): FluentStream<string> {
     return new FluentStream(
-      (this._stream as unknown as Stream<string>).pipe(transforms.lines())
-    ) as unknown as FluentStream<string>;
+      this._stream.pipe(transforms.lines())
+    );
   }
 
   /**

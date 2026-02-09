@@ -612,13 +612,14 @@ export class Command implements PromiseLike<CommandResult> {
 
     // SSH-426: Set up timeout if specified
     let timeoutId: number | undefined;
+    let killTimeoutId: number | undefined;
     let timedOut = false;
     if (this.options.timeout && this.options.timeout > 0) {
       timeoutId = setTimeout(() => {
         timedOut = true;
         try {
           process.kill("SIGTERM");
-          setTimeout(() => {
+          killTimeoutId = setTimeout(() => {
             try {
               process.kill("SIGKILL");
             } catch {
@@ -652,6 +653,9 @@ export class Command implements PromiseLike<CommandResult> {
       if (timeoutId !== undefined) {
         clearTimeout(timeoutId);
       }
+      if (killTimeoutId !== undefined) {
+        clearTimeout(killTimeoutId);
+      }
 
       // Emit job end event
       const exitCode = timedOut ? 124 : status.code;
@@ -662,6 +666,9 @@ export class Command implements PromiseLike<CommandResult> {
       // Clear timeout on error
       if (timeoutId !== undefined) {
         clearTimeout(timeoutId);
+      }
+      if (killTimeoutId !== undefined) {
+        clearTimeout(killTimeoutId);
       }
       throw err;
     }

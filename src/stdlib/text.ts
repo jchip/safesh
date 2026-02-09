@@ -113,11 +113,12 @@ export function grep(
   validateString(input, "$.text.grep()");
 
   const matches: GrepMatch[] = [];
+  // No 'g' flag: we test line-by-line, and 'g' breaks match() capture groups
   const regex = typeof pattern === "string"
-    ? new RegExp(pattern, options.ignoreCase ? "gi" : "g")
+    ? new RegExp(pattern, options.ignoreCase ? "i" : "")
     : options.ignoreCase
-    ? new RegExp(pattern.source, pattern.flags.includes("i") ? pattern.flags : pattern.flags + "i")
-    : pattern;
+      ? new RegExp(pattern.source, pattern.flags.replace(/g/g, "") + (pattern.flags.includes("i") ? "" : "i"))
+      : new RegExp(pattern.source, pattern.flags.replace(/g/g, ""));
 
   const lines = input.split("\n");
   const seen = new Set<string>();
@@ -401,7 +402,11 @@ export interface CountResult {
  */
 export function count(input: string): CountResult {
   validateString(input, "$.text.count()");
-  const lineCount = input.split("\n").length;
+  // Match wc -l: count newline characters (not split segments)
+  let lineCount = 0;
+  for (let i = 0; i < input.length; i++) {
+    if (input[i] === "\n") lineCount++;
+  }
   const wordCount = input.split(/\s+/).filter((w) => w.length > 0).length;
   const charCount = input.length;
   const byteCount = new TextEncoder().encode(input).length;

@@ -69,12 +69,9 @@ export async function which(
       break;
     }
 
-    let attempt = resolve(dir, cmd);
-    if (onWindows) {
-      attempt = attempt.toUpperCase();
-    }
+    const attempt = resolve(dir, cmd);
 
-    // Check if command already has a valid extension
+    // Check if command already has a valid extension (case-insensitive on Windows)
     const hasExt = pathExtArray.some((ext) =>
       attempt.toUpperCase().endsWith(ext)
     );

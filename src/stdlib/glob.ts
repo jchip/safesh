@@ -8,7 +8,7 @@
  */
 
 import { expandGlob, type ExpandGlobOptions } from "@std/fs/expand-glob";
-import { resolve, normalize, dirname } from "@std/path";
+import { resolve } from "@std/path";
 import { expandPath, isPathAllowed } from "../core/permissions.ts";
 import { pathViolation } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
