@@ -150,12 +150,14 @@ describe("SSH-303: Array Variable Support", () => {
   describe("Array length", () => {
     it("should support ${#arr[@]} for array length", () => {
       const code = transpileBash('echo ${#arr[@]}');
-      // Transpiler ready for modifier: "length" with subscript
+      // Transpiler generates .length on the subscripted array reference
+      assertStringIncludes(code, "arr[@].length");
     });
 
     it("should support ${#arr[*]} for array length", () => {
       const code = transpileBash('echo ${#arr[*]}');
-      // Transpiler ready
+      // Transpiler generates .length on the subscripted array reference
+      assertStringIncludes(code, "arr[*].length");
     });
   });
 
