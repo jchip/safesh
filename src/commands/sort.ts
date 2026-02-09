@@ -231,8 +231,10 @@ function compareValues(a: string, b: string, opts: CompareOptions): number {
   }
 
   if (opts.numeric) {
-    const numA = parseFloat(valA) || 0;
-    const numB = parseFloat(valB) || 0;
+    const rawA = parseFloat(valA);
+    const rawB = parseFloat(valB);
+    const numA = Number.isNaN(rawA) ? 0 : rawA;
+    const numB = Number.isNaN(rawB) ? 0 : rawB;
     return numA - numB;
   }
 
@@ -329,32 +331,16 @@ function createComparator(
  * Filter unique lines based on options
  */
 function filterUnique(lines: string[], options: SortOptions): string[] {
-  if (options.keys && options.keys.length > 0) {
-    const key = options.keys[0];
-    const seen = new Set<string>();
+  // Use stable mode to suppress the raw-string tiebreaker: lines that are equal
+  // by the sort criteria (keys, ignoreCase, dictionaryOrder, etc.) should dedup.
+  const comparator = createComparator({ ...options, unique: false, stable: true });
 
-    return lines.filter((line) => {
-      let keyVal = extractKeyValue(line, key, options.fieldDelimiter);
-      if (key.ignoreCase ?? options.ignoreCase) {
-        keyVal = keyVal.toLowerCase();
-      }
-      if (seen.has(keyVal)) return false;
-      seen.add(keyVal);
-      return true;
-    });
-  }
-
-  if (options.ignoreCase) {
-    const seen = new Set<string>();
-    return lines.filter((line) => {
-      const key = line.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-
-  return [...new Set(lines)];
+  // Adjacent dedup: since lines are already sorted, consecutive equal elements
+  // according to the full comparator (without tiebreaker) are duplicates
+  return lines.filter((line, i) => {
+    if (i === 0) return true;
+    return comparator(lines[i - 1]!, line) !== 0;
+  });
 }
 
 /**
@@ -363,32 +349,35 @@ function filterUnique(lines: string[], options: SortOptions): string[] {
 export function parseKeySpec(spec: string): SortKeySpec | null {
   const result: SortKeySpec = { startField: 1 };
 
-  let modifierStr = "";
-  let mainSpec = spec;
-
-  const modifierMatch = mainSpec.match(/([bdfhMnrV]+)$/);
-  if (modifierMatch) {
-    modifierStr = modifierMatch[1];
-    mainSpec = mainSpec.slice(0, -modifierStr.length);
-  }
-
-  if (modifierStr.includes("n")) result.numeric = true;
-  if (modifierStr.includes("r")) result.reverse = true;
-  if (modifierStr.includes("f")) result.ignoreCase = true;
-  if (modifierStr.includes("b")) result.ignoreLeading = true;
-  if (modifierStr.includes("h")) result.humanNumeric = true;
-  if (modifierStr.includes("V")) result.versionSort = true;
-  if (modifierStr.includes("d")) result.dictionaryOrder = true;
-  if (modifierStr.includes("M")) result.monthSort = true;
-
-  const parts = mainSpec.split(",");
+  // Split on comma first, then strip modifiers from each part
+  const parts = spec.split(",");
 
   if (parts.length === 0 || parts[0] === "") {
     return null;
   }
 
-  const startParts = parts[0].split(".");
-  const startField = parseInt(startParts[0], 10);
+  // Helper to strip and apply modifiers from a part string
+  function applyModifiers(part: string): string {
+    const modMatch = part.match(/([bdfhMnrV]+)$/);
+    if (modMatch && modMatch[1]) {
+      const mods = modMatch[1];
+      if (mods.includes("n")) result.numeric = true;
+      if (mods.includes("r")) result.reverse = true;
+      if (mods.includes("f")) result.ignoreCase = true;
+      if (mods.includes("b")) result.ignoreLeading = true;
+      if (mods.includes("h")) result.humanNumeric = true;
+      if (mods.includes("V")) result.versionSort = true;
+      if (mods.includes("d")) result.dictionaryOrder = true;
+      if (mods.includes("M")) result.monthSort = true;
+      return part.slice(0, -mods.length);
+    }
+    return part;
+  }
+
+  // Process start part
+  const startRaw = applyModifiers(parts[0]!);
+  const startParts = startRaw.split(".");
+  const startField = parseInt(startParts[0]!, 10);
   if (Number.isNaN(startField) || startField < 1) {
     return null;
   }
@@ -401,23 +390,10 @@ export function parseKeySpec(spec: string): SortKeySpec | null {
     }
   }
 
+  // Process end part
   if (parts.length > 1 && parts[1]) {
-    let endPart = parts[1];
-    const endModifierMatch = endPart.match(/([bdfhMnrV]+)$/);
-    if (endModifierMatch) {
-      const endModifiers = endModifierMatch[1];
-      if (endModifiers.includes("n")) result.numeric = true;
-      if (endModifiers.includes("r")) result.reverse = true;
-      if (endModifiers.includes("f")) result.ignoreCase = true;
-      if (endModifiers.includes("b")) result.ignoreLeading = true;
-      if (endModifiers.includes("h")) result.humanNumeric = true;
-      if (endModifiers.includes("V")) result.versionSort = true;
-      if (endModifiers.includes("d")) result.dictionaryOrder = true;
-      if (endModifiers.includes("M")) result.monthSort = true;
-      endPart = endPart.slice(0, -endModifiers.length);
-    }
-
-    const endParts = endPart.split(".");
+    const endRaw = applyModifiers(parts[1]);
+    const endParts = endRaw.split(".");
     if (endParts[0]) {
       const endField = parseInt(endParts[0], 10);
       if (!Number.isNaN(endField) && endField >= 1) {
