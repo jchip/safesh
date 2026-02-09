@@ -375,16 +375,32 @@ function hasComplexValue(value: AST.Word | AST.ParameterExpansion | AST.CommandS
 }
 
 /**
- * Extract command names from a statement recursively
+ * Options for command extraction
  */
-function extractCommandsFromStatement(stmt: AST.Statement, commands: Set<string>): void {
+interface ExtractCommandsOptions {
+  /** If true, skip builtin commands (default: false) */
+  skipBuiltins?: boolean;
+}
+
+/**
+ * Extract command names from a statement recursively.
+ *
+ * @param stmt - AST statement to extract from
+ * @param commands - Set to collect command names into
+ * @param options - Extraction options (skipBuiltins filters BUILTIN_COMMANDS)
+ */
+function extractCommandsFromStatement(
+  stmt: AST.Statement,
+  commands: Set<string>,
+  options: ExtractCommandsOptions = {},
+): void {
+  const { skipBuiltins = false } = options;
+
   switch (stmt.type) {
     case "Command": {
-      // Extract command name if it's a simple word
       if (stmt.name.type === "Word") {
         const cmdName = stmt.name.value;
-        // Skip builtins and variable assignments (empty command name)
-        if (cmdName && !BUILTIN_COMMANDS.has(cmdName)) {
+        if (cmdName && (!skipBuiltins || !BUILTIN_COMMANDS.has(cmdName))) {
           commands.add(cmdName);
         }
       }
@@ -392,27 +408,24 @@ function extractCommandsFromStatement(stmt: AST.Statement, commands: Set<string>
     }
     case "Pipeline": {
       for (const cmd of stmt.commands) {
-        extractCommandsFromStatement(cmd, commands);
+        extractCommandsFromStatement(cmd, commands, options);
       }
       break;
     }
     case "IfStatement": {
-      // Check test condition
       if (stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand") {
-        extractCommandsFromStatement(stmt.test, commands);
+        extractCommandsFromStatement(stmt.test, commands, options);
       }
-      // Check consequent
       for (const s of stmt.consequent) {
-        extractCommandsFromStatement(s, commands);
+        extractCommandsFromStatement(s, commands, options);
       }
-      // Check alternate
       if (stmt.alternate) {
         if (Array.isArray(stmt.alternate)) {
           for (const s of stmt.alternate) {
-            extractCommandsFromStatement(s, commands);
+            extractCommandsFromStatement(s, commands, options);
           }
         } else {
-          extractCommandsFromStatement(stmt.alternate, commands);
+          extractCommandsFromStatement(stmt.alternate, commands, options);
         }
       }
       break;
@@ -421,37 +434,37 @@ function extractCommandsFromStatement(stmt: AST.Statement, commands: Set<string>
     case "WhileStatement":
     case "UntilStatement": {
       if ("test" in stmt && stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand") {
-        extractCommandsFromStatement(stmt.test as AST.Statement, commands);
+        extractCommandsFromStatement(stmt.test as AST.Statement, commands, options);
       }
       for (const s of stmt.body) {
-        extractCommandsFromStatement(s, commands);
+        extractCommandsFromStatement(s, commands, options);
       }
       break;
     }
     case "CStyleForStatement": {
       for (const s of stmt.body) {
-        extractCommandsFromStatement(s, commands);
+        extractCommandsFromStatement(s, commands, options);
       }
       break;
     }
     case "CaseStatement": {
       for (const clause of stmt.cases) {
         for (const s of clause.body) {
-          extractCommandsFromStatement(s, commands);
+          extractCommandsFromStatement(s, commands, options);
         }
       }
       break;
     }
     case "FunctionDeclaration": {
       for (const s of stmt.body) {
-        extractCommandsFromStatement(s, commands);
+        extractCommandsFromStatement(s, commands, options);
       }
       break;
     }
     case "Subshell":
     case "BraceGroup": {
       for (const s of stmt.body) {
-        extractCommandsFromStatement(s, commands);
+        extractCommandsFromStatement(s, commands, options);
       }
       break;
     }
@@ -459,12 +472,12 @@ function extractCommandsFromStatement(stmt: AST.Statement, commands: Set<string>
 }
 
 /**
- * Extract all external command names from a parsed AST
+ * Extract external command names from a parsed AST (skips builtins)
  */
 function extractCommands(ast: AST.Program): Set<string> {
   const commands = new Set<string>();
   for (const stmt of ast.body) {
-    extractCommandsFromStatement(stmt, commands);
+    extractCommandsFromStatement(stmt, commands, { skipBuiltins: true });
   }
   return commands;
 }
@@ -491,83 +504,13 @@ const DANGEROUS_COMMANDS = new Set([
 ]);
 
 /**
- * Extract all command names including builtins (for dangerous command detection)
- */
-function extractAllCommands(stmt: AST.Statement, commands: Set<string>): void {
-  switch (stmt.type) {
-    case "Command": {
-      // Extract command name if it's a simple word (including builtins)
-      if (stmt.name.type === "Word") {
-        const cmdName = stmt.name.value;
-        if (cmdName) {
-          commands.add(cmdName);
-        }
-      }
-      break;
-    }
-    case "Pipeline": {
-      for (const cmd of stmt.commands) {
-        extractAllCommands(cmd, commands);
-      }
-      break;
-    }
-    case "IfStatement": {
-      if (stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand") {
-        extractAllCommands(stmt.test, commands);
-      }
-      for (const s of stmt.consequent) {
-        extractAllCommands(s, commands);
-      }
-      if (stmt.alternate) {
-        if (Array.isArray(stmt.alternate)) {
-          for (const s of stmt.alternate) {
-            extractAllCommands(s, commands);
-          }
-        } else {
-          extractAllCommands(stmt.alternate, commands);
-        }
-      }
-      break;
-    }
-    case "ForStatement":
-    case "WhileStatement":
-    case "UntilStatement": {
-      for (const s of stmt.body) {
-        extractAllCommands(s, commands);
-      }
-      break;
-    }
-    case "CStyleForStatement": {
-      for (const s of stmt.body) {
-        extractAllCommands(s, commands);
-      }
-      break;
-    }
-    case "CaseStatement": {
-      for (const caseItem of stmt.cases) {
-        for (const s of caseItem.body) {
-          extractAllCommands(s, commands);
-        }
-      }
-      break;
-    }
-    case "Subshell":
-    case "BraceGroup": {
-      for (const s of stmt.body) {
-        extractAllCommands(s, commands);
-      }
-      break;
-    }
-  }
-}
-
-/**
- * Check if AST contains any dangerous commands that require safesh permission checks
+ * Check if AST contains any dangerous commands that require safesh permission checks.
+ * Uses extractCommandsFromStatement without skipBuiltins to include all commands.
  */
 function hasDangerousCommands(ast: AST.Program): boolean {
   const commands = new Set<string>();
   for (const stmt of ast.body) {
-    extractAllCommands(stmt, commands);
+    extractCommandsFromStatement(stmt, commands);
   }
 
   for (const cmd of commands) {
