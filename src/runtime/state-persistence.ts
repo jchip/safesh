@@ -76,12 +76,13 @@ export function getStateFilePath(projectDir: string): string {
 }
 
 /**
- * Check if a PID is still running
+ * Check if a PID is still running.
+ * Uses SIGURG which is a no-op signal (out-of-band data notification)
+ * that won't resume stopped processes unlike SIGCONT.
  */
 function isPidRunning(pid: number): boolean {
   try {
-    // Signal 0 doesn't kill but checks if process exists
-    Deno.kill(pid, "SIGCONT"); // Use SIGCONT as it's harmless
+    Deno.kill(pid, "SIGURG");
     return true;
   } catch {
     return false;
