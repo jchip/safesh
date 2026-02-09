@@ -6,6 +6,7 @@
  */
 
 import type { TokenId } from "./token-id.ts";
+import type { DiagnosticSeverity } from "./diagnostics.ts";
 
 // =============================================================================
 // Base Types
@@ -452,7 +453,7 @@ export interface StringTest extends BaseNode {
 // Parse Diagnostics (for error recovery)
 // =============================================================================
 
-export type DiagnosticSeverity = "error" | "warning" | "info";
+export type { DiagnosticSeverity };
 
 export interface ParseDiagnostic {
   severity: DiagnosticSeverity;
