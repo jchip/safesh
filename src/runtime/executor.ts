@@ -722,18 +722,23 @@ export async function findConfig(cwd: string): Promise<string | undefined> {
   return undefined;
 }
 
+/** Result of file execution preparation */
+interface FileExecutionPrep {
+  cwd: string;
+  args: string[];
+  subprocessManager: SubprocessManager;
+}
+
 /**
- * Execute a JS/TS file directly
+ * Shared preparation for file execution: read file, validate imports,
+ * build preamble/postamble, write temp file, and build Deno command args.
  */
-export async function executeFile(
+async function prepareFileExecution(
   filePath: string,
   config: SafeShellConfig,
-  options: ExecOptions = {},
+  cwd: string,
   shell?: Shell,
-): Promise<ExecResult> {
-  const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
-  const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT_MS;
-
+): Promise<FileExecutionPrep> {
   // Resolve file path - if already absolute, use as-is, otherwise resolve from cwd
   const absolutePath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
 
@@ -777,6 +782,23 @@ export async function executeFile(
     scriptPath: tempPath,
     denoFlags: config.denoFlags,
   });
+
+  return { cwd, args, subprocessManager };
+}
+
+/**
+ * Execute a JS/TS file directly
+ */
+export async function executeFile(
+  filePath: string,
+  config: SafeShellConfig,
+  options: ExecOptions = {},
+  shell?: Shell,
+): Promise<ExecResult> {
+  const cwd = options.cwd ?? shell?.cwd ?? Deno.cwd();
+  const timeoutMs = options.timeout ?? config.timeout ?? DEFAULT_TIMEOUT_MS;
+
+  const { args, subprocessManager } = await prepareFileExecution(filePath, config, cwd, shell);
 
   // Build environment
   const env = buildEnv(config, shell);
@@ -822,47 +844,7 @@ export async function executeFilePassthrough(
 ): Promise<number> {
   const cwd = options.cwd ?? Deno.cwd();
 
-  // Resolve file path
-  const absolutePath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
-
-  // Read and validate file imports
-  let fileCode: string;
-  try {
-    fileCode = await Deno.readTextFile(absolutePath);
-  } catch (error) {
-    throw executionError(
-      `Failed to read file '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  const importPolicy = config.imports ?? { trusted: [], allowed: [], blocked: [] };
-  validateImports(fileCode, importPolicy);
-
-  // Build preamble (no shell state needed for passthrough)
-  const preambleConfig = extractPreambleConfig(config, cwd);
-  const filePreamble = buildFilePreamble(undefined, preambleConfig);
-  const filePostamble = buildFilePostamble(false);
-  const wrappedCode = filePreamble + fileCode + filePostamble;
-
-  // Write wrapped code to temp file
-  await ensureDir(TEMP_SCRIPT_DIR);
-  const hash = await hashCode(wrappedCode);
-  const tempPath = join(TEMP_SCRIPT_DIR, `file_${hash}.ts`);
-  await Deno.writeTextFile(tempPath, wrappedCode);
-
-  // Build subprocess args
-  const importMapPath = await generateImportMap(importPolicy);
-  const permFlags = buildPermissionFlags(config, cwd);
-  const configPath = await findConfig(cwd);
-
-  const subprocessManager = new SubprocessManager();
-  const args = subprocessManager.buildDenoArgs({
-    permFlags,
-    importMapPath,
-    configPath,
-    scriptPath: tempPath,
-    denoFlags: config.denoFlags,
-  });
+  const { args } = await prepareFileExecution(filePath, config, cwd);
 
   const env = buildEnv(config);
 
