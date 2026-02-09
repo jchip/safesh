@@ -155,15 +155,15 @@ function buildEnv(
   const allowList = envConfig.allow ?? [];
   const maskPatterns = envConfig.mask ?? [];
 
+  // Pre-compile mask regexes once before the loop
+  const maskRegexes = maskPatterns.map(
+    (pattern) => new RegExp("^" + pattern.replace(/\*/g, ".*") + "$"),
+  );
+
   // Helper to check if a key matches any mask pattern
   const isMasked = (key: string): boolean => {
-    if (maskPatterns.length === 0) return false;
-    return maskPatterns.some((pattern) => {
-      const regex = new RegExp(
-        "^" + pattern.replace(/\*/g, ".*") + "$",
-      );
-      return regex.test(key);
-    });
+    if (maskRegexes.length === 0) return false;
+    return maskRegexes.some((regex) => regex.test(key));
   };
 
   // Copy allowed env vars from current process
