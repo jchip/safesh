@@ -28,14 +28,36 @@ import { SHELL_BUILTINS, type BuiltinConfig } from "../builtins.ts";
 
 /**
  * Format argument for TypeScript output.
- * Args containing ${} are template interpolations and need backticks, not double quotes.
+ *
+ * @param arg - The string to format
+ * @param hasExpansion - Explicit flag: true for template literal, false for double-quoted.
+ *   When omitted, detects unescaped `${` via regex. Explicit flag avoids false positives
+ *   from escaped `\${` that still contains the `${` substring (SSH-532).
  */
-function formatArg(arg: string): string {
-  if (arg.includes("${")) {
-    // Template interpolation - use backticks to evaluate
+function formatArg(arg: string, hasExpansion?: boolean): string {
+  // SSH-532: Use explicit AST metadata when available; otherwise detect unescaped ${
+  const isTemplate = hasExpansion ?? /(?<!\\)\$\{/.test(arg);
+  if (isTemplate) {
     return `\`${arg}\``;
   }
   return `"${escapeForQuotes(arg)}"`;
+}
+
+/**
+ * SSH-532: Check if an AST word node contains real expansions (not just literal parts).
+ */
+function wordHasExpansion(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+): boolean {
+  if (word.type === "ParameterExpansion" || word.type === "CommandSubstitution") {
+    return true;
+  }
+  if (word.type === "Word" && word.parts.length > 0) {
+    return word.parts.some(
+      (part) => part.type !== "LiteralPart" && part.type !== "GlobPattern",
+    );
+  }
+  return false;
 }
 
 /**
@@ -59,9 +81,12 @@ function handleUserFunction(name: string): string {
 function handleShellBuiltin(
   name: string,
   args: string[],
-  builtin: { fn: string; type: string }
+  builtin: { fn: string; type: string },
+  argExpansions?: boolean[],
 ): { code: string; async: boolean } {
-  const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+  const argsArray = args.length > 0
+    ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
+    : "";
 
   if (builtin.type === "output") {
     // Output builtins should print their result
@@ -90,7 +115,7 @@ function handleShellBuiltin(
   }
 }
 
-function handleTmuxSendKeys(args: string[]): string | null {
+function handleTmuxSendKeys(args: string[], argExpansions?: boolean[]): string | null {
   // Check for pattern: tmux send-keys -t <target> [-c <client>] <text> C-m
   if (args.length > 0 && args[0] === "send-keys" && args[args.length - 1] === "C-m") {
     let target: string | null = null;
@@ -103,13 +128,13 @@ function handleTmuxSendKeys(args: string[]): string | null {
       const nextArg = args[i + 1];
 
       if (arg === "-t" && nextArg) {
-        target = formatArg(nextArg);
+        target = formatArg(nextArg, argExpansions?.[i + 1]);
         i++; // skip next arg
       } else if (arg === "-c" && nextArg) {
-        client = formatArg(nextArg);
+        client = formatArg(nextArg, argExpansions?.[i + 1]);
         i++; // skip next arg
       } else if (arg) {
-        textArgs.push(formatArg(arg));
+        textArgs.push(formatArg(arg, argExpansions?.[i]));
       }
     }
 
@@ -167,7 +192,7 @@ function handleTimeoutCommand(args: string[], ctx: VisitorContext): { code: stri
   const cmdArgs = args.slice(2);
 
   // Build the command with timeout option
-  const argsArray = cmdArgs.length > 0 ? cmdArgs.map(formatArg).join(", ") : "";
+  const argsArray = cmdArgs.length > 0 ? cmdArgs.map((a) => formatArg(a)).join(", ") : "";
   const code = `$.cmd({ timeout: ${timeoutMs} }, ${formatArg(cmdName)}${argsArray ? `, ${argsArray}` : ""})`;
 
   return { code, async: true };
@@ -176,15 +201,18 @@ function handleTimeoutCommand(args: string[], ctx: VisitorContext): { code: stri
 function handleSpecializedCommand(
   name: string,
   args: string[],
-  hasMergeStreams: boolean
+  hasMergeStreams: boolean,
+  argExpansions?: boolean[],
 ): string {
   // Special handling for tmux send-keys
   if (name === "tmux") {
-    const tmuxResult = handleTmuxSendKeys(args);
+    const tmuxResult = handleTmuxSendKeys(args, argExpansions);
     if (tmuxResult) return tmuxResult;
   }
 
-  const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+  const argsArray = args.length > 0
+    ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
+    : "";
   if (hasMergeStreams) {
     return `$.${name}({ mergeStreams: true }${argsArray ? `, ${argsArray}` : ""})`;
   }
@@ -197,10 +225,12 @@ function handleStandardCommand(
   hasAssignments: boolean,
   assignments: AST.VariableAssignment[],
   hasMergeStreams: boolean,
-  ctx: VisitorContext
+  ctx: VisitorContext,
+  nameHasExpansion?: boolean,
+  argExpansions?: boolean[],
 ): string {
   // SSH-484: Use formatArg for command name to support variable expansion
-  const formattedName = formatArg(name);
+  const formattedName = formatArg(name, nameHasExpansion);
 
   if (hasAssignments) {
     const envEntries = assignments
@@ -210,11 +240,13 @@ function handleStandardCommand(
         return `${a.name}: "${escapedValue}"`;
       })
       .join(", ");
-    const argsArray = args.map(formatArg).join(", ");
+    const argsArray = args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ");
     return `$.cmd({ env: { ${envEntries} } }, ${formattedName}${argsArray ? `, ${argsArray}` : ""})`;
   }
 
-  const argsArray = args.length > 0 ? args.map(formatArg).join(", ") : "";
+  const argsArray = args.length > 0
+    ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
+    : "";
   if (hasMergeStreams) {
     return `$.cmd({ mergeStreams: true }, ${formattedName}${argsArray ? `, ${argsArray}` : ""})`;
   }
@@ -236,6 +268,10 @@ interface CommandAnalysis {
   hasMergeStreams: boolean;
   hasDynamicArgs: boolean;
   isVariableAssignmentOnly: boolean;
+  /** SSH-532: Whether the command name contains real expansions */
+  nameHasExpansion: boolean;
+  /** SSH-532: Per-arg flags indicating real expansions */
+  argExpansions: boolean[];
 }
 
 /**
@@ -244,11 +280,11 @@ interface CommandAnalysis {
 type CommandStrategy =
   | { type: 'variable-assignment'; assignments: AST.VariableAssignment[] }
   | { type: 'user-function'; name: string }
-  | { type: 'shell-builtin'; name: string; args: string[]; builtin: BuiltinConfig }
+  | { type: 'shell-builtin'; name: string; args: string[]; builtin: BuiltinConfig; argExpansions: boolean[] }
   | { type: 'timeout'; args: string[] }
   | { type: 'fluent'; name: string; args: string[] }
-  | { type: 'specialized'; name: string; args: string[]; hasMergeStreams: boolean }
-  | { type: 'standard'; name: string; args: string[]; hasAssignments: boolean; assignments: AST.VariableAssignment[]; hasMergeStreams: boolean };
+  | { type: 'specialized'; name: string; args: string[]; hasMergeStreams: boolean; argExpansions: boolean[] }
+  | { type: 'standard'; name: string; args: string[]; hasAssignments: boolean; assignments: AST.VariableAssignment[]; hasMergeStreams: boolean; nameHasExpansion: boolean; argExpansions: boolean[] };
 
 /**
  * Phase 1: Analyze command structure
@@ -271,7 +307,10 @@ function analyzeCommand(
            typeof r.target === "number" && r.target === 1 &&
            r.fd === 2
   );
-  const hasDynamicArgs = args.some((arg) => arg.includes("${"));
+  // SSH-532: Compute expansion metadata from AST, not string heuristics
+  const nameHasExpansion = wordHasExpansion(command.name);
+  const argExpansions = command.args.map((arg) => wordHasExpansion(arg));
+  const hasDynamicArgs = argExpansions.some(Boolean);
 
   return {
     name,
@@ -281,6 +320,8 @@ function analyzeCommand(
     hasMergeStreams,
     hasDynamicArgs,
     isVariableAssignmentOnly,
+    nameHasExpansion,
+    argExpansions,
   };
 }
 
@@ -311,7 +352,8 @@ function selectCommandStrategy(
       type: 'shell-builtin',
       name: analysis.name,
       args: analysis.args,
-      builtin
+      builtin,
+      argExpansions: analysis.argExpansions,
     };
   }
 
@@ -336,7 +378,8 @@ function selectCommandStrategy(
       type: 'specialized',
       name: analysis.name,
       args: analysis.args,
-      hasMergeStreams: analysis.hasMergeStreams
+      hasMergeStreams: analysis.hasMergeStreams,
+      argExpansions: analysis.argExpansions,
     };
   }
 
@@ -347,7 +390,9 @@ function selectCommandStrategy(
     args: analysis.args,
     hasAssignments: analysis.hasAssignments,
     assignments: command.assignments,
-    hasMergeStreams: analysis.hasMergeStreams
+    hasMergeStreams: analysis.hasMergeStreams,
+    nameHasExpansion: analysis.nameHasExpansion,
+    argExpansions: analysis.argExpansions,
   };
 }
 
@@ -373,7 +418,7 @@ function executeCommandStrategy(
     }
 
     case 'shell-builtin': {
-      const result = handleShellBuiltin(strategy.name, strategy.args, strategy.builtin);
+      const result = handleShellBuiltin(strategy.name, strategy.args, strategy.builtin, strategy.argExpansions);
       return { code: result.code, async: result.async };
     }
 
@@ -407,7 +452,7 @@ function executeCommandStrategy(
     }
 
     case 'specialized': {
-      const cmdExpr = handleSpecializedCommand(strategy.name, strategy.args, strategy.hasMergeStreams);
+      const cmdExpr = handleSpecializedCommand(strategy.name, strategy.args, strategy.hasMergeStreams, strategy.argExpansions);
       return { code: cmdExpr, async: true };
     }
 
@@ -418,7 +463,9 @@ function executeCommandStrategy(
         strategy.hasAssignments,
         strategy.assignments,
         strategy.hasMergeStreams,
-        ctx
+        ctx,
+        strategy.nameHasExpansion,
+        strategy.argExpansions,
       );
       return { code: cmdExpr, async: true };
     }
