@@ -3,12 +3,24 @@
  *
  * Provides unified logic for detecting and handling errors, especially path violations.
  * Eliminates ~400 lines duplicated 3 times across bash-prehook.ts.
+ *
+ * Path violation detection patterns are defined in error-patterns.ts and shared
+ * between the runtime functions and the generated inline error handler code.
  */
 
 import { getTempRoot } from "./temp.ts";
 import { getErrorLogPath } from "./temp.ts";
 import type { PendingPathRequest } from "./pending.ts";
 import { writeJsonFileSync } from "./io-utils.ts";
+import {
+  COMMAND_FAILURE_MESSAGES,
+  DENO_PATH_REGEX,
+  PATH_VIOLATION_CODES,
+  PATH_VIOLATION_MESSAGES,
+  SAFESH_PATH_REGEX,
+  SYMLINK_REAL_PATH_REGEX,
+  WRITE_ACCESS_MESSAGE,
+} from "./error-patterns.ts";
 
 /**
  * Information about a detected path violation
@@ -38,14 +50,9 @@ export function detectPathViolation(error: unknown): PathViolationInfo {
   const errorCode = err?.code || "";
 
   const isPathViolation =
-    errorCode === "PATH_VIOLATION" ||
-    errorCode === "SYMLINK_VIOLATION" ||
-    errorCode === "NotCapable" ||
+    PATH_VIOLATION_CODES.some((c) => errorCode === c) ||
     err?.name === "NotCapable" ||
-    errorMessage.includes("is outside allowed directories") ||
-    errorMessage.includes("outside allowed directories") ||
-    errorMessage.includes("Requires read access to") ||
-    errorMessage.includes("Requires write access to");
+    PATH_VIOLATION_MESSAGES.some((m) => errorMessage.includes(m));
 
   if (isPathViolation) {
     const path = extractPathFromError(errorMessage, errorCode);
@@ -82,19 +89,19 @@ export function extractPathFromError(
   errorCode?: string,
 ): string {
   // Try Deno format first: Requires read/write access to "path"
-  const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
+  const denoMatch = errorMessage.match(DENO_PATH_REGEX);
   if (denoMatch) {
     return denoMatch[1]!;
   }
 
   // Try SafeShell format: Path/Symlink 'path'
-  const pathMatch = errorMessage.match(/(?:Path|Symlink) '([^']+)'/);
+  const pathMatch = errorMessage.match(SAFESH_PATH_REGEX);
   if (pathMatch) {
     let path = pathMatch[1]!;
 
     // For symlink violations, extract the real path instead
     if (errorCode === "SYMLINK_VIOLATION") {
-      const realPathMatch = errorMessage.match(/points to '([^']+)'/);
+      const realPathMatch = errorMessage.match(SYMLINK_REAL_PATH_REGEX);
       if (realPathMatch) {
         path = realPathMatch[1]!;
       }
@@ -118,7 +125,7 @@ export function extractPathFromError(
 export function extractOperationFromError(
   errorMessage: string,
 ): "read" | "write" {
-  if (errorMessage.includes("Requires write access to")) {
+  if (errorMessage.includes(WRITE_ACCESS_MESSAGE)) {
     return "write";
   }
   // PATH_VIOLATION and SYMLINK_VIOLATION from SafeShell don't distinguish
@@ -252,10 +259,7 @@ export function createErrorHandler(
     }
 
     // Check if this is a command execution failure (not a SafeShell error)
-    const isCommandFailure =
-      errorMessage.includes("Pipeline failed: upstream command exited with code") ||
-      errorMessage.includes("command exited with code") ||
-      errorMessage.includes("Command failed with exit code");
+    const isCommandFailure = COMMAND_FAILURE_MESSAGES.some((m) => errorMessage.includes(m));
 
     // Build error message
     const messageParts = [`=== ${options.prefix} ===`];
@@ -321,38 +325,42 @@ export function generateInlineErrorHandler(
     ? `const __TRANSPILED_CODE__ = \`${escapedTranspiledCode}\`;\n`
     : "";
 
+  // Generate inline path violation code checks from shared constants
+  const codeChecks = PATH_VIOLATION_CODES.map((c) => `    errorCode === "${c}"`).join(" ||\n");
+  const msgChecks = PATH_VIOLATION_MESSAGES.map((m, i, arr) =>
+    `    errorMessage.includes("${m}")${i < arr.length - 1 ? " ||" : ";"}`
+  ).join("\n");
+  const cmdFailureChecks = COMMAND_FAILURE_MESSAGES.map((m, i, arr) =>
+    `    errorMessage.includes("${m}")${i < arr.length - 1 ? " ||" : ";"}`
+  ).join("\n");
+
   const handlerCode = `${transpiledCodeConst}const __handleError = (error) => {
 ${includeCommandCheck}  const errorMessage = error.message || String(error);
   const errorCode = error.code || "";
 
   // Check if this is a path permission error (SafeShell or Deno)
   const isPathViolation =
-    errorCode === "PATH_VIOLATION" ||
-    errorCode === "SYMLINK_VIOLATION" ||
-    errorCode === "NotCapable" ||
+${codeChecks} ||
     error?.name === "NotCapable" ||
-    errorMessage.includes("is outside allowed directories") ||
-    errorMessage.includes("outside allowed directories") ||
-    errorMessage.includes("Requires read access to") ||
-    errorMessage.includes("Requires write access to");
+${msgChecks}
 
   if (isPathViolation) {
     let path = "unknown";
-    const denoMatch = errorMessage.match(/Requires (?:read|write) access to "([^"]+)"/);
+    const denoMatch = errorMessage.match(${DENO_PATH_REGEX.toString()});
     if (denoMatch) {
       path = denoMatch[1];
     } else {
-      const pathMatch = errorMessage.match(/(?:Path|Symlink) '([^']+)'/);
+      const pathMatch = errorMessage.match(${SAFESH_PATH_REGEX.toString()});
       if (pathMatch) {
         path = pathMatch[1];
         if (errorCode === "SYMLINK_VIOLATION") {
-          const realPathMatch = errorMessage.match(/points to '([^']+)'/);
+          const realPathMatch = errorMessage.match(${SYMLINK_REAL_PATH_REGEX.toString()});
           if (realPathMatch) path = realPathMatch[1];
         }
       }
     }
 
-    const operation = errorMessage.includes("Requires write access to") ? "write" : "read";
+    const operation = errorMessage.includes("${WRITE_ACCESS_MESSAGE}") ? "write" : "read";
     const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
     const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
     const pending = {
@@ -395,9 +403,7 @@ AFTER USER RESPONDS: desh retry-path --id=\${pendingId} --choice=<user's choice>
   }
 
   const isCommandFailure =
-    errorMessage.includes("Pipeline failed: upstream command exited with code") ||
-    errorMessage.includes("command exited with code") ||
-    errorMessage.includes("Command failed with exit code");
+${cmdFailureChecks}
 
   // SSH-475: Build detailed error log with transpiled code if available
   const errorLogParts = [
