@@ -331,7 +331,7 @@ function selectCommandStrategy(
   }
 
   // Specialized command
-  if (!analysis.hasAssignments && (SPECIALIZED_COMMANDS.has(analysis.name) || analysis.name === "tmux")) {
+  if (!analysis.hasAssignments && SPECIALIZED_COMMANDS.has(analysis.name)) {
     return {
       type: 'specialized',
       name: analysis.name,
