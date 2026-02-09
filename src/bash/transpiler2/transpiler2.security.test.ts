@@ -243,18 +243,16 @@ describe("Security - Path Traversal Prevention", () => {
     const ast = parse('cat "file\\nname"');
     const output = transpile(ast);
 
-    // Escaped newline in path should be preserved
-    assertStringIncludes(output, "$.cat(");
-    assertStringIncludes(output, "file");
+    // Escaped newline in path should be preserved as escaped sequence (4 literal backslashes)
+    assertStringIncludes(output, '$.cat("file\\\\\\\\nname")');
   });
 
   it("should handle null byte injection attempts", () => {
     const ast = parse('cat "file.txt\\x00.sh"');
     const output = transpile(ast);
 
-    // Null bytes should be handled (though bash parser may reject)
-    assertStringIncludes(output, "$.cat(");
-    assertStringIncludes(output, "file.txt");
+    // Null byte escape sequence should be preserved as escaped literal, not injected
+    assertStringIncludes(output, '$.cat("file.txt\\\\\\\\x00.sh")');
   });
 
   it("should handle redirection to dangerous paths", () => {
@@ -421,10 +419,8 @@ describe("Security - Quote Escaping", () => {
     const ast = parse('echo "say \\"hello\\""');
     const output = transpile(ast);
 
-    // Escaped quotes should be preserved in the output
-    assertStringIncludes(output, "$.echo(");
-    assertStringIncludes(output, "say");
-    assertStringIncludes(output, "hello");
+    // Escaped quotes should be preserved in the transpiled output
+    assertStringIncludes(output, '$.echo("say \\"hello\\"")');
   });
 
   it("should handle single quotes in double-quoted strings", () => {
@@ -786,8 +782,8 @@ describe("Security - Escaping Edge Cases", () => {
     const ast = parse('echo "test\u200Bhidden"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "$.echo(");
-    assertStringIncludes(output, "test");
+    // Zero-width space and full string should be preserved in output
+    assertStringIncludes(output, "test\u200Bhidden");
   });
 
   it("should handle ANSI escape codes safely", () => {
@@ -806,20 +802,21 @@ describe("Security - Escaping Edge Cases", () => {
     assertStringIncludes(output, longString);
   });
 
-  it("should handle malformed UTF-8 gracefully", () => {
-    // This tests the transpiler's robustness
-    const ast = parse('echo "test"');
+  it("should handle surrogate-adjacent Unicode characters gracefully", () => {
+    // Test with characters near surrogate boundaries and supplementary plane
+    const ast = parse('echo "\uD7FF\uE000"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "test");
+    // Should preserve the full Unicode string including boundary characters
+    assertStringIncludes(output, '$.echo("\uD7FF\uE000")');
   });
 
   it("should handle control characters safely", () => {
     const ast = parse('echo "test\\x00null"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "$.echo(");
-    assertStringIncludes(output, "test");
+    // Control character escape sequence should be preserved as escaped literal
+    assertStringIncludes(output, '$.echo("test\\\\\\\\x00null")');
   });
 
   it("should handle special regex characters in patterns", () => {
