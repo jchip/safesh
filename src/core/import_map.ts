@@ -109,9 +109,14 @@ export function validateImports(code: string, policy: ImportPolicy): void {
   const allowed = policy.allowed ?? [];
   const blocked = policy.blocked ?? [];
 
-  // Simple regex to find import statements
-  // Matches: import ... from "specifier" or import("specifier")
-  const importRegex = /(?:import\s+.*?\s+from\s+|import\()\s*["']([^"']+)["']/g;
+  // Regex to find import/re-export statements and dynamic imports
+  // Matches:
+  //   import ... from "specifier"          (named/default imports, multiline)
+  //   import "specifier"                   (bare/side-effect imports)
+  //   import("specifier")                  (dynamic imports)
+  //   export { ... } from "specifier"      (re-exports)
+  //   export * from "specifier"            (namespace re-exports)
+  const importRegex = /(?:import\s[\s\S]*?\s+from\s+|import\s*\(\s*|import\s+|export\s[\s\S]*?\sfrom\s+)["']([^"']+)["']/g;
 
   const violations: string[] = [];
   let match;
