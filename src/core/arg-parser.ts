@@ -384,7 +384,6 @@ function parseShortFlag(
   // Try combined boolean flags (e.g., "-abc" = "-a -b -c")
   if (allowCombinedFlags && arg.length > 2) {
     const flags: Record<string, unknown> = {};
-    let hasError = false;
 
     for (let i = 1; i < arg.length; i++) {
       const char = `-${arg[i]}`;
@@ -410,12 +409,10 @@ function parseShortFlag(
       flags[charName] = true;
     }
 
-    if (!hasError) {
-      return {
-        flags,
-        consumed: 1,
-      };
-    }
+    return {
+      flags,
+      consumed: 1,
+    };
   }
 
   return {
