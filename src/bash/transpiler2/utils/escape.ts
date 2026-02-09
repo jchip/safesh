@@ -47,13 +47,13 @@ export function escapeString(
       result = result.replace(/"/g, '\\"');
       break;
     case "template":
-      // First escape ${ to prevent template interpolation
-      // This needs special handling: ${ becomes \\${
-      // Then escape other $ signs and backticks
-      result = result
-        .replace(/\$\{/g, "\\\\${")
-        .replace(/`/g, "\\`")
-        .replace(/\$(?!\{)/g, "\\$"); // Escape $ not followed by {
+      // Single-pass: match ${ (template interpolation), ` (backtick), or lone $ in one regex.
+      // Avoids multi-pass interaction where earlier replacements could affect later ones.
+      result = result.replace(/\$\{|`|\$/g, (match) => {
+        if (match === "${") return "\\\\${";
+        if (match === "`") return "\\`";
+        return "\\$"; // lone $
+      });
       break;
   }
 
