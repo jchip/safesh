@@ -332,6 +332,23 @@ export function getMergedPathSync(currentPath: string): string {
 }
 
 /**
+ * Concatenate multiple Uint8Array chunks into a single Uint8Array.
+ *
+ * @param chunks - Array of Uint8Array chunks to concatenate
+ * @returns Single Uint8Array containing all chunks
+ */
+export function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}
+
+/**
  * Collect a readable stream into bytes
  */
 export async function collectStreamBytes(
@@ -350,16 +367,7 @@ export async function collectStreamBytes(
     reader.releaseLock();
   }
 
-  // Concatenate all chunks
-  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return result;
+  return concatUint8Arrays(chunks);
 }
 
 /**
@@ -408,16 +416,7 @@ export async function collectStreamBytesWithTimeout(
     }
   }
 
-  // Concatenate all chunks collected before abort/completion
-  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return result;
+  return concatUint8Arrays(chunks);
 }
 
 /**
