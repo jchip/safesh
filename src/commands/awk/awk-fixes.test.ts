@@ -50,22 +50,22 @@ describe("SSH-540: indexOf trailing-line detection", () => {
 // SSH-541: AWK substr() POSIX clamping
 // =============================================================================
 
-describe("SSH-541: substr() POSIX clamping", () => {
+describe("SSH-541: substr() uses .substring() with proper clamping", () => {
   it("should handle normal substr correctly", async () => {
     const result = await awkExec('{ print substr($0, 2, 3) }', "hello");
     assertEquals(result.output.trim(), "ell");
   });
 
-  it("should handle substr with start < 1 (clamped to 0)", async () => {
-    // Implementation: start = Math.floor(-1) - 1 = -2, clamped to 0 via Math.max
-    // str.substr(0, 4) = "hell"
+  it("should handle substr with start < 1 (clamped to index 0)", async () => {
+    // AWK start=-1, JS index = max(0, floor(-1)-1) = 0
+    // .substring(0, 0+4) = "hell"
     const result = await awkExec('{ print substr($0, -1, 4) }', "hello");
     assertEquals(result.output.trim(), "hell");
   });
 
-  it("should handle substr with start = 0 (clamped to 0)", async () => {
-    // Implementation: start = Math.floor(0) - 1 = -1, clamped to 0 via Math.max
-    // str.substr(0, 3) = "hel"
+  it("should handle substr with start = 0 (clamped to index 0)", async () => {
+    // AWK start=0, JS index = max(0, floor(0)-1) = 0
+    // .substring(0, 0+3) = "hel"
     const result = await awkExec('{ print substr($0, 0, 3) }', "hello");
     assertEquals(result.output.trim(), "hel");
   });
@@ -75,11 +75,17 @@ describe("SSH-541: substr() POSIX clamping", () => {
     assertEquals(result.output.trim(), "llo");
   });
 
-  it("should handle negative start with small length (clamped to 0)", async () => {
-    // Implementation: start = Math.floor(-5) - 1 = -6, clamped to 0 via Math.max
-    // str.substr(0, 2) = "he"
+  it("should handle negative start with small length (clamped to index 0)", async () => {
+    // AWK start=-5, JS index = max(0, floor(-5)-1) = 0
+    // .substring(0, 0+2) = "he"
     const result = await awkExec('{ print substr($0, -5, 2) }', "hello");
     assertEquals(result.output.trim(), "he");
+  });
+
+  it("should clamp end to string length", async () => {
+    // substr("hi", 1, 100) should give "hi", not error
+    const result = await awkExec('{ print substr($0, 1, 100) }', "hi");
+    assertEquals(result.output.trim(), "hi");
   });
 });
 
