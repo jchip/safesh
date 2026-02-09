@@ -83,3 +83,13 @@ export const ERROR_COMMAND_NOT_FOUND = "COMMAND_NOT_FOUND";
  * Error type for network access blocked.
  */
 export const ERROR_NETWORK_BLOCKED = "NETWORK_BLOCKED";
+
+// ============================================================================
+// Version
+// ============================================================================
+
+/**
+ * SafeShell version string - single source of truth.
+ * Used by CLI (desh, safesh) and MCP server.
+ */
+export const VERSION = "0.1.0";

@@ -26,8 +26,7 @@ import { readPendingCommand, readPendingPath, deletePending, type PendingCommand
 import { addSessionCommands, addSessionPaths, getSessionAllowedCommandsArray, getSessionPathPermissions, mergeSessionPermissions } from "../core/session.ts";
 import { readStdinFully } from "../core/io-utils.ts";
 import { addCommandsToConfig, addPathsToConfig } from "../core/config-persistence.ts";
-
-const VERSION = "0.1.0";
+import { VERSION } from "../core/constants.ts";
 
 // Project root, session, and pending functions now imported from core modules
 

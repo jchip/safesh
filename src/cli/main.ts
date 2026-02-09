@@ -15,8 +15,7 @@ import { tasksCommand } from "./commands/tasks.ts";
 import { logsCommand } from "./commands/logs.ts";
 import { killCommand } from "./commands/kill.ts";
 import { cleanCommand } from "./commands/clean.ts";
-
-const VERSION = "0.1.0";
+import { VERSION } from "../core/constants.ts";
 
 const HELP = `
 SafeShell - Secure shell for AI assistants

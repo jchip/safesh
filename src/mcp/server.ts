@@ -32,6 +32,7 @@ import {
   ERROR_COMMAND_NOT_FOUND,
   ERROR_COMMANDS_BLOCKED,
   ERROR_NETWORK_BLOCKED,
+  VERSION,
 } from "../core/constants.ts";
 import {
   DEFAULT_WAIT_TIMEOUT_MS,
@@ -700,7 +701,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
   const server = new Server(
     {
       name: "safesh",
-      version: "0.1.0",
+      version: VERSION,
     },
     {
       capabilities: {
