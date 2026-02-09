@@ -4,6 +4,8 @@
  * Provides utilities for input/output operations.
  */
 
+import { concatUint8Arrays } from "./utils.ts";
+
 /**
  * Read stdin completely and return as string
  *
@@ -13,22 +15,13 @@
  * @returns Promise resolving to the complete stdin content as a string
  */
 export async function readStdinFully(): Promise<string> {
-  const decoder = new TextDecoder();
   const chunks: Uint8Array[] = [];
 
   for await (const chunk of Deno.stdin.readable) {
     chunks.push(chunk);
   }
 
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const combined = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    combined.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return decoder.decode(combined);
+  return new TextDecoder().decode(concatUint8Arrays(chunks));
 }
 
 /**
