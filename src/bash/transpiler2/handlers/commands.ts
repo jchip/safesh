@@ -944,16 +944,7 @@ class PipelineAssembler {
    * @param followedByPipe - Whether this && is eventually followed by a pipe
    */
   appendAnd(part: PipelinePart, followedByPipe: boolean): void {
-    if (!this.isPrintable && !part.isPrintable) {
-      this.handleNonPrintableAnd(part);
-      this.isPrintable = part.isPrintable;
-    } else if (this.isPrintable) {
-      this.handlePrintableAnd(part, followedByPipe);
-      // isPrintable already set by handler (false when __printCmd moved inside IIFE)
-    } else {
-      this.handleMixedAnd(part, followedByPipe);
-      // isPrintable already set by handler (false when __printCmd moved inside IIFE)
-    }
+    this.handleLogicalOp("&&", part, followedByPipe);
   }
 
   /**
@@ -961,16 +952,7 @@ class PipelineAssembler {
    * SSH-361/362: Handle printable vs non-printable parts correctly.
    */
   appendOr(part: PipelinePart): void {
-    if (!this.isPrintable && !part.isPrintable) {
-      this.handleNonPrintableOr(part);
-      this.isPrintable = part.isPrintable;
-    } else if (this.isPrintable) {
-      this.handlePrintableOr(part);
-      // isPrintable already set by handler (false when __printCmd moved inside IIFE)
-    } else {
-      this.handleMixedOr(part);
-      // isPrintable already set by handler (false when __printCmd moved inside IIFE)
-    }
+    this.handleLogicalOp("||", part, false);
     this.resetPromiseState();
   }
 
@@ -1035,100 +1017,66 @@ class PipelineAssembler {
   // ----- Private Helper Methods -----
 
   /**
-   * Handle && for non-printable parts (like cd && cd)
+   * SSH-514: Unified handler for logical operators (&& and ||).
+   * Branches on printability of left/right parts and operator type.
+   *
+   * @param op - The operator: "&&" or "||"
+   * @param part - The right-hand pipeline part
+   * @param followedByPipe - (&&-only) Whether a pipe operator follows
    */
-  private handleNonPrintableAnd(part: PipelinePart): void {
-    this.code = `${this.code}; ${part.code}`;
-    this.updateStreamState(false, false);
-    this.isPromise = false;
-  }
+  private handleLogicalOp(
+    op: "&&" | "||",
+    part: PipelinePart,
+    followedByPipe: boolean,
+  ): void {
+    const leftPrintable = this.isPrintable;
+    const bothNonPrintable = !leftPrintable && !part.isPrintable;
 
-  /**
-   * Handle && for printable first part
-   */
-  private handlePrintableAnd(part: PipelinePart, followedByPipe: boolean): void {
-    const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
-    if (followedByPipe) {
-      // Use comma operator to execute first command, then return second
-      this.code = `(await __printCmd(${resultExpr}), ${part.code})`;
-      this.isPromise = false;
-      // SSH-425: Preserve stream status from second part for subsequent piping
-      this.isStream = part.isStreamProducer;
-      this.isLineStream = false;
-    } else {
-      // Use __printCmd inside IIFE for both parts to enable streaming output.
-      // Returning a Command from async IIFE would auto-await its thenable, buffering output.
-      // SSH-494: Don't wrap stream producers in __printCmd - the for-await loop handles iteration
-      const returnExpr = (part.isPrintable && !part.isStreamProducer)
-        ? `return await __printCmd(${part.code})`
-        : `return ${part.code}`;
-      this.wrapInAsyncIIFE(
-        `await __printCmd(${resultExpr})`,
-        returnExpr
-      );
-      if (part.isPrintable) this.isPrintable = false;
-      // SSH-474: Preserve stream status from the returning part
-      // The IIFE returns part.code, so stream state should match
-      this.isStream = part.isStreamProducer;
-      this.isLineStream = false;
-    }
-  }
+    // Build left expression: wrap in __printCmd if printable, resolve promise if needed
+    const leftExpr = leftPrintable
+      ? `await __printCmd(${this.isPromise ? `await ${this.code}` : this.code})`
+      : this.code;
 
-  /**
-   * Handle && for mixed printable/non-printable (cd && echo)
-   */
-  private handleMixedAnd(part: PipelinePart, followedByPipe: boolean): void {
-    if (followedByPipe) {
-      this.code = `(${this.code}, ${part.code})`;
-      this.isPromise = false;
-      // SSH-425: Preserve stream status from second part for subsequent piping
-      this.isStream = part.isStreamProducer;
-      this.isLineStream = false;
-    } else {
-      // Use __printCmd inside IIFE for printable last part to enable streaming output.
-      // Returning a Command from async IIFE would auto-await its thenable, buffering output.
-      // SSH-494: Don't wrap stream producers in __printCmd - the for-await loop handles iteration
-      const returnExpr = (part.isPrintable && !part.isStreamProducer)
-        ? `return await __printCmd(${part.code})`
-        : `return ${part.code}`;
-      this.wrapInAsyncIIFE(this.code, returnExpr);
-      if (part.isPrintable) this.isPrintable = false;
-      // SSH-474: Preserve stream status from the returning part
-      this.isStream = part.isStreamProducer;
-      this.isLineStream = false;
-    }
-  }
-
-  /**
-   * Handle || for non-printable parts
-   */
-  private handleNonPrintableOr(part: PipelinePart): void {
-    this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${part.code}; return { code: 0, stdout: '', stderr: '', success: true }; } })()`;
-  }
-
-  /**
-   * Handle || for printable first part
-   */
-  private handlePrintableOr(part: PipelinePart): void {
-    const resultExpr = this.isPromise ? `await ${this.code}` : this.code;
-    // SSH-494: Don't wrap stream producers in __printCmd - the for-await loop handles iteration
-    const catchExpr = (part.isPrintable && !part.isStreamProducer)
+    // Build right expression: wrap in __printCmd if printable (SSH-494: skip for streams)
+    const rightExpr = (part.isPrintable && !part.isStreamProducer)
       ? `return await __printCmd(${part.code})`
       : `return ${part.code}`;
-    this.code = `(async () => { try { await __printCmd(${resultExpr}); return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${catchExpr}; } })()`;
-    if (part.isPrintable) this.isPrintable = false;
-  }
 
-  /**
-   * Handle || for mixed printable/non-printable
-   */
-  private handleMixedOr(part: PipelinePart): void {
-    // SSH-494: Don't wrap stream producers in __printCmd - the for-await loop handles iteration
-    const catchExpr = (part.isPrintable && !part.isStreamProducer)
-      ? `return await __printCmd(${part.code})`
-      : `return ${part.code}`;
-    this.code = `(async () => { try { ${this.code}; return { code: 0, stdout: '', stderr: '', success: true }; } catch { ${catchExpr}; } })()`;
+    if (op === "&&") {
+      if (bothNonPrintable) {
+        // Non-printable && non-printable: simple sequential
+        this.code = `${this.code}; ${part.code}`;
+        this.updateStreamState(false, false);
+        this.isPromise = false;
+        return;
+      }
+      if (followedByPipe) {
+        // SSH-425: Use comma operator so result can be piped
+        this.code = leftPrintable
+          ? `(${leftExpr}, ${part.code})`
+          : `(${this.code}, ${part.code})`;
+        this.isPromise = false;
+        this.isStream = part.isStreamProducer;
+        this.isLineStream = false;
+        return;
+      }
+      // Wrap in IIFE: execute first, then return second
+      this.wrapInAsyncIIFE(leftExpr, rightExpr);
+    } else {
+      // || operator: always wrap in try/catch IIFE
+      const successResult = "return { code: 0, stdout: '', stderr: '', success: true };";
+      if (bothNonPrintable) {
+        this.code = `(async () => { try { ${this.code}; ${successResult} } catch { ${part.code}; ${successResult} } })()`;
+      } else {
+        const tryExpr = leftPrintable ? `${leftExpr}; ${successResult}` : `${this.code}; ${successResult}`;
+        this.code = `(async () => { try { ${tryExpr} } catch { ${rightExpr}; } })()`;
+      }
+    }
+
     if (part.isPrintable) this.isPrintable = false;
+    // SSH-474: Preserve stream status from the returning (right) part
+    this.isStream = part.isStreamProducer;
+    this.isLineStream = false;
   }
 
   /**
