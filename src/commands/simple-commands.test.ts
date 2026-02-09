@@ -95,11 +95,12 @@ Deno.test("SSH-552: numeric sort NaN as 0", async () => {
 });
 
 Deno.test("SSH-552: unique uses full comparator", async () => {
+  // With two keys, "a 1" and "a 2" differ in second key, so both are unique
   const r = await collect(sort(toAsync(["a 1", "a 2", "b 1"]), {
     unique: true,
     keys: [{ startField: 1 }, { startField: 2, numeric: true }],
   }));
-  assertEquals(r.length, 2);
+  assertEquals(r.length, 3);
 });
 
 Deno.test("SSH-552: unique adjacent dedup", async () => {
@@ -132,6 +133,44 @@ Deno.test("SSH-552: parseKeySpec both modifiers", () => {
   assertEquals(s!.endField, 3);
   assertEquals(s!.numeric, true);
   assertEquals(s!.reverse, true);
+});
+
+Deno.test("SSH-552: numeric sort parseFloat('0') not conflated with NaN", async () => {
+  // parseFloat("0") returns 0, which is falsy; old code `parseFloat(v) || 0` was correct by accident
+  // but conceptually wrong. This test ensures 0 sorts between -1 and 1.
+  const r = await collect(sort(toAsync(["1", "0", "-1", "0"]), { numeric: true }));
+  assertEquals(r, ["-1", "0", "0", "1"]);
+});
+
+Deno.test("SSH-552: unique with dictionaryOrder dedup", async () => {
+  // dictionaryOrder strips non-alphanumeric; "a-b" and "a_b" both become "ab"
+  const r = await collect(sort(toAsync(["a-b", "a_b", "ab"]), { unique: true, dictionaryOrder: true }));
+  assertEquals(r.length, 1);
+});
+
+Deno.test("SSH-552: unique multi-key full comparator", async () => {
+  // Lines that differ only in second key should NOT be deduped
+  const r = await collect(sort(toAsync(["a 1", "a 2", "a 3"]), {
+    unique: true,
+    keys: [{ startField: 1 }, { startField: 2, numeric: true }],
+  }));
+  assertEquals(r, ["a 1", "a 2", "a 3"]);
+});
+
+Deno.test("SSH-552: parseKeySpec modifier on start part only", () => {
+  // "2n,3" - numeric modifier on start field, no modifier on end
+  const s = parseKeySpec("2n,3");
+  assertEquals(s!.startField, 2);
+  assertEquals(s!.endField, 3);
+  assertEquals(s!.numeric, true);
+});
+
+Deno.test("SSH-552: parseKeySpec modifier does not eat comma content", () => {
+  // "1n,2n" - both start and end have modifiers
+  const s = parseKeySpec("1n,2n");
+  assertEquals(s!.startField, 1);
+  assertEquals(s!.endField, 2);
+  assertEquals(s!.numeric, true);
 });
 
 // === SSH-553: wc ===
