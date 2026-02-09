@@ -396,7 +396,7 @@ async function awkInt(
   evaluator: AwkEvaluator,
 ): Promise<number> {
   if (args.length === 0) return 0;
-  return Math.floor(toNumber(await evaluator.evalExpr(args[0]!)));
+  return Math.trunc(toNumber(await evaluator.evalExpr(args[0]!)));
 }
 
 async function awkSqrt(
