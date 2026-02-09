@@ -62,6 +62,9 @@ const DESH_CMD = new URL("../src/cli/desh.ts", import.meta.url).pathname;
 function debug(message: string): void {
   if (DEBUG) {
     console.error(`[bash-prehook] ${message}`);
+    try {
+      Deno.writeTextFileSync("/tmp/gemini_hook_debug.log", `[${new Date().toISOString()}] ${message}\n`, { append: true });
+    } catch {}
   }
 }
 
@@ -556,15 +559,26 @@ async function getDisallowedCommands(
 
 
 /**
- * Claude Code PreToolUse hook input format
+ * Generic Hook Input format (Claude Code / Gemini CLI)
+ * Supports both snake_case (Claude) and camelCase (Gemini potential)
  */
-interface ClaudeCodeHookInput {
-  tool_name: string;
-  tool_input: {
+interface HookInput {
+  hookEventName?: string;
+  tool_name?: string;
+  toolName?: string;
+  tool_input?: {
     command: string;
     timeout?: number;
     description?: string;
     run_in_background?: boolean;
+    runInBackground?: boolean;
+  };
+  toolInput?: {
+    command: string;
+    timeout?: number;
+    description?: string;
+    run_in_background?: boolean;
+    runInBackground?: boolean;
   };
 }
 
@@ -575,22 +589,38 @@ interface ParsedCommand {
   command: string;
   timeout?: number;
   runInBackground?: boolean;
+  hookEventName?: string;
 }
 
 /**
- * Parse Claude Code hook input from JSON
+ * Parse Hook input from JSON
+ * Handles both Claude Code and Gemini CLI formats
  */
-function parseClaudeCodeInput(input: string): ParsedCommand | null {
+function parseHookInput(input: string): ParsedCommand | null {
   try {
-    const parsed = JSON.parse(input) as ClaudeCodeHookInput;
-    if (parsed.tool_name === "Bash" && parsed.tool_input?.command) {
-      debug(`Parsed Claude Code input: ${parsed.tool_input.command}`);
-      debug(`Timeout: ${parsed.tool_input.timeout}`);
-      debug(`Run in background: ${parsed.tool_input.run_in_background}`);
+    const parsed = JSON.parse(input) as HookInput;
+    
+    // Normalize fields
+    const toolName = parsed.tool_name || parsed.toolName || "";
+    const toolInput = parsed.tool_input || parsed.toolInput;
+    
+    // Check if it's a supported tool
+    if (/^(Bash|bash|run_shell_command)$/i.test(toolName) && toolInput?.command) {
+      debug(`Parsed input for tool: ${toolName}`);
+      debug(`Command: ${toolInput.command}`);
+      
+      const timeout = toolInput.timeout;
+      // Handle both boolean flag styles
+      const runInBackground = toolInput.run_in_background ?? toolInput.runInBackground;
+
+      debug(`Timeout: ${timeout}`);
+      debug(`Run in background: ${runInBackground}`);
+      
       return {
-        command: parsed.tool_input.command,
-        timeout: parsed.tool_input.timeout,
-        runInBackground: parsed.tool_input.run_in_background,
+        command: toolInput.command,
+        timeout: timeout,
+        runInBackground: runInBackground,
+        hookEventName: parsed.hookEventName,
       };
     }
   } catch {
@@ -617,7 +647,7 @@ async function getBashCommand(): Promise<ParsedCommand> {
     debug(`Raw stdin input: ${trimmed}`);
 
     // Try to parse as Claude Code hook input (JSON format)
-    const parsed = parseClaudeCodeInput(trimmed);
+    const parsed = parseHookInput(trimmed);
     if (parsed) {
       return parsed;
     }
@@ -719,6 +749,7 @@ interface DeshRewriteOptions {
   runInBackground?: boolean;
   isDirectTs?: boolean;
   originalCommand?: string;
+  hookEventName?: string;
 }
 
 /**
@@ -800,7 +831,7 @@ async function outputRewriteToDeshHeredoc(
 /**
  * Output the hook response with the desh command
  */
-function outputHookResponse(deshCommand: string, options?: { timeout?: number; runInBackground?: boolean }): void {
+function outputHookResponse(deshCommand: string, options?: { timeout?: number; runInBackground?: boolean; hookEventName?: string }): void {
   // Build updatedInput preserving timeout and run_in_background
   const updatedInput: Record<string, unknown> = { command: deshCommand };
   if (options?.timeout !== undefined) {
@@ -813,7 +844,7 @@ function outputHookResponse(deshCommand: string, options?: { timeout?: number; r
   // Correct format with hookSpecificOutput wrapper
   const output = {
     hookSpecificOutput: {
-      hookEventName: "PreToolUse",
+      hookEventName: options?.hookEventName || "PreToolUse",
       permissionDecision: "allow",
       permissionDecisionReason: "Transpiled to SafeShell TypeScript via desh",
       updatedInput,
@@ -841,7 +872,7 @@ async function outputDenyWithRetry(
   disallowedCommands: string[],
   tsCode: string,
   projectDir: string,
-  options?: { timeout?: number; runInBackground?: boolean; originalCommand?: string },
+  options?: { timeout?: number; runInBackground?: boolean; originalCommand?: string; hookEventName?: string },
 ): Promise<void> {
   const cmdList = disallowedCommands.join(", ");
 
@@ -899,7 +930,7 @@ HINT: Use safesh TypeScript code with /*#*/ prefix - many shell utils are pre-ap
 
   const output = {
     hookSpecificOutput: {
-      hookEventName: "PreToolUse",
+      hookEventName: options?.hookEventName || "PreToolUse",
       permissionDecision: "deny",
       permissionDecisionReason: message,
     },
@@ -911,7 +942,7 @@ HINT: Use safesh TypeScript code with /*#*/ prefix - many shell utils are pre-ap
  * Output hook decision to rewrite command to desh
  * Uses file mode by default, heredoc if configured
  */
-async function outputRewriteToDesh(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean; isDirectTs?: boolean; originalCommand?: string }): Promise<void> {
+async function outputRewriteToDesh(tsCode: string, projectDir: string, options?: DeshRewriteOptions): Promise<void> {
   if (DESH_MODE === "heredoc") {
     await outputRewriteToDeshHeredoc(tsCode, projectDir, options);
   } else {
@@ -1118,6 +1149,7 @@ ${tsCode}
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
         isDirectTs: true,
+        hookEventName: parsed.hookEventName,
       });
       Deno.exit(0);
     }
@@ -1263,6 +1295,7 @@ ${tsCode}
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
         originalCommand: parsed.command,
+        hookEventName: parsed.hookEventName,
       });
       Deno.exit(0);
     }
@@ -1276,6 +1309,7 @@ ${tsCode}
       timeout: parsed.timeout,
       runInBackground: parsed.runInBackground,
       originalCommand: parsed.command,
+      hookEventName: parsed.hookEventName,
     });
     Deno.exit(0);
   } catch (error) {
