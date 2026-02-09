@@ -25,6 +25,9 @@ export async function loadState(projectDir?: string): Promise<PersistedState | n
 
 /**
  * Check if a PID is still running
+ * TODO: SSH-522 - This duplicates isPidRunning from runtime/state-persistence.ts.
+ * Should import from there instead, and use SIGURG instead of SIGCONT
+ * to avoid resuming stopped processes.
  */
 export function isPidRunning(pid: number): boolean {
   try {
