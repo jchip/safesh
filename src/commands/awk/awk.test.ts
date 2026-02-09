@@ -109,8 +109,8 @@ describe("AWK", () => {
   describe("math functions", () => {
     it("int()", async () => {
       const result = await awkExec("{ print int($1) }", "3.7\n-2.3");
-      // Note: AWK int() uses Math.floor, so -2.3 becomes -3
-      assertEquals(result.output.trim(), "3\n-3");
+      // AWK int() truncates toward zero (POSIX): int(-2.3) = -2
+      assertEquals(result.output.trim(), "3\n-2");
     });
 
     it("sqrt()", async () => {

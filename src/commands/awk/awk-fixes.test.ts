@@ -93,22 +93,27 @@ describe("SSH-541: substr() uses .substring() with proper clamping", () => {
 // SSH-542: AWK int(), split(), srand() correctness
 // =============================================================================
 
-describe("SSH-542: int() truncation", () => {
+describe("SSH-542: int() truncation toward zero", () => {
   it("should truncate positive numbers toward zero", async () => {
     const result = await awkExec('{ print int($1) }', "3.7");
     assertEquals(result.output.trim(), "3");
   });
 
-  it("should floor negative numbers (Math.floor behavior)", async () => {
-    // Current implementation uses Math.floor, so int(-2.3) = -3
+  it("should truncate negative numbers toward zero (POSIX)", async () => {
+    // POSIX int() truncates toward zero: int(-2.3) = -2
     const result = await awkExec('{ print int($1) }', "-2.3");
-    assertEquals(result.output.trim(), "-3");
+    assertEquals(result.output.trim(), "-2");
   });
 
-  it("should floor -0.5 to -1 (Math.floor behavior)", async () => {
-    // Current implementation uses Math.floor, so int(-0.5) = -1
+  it("should truncate -0.5 toward zero", async () => {
+    // POSIX int() truncates toward zero: int(-0.5) = 0
     const result = await awkExec('{ print int($1) }', "-0.5");
-    assertEquals(result.output.trim(), "-1");
+    assertEquals(result.output.trim(), "0");
+  });
+
+  it("should truncate -9.9 toward zero", async () => {
+    const result = await awkExec('{ print int($1) }', "-9.9");
+    assertEquals(result.output.trim(), "-9");
   });
 });
 
