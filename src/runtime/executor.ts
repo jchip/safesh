@@ -432,16 +432,7 @@ function buildNetPermission(net: boolean | string[] | undefined): string {
  * 3. Dynamic scripts cannot be listed upfront
  * 4. Security is enforced at application layer (bash-prehook, initCmds)
  */
-function buildRunPermission(
-  commands: string[],
-  cwd: string,
-  config: SafeShellConfig,
-): string | null {
-  // Always use unrestricted --allow-run
-  // SafeShell's permission validation happens at application layer:
-  // - bash-prehook validates commands before transpilation
-  // - initCmds() validates commands before execution
-  // - User approval required for new commands
+function buildRunPermission(): string {
   return "--allow-run";
 }
 
@@ -488,8 +479,7 @@ export function buildPermissionFlags(config: SafeShellConfig, cwd: string): stri
   const netFlag = buildNetPermission(perms.net);
   if (netFlag) flags.push(netFlag);
 
-  const runFlag = buildRunPermission(perms.run ?? [], cwd, config);
-  if (runFlag) flags.push(runFlag);
+  flags.push(buildRunPermission());
 
   const envFlag = buildEnvPermission(perms.env, config.env ?? {});
   if (envFlag) flags.push(envFlag);
