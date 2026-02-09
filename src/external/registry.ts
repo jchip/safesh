@@ -115,18 +115,7 @@ export class CommandRegistry {
    * Check if a command is whitelisted
    */
   isWhitelisted(command: string): boolean {
-    if (this.commands.has(command)) {
-      return true;
-    }
-
-    // Check if command is within projectDir when allowProjectCommands is true
-    if (this.allowProjectCommands && this.projectDir) {
-      if (isCommandWithinProjectDir(command, this.projectDir, this.cwd)) {
-        return true;
-      }
-    }
-
-    return false;
+    return this.get(command) !== undefined;
   }
 
   /**
