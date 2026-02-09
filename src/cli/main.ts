@@ -4,6 +4,7 @@
  */
 
 import { parseArgs } from "@std/cli/parse-args";
+import { TextLineStream } from "@std/streams";
 import { loadConfig } from "../core/config.ts";
 import { executeCode } from "../runtime/executor.ts";
 import { runExternal } from "../external/runner.ts";
@@ -93,20 +94,16 @@ async function startRepl(config: SafeShellConfig): Promise<void> {
   console.log("Type .help for commands, .exit to quit");
   console.log("");
 
-  const decoder = new TextDecoder();
-  const buffer = new Uint8Array(1024);
+  // Use TextLineStream for dynamically-sized line reading (no fixed buffer limit)
+  const lineStream = Deno.stdin.readable
+    .pipeThrough(new TextDecoderStream())
+    .pipeThrough(new TextLineStream());
 
-  while (true) {
-    // Print prompt
-    await Deno.stdout.write(new TextEncoder().encode("> "));
+  const prompt = new TextEncoder().encode("> ");
+  await Deno.stdout.write(prompt);
 
-    // Read input
-    const n = await Deno.stdin.read(buffer);
-    if (n === null) {
-      break; // EOF
-    }
-
-    const input = decoder.decode(buffer.subarray(0, n)).trim();
+  for await (const line of lineStream) {
+    const input = line.trim();
 
     // Handle REPL commands
     if (input === ".exit" || input === ".quit") {
@@ -120,10 +117,12 @@ async function startRepl(config: SafeShellConfig): Promise<void> {
       console.log("  .exit    Exit REPL");
       console.log("  .quit    Exit REPL");
       console.log("");
+      await Deno.stdout.write(prompt);
       continue;
     }
 
     if (!input) {
+      await Deno.stdout.write(prompt);
       continue;
     }
 
@@ -147,6 +146,8 @@ async function startRepl(config: SafeShellConfig): Promise<void> {
         console.error(`Error: ${error}`);
       }
     }
+
+    await Deno.stdout.write(prompt);
   }
 }
 
