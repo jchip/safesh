@@ -110,9 +110,19 @@ export function visitForStatement(
           // Build a template literal evaluation that handles expansion
           lines.push(`${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`);
         } else {
-          // Word with other expansions (parameter, arithmetic): evaluate as single item
+          // SSH-531: Check if word has unquoted parameter/arithmetic expansions
+          // In bash, `for i in $var` splits $var's value on whitespace
+          const hasParamExpansion = !item.quoted && !item.singleQuoted && item.parts.some(
+            (part) => part.type === "ParameterExpansion" || part.type === "ArithmeticExpansion",
+          );
           const wordExpr = ctx.visitWord(item);
-          lines.push(`${indent}${tempVar}.push(\`${wordExpr}\`);`);
+          if (hasParamExpansion) {
+            // Unquoted expansion: word-split at runtime
+            lines.push(`${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`);
+          } else {
+            // Quoted expansion or plain literal: keep as single item
+            lines.push(`${indent}${tempVar}.push(\`${wordExpr}\`);`);
+          }
         }
       } else {
         // Plain word: add as string literal
