@@ -713,30 +713,30 @@ async function executeAndCapture(
  */
 const DESH_MODE = Deno.env.get("BASH_PREHOOK_DESH_MODE") || "file"; // "file" or "heredoc"
 
+/** Options for desh rewrite output */
+interface DeshRewriteOptions {
+  timeout?: number;
+  runInBackground?: boolean;
+  isDirectTs?: boolean;
+  originalCommand?: string;
+}
+
 /**
- * Output hook decision to rewrite command as desh with file
- * Writes transpiled code to /tmp and passes file path to desh
+ * Shared logic for preparing desh rewrite: hash, pending ID, marked code, and pending command.
  *
- * For TypeScript code, generates an ID and saves metadata for potential
- * retry flow if initCmds encounters blocked commands at runtime.
+ * Both file and heredoc modes share this preparation step.
+ * Returns the data needed to form the final desh command.
  */
-async function outputRewriteToDeshFile(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean; isDirectTs?: boolean; originalCommand?: string }): Promise<void> {
-  // Generate hash-based ID for caching and retry
-  // For bash: hash original command to cache transpiled result
-  // For /*#*/ scripts: hash TypeScript code directly
-  // TRANSPILER_VERSION in hashContent ensures cache busts when transpiler changes
+async function prepareDeshRewrite(
+  tsCode: string,
+  projectDir: string,
+  options?: DeshRewriteOptions,
+): Promise<{ hash: string; pendingId: string; markedCode: string; prefix: string }> {
   const hashInput = options?.originalCommand || tsCode;
   const hash = await hashContent(hashInput);
   const prefix = options?.isDirectTs ? "script" : "tx-script";
-  const id = hash;
-  const scriptsDir = getScriptsDir();
-  const tempFile = `${scriptsDir}/${prefix}-${hash}.ts`;
-
-  // Generate pending ID for retry flow
   const pendingId = generatePendingId();
 
-  // Set env vars at the top of the script instead of in the command string
-  // This avoids polluting the command with env vars which breaks permission pattern matching
   const markedCode = `// Set SafeShell execution context
 Deno.env.set("SAFESH_SCRIPT_ID", "${pendingId}");
 Deno.env.set("SAFESH_SCRIPT_HASH", "${hash}");
@@ -745,84 +745,56 @@ Deno.env.set("SAFESH_ALLOW_PROJECT_COMMANDS", "true");
 console.error("# /*#*/ ${projectDir}");
 ${tsCode}`;
 
+  const pending: PendingCommand = {
+    id: pendingId,
+    scriptHash: hash,
+    commands: [],
+    cwd: Deno.cwd(),
+    timeout: options?.timeout,
+    runInBackground: options?.runInBackground,
+    createdAt: new Date().toISOString(),
+  };
+  writePendingCommand(pending);
+
+  return { hash, pendingId, markedCode, prefix };
+}
+
+/**
+ * Output hook decision to rewrite command as desh with file.
+ * Writes transpiled code to /tmp and passes file path to desh.
+ */
+async function outputRewriteToDeshFile(
+  tsCode: string,
+  projectDir: string,
+  options?: DeshRewriteOptions,
+): Promise<void> {
+  const { hash, markedCode, prefix } = await prepareDeshRewrite(tsCode, projectDir, options);
+  const scriptsDir = getScriptsDir();
+  const tempFile = `${scriptsDir}/${prefix}-${hash}.ts`;
+
   // Check if cached script exists, only write if it doesn't
-  let cached = false;
   try {
     await Deno.stat(tempFile);
-    cached = true;
     debug(`Using cached script: ${prefix}-${hash}.ts`);
   } catch {
-    // File doesn't exist, write it
     Deno.writeTextFileSync(tempFile, markedCode);
     debug(`Created new script: ${prefix}-${hash}.ts`);
   }
 
-  // Save metadata for potential retry (if initCmds encounters blocked commands)
-  // Note: tsCode is NOT stored here - it's read from the script file using scriptHash
-  const pending: PendingCommand = {
-    id: pendingId,
-    scriptHash: hash,
-    commands: [], // Will be filled by initCmds if commands are blocked
-    cwd: Deno.cwd(),
-    timeout: options?.timeout,
-    runInBackground: options?.runInBackground,
-    createdAt: new Date().toISOString(),
-  };
-  writePendingCommand(pending);
-
-  // Create clean desh command without env vars in the command string
-  // Env vars are set inside the script file itself
-  const deshCommand = `${DESH_CMD} -q -f ${tempFile}`;
-
-  outputHookResponse(deshCommand, options);
+  outputHookResponse(`${DESH_CMD} -q -f ${tempFile}`, options);
 }
 
 /**
- * Output hook decision to rewrite command as desh heredoc
- * Uses heredoc to pass code inline
- *
- * For TypeScript code, generates an ID and saves metadata for potential
- * retry flow if initCmds encounters blocked commands at runtime.
+ * Output hook decision to rewrite command as desh heredoc.
+ * Uses heredoc to pass code inline.
  */
-async function outputRewriteToDeshHeredoc(tsCode: string, projectDir: string, options?: { timeout?: number; runInBackground?: boolean; isDirectTs?: boolean; originalCommand?: string }): Promise<void> {
-  // Generate hash-based ID for caching and retry
-  // For bash: hash original command to cache transpiled result
-  // For /*#*/ scripts: hash TypeScript code directly
-  // TRANSPILER_VERSION in hashContent ensures cache busts when transpiler changes
-  const hashInput = options?.originalCommand || tsCode;
-  const hash = await hashContent(hashInput);
-
-  // Generate pending ID for retry flow
-  const pendingId = generatePendingId();
-
-  // Set env vars at the top of the script instead of in the command string
-  // This avoids polluting the command with env vars which breaks permission pattern matching
-  const markedCode = `// Set SafeShell execution context
-Deno.env.set("SAFESH_SCRIPT_ID", "${pendingId}");
-Deno.env.set("SAFESH_SCRIPT_HASH", "${hash}");
-Deno.env.set("SAFESH_ALLOW_PROJECT_COMMANDS", "true");
-
-console.error("# /*#*/ ${projectDir}");
-${tsCode}`;
-
-  // Save metadata for potential retry (if initCmds encounters blocked commands)
-  // Note: tsCode is NOT stored here - it's passed via heredoc, scriptHash used for caching
-  const pending: PendingCommand = {
-    id: pendingId,
-    scriptHash: hash,
-    commands: [], // Will be filled by initCmds if commands are blocked
-    cwd: Deno.cwd(),
-    timeout: options?.timeout,
-    runInBackground: options?.runInBackground,
-    createdAt: new Date().toISOString(),
-  };
-  writePendingCommand(pending);
-
-  // Create clean desh heredoc command without env vars in the command string
-  // Env vars are set inside the script itself
-  const deshCommand = `${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`;
-
-  outputHookResponse(deshCommand, options);
+async function outputRewriteToDeshHeredoc(
+  tsCode: string,
+  projectDir: string,
+  options?: DeshRewriteOptions,
+): Promise<void> {
+  const { markedCode } = await prepareDeshRewrite(tsCode, projectDir, options);
+  outputHookResponse(`${DESH_CMD} -q <<'SAFESH_EOF'\n${markedCode}\nSAFESH_EOF`, options);
 }
 
 /**
