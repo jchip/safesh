@@ -19,7 +19,7 @@ import { loadConfig, loadSessionConfig, mergeConfigs, validateConfig } from "../
 import { executeCode, executeCodeStreaming, executeFilePassthrough } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
-import { getPendingFilePath, getSessionFilePath, findScriptFilePath, getTempRoot } from "../core/temp.ts";
+import { getPendingFilePath, getSessionFilePath, findScriptFilePath } from "../core/temp.ts";
 // New unified core modules (DRY refactoring)
 import { findProjectRoot, PROJECT_MARKERS } from "../core/project-root.ts";
 import { readPendingCommand, readPendingPath, deletePending, type PendingCommand, type PendingPathRequest } from "../core/pending.ts";
@@ -27,6 +27,7 @@ import { addSessionCommands, addSessionPaths, getSessionAllowedCommandsArray, ge
 import { readStdinFully } from "../core/io-utils.ts";
 import { addCommandsToConfig, addPathsToConfig } from "../core/config-persistence.ts";
 import { VERSION } from "../core/constants.ts";
+import { logExecutionError } from "../core/error-handlers.ts";
 
 // Project root, session, and pending functions now imported from core modules
 
@@ -749,29 +750,7 @@ async function executeInlineCode(
       Deno.exit(result.code);
     }
   } catch (error) {
-    // SSH-477: Save error to log file with context
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : undefined;
-
-    // Build error log with available context
-    const errorLogParts = [
-      "=== Execution Error ===",
-      `Code:\n${code}`,
-      `\nError: ${errorMessage}`,
-      errorStack ? `\nStack trace:\n${errorStack}` : "",
-      "=========================\n",
-    ].join("\n");
-
-    // Save to error log file
-    try {
-      const errorDir = `${getTempRoot()}/errors`;
-      Deno.mkdirSync(errorDir, { recursive: true });
-      const errorFile = `${errorDir}/${Date.now()}-${Deno.pid}.log`;
-      Deno.writeTextFileSync(errorFile, errorLogParts);
-      console.error(`\nFull details saved to: ${errorFile}`);
-    } catch {
-      // Ignore logging errors
-    }
+    logExecutionError(error, code);
 
     if (error instanceof SafeShellError) {
       console.error(`Error: ${error.message}`);

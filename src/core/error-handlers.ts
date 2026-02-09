@@ -450,3 +450,36 @@ globalThis.addEventListener("unhandledrejection", (event) => {
 
   return handlerCode;
 }
+
+/**
+ * Log an execution error to a file and stderr.
+ *
+ * Shared pattern used by both bash-prehook and desh CLI for SSH-477 error logging.
+ * Builds an error log with context (code, error message, stack trace), saves it
+ * to the errors directory, and prints a summary to stderr.
+ *
+ * @param error - The caught error
+ * @param code - The code that was being executed
+ */
+export function logExecutionError(error: unknown, code: string): void {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : undefined;
+
+  const errorLogParts = [
+    "=== Execution Error ===",
+    `Code:\n${code}`,
+    `\nError: ${errorMessage}`,
+    errorStack ? `\nStack trace:\n${errorStack}` : "",
+    "=========================\n",
+  ].join("\n");
+
+  try {
+    const errorDir = `${getTempRoot()}/errors`;
+    Deno.mkdirSync(errorDir, { recursive: true });
+    const errorFile = `${errorDir}/${Date.now()}-${Deno.pid}.log`;
+    Deno.writeTextFileSync(errorFile, errorLogParts);
+    console.error(`\nFull details saved to: ${errorFile}`);
+  } catch {
+    // Ignore logging errors
+  }
+}

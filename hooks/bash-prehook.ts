@@ -34,7 +34,7 @@ import type { SafeShellConfig, PendingCommand } from "../src/core/types.ts";
 import { findProjectRoot, PROJECT_MARKERS } from "../src/core/project-root.ts";
 import { generatePendingId, writePendingCommand, writePendingPath } from "../src/core/pending.ts";
 import { getSessionAllowedCommands } from "../src/core/session.ts";
-import { generateInlineErrorHandler } from "../src/core/error-handlers.ts";
+import { generateInlineErrorHandler, logExecutionError } from "../src/core/error-handlers.ts";
 import { readStdinFully } from "../src/core/io-utils.ts";
 import {
   detectHybridCommand,
@@ -947,29 +947,7 @@ async function executeStreaming(
     debug(`Streaming execution completed with exit code: ${exitCode}`);
     return exitCode;
   } catch (error) {
-    // SSH-477: Save error to log file with context
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : undefined;
-
-    // Build error log with available context
-    const errorLogParts = [
-      "=== Execution Error ===",
-      `Code:\n${code}`,
-      `\nError: ${errorMessage}`,
-      errorStack ? `\nStack trace:\n${errorStack}` : "",
-      "=========================\n",
-    ].join("\n");
-
-    // Save to error log file
-    try {
-      const errorDir = `${getTempRoot()}/errors`;
-      Deno.mkdirSync(errorDir, { recursive: true });
-      const errorFile = `${errorDir}/${Date.now()}-${Deno.pid}.log`;
-      Deno.writeTextFileSync(errorFile, errorLogParts);
-      console.error(`\nFull details saved to: ${errorFile}`);
-    } catch {
-      // Ignore logging errors
-    }
+    logExecutionError(error, code);
 
     if (error instanceof SafeShellError) {
       console.error(`Error: ${error.message}`);
