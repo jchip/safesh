@@ -254,9 +254,10 @@ class ArithmeticLexer {
       return { type: ArithTokenType.IDENTIFIER, value, pos: startPos };
     }
 
-    // Unknown character - skip and try again
-    this.pos++;
-    return this.next();
+    // Unknown character - throw error instead of silently skipping
+    throw new Error(
+      `Unexpected character '${c}' at position ${startPos} in arithmetic expression`
+    );
   }
 
   tokenize(): ArithToken[] {

@@ -698,11 +698,16 @@ describe("Arithmetic Parser - Comprehensive Coverage", () => {
 
   describe("Error handling", () => {
     it("should throw on unexpected token after expression", () => {
-      // The lexer skips unknown characters like }, so this test is not applicable
-      // Instead test with a valid token that shouldn't be there
       assertThrows(() => {
         parseArithmetic("1 + 2 3");
       }, Error, "Unexpected token");
+    });
+
+    it("should throw on unknown character (SSH-530)", () => {
+      // Previously unknown chars like @ were silently skipped, turning @+1 into +1
+      assertThrows(() => {
+        parseArithmetic("@+1");
+      }, Error, "Unexpected character '@' at position 0");
     });
 
     it("should throw on invalid token in prefix position", () => {
