@@ -9,90 +9,12 @@ import { ensureDir } from "@std/fs";
 import { timeout as timeoutError } from "../core/errors.ts";
 import type { ExecOptions, SafeShellConfig, Shell, StreamChunk } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
-import { cleanupProcess } from "../core/utils.ts";
+import { hashCode, buildEnv, cleanupProcess } from "../core/utils.ts";
+import { buildPreamble, extractPreambleConfig } from "./preamble.ts";
 import { getScriptsDir } from "../core/temp.ts";
 
 const TEMP_DIR = getScriptsDir();
 const DEFAULT_TIMEOUT = 30000;
-
-/**
- * Hash code to create a cache key
- */
-async function hashCode(code: string): Promise<string> {
-  const data = new TextEncoder().encode(code);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * Build the preamble that gets prepended to user code
- */
-function buildPreamble(shell?: Shell): string {
-  if (!shell) {
-    return "";
-  }
-
-  const lines: string[] = [
-    "// SafeShell auto-generated preamble",
-    "// Shell context available on $ namespace",
-    `(globalThis as any).$ = {`,
-    `  ID: ${JSON.stringify(shell.id)},`,
-    `  CWD: ${JSON.stringify(shell.cwd)},`,
-    `  ENV: ${JSON.stringify(shell.env)},`,
-    `  VARS: ${JSON.stringify(shell.vars)},`,
-    `};`,
-    "",
-    "// User code starts here",
-    "",
-  ];
-
-  return lines.join("\n");
-}
-
-/**
- * Build environment variables for subprocess
- */
-function buildEnv(
-  config: SafeShellConfig,
-  shell?: Shell,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  const envConfig = config.env ?? {};
-  const allowList = envConfig.allow ?? [];
-  const maskPatterns = envConfig.mask ?? [];
-
-  // Helper to check if a key matches any mask pattern
-  const isMasked = (key: string): boolean => {
-    return maskPatterns.some((pattern) => {
-      const regex = new RegExp(
-        "^" + pattern.replace(/\*/g, ".*") + "$",
-      );
-      return regex.test(key);
-    });
-  };
-
-  // Copy allowed env vars that aren't masked
-  for (const key of allowList) {
-    if (!isMasked(key)) {
-      const value = Deno.env.get(key);
-      if (value !== undefined) {
-        result[key] = value;
-      }
-    }
-  }
-
-  // Merge shell env vars (they override)
-  if (shell?.env) {
-    for (const [key, value] of Object.entries(shell.env)) {
-      if (!isMasked(key)) {
-        result[key] = value;
-      }
-    }
-  }
-
-  return result;
-}
 
 
 /**
@@ -183,8 +105,9 @@ export async function* executeCodeStreaming(
   const hash = await hashCode(code);
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
-  // Build full code with preamble
-  const preamble = buildPreamble(shell);
+  // Build full code with preamble from canonical preamble module
+  const preambleConfig = extractPreambleConfig(config, cwd);
+  const { preamble } = buildPreamble(shell, preambleConfig);
   const fullCode = preamble + code;
 
   // Write script to temp file
