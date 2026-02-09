@@ -118,9 +118,12 @@ export async function jqExec(
       if (options.slurp) {
         let values: JsonValue[];
         try {
+          // Try parsing the whole input as a single JSON value first
           const parsed = JSON.parse(trimmedInput);
-          values = Array.isArray(parsed) ? parsed : [parsed];
+          // Slurp always wraps in an array: `echo '[1,2]' | jq -s` -> [[1,2]]
+          values = [parsed];
         } catch {
+          // Fall back to line-by-line parsing for JSONL / multi-value input
           values = [];
           const lines = trimmedInput.split("\n");
           for (const line of lines) {
