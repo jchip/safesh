@@ -11,7 +11,7 @@ import type { Stream, Transform } from "./stream.ts";
 import * as transforms from "./transforms.ts";
 import { type CommandFn, CMD_NAME_SYMBOL } from "./command-init.ts";
 import { toCmdLines } from "./command-transforms.ts";
-import type { CommandOptions } from "./command.ts";
+import { Command, type CommandOptions } from "./command.ts";
 
 /**
  * FluentStream<T> - A chainable API for stream processing
@@ -193,6 +193,7 @@ export class FluentStream<T> implements AsyncIterable<T> {
    * Overloaded to accept either:
    * - Transform function: applies transform to stream
    * - CommandFn: pipes stream through external command (yields output lines)
+   * - Command object: pipes stream through command directly (SSH-557)
    *
    * @example
    * ```ts
@@ -202,15 +203,25 @@ export class FluentStream<T> implements AsyncIterable<T> {
    * // With CommandFn
    * const [sort] = await initCmds(['sort']);
    * stream.pipe(sort, ['-r']);
+   *
+   * // With Command object (transpiler-generated)
+   * stream.pipe($.cmd('sed', ['s/foo/bar/']));
    * ```
    */
   pipe<U>(transform: Transform<T, U>): FluentStream<U>;
   pipe(commandFn: CommandFn, args?: string[], options?: CommandOptions): FluentStream<string>;
+  pipe(command: Command): FluentStream<string>;
   pipe<U>(
-    transformOrCmd: Transform<T, U> | CommandFn,
+    transformOrCmd: Transform<T, U> | CommandFn | Command,
     args: string[] = [],
     options?: CommandOptions,
   ): FluentStream<U> | FluentStream<string> {
+    // SSH-557: Check if it's a Command object (from transpiler-generated $.cmd(...))
+    if (transformOrCmd instanceof Command) {
+      return new FluentStream(
+        (this._stream as unknown as Stream<string>).pipe(toCmdLines(transformOrCmd))
+      );
+    }
     // Check if it's a CommandFn by looking for the symbol
     if (typeof transformOrCmd === "function" && CMD_NAME_SYMBOL in transformOrCmd) {
       return new FluentStream(

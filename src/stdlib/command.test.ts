@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assert } from "@std/assert";
-import { cmd, git, str, bytes, toCmd, toCmdLines, initCmds, type StreamChunk, type CommandFn } from "./command.ts";
+import { cmd, Command, git, str, bytes, toCmd, toCmdLines, initCmds, type StreamChunk, type CommandFn } from "./command.ts";
 import { lines, grep } from "./transforms.ts";
 import { createStream } from "./stream.ts";
 import { FluentStream } from "./fluent-stream.ts";
@@ -690,4 +690,94 @@ Deno.test("SSH-422 - Command.pipe() chaining with multiple transforms", async ()
     .collect();
 
   assertEquals(stream, ["apple", "apricot"]);
+});
+
+// ==================== SSH-557: toCmdLines/toCmd with Command objects ====================
+
+Deno.test("SSH-557 - toCmdLines accepts Command object directly", async () => {
+  // Reproduces the bug: transpiler generates $.toCmdLines($.cmd("sed", ...))
+  // which passes a Command object, not a CommandFn
+  const stream = createStream(
+    (async function* () {
+      yield "hello world";
+      yield "foo bar";
+    })(),
+  );
+
+  const transform = toCmdLines(cmd("sort", ["-r"]));
+  const result: string[] = [];
+  for await (const line of transform(stream)) {
+    result.push(line);
+  }
+
+  assertEquals(result, ["hello world", "foo bar"]);
+});
+
+Deno.test("SSH-557 - toCmd accepts Command object directly", async () => {
+  const stream = createStream(
+    (async function* () {
+      yield "cherry";
+      yield "apple";
+      yield "banana";
+    })(),
+  );
+
+  const transform = toCmd(cmd("sort"));
+  const result: string[] = [];
+  for await (const line of transform(stream)) {
+    result.push(line);
+  }
+
+  assertEquals(result, ["apple\nbanana\ncherry\n"]);
+});
+
+Deno.test("SSH-557 - FluentStream.pipe() with Command object", async () => {
+  // Simulates the transpiler pattern: stream.pipe($.cmd("sort"))
+  const stream = new FluentStream(createStream(
+    (async function* () {
+      yield "cherry";
+      yield "apple";
+      yield "banana";
+    })(),
+  ));
+
+  const result = await stream.pipe(cmd("sort")).collect();
+
+  assertEquals(result, ["apple", "banana", "cherry"]);
+});
+
+Deno.test("SSH-557 - FluentStream.pipe() with Command with args", async () => {
+  // Simulates: stream.pipe($.cmd("sort", ["-r"]))
+  const stream = new FluentStream(createStream(
+    (async function* () {
+      yield "apple";
+      yield "cherry";
+      yield "banana";
+    })(),
+  ));
+
+  const result = await stream.pipe(cmd("sort", ["-r"])).collect();
+
+  assertEquals(result, ["cherry", "banana", "apple"]);
+});
+
+Deno.test("SSH-557 - chained: stream | grep | cmd(sed) | grep", async () => {
+  // Simulates the transpiler pattern for:
+  // echo "..." | grep pattern | sed 's/foo/bar/' | grep bar
+  // After grep (a fluent transform), sed is a Command piped via toCmdLines
+  const stream = new FluentStream(createStream(
+    (async function* () {
+      yield "3 match_foo";
+      yield "1 no";
+      yield "2 match_foo";
+    })(),
+  ));
+
+  const result = await stream
+    .pipe(grep(/match/))                                      // fluent transform
+    .pipe(cmd("sed", ["s/match_foo/match_bar/"]))             // Command object via toCmdLines
+    .pipe(grep(/match_bar/))                                  // fluent transform
+    .collect();
+
+  assertEquals(result, ["3 match_bar", "2 match_bar"]);
 });
