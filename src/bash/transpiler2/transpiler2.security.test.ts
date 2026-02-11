@@ -487,7 +487,8 @@ describe("Security - Environment Variable Safety", () => {
     const ast = parse('PATH="/malicious:$PATH"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let PATH = ');
+    // SSH-566: Self-referencing assignments split declaration to avoid TDZ
+    assertStringIncludes(output, "let PATH;");
     assertStringIncludes(output, "$.ENV.PATH");
   });
 
