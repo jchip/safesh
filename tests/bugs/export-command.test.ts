@@ -137,6 +137,63 @@ describe("Bug: export VAR=value", () => {
     }
   });
 
+  it("SSH-566: export PATH self-reference should not cause TDZ error", () => {
+    // export PATH="$PATH:..." used to generate `let PATH = \`...\`` which
+    // triggers "Cannot access 'PATH' before initialization" (TDZ error)
+    // because `typeof PATH` on a let-declared variable in its own initializer throws.
+    // Fix: split into `let PATH; PATH = ...;` so typeof sees undefined, not TDZ.
+    const code = transpileBash(
+      'export PATH="$PATH:$HOME/Library/Android/sdk/platform-tools"'
+    );
+
+    assertStringIncludes(code, 'Deno.env.set("PATH"');
+
+    // Must split declaration and assignment for self-referencing variables
+    assertStringIncludes(code, "let PATH;");
+
+    // Execute to verify no TDZ error
+    const bodyCode = code
+      .replace(/import .*/g, "")
+      .replace(/"use strict";/, "")
+      .replace(/\(async \(\) => \{/, "")
+      .replace(/\}\)\(\);/, "");
+    const fn = new Function("$", "Deno", bodyCode + "; return PATH;");
+    const mockEnv: Record<string, string> = { PATH: "/usr/bin", HOME: "/Users/test" };
+    const result = fn(
+      { ENV: mockEnv, VARS: {} },
+      { env: { set: (k: string, v: string) => { mockEnv[k] = v; }, get: (k: string) => mockEnv[k] } },
+    );
+    assertStringIncludes(result, "/usr/bin");
+    assertStringIncludes(result, "platform-tools");
+  });
+
+  it("SSH-566: non-export self-referencing assignment should not TDZ", () => {
+    const code = transpileBash('PATH="$PATH:/usr/local/bin"');
+
+    // Must split declaration and assignment
+    assertStringIncludes(code, "let PATH;");
+
+    const bodyCode = code
+      .replace(/import .*/g, "")
+      .replace(/"use strict";/, "")
+      .replace(/\(async \(\) => \{/, "")
+      .replace(/\}\)\(\);/, "");
+    const fn = new Function("$", "Deno", bodyCode + "; return PATH;");
+    const result = fn(
+      { ENV: { PATH: "/usr/bin" }, VARS: {} },
+      { env: { set: () => {}, get: () => undefined } },
+    );
+    assertStringIncludes(result, "/usr/bin");
+    assertStringIncludes(result, "/usr/local/bin");
+  });
+
+  it("SSH-566: non-self-referencing export should use inline declaration", () => {
+    const code = transpileBash('export FOO="bar"');
+    // Should NOT split — no self-reference, so inline `let FOO = ...` is safe
+    assertStringIncludes(code, 'let FOO = "bar"');
+    assertStringIncludes(code, 'Deno.env.set("FOO"');
+  });
+
   it("should handle the original failing command pattern", () => {
     const code = transpileBash(
       'export ANDROID_HOME=~/Library/Android/sdk && export PATH="$ANDROID_HOME/platform-tools:$PATH"'

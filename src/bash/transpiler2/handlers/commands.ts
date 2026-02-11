@@ -1649,6 +1649,12 @@ export function buildVariableAssignment(
     }
   }
 
+  // SSH-566: Check if the value references the variable being assigned.
+  // If so, and it's a first declaration, we must split `let VAR; VAR = value;`
+  // to avoid TDZ (Temporal Dead Zone) errors where `typeof VAR` throws because
+  // `let` hasn't finished initializing.
+  const selfReferences = !ctx.isDeclared(stmt.name) && value.includes(`typeof ${jsName} `);
+
   // SSH-306: Handle exported variables
   if (stmt.exported) {
     // Exported variables need to be set in both local scope and environment
@@ -1659,6 +1665,9 @@ export function buildVariableAssignment(
     } else {
       // First assignment - declare, set value, and export
       ctx.declareVariable(stmt.name, "let");
+      if (selfReferences) {
+        return `let ${jsName}; ${jsName} = ${value}; Deno.env.set("${stmt.name}", ${jsName})`;
+      }
       return `let ${jsName} = ${value}; Deno.env.set("${stmt.name}", ${jsName})`;
     }
   }
@@ -1670,6 +1679,9 @@ export function buildVariableAssignment(
   } else {
     // First assignment - declare with let (bash variables are mutable)
     ctx.declareVariable(stmt.name, "let");
+    if (selfReferences) {
+      return `let ${jsName}; ${jsName} = ${value}`;
+    }
     return `let ${jsName} = ${value}`;
   }
 }
