@@ -150,3 +150,59 @@ exit 42
     await Deno.remove(tmpDir, { recursive: true });
   }
 });
+
+Deno.test("SSH-565 - stdout().lines().pipe(head()) doesn't hang on early exit", async () => {
+  // When head() breaks the for-await loop after N items, the upstream
+  // subprocess must be killed so drainPromise and process.status don't hang.
+  const tmpDir = await Deno.makeTempDir();
+  const scriptPath = `${tmpDir}/many-lines.sh`;
+
+  try {
+    // Script that outputs many lines (more than we'll consume)
+    await Deno.writeTextFile(scriptPath, `#!/bin/sh
+for i in $(seq 1 1000); do
+  echo "line $i"
+done
+`);
+    await Deno.chmod(scriptPath, 0o755);
+
+    const startTime = Date.now();
+
+    // Only consume 5 lines from a command that outputs 1000
+    const lines = await cmd("sh", [scriptPath])
+      .stdout()
+      .lines()
+      .head(5)
+      .collect();
+
+    const duration = Date.now() - startTime;
+
+    assertEquals(lines.length, 5, "Should collect exactly 5 lines");
+    assertEquals(lines[0], "line 1");
+    assertEquals(lines[4], "line 5");
+
+    // Should complete quickly, not hang waiting for the full 1000 lines
+    assert(duration < 5000, `Should complete quickly (took ${duration}ms)`);
+    console.log(`✓ head(5) pipeline completed in ${duration}ms`);
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("SSH-565 - stdout().pipe(head()) with long-running process", async () => {
+  // Simulate the exact scenario: find piped through head
+  // find would run for a long time, but head(5) should kill it
+  const startTime = Date.now();
+
+  const lines = await cmd("find", ["/usr", "-type", "f"])
+    .stdout()
+    .lines()
+    .head(5)
+    .collect();
+
+  const duration = Date.now() - startTime;
+
+  assertEquals(lines.length, 5, "Should collect exactly 5 lines");
+  assert(duration < 10000, `Should complete quickly (took ${duration}ms)`);
+  console.log(`✓ find | head(5) completed in ${duration}ms`);
+});

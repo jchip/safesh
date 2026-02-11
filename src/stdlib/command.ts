@@ -715,6 +715,7 @@ export class Command implements PromiseLike<CommandResult> {
 
         // Stream target output
         const reader = streamToRead.getReader();
+        let streamFullyConsumed = false;
         try {
           while (true) {
             const { done, value } = await reader.read();
@@ -723,8 +724,20 @@ export class Command implements PromiseLike<CommandResult> {
               yield decoder.decode(value, { stream: true });
             }
           }
+          streamFullyConsumed = true;
         } finally {
-          reader.releaseLock();
+          // SSH-565: If stream was NOT fully consumed (early break from head/take/first),
+          // kill the subprocess and cancel streams so drainPromise/process.status don't hang.
+          if (!streamFullyConsumed) {
+            try { process.kill("SIGTERM"); } catch { /* already exited */ }
+            // Cancel streams to release resources (reader lock must be released first)
+            reader.releaseLock();
+            await streamToRead.cancel().catch(() => {});
+            await streamToDrain.cancel().catch(() => {});
+          } else {
+            reader.releaseLock();
+          }
+
           if (stdinPromise) await stdinPromise;
           await drainPromise;
           const status = await process.status;
