@@ -678,7 +678,15 @@ export async function executeCode(
   await getLoginShellPath();
 
   // Phase 1: Prepare execution context (validate, resolve options)
-  const { cwd, timeoutMs, importPolicy } = prepareExecutionContext(code, config, options, shell);
+  // SSH-562: Catch import validation errors and return as failed result
+  let ctx: ExecutionContext;
+  try {
+    ctx = prepareExecutionContext(code, config, options, shell);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { stdout: "", stderr: msg, code: 1, success: false };
+  }
+  const { cwd, timeoutMs, importPolicy } = ctx;
 
   // Phase 2: Create script record for tracking
   const script = createExecutionScript(code, shell);

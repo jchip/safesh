@@ -454,11 +454,16 @@ export async function cleanupProcess(
   try {
     await process.stdout.cancel();
   } catch {
-    // Stream may already be closed
+    // Stream may already be closed or locked by a reader
   }
   try {
     await process.stderr.cancel();
   } catch {
-    // Stream may already be closed
+    // Stream may already be closed or locked by a reader
+  }
+  try {
+    await process.status;
+  } catch {
+    // Process may have already been awaited
   }
 }

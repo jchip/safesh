@@ -10,7 +10,7 @@ import { timeout as timeoutError } from "../core/errors.ts";
 import type { ExecOptions, SafeShellConfig, Shell, StreamChunk } from "../core/types.ts";
 import { buildPermissionFlags, findConfig } from "./executor.ts";
 import { hashCode, buildEnv, cleanupProcess } from "../core/utils.ts";
-import { buildPreamble, extractPreambleConfig } from "./preamble.ts";
+import { buildPreamble, buildErrorHandler, extractPreambleConfig } from "./preamble.ts";
 import { getScriptsDir } from "../core/temp.ts";
 
 const TEMP_DIR = getScriptsDir();
@@ -40,7 +40,8 @@ async function* streamProcess(
     let stderrPromise = stderrReader.read();
 
     while (!stdoutDone || !stderrDone) {
-      if (Date.now() - startTime > timeoutMs) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > timeoutMs) {
         throw timeoutError(timeoutMs, `${label} (streaming)`);
       }
 
@@ -53,12 +54,24 @@ async function* streamProcess(
         promises.push({ promise: stderrPromise, type: "stderr" });
       }
 
-      const result = await Promise.race(
-        promises.map(async ({ promise, type }) => ({
+      // SSH-563: Race a timeout against stream reads so hanging processes get killed
+      const remaining = timeoutMs - elapsed;
+      let timerId: number | undefined;
+      const result = await Promise.race([
+        ...promises.map(async ({ promise, type }) => ({
           result: await promise,
-          type,
-        }))
-      );
+          type: type as "stdout" | "stderr",
+          timedOut: false as const,
+        })),
+        new Promise<{ timedOut: true; type: "timeout"; result: null }>((resolve) => {
+          timerId = setTimeout(() => resolve({ timedOut: true, type: "timeout", result: null }), remaining) as unknown as number;
+        }),
+      ]);
+      clearTimeout(timerId);
+
+      if (result.timedOut) {
+        throw timeoutError(timeoutMs, `${label} (streaming)`);
+      }
 
       if (result.type === "stdout") {
         if (result.result.done) {
@@ -80,6 +93,9 @@ async function* streamProcess(
     const status = await process.status;
     yield { type: "exit", code: status.code };
   } catch (error) {
+    // Release readers before cleanup so streams can be canceled
+    try { stdoutReader.cancel(); } catch { /* already closed */ }
+    try { stderrReader.cancel(); } catch { /* already closed */ }
     await cleanupProcess(process);
     throw error;
   }
@@ -105,10 +121,11 @@ export async function* executeCodeStreaming(
   const hash = await hashCode(code);
   const scriptPath = join(TEMP_DIR, `${hash}.ts`);
 
-  // Build full code with preamble from canonical preamble module
+  // Build full code with preamble and error handler from canonical preamble module
   const preambleConfig = extractPreambleConfig(config, cwd);
-  const { preamble } = buildPreamble(shell, preambleConfig);
-  const fullCode = preamble + code;
+  const { preamble, preambleLineCount } = buildPreamble(shell, preambleConfig);
+  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell);
+  const fullCode = preamble + code + errorHandler;
 
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);

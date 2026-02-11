@@ -402,11 +402,10 @@ export interface CountResult {
  */
 export function count(input: string): CountResult {
   validateString(input, "$.text.count()");
-  // Match wc -l: count newline characters (not split segments)
-  let lineCount = 0;
-  for (let i = 0; i < input.length; i++) {
-    if (input[i] === "\n") lineCount++;
-  }
+  // Count text lines: number of \n-separated segments
+  // A trailing newline does not count as an extra line (matches text editor behavior)
+  const segments = input.split("\n");
+  const lineCount = segments[segments.length - 1] === "" ? segments.length - 1 : segments.length;
   const wordCount = input.split(/\s+/).filter((w) => w.length > 0).length;
   const charCount = input.length;
   const byteCount = new TextEncoder().encode(input).length;

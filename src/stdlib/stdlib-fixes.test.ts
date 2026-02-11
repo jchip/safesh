@@ -55,9 +55,9 @@ Deno.test("count() - empty string has 0 lines", () => {
   assertEquals(result.lines, 0);
 });
 
-Deno.test("count() - single line no trailing newline has 0 lines (wc -l compat)", () => {
+Deno.test("count() - single line no trailing newline has 1 line", () => {
   const result = count("hello");
-  assertEquals(result.lines, 0);
+  assertEquals(result.lines, 1);
 });
 
 Deno.test("count() - single line with trailing newline has 1 line", () => {
@@ -72,7 +72,7 @@ Deno.test("count() - two lines with trailing newline", () => {
 
 Deno.test("count() - two lines without trailing newline", () => {
   const result = count("hello\nworld");
-  assertEquals(result.lines, 1);
+  assertEquals(result.lines, 2);
 });
 
 Deno.test("count() - word count", () => {
