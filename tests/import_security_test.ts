@@ -2,7 +2,7 @@
  * Tests for import security policy enforcement
  */
 
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import {
   generateImportMap,
@@ -203,13 +203,10 @@ describe("Import Security", () => {
         console.log("Should not reach here");
       `;
 
-      await assertRejects(
-        async () => {
-          await executeCode(code, DEFAULT_CONFIG);
-        },
-        SafeShellError,
-        "npm:lodash",
-      );
+      // SSH-562: executeCode catches import validation errors and returns failed result
+      const result = await executeCode(code, DEFAULT_CONFIG);
+      assertEquals(result.success, false);
+      assertStringIncludes(result.stderr, "npm:lodash");
     });
 
     it("should allow jsr:@std/* imports", async () => {

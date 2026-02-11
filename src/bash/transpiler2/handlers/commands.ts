@@ -53,9 +53,15 @@ function wordHasExpansion(
     return true;
   }
   if (word.type === "Word" && word.parts.length > 0) {
-    return word.parts.some(
+    if (word.parts.some(
       (part) => part.type !== "LiteralPart" && part.type !== "GlobPattern",
-    );
+    )) return true;
+    // SSH-561: Tilde expansion in LiteralPart generates ${Deno.env.get("HOME")}
+    // which needs template literal wrapping (backticks, not double quotes)
+    const first = word.parts[0];
+    if (first.type === "LiteralPart" && (first.value === "~" || first.value.startsWith("~/"))) {
+      return true;
+    }
   }
   return false;
 }

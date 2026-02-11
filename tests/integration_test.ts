@@ -397,13 +397,10 @@ Deno.test("E2E: Import policy blocks unauthorized imports", async () => {
     const { something } = await import("npm:malicious-package");
   `;
 
-  await assertRejects(
-    async () => {
-      await executeCode(code, restrictedConfig);
-    },
-    SafeShellError,
-    "blocked",
-  );
+  // SSH-562: executeCode catches import validation errors and returns failed result
+  const result = await executeCode(code, restrictedConfig);
+  assertEquals(result.success, false);
+  assertStringIncludes(result.stderr, "blocked");
 });
 
 Deno.test("E2E: Import policy allows trusted imports", async () => {

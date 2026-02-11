@@ -16,7 +16,13 @@ import type { ImportPolicy } from "./types.ts";
 import { importError } from "./errors.ts";
 import { getImportPolicyDir } from "./temp.ts";
 
-const TEMP_DIR = getImportPolicyDir();
+// SSH-562: Lazy-initialize to avoid module-level side effect (Deno.mkdirSync)
+// that fails when imported without --allow-write permission
+let _tempDir: string | undefined;
+function getTempDir(): string {
+  if (!_tempDir) _tempDir = getImportPolicyDir();
+  return _tempDir;
+}
 
 /**
  * Deno import map structure
@@ -60,7 +66,7 @@ export async function generateImportMap(
   policy: ImportPolicy,
 ): Promise<string> {
   // Ensure temp directory exists
-  await ensureDir(TEMP_DIR);
+  await ensureDir(getTempDir());
 
   const importMap: ImportMap = {
     imports: {},
@@ -88,7 +94,7 @@ export async function generateImportMap(
   importMap.imports!["@std/async"] = "jsr:@std/async@^1";
   importMap.imports!["@std/fmt/colors"] = "jsr:@std/fmt@^1/colors";
 
-  const importMapPath = join(TEMP_DIR, "import-map.json");
+  const importMapPath = join(getTempDir(), "import-map.json");
   await Deno.writeTextFile(
     importMapPath,
     JSON.stringify(importMap, null, 2),
