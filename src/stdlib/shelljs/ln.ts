@@ -52,8 +52,10 @@ export async function ln(
     const expandedSource = expandTilde(source);
     const resolvedDest = resolve(expandTilde(dest));
 
-    // For hard links, resolve source to absolute; for symlinks, keep as-given
-    const resolvedSource = symbolic ? expandedSource : resolve(expandedSource);
+    // Resolve source to absolute for both hard links and symlinks
+    // For symlinks, relative paths would be resolved relative to the link's
+    // directory (not CWD), causing broken links when the paths differ
+    const resolvedSource = resolve(expandedSource);
 
     // Check if source exists (for hard links, must exist)
     if (!symbolic) {
