@@ -192,6 +192,27 @@ describe("Fluent Commands - Comprehensive", () => {
       assertStringIncludes(output, "$.filter(");
       assertStringIncludes(output, "!/pattern/.test");
     });
+
+    it("SSH-567: should escape forward slashes in grep pattern", () => {
+      const ast = parse('echo "test" | grep -E "test/path"');
+      const output = transpile(ast);
+      // Forward slash must be escaped to prevent breaking the regex literal
+      assertStringIncludes(output, "test\\/path");
+      // The regex literal must be valid (no double //)
+      assertEquals(output.includes("test//"), false);
+    });
+
+    it("SSH-567: should handle grep pattern with multiple slashes", () => {
+      const ast = parse('cat log | grep "/usr/local/bin"');
+      const output = transpile(ast);
+      assertStringIncludes(output, "\\/usr\\/local\\/bin");
+    });
+
+    it("SSH-567: should handle grep -E with alternation containing slashes", () => {
+      const ast = parse('echo "x" | grep -E "FAILED|test/"');
+      const output = transpile(ast);
+      assertStringIncludes(output, "FAILED|test\\/");
+    });
   });
 
   describe("cut command", () => {
