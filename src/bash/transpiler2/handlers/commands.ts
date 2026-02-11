@@ -678,7 +678,10 @@ function buildFluentCommand(
         return null;
       }
 
-      const escapedPattern = escapeForQuotes(pattern);
+      // SSH-567: Escape forward slashes in the pattern for use inside JS regex literal /pattern/
+      // The pattern is already a regex (from grep -E or grep), so only the delimiter needs escaping.
+      // escapeForQuotes was wrong here — it escapes for strings, not regex literals.
+      const escapedPattern = pattern.replace(/\//g, "\\/");
       const flags = ignoreCase ? "i" : "";
       const regexPattern = `/${escapedPattern}/${flags}`;
 
