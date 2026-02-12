@@ -213,6 +213,34 @@ describe("Fluent Commands - Comprehensive", () => {
       const output = transpile(ast);
       assertStringIncludes(output, "FAILED|test\\/");
     });
+
+    it("SSH-568: should fall back to $.cmd for grep -A (after context)", () => {
+      const ast = parse('echo "test" | grep -A 20 "══"');
+      const output = transpile(ast);
+      // -A takes a numeric arg; fluent grep doesn't support context lines
+      // Must fall back to $.cmd("grep", ...) instead of misparsing args
+      assertStringIncludes(output, '$.cmd("grep"');
+      // Should NOT treat "20" as the pattern
+      assert(!output.includes("$.grep(/20/)"), "Should not misparse '20' as grep pattern");
+    });
+
+    it("SSH-568: should fall back to $.cmd for grep -B (before context)", () => {
+      const ast = parse('echo "test" | grep -B 5 "pattern"');
+      const output = transpile(ast);
+      assertStringIncludes(output, '$.cmd("grep"');
+    });
+
+    it("SSH-568: should fall back to $.cmd for grep -C (combined context)", () => {
+      const ast = parse('echo "test" | grep -C 3 "pattern"');
+      const output = transpile(ast);
+      assertStringIncludes(output, '$.cmd("grep"');
+    });
+
+    it("SSH-568: should fall back to $.cmd for grep -m (max count)", () => {
+      const ast = parse('echo "test" | grep -m 1 "pattern"');
+      const output = transpile(ast);
+      assertStringIncludes(output, '$.cmd("grep"');
+    });
   });
 
   describe("cut command", () => {
