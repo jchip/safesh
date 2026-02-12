@@ -663,8 +663,12 @@ function buildFluentCommand(
         } else if (arg === "-r" || arg === "-R" || arg?.includes("r") && arg.startsWith("-")) {
           // Check for -r, -R, or combined flags like -rn, -rin, etc.
           recursive = true;
+        } else if (arg === "-A" || arg === "-B" || arg === "-C" || arg === "-m") {
+          // SSH-568: These flags take numeric arguments and aren't supported by fluent grep.
+          // Fall back to $.cmd("grep", ...) for correctness.
+          return null;
         } else if (arg?.startsWith("-")) {
-          // Skip other options
+          // Skip other options (simple flags like -E, -F, -c, -l, -q, etc.)
         } else if (!pattern) {
           pattern = arg ?? "";
         } else {
