@@ -594,6 +594,7 @@ export class Parser {
         TokenType.WORD,
         TokenType.NAME,
         TokenType.NUMBER,
+        TokenType.ASSIGNMENT_WORD, // SSH-569: name=value after command name is an argument, not assignment
         TokenType.BANG, // Allow ! as argument for test/[ commands
         TokenType.LESS,
         TokenType.GREAT,
@@ -629,6 +630,22 @@ export class Parser {
           quoted: false,
           singleQuoted: false,
           parts: [{ type: "LiteralPart", value: "!" }],
+        });
+      } else if (this.is(TokenType.ASSIGNMENT_WORD)) {
+        // SSH-569: After a command name, name=value is a regular argument
+        // (e.g., curl -d name="Basic") not a variable assignment prefix
+        const token = this.advance();
+        const id = this.nextId();
+        const loc = this.tokenLoc(token);
+        this.recordLocation(id, loc);
+        args.push({
+          type: "Word",
+          id,
+          loc,
+          value: token.value,
+          quoted: token.quoted || false,
+          singleQuoted: token.singleQuoted || false,
+          parts: this.parseWordParts(token.value, token.quoted || false, token.singleQuoted || false),
         });
       } else {
         args.push(this.parseWord());
