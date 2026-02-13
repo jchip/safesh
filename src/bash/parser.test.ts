@@ -328,6 +328,47 @@ EOF`);
       assertEquals((cmd.args[0] as AST.Word).value, "arg");
     });
 
+    // SSH-569: name=value after command should be treated as argument, not assignment
+    it("should treat name=value as argument when it follows a command", () => {
+      // In bash: curl -d name="Basic" passes 'name=Basic' as argument to -d
+      // The parser should NOT split this into separate commands
+      const ast = parse('curl -d name="Basic"');
+      assertEquals(ast.body.length, 1, "should be a single statement");
+
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals((cmd.name as AST.Word).value, "curl");
+      assertEquals(cmd.assignments.length, 0, "no assignments - name=Basic is an arg");
+      assertEquals(cmd.args.length, 2, "should have 2 args: -d and name=Basic");
+      assertEquals((cmd.args[0] as AST.Word).value, "-d");
+      // Lexer preserves quotes in partial-quoted words; parts handle expansion
+      assertEquals((cmd.args[1] as AST.Word).value, 'name="Basic"');
+    });
+
+    it("should treat multiple name=value as arguments in curl -d pattern", () => {
+      // Real-world pattern: curl with multiple -d flags using name=value
+      const ast = parse(`curl -s https://example.com \\
+  -u "key:" \\
+  -d name="Basic" \\
+  -d description="Vault backup" \\
+  -d "metadata[plan_id]=basic"`);
+
+      assertEquals(ast.body.length, 1, "should be a single statement");
+
+      const stmt = ast.body[0] as AST.Pipeline;
+      const cmd = stmt.commands[0] as AST.Command;
+
+      assertEquals((cmd.name as AST.Word).value, "curl");
+      assertEquals(cmd.assignments.length, 0, "no assignments");
+      // Args: -s, url, -u, key:, -d, name="Basic", -d, description="Vault backup", -d, metadata[plan_id]=basic
+      assertEquals(cmd.args.length, 10, "should have 10 args");
+      assertEquals((cmd.args[4] as AST.Word).value, "-d");
+      assertEquals((cmd.args[5] as AST.Word).value, 'name="Basic"');
+      assertEquals((cmd.args[6] as AST.Word).value, "-d");
+      assertEquals((cmd.args[7] as AST.Word).value, 'description="Vault backup"');
+    });
+
     // SSH-327: Array assignment tests
     it("should parse simple array assignment", () => {
       const ast = parse("arr=(one two three)");
