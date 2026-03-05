@@ -14,7 +14,7 @@ The main tool is `run` - never guess names like `execute`, `eval`, etc.
 
 All shell utilities and APIs are accessed through the `$` object (e.g., `$.mkdir()`, `$.cd()`, `$.ls()`).
 
-**Common APIs:** `$.git`, `$.fs`, `$.cat`, `$.mkdir`, `$.cp`, `$.mv`, `$.rm`, `$.touch`, `$.cd`, `$.pwd`, `$.ls`
+**Common APIs:** `$.cmd`, `$.git`, `$.fs`, `$.path`, `$.text`, `$.cat`, `$.glob`, `$.mkdir`, `$.cp`, `$.mv`, `$.rm`, `$.rmdir`, `$.touch`, `$.cd`, `$.pwd`, `$.ls`
 
 **Shell state:** `$.ID`, `$.CWD`, `$.ENV`, `$.VARS`
 
@@ -25,6 +25,8 @@ All shell utilities and APIs are accessed through the `$` object (e.g., `$.mkdir
 - ❌ `$.fs.readTextFile` → ✅ `$.fs.read()` or `Deno.readTextFile()`
 - ❌ `$.writeTextFile` → ✅ `$.fs.write()`
 - ❌ `$.readTextFile` → ✅ `$.fs.read()`
+- ❌ `$.text()` → ✅ `$.str()` for strings as commands or `$.text.*` for text utils
+- ❌ `$.from()` → ✅ `$.fromArray()`
 
 ## Common Gotchas
 
@@ -38,9 +40,9 @@ All shell utilities and APIs are accessed through the `$` object (e.g., `$.mkdir
 
 ## Streaming vs Direct
 
-**Streams (need `.collect()`):** `$.cat()`, `$.from()`, `$.text()`, `$.glob()`, and chains: `.lines()`, `.grep()`, `.filter()`, `.map()`, `.head()`, `.tail()`
+**Streams (need `.collect()`):** `$.cat()`, `$.glob()`, `$.src()`, `$.fromArray()`, and chains: `.lines()`, `.grep()`, `.jq()`, `.filter()`, `.map()`, `.head()`, `.tail()`
 
-**Direct (return value):** `$.fs.read()`, `$.ls()`, `$.mkdir()`, `$.rm()`, `$.cp()`, `$.mv()`, `$.touch()`
+**Direct (return value):** `$.fs.read()`, `$.ls()`, `$.mkdir()`, `$.rm()`, `$.cp()`, `$.mv()`, `$.touch()`, `$.text.grep()`, `$.text.replace()`
 
 ## Commands
 
