@@ -1,3 +1,11 @@
+function safeString(v: any): string {
+  try {
+    return v instanceof Error ? v.message : String(v);
+  } catch {
+    return "[unconvertible error]";
+  }
+}
+
 /**
  * Error Handlers Module
  *
@@ -46,7 +54,7 @@ export interface PathViolationInfo {
  */
 export function detectPathViolation(error: unknown): PathViolationInfo {
   const err = error as any;
-  const errorMessage = err?.message || String(error);
+  const errorMessage = err?.message || safeString(error);
   const errorCode = err?.code || "";
 
   const isPathViolation =
@@ -246,7 +254,7 @@ export function createErrorHandler(
 ): (error: unknown) => never {
   return (error: unknown): never => {
     const err = error as any;
-    const errorMessage = err?.message || String(error);
+    const errorMessage = err?.message || safeString(error);
     const errorCode = err?.code || "";
 
     // Check if this is a path violation
@@ -335,7 +343,13 @@ export function generateInlineErrorHandler(
   ).join("\n");
 
   const handlerCode = `${transpiledCodeConst}const __handleError = (error) => {
-${includeCommandCheck}  const errorMessage = error.message || String(error);
+${includeCommandCheck}  if (!error) error = new Error("Unknown error (null or undefined)");
+  let errorMessage;
+  try {
+    errorMessage = error.message || String(error);
+  } catch (e) {
+    errorMessage = "[unconvertible error]";
+  }
   const errorCode = error.code || "";
 
   // Check if this is a path permission error (SafeShell or Deno)
@@ -468,7 +482,7 @@ globalThis.addEventListener("unhandledrejection", (event) => {
  * @param code - The code that was being executed
  */
 export function logExecutionError(error: unknown, code: string): void {
-  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorMessage = safeString(error);
   const errorStack = error instanceof Error ? error.stack : undefined;
 
   const errorLogParts = [
