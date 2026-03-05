@@ -1061,14 +1061,12 @@ async function main() {
       // 3. Temporarily replacing Deno.stdin with our stream
       const combinedTsCode = `
 // Execute bash part and capture output
-const __bashOutput = ${bashTsCode.trim()};
+const __bashOutput = await ${bashTsCode.trim()};
 
 // Get the stdout from the bash command result
 let __stdout: string;
-if (typeof __bashOutput === "object" && "stdout" in __bashOutput) {
+if (typeof __bashOutput === "object" && __bashOutput !== null && "stdout" in __bashOutput) {
   __stdout = __bashOutput.stdout;
-} else if (typeof __bashOutput === "string") {
-  __stdout = __bashOutput;
 } else {
   __stdout = String(__bashOutput);
 }
