@@ -674,8 +674,8 @@ describe("Transpiler2 - Pipelines", () => {
       /const\s+\w+\s+=\s+for\s+await/,
       /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,
       /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,
-      /\.pipe\((?:(?!\breturn\b)[^`]){1,500}\)\.pipe\((?:(?!\breturn\b)[^`]){1,500}\)\.stdout\(\)/,
-      /\.lines\(\)\.pipe\((?:(?!\breturn\b)[^`]){1,500}\)\.lines\(\)/,
+      /\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.stdout\(\)/,
+      /\.lines\(\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.lines\(\)/,
     ];
 
     const validCommands = [
@@ -686,6 +686,8 @@ describe("Transpiler2 - Pipelines", () => {
       'make test 2>&1 | tail -5 && echo "done" && make lint 2>&1 | head -10',
       // SSH-498: command substitution with pipeline inside double-quoted arg
       'curl -sk https://example.com -H "Cookie: $(cat config.toml 2>/dev/null | grep -v cookie)" 2>&1 | head -5',
+      // SSH-570: multiple semicolon-separated pipelines - .lines().pipe() cross-statement false positive
+      'curl -sk --max-time 3 https://example.com 2>&1| head -5; echo "---"; curl -sk --max-time 3 http://localhost:8080 2>&1 | head -3',
     ];
 
     for (const cmd of validCommands) {

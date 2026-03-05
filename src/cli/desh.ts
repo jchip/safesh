@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-read --allow-write --allow-run --allow-env --config=/Users/jc/dev/safesh/deno.json
+#!/usr/bin/env -S deno run --allow-read --allow-write --allow-run --allow-env
 /**
  * desh - Deno Shell CLI for SafeShell
  *
