@@ -59,7 +59,7 @@ function wordHasExpansion(
     // SSH-561: Tilde expansion in LiteralPart generates ${Deno.env.get("HOME")}
     // which needs template literal wrapping (backticks, not double quotes)
     const first = word.parts[0];
-    if (first.type === "LiteralPart" && (first.value === "~" || first.value.startsWith("~/"))) {
+    if (first && first.type === "LiteralPart" && (first.value === "~" || first.value.startsWith("~/"))) {
       return true;
     }
   }
@@ -956,8 +956,8 @@ class PipelineAssembler {
    * @param part - The pipeline part to append
    * @param followedByPipe - Whether this && is eventually followed by a pipe
    */
-  appendAnd(part: PipelinePart, followedByPipe: boolean): void {
-    this.handleLogicalOp("&&", part, followedByPipe);
+  appendAnd(part: PipelinePart): void {
+    this.handleLogicalOp("&&", part);
   }
 
   /**
@@ -965,7 +965,7 @@ class PipelineAssembler {
    * SSH-361/362: Handle printable vs non-printable parts correctly.
    */
   appendOr(part: PipelinePart): void {
-    this.handleLogicalOp("||", part, false);
+    this.handleLogicalOp("||", part);
     this.resetPromiseState();
   }
 
@@ -1040,7 +1040,6 @@ class PipelineAssembler {
   private handleLogicalOp(
     op: "&&" | "||",
     part: PipelinePart,
-    followedByPipe: boolean,
   ): void {
     const leftPrintable = this.isPrintable;
     const bothNonPrintable = !leftPrintable && !part.isPrintable;
@@ -1061,16 +1060,6 @@ class PipelineAssembler {
         this.code = `${this.code}; ${part.code}`;
         this.updateStreamState(false, false);
         this.isPromise = false;
-        return;
-      }
-      if (followedByPipe) {
-        // SSH-425: Use comma operator so result can be piped
-        this.code = leftPrintable
-          ? `(${leftExpr}, ${part.code})`
-          : `(${this.code}, ${part.code})`;
-        this.isPromise = false;
-        this.isStream = part.isStreamProducer;
-        this.isLineStream = false;
         return;
       }
       // Wrap in IIFE: execute first, then return second
@@ -1194,7 +1183,7 @@ function assemblePipeline(
     if (!part) continue;
 
     if (op === "&&") {
-      assembler.appendAnd(part, analysis.hasAndThenPipe);
+      assembler.appendAnd(part);
     } else if (op === "||") {
       assembler.appendOr(part);
     } else if (op === "|") {
@@ -1572,7 +1561,7 @@ export function visitPipeline(
     // Convert the command to a spawned child process so we can get its PID
     // If the result is async (e.g., wrapped in IIFE for cd), await it first
     const bgCode = result.async
-      ? `${indent}  const __bgCmd = await (${result.code});`
+      ? `${indent}  const __bgCmd = await (async () => { return ${result.code}; })();` // SSH-572: Wrap in IIFE to avoid semicolon syntax error
       : `${indent}  const __bgCmd = ${result.code};`;
 
     return {
