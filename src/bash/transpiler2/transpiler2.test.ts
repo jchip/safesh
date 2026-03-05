@@ -688,6 +688,8 @@ describe("Transpiler2 - Pipelines", () => {
       'curl -sk https://example.com -H "Cookie: $(cat config.toml 2>/dev/null | grep -v cookie)" 2>&1 | head -5',
       // SSH-570: multiple semicolon-separated pipelines - .lines().pipe() cross-statement false positive
       'curl -sk --max-time 3 https://example.com 2>&1| head -5; echo "---"; curl -sk --max-time 3 http://localhost:8080 2>&1 | head -3',
+      // SSH-571: docker exec with multiple args, 2>&1 | head, semicolon-separated
+      'docker exec workflow-engine-traefik wget -q -O- --timeout=3 http://localhost:80 2>&1 | head -5; echo "---"; docker exec workflow-engine-mailpit wget -q -O- --timeout=3 http://mailpit:8025 2>&1 | head -5',
     ];
 
     for (const cmd of validCommands) {
