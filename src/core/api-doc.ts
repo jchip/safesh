@@ -42,12 +42,13 @@ Complete API list:
   - countMatches('**/*.test.ts') → Promise<number>
   - findFirst('config.*.json') → Promise<string|undefined>
 - Stream transforms:
-  - toCmd/toCmdLines(CmdFn, args) - yields single result/lines, jq(query, opts?), stdout(), stderr(), grep(pattern), lines() → Transform<string, string>
+  - toCmd/toCmdLines(CmdFn, args) - yields single result/lines, jq(query, opts?), stdout(), stderr(), grep(pattern), lines(), wc(), sort(), uniq() → Transform<string, string>
+  - dest(dir) → Transform<File, File>
   - tee, filter, take, head, tail → Transform<T, T>
   - map, flatMap → Transform<T, U>
 - Shell-like
   - (sync): echo, cd, pwd, pushd, popd, dirs, tempdir
-  - (async → Promise): test, which, chmod, ln, rm, cp, mv, mkdir, touch, ls
+  - (async → Promise): test, which, chmod, ln, rm, rmdir, cp, mv, mkdir, touch, ls
 - Timing: sleep(ms), delay(ms) → Promise<void>
 - State (persists with shellId): ID, ProjectDir, CWD; ENV, VARS (plain objs)
 - Deno aliases: writeFile/Sync, writeTextFile/Sync, readFile/Sync, readTextFile/Sync, readDir/Sync, readLink/Sync

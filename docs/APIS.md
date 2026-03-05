@@ -843,6 +843,12 @@ $.grep(pattern): Transform<string, string>
 // Command transforms
 $.toCmd(cmd, args): Transform<string, string>
 $.toCmdLines(cmd, args): Transform<string, string>
+$.wc(options?: WcOptions): Transform<string, string>
+$.sort(options?: SortOptions): Transform<string, string>
+$.uniq(options?: UniqOptions): Transform<string, string>
+
+// File transforms
+$.dest(outDir: string, options?: GlobOptions): Transform<File, File>
 
 // JSON transforms
 $.jq(query: string, options?: JqOptions): Transform<string, string>
@@ -930,6 +936,7 @@ $.ls(path?: string, options?): string[]
 $.mkdir(path: string, options?): Promise<void>
 $.touch(path: string, options?): Promise<void>
 $.rm(path: string, options?): Promise<void>
+$.rmdir(path: string, options?): Promise<void>
 $.cp(src: string, dest: string, options?): Promise<void>
 $.mv(src: string, dest: string, options?): Promise<void>
 $.ln(target: string, link: string, options?): Promise<void>
@@ -1303,5 +1310,5 @@ if (!build.success) {
 
 ---
 
-**Version:** 1.2.0
-**Last Updated:** 2026-01-16
+**Version:** 1.3.0
+**Last Updated:** 2026-03-04
