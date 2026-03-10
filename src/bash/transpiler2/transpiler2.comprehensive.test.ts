@@ -241,6 +241,36 @@ describe("Fluent Commands - Comprehensive", () => {
       const output = transpile(ast);
       assertStringIncludes(output, '$.cmd("grep"');
     });
+
+    // SSH-5: BRE escape sequences must not produce invalid regex literals
+    it("SSH-5: should generate valid regex for grep pattern with escaped bracket \\[", () => {
+      const ast = parse('echo "x" | grep "group\\|##\\["');
+      const output = transpile(ast);
+      // Must NOT produce \\[ (which opens an unclosed character class)
+      assertNotMatch(output, /\\\\+\[/);
+      // Must produce a valid regex with literal [
+      assertStringIncludes(output, "\\[");
+      // Must use | not \\| for alternation
+      assertNotMatch(output, /\\\\+\|/);
+    });
+
+    it("SSH-5: grep -v with BRE pattern \\[0m\\$\\|^\\$ should produce valid regex", () => {
+      const ast = parse('echo "x" | grep -v "^\\[0m$\\|^$"');
+      const output = transpile(ast);
+      // Must NOT produce \\[ (unclosed character class)
+      assertNotMatch(output, /\\\\+\[/);
+      // Must produce valid filter with \[ for literal bracket
+      assertStringIncludes(output, "\\[");
+    });
+
+    it("SSH-5: grep with escaped bracket in file pattern produces valid regex", () => {
+      const ast = parse('grep "\\[INFO\\]" log.txt');
+      const output = transpile(ast);
+      // Must NOT produce \\[ which creates invalid character class
+      assertNotMatch(output, /\\\\+\[/);
+      // Must have \[ for literal bracket
+      assertStringIncludes(output, "\\[");
+    });
   });
 
   describe("cut command", () => {

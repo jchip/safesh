@@ -101,6 +101,44 @@ export function escapeRegex(str: string): string {
 }
 
 /**
+ * SSH-5: Convert a template-escaped grep pattern string to a valid JS regex literal source.
+ *
+ * visitWord() passes all args through escapeForTemplate() which:
+ *   1. Doubles backslashes:  \[ → \\[,  \| → \\|
+ *   2. Escapes dollars:       $ → \$
+ *
+ * When these template-escaped values are embedded directly in /pattern/, the
+ * doubled backslash \\[ opens an unclosed character class → "Unterminated regexp".
+ *
+ * This function reverses the template escaping, then applies BRE→JS conversions
+ * so the result is safe to embed between / delimiters.
+ */
+export function templateEscapedToRegexSource(templateEscapedPattern: string): string {
+  let p = templateEscapedPattern;
+
+  // 1. Reverse escapeForTemplate: un-double backslashes (\\  →  \)
+  //    Must happen before un-escaping \$ so we don't create new \\ pairs.
+  p = p.replace(/\\\\/g, "\x00"); // use NUL as placeholder for single backslash
+  // 2. Reverse escapeForTemplate: un-escape dollar signs (\$  →  $)
+  p = p.replace(/\\\$/g, "$");
+  // 3. Restore single backslashes
+  p = p.replace(/\x00/g, "\\");
+
+  // 4. Convert BRE alternation \| → JS |  (but not \\| which is escaped backslash + |)
+  p = p.replace(/(?<!\\)\\\|/g, "|");
+
+  // 5. Escape quantifiers after ^ anchor (BRE: ^+ means line-starts-with-+)
+  p = p.replace(/\^([+*?]+)/g, (_, quantifiers: string) =>
+    "^" + quantifiers.split("").map((q) => "\\" + q).join(""),
+  );
+
+  // 6. Escape the regex delimiter /
+  p = p.replace(/\//g, "\\/");
+
+  return p;
+}
+
+/**
  * SSH-489: JavaScript reserved words that cannot be used as variable names.
  * When a bash variable name collides with one of these, prefix with __ to avoid syntax errors.
  */

@@ -11,6 +11,7 @@ export {
   escapeRegex,
   globToRegex,
   sanitizeVarName,
+  templateEscapedToRegexSource,
 } from "./escape.ts";
 
 export {
