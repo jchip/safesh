@@ -112,6 +112,50 @@ Deno.test("buildRegex() - adds case insensitive flag to existing RegExp", () => 
   assertEquals(result.flags.includes("i"), true);
 });
 
+// SSH-573: BRE pattern compatibility tests (these should fail before the fix)
+Deno.test("buildRegex() - converts BRE alternation \\| to JS |", () => {
+  const regex = buildRegex("jdbc\\|password\\|secret");
+  regex.lastIndex = 0;
+  assertEquals(regex.test("jdbc:postgresql://host/db"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("password=hunter2"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("secret_key=abc"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("other_field=value"), false);
+});
+
+Deno.test("buildRegex() - escapes quantifier after ^ anchor (BRE ^+ means starts-with-+)", () => {
+  // In BRE, ^+ means line starting with literal +
+  // In JS regex, ^+ is invalid ("nothing to repeat")
+  const regex = buildRegex("^+");
+  regex.lastIndex = 0;
+  assertEquals(regex.test("+++ added line"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("--- removed line"), false);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("normal line"), false);
+});
+
+Deno.test("buildRegex() - handles complex BRE diff-filter pattern with \\| and ^+++", () => {
+  // Simulates: grep "^--\|Binary\|^diff\|^index\|^---\|^+++"
+  const regex = buildRegex("^--\\|Binary\\|^diff\\|^index\\|^---\\|^+++");
+  regex.lastIndex = 0;
+  assertEquals(regex.test("--- a/old.txt"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("+++ b/new.txt"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("Binary files a and b differ"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("diff --git a/x b/x"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("index 1234567..abcdef"), true);
+  regex.lastIndex = 0;
+  assertEquals(regex.test("+added line"), false); // only 1 + at start, not +++
+  regex.lastIndex = 0;
+  assertEquals(regex.test("regular content line"), false);
+});
+
 Deno.test("testLine() - matches line against regex", () => {
   const regex = /error/;
   assertEquals(testLine("error occurred", regex, false), true);
