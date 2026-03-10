@@ -150,6 +150,18 @@ export function buildRegex(
   // Handle fixed strings mode - escape all regex special chars
   if (options.fixedStrings) {
     regexPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  } else {
+    // Convert grep BRE syntax to JS regex syntax:
+    // 1. \| (BRE alternation) → | (JS alternation)
+    regexPattern = regexPattern.replace(/(?<!\\)\\\|/g, "|");
+    // 2. Escape all consecutive +, *, ? immediately after ^ anchor to prevent
+    //    "nothing to repeat" errors. In BRE, ^+++ means "line starting with +++"
+    //    but in JS ^+ is invalid (quantifying a zero-width assertion).
+    regexPattern = regexPattern.replace(
+      /\^([+*?]+)/g,
+      (_, quantifiers: string) =>
+        "^" + quantifiers.split("").map((q) => "\\" + q).join(""),
+    );
   }
 
   // Handle whole word matching
