@@ -48,13 +48,9 @@ export async function execStreamToCmd(
 
   // SSH-557: Accept Command objects directly (from transpiler-generated code)
   if (commandFnOrCmd instanceof Command) {
-    const result = await commandFnOrCmd.stdin(input).exec();
-    if (!result.success) {
-      throw new Error(
-        `${fnName} failed: command exited with code ${result.code}`,
-      );
-    }
-    return result;
+    // SSH-4: Do not throw on non-zero exit. In bash pipelines (without pipefail),
+    // a non-zero exit from an intermediate stage passes its stdout to the next stage.
+    return await commandFnOrCmd.stdin(input).exec();
   }
 
   const command = commandFnOrCmd[CMD_NAME_SYMBOL];
@@ -62,18 +58,11 @@ export async function execStreamToCmd(
     throw new Error(`${fnName}() requires a CommandFn from initCmds(). Raw string command names are not allowed.`);
   }
 
-  const result = await cmd(command, args, {
+  // SSH-4: Do not throw on non-zero exit - pass stdout through to downstream stages.
+  return await cmd(command, args, {
     ...options,
     stdin: input,
   }).exec();
-
-  if (!result.success) {
-    throw new Error(
-      `${fnName} failed: ${command} exited with code ${result.code}`,
-    );
-  }
-
-  return result;
 }
 
 /**
