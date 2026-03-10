@@ -19,6 +19,7 @@ import {
   collectFlagOptions,
   collectFlagOptionsAndFiles,
   sanitizeVarName,
+  templateEscapedToRegexSource,
 } from "../utils/mod.ts";
 import { SHELL_BUILTINS, type BuiltinConfig } from "../builtins.ts";
 
@@ -682,12 +683,14 @@ function buildFluentCommand(
         return null;
       }
 
-      // SSH-567: Escape forward slashes in the pattern for use inside JS regex literal /pattern/
-      // The pattern is already a regex (from grep -E or grep), so only the delimiter needs escaping.
-      // escapeForQuotes was wrong here — it escapes for strings, not regex literals.
-      const escapedPattern = pattern.replace(/\//g, "\\/");
+      // SSH-5: pattern comes from visitWord() which applies escapeForTemplate(), doubling
+      // backslashes and escaping $. Embedding the template-escaped string directly in a
+      // regex literal causes \\[ to open an unclosed character class.
+      // templateEscapedToRegexSource() reverses the template escaping then applies
+      // BRE→JS conversions so the result is safe inside /.../.
+      const regexSource = templateEscapedToRegexSource(pattern);
       const flags = ignoreCase ? "i" : "";
-      const regexPattern = `/${escapedPattern}/${flags}`;
+      const regexPattern = `/${regexSource}/${flags}`;
 
       if (files.length > 0) {
         // grep pattern file -> $.cat(file).grep(pattern) - this is a stream chain
