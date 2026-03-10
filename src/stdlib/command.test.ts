@@ -636,7 +636,9 @@ Deno.test("Command.trans() and FluentStream.pipe() - chained", async () => {
   assertEquals(result, "apple");
 });
 
-Deno.test("toCmd() - failure throws error", async () => {
+// SSH-4: Pipeline stages must NOT throw on non-zero exit - pass output through
+// (replaces old "failure throws error" test which reflected wrong throw behavior)
+Deno.test("toCmd() - non-zero exit yields empty output, does not throw", async () => {
   await initTestCmds();
   const stream = createStream(
     (async function* () {
@@ -644,13 +646,10 @@ Deno.test("toCmd() - failure throws error", async () => {
     })(),
   );
 
-  try {
-    await new FluentStream(stream).pipe(_sh, ["-c", "exit 1"]).first();
-    assert(false, "Should have thrown");
-  } catch (error) {
-    assert(error instanceof Error);
-    assert(error.message.includes("toCmdLines failed"));
-  }
+  // sh -c "exit 1" produces no stdout and exits 1
+  // Bash pipeline behavior: the stage completes, downstream gets empty output
+  const result = await new FluentStream(stream).pipe(_sh, ["-c", "exit 1"]).first();
+  assertEquals(result, undefined); // empty stream → undefined, no throw
 });
 
 // ==================== SSH-422: Command.pipe() with Transform functions ====================
