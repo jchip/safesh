@@ -707,12 +707,10 @@ export class Parser {
         this.expect(TokenType.FI);
       }
 
-      return {
-        type: "IfStatement",
-        test,
-        consequent,
-        alternate,
-      };
+      const redirects = this.collectTrailingRedirections();
+      const ifResult: AST.IfStatement = { type: "IfStatement", test, consequent, alternate };
+      if (redirects.length > 0) ifResult.redirects = redirects;
+      return ifResult;
     });
   }
 
@@ -755,12 +753,10 @@ export class Parser {
       const body = this.parseStatementList([TokenType.DONE]);
       this.expect(TokenType.DONE);
 
-      return {
-        type: "ForStatement",
-        variable,
-        iterable,
-        body,
-      };
+      const redirects = this.collectTrailingRedirections();
+      const forResult: AST.ForStatement = { type: "ForStatement", variable, iterable, body };
+      if (redirects.length > 0) forResult.redirects = redirects;
+      return forResult;
     });
   }
 
@@ -811,13 +807,10 @@ export class Parser {
       const body = this.parseStatementList([TokenType.DONE]);
       this.expect(TokenType.DONE);
 
-      return {
-        type: "CStyleForStatement",
-        init,
-        test,
-        update,
-        body,
-      };
+      const redirects = this.collectTrailingRedirections();
+      const cForResult: AST.CStyleForStatement = { type: "CStyleForStatement", init, test, update, body };
+      if (redirects.length > 0) cForResult.redirects = redirects;
+      return cForResult;
     });
   }
 
@@ -881,11 +874,17 @@ export class Parser {
       const body = this.parseStatementList([TokenType.DONE]);
       this.expect(TokenType.DONE);
 
-      return {
+      const redirects = this.collectTrailingRedirections();
+
+      const result = {
         type,
         test,
         body,
       } as T extends "WhileStatement" ? AST.WhileStatement : AST.UntilStatement;
+      if (redirects.length > 0) {
+        (result as AST.WhileStatement).redirects = redirects;
+      }
+      return result;
     });
   }
 
@@ -942,11 +941,10 @@ export class Parser {
 
       this.expect(TokenType.ESAC);
 
-      return {
-        type: "CaseStatement",
-        word,
-        cases,
-      };
+      const redirects = this.collectTrailingRedirections();
+      const caseResult: AST.CaseStatement = { type: "CaseStatement", word, cases };
+      if (redirects.length > 0) caseResult.redirects = redirects;
+      return caseResult;
     });
   }
 
