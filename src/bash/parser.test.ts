@@ -572,6 +572,30 @@ EOF`);
       const stmt = getFirstStatement(ast) as AST.WhileStatement;
       assertExists(stmt.test);
     });
+
+    // SSH-6: trailing redirections after compound commands
+    it("should parse while loop with trailing 2>&1 redirect", () => {
+      const ast = parse("while read line; do echo $line; done 2>&1");
+      const stmt = getFirstStatement(ast) as AST.WhileStatement;
+      assertEquals(stmt.type, "WhileStatement");
+      assertExists(stmt.redirects);
+      assertEquals(stmt.redirects!.length, 1);
+      assertEquals(stmt.redirects![0]!.operator, ">&");
+    });
+
+    it("should parse pipeline ending with while...done 2>&1", () => {
+      const ast = parse(
+        "git branch | grep 'worktree-agent-' | tr -d '[:space:]' | while IFS= read -r branch; do git branch -D \"$branch\"; done 2>&1",
+      );
+      assertEquals(ast.body.length, 1);
+      const pipeline = ast.body[0] as AST.Pipeline;
+      assertEquals(pipeline.type, "Pipeline");
+      assertEquals(pipeline.commands.length, 4);
+      const whileStmt = pipeline.commands[3] as AST.WhileStatement;
+      assertEquals(whileStmt.type, "WhileStatement");
+      assertExists(whileStmt.redirects);
+      assertEquals(whileStmt.redirects!.length, 1);
+    });
   });
 
   describe("Until Loops", () => {

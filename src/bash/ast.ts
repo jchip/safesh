@@ -85,6 +85,7 @@ export interface IfStatement extends BaseNode {
   test: Pipeline | Command | TestCommand | ArithmeticCommand;
   consequent: Statement[];
   alternate: Statement[] | IfStatement | null;
+  redirects?: Redirection[];
 }
 
 export interface ForStatement extends BaseNode {
@@ -92,6 +93,7 @@ export interface ForStatement extends BaseNode {
   variable: string;
   iterable: (Word | ParameterExpansion | CommandSubstitution)[];
   body: Statement[];
+  redirects?: Redirection[];
 }
 
 export interface CStyleForStatement extends BaseNode {
@@ -100,24 +102,28 @@ export interface CStyleForStatement extends BaseNode {
   test: ArithmeticExpression | null;
   update: ArithmeticExpression | null;
   body: Statement[];
+  redirects?: Redirection[];
 }
 
 export interface WhileStatement extends BaseNode {
   type: "WhileStatement";
   test: Pipeline | Command | TestCommand | ArithmeticCommand;
   body: Statement[];
+  redirects?: Redirection[];
 }
 
 export interface UntilStatement extends BaseNode {
   type: "UntilStatement";
   test: Pipeline | Command | TestCommand | ArithmeticCommand;
   body: Statement[];
+  redirects?: Redirection[];
 }
 
 export interface CaseStatement extends BaseNode {
   type: "CaseStatement";
   word: Word | ParameterExpansion | CommandSubstitution;
   cases: CaseClause[];
+  redirects?: Redirection[];
 }
 
 export interface CaseClause extends BaseNode {
