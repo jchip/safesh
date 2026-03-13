@@ -7,21 +7,17 @@
  */
 
 import type * as AST from "../../ast.ts";
-import type {
-  ExpressionResult,
-  StatementResult,
-  VisitorContext,
-} from "../types.ts";
+import type { ExpressionResult, StatementResult, VisitorContext } from "../types.ts";
 import { isFluentCommand } from "../types.ts";
 import {
-  escapeForQuotes,
-  parseCountArg,
   collectFlagOptions,
   collectFlagOptionsAndFiles,
+  escapeForQuotes,
+  parseCountArg,
   sanitizeVarName,
   templateEscapedToRegexSource,
 } from "../utils/mod.ts";
-import { SHELL_BUILTINS, type BuiltinConfig } from "../builtins.ts";
+import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
 
 // =============================================================================
 // Helpers
@@ -54,13 +50,21 @@ function wordHasExpansion(
     return true;
   }
   if (word.type === "Word" && word.parts.length > 0) {
-    if (word.parts.some(
-      (part) => part.type !== "LiteralPart" && part.type !== "GlobPattern",
-    )) return true;
+    if (
+      word.parts.some(
+        (part) => part.type !== "LiteralPart" && part.type !== "GlobPattern",
+      )
+    ) return true;
     // SSH-561: Tilde expansion in LiteralPart generates ${Deno.env.get("HOME")}
     // which needs template literal wrapping (backticks, not double quotes)
     const first = word.parts[0];
-    if (first && first.type === "LiteralPart" && (first.value === "~" || first.value.startsWith("~/"))) {
+    if (
+      first &&
+      first.type === "LiteralPart" &&
+      !word.quoted &&
+      !word.singleQuoted &&
+      (first.value === "~" || first.value.startsWith("~/"))
+    ) {
       return true;
     }
   }
@@ -146,7 +150,7 @@ function handleTmuxSendKeys(args: string[], argExpansions?: boolean[]): string |
     }
 
     if (target && textArgs.length > 0) {
-      const text = textArgs.join(" + \" \" + ");
+      const text = textArgs.join(' + " " + ');
       if (client) {
         return `$.tmuxSubmit(${target}, ${text}, ${client})`;
       } else {
@@ -162,7 +166,10 @@ function handleTmuxSendKeys(args: string[], argExpansions?: boolean[]): string |
  * Parses "timeout DURATION COMMAND [ARG...]" and generates code with timeout option
  * @returns Transpiled command with timeout, or null if not a valid timeout command
  */
-function handleTimeoutCommand(args: string[], ctx: VisitorContext): { code: string; async: boolean } | null {
+function handleTimeoutCommand(
+  args: string[],
+  ctx: VisitorContext,
+): { code: string; async: boolean } | null {
   if (args.length < 2) return null;
 
   const duration = args[0];
@@ -200,7 +207,9 @@ function handleTimeoutCommand(args: string[], ctx: VisitorContext): { code: stri
 
   // Build the command with timeout option
   const argsArray = cmdArgs.length > 0 ? cmdArgs.map((a) => formatArg(a)).join(", ") : "";
-  const code = `$.cmd({ timeout: ${timeoutMs} }, ${formatArg(cmdName)}${argsArray ? `, ${argsArray}` : ""})`;
+  const code = `$.cmd({ timeout: ${timeoutMs} }, ${formatArg(cmdName)}${
+    argsArray ? `, ${argsArray}` : ""
+  })`;
 
   return { code, async: true };
 }
@@ -248,7 +257,9 @@ function handleStandardCommand(
       })
       .join(", ");
     const argsArray = args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ");
-    return `$.cmd({ env: { ${envEntries} } }, ${formattedName}${argsArray ? `, ${argsArray}` : ""})`;
+    return `$.cmd({ env: { ${envEntries} } }, ${formattedName}${
+      argsArray ? `, ${argsArray}` : ""
+    })`;
   }
 
   const argsArray = args.length > 0
@@ -285,13 +296,34 @@ interface CommandAnalysis {
  * Command strategy types
  */
 type CommandStrategy =
-  | { type: 'variable-assignment'; assignments: AST.VariableAssignment[] }
-  | { type: 'user-function'; name: string }
-  | { type: 'shell-builtin'; name: string; args: string[]; builtin: BuiltinConfig; argExpansions: boolean[] }
-  | { type: 'timeout'; args: string[] }
-  | { type: 'fluent'; name: string; args: string[] }
-  | { type: 'specialized'; name: string; args: string[]; hasMergeStreams: boolean; argExpansions: boolean[] }
-  | { type: 'standard'; name: string; args: string[]; hasAssignments: boolean; assignments: AST.VariableAssignment[]; hasMergeStreams: boolean; nameHasExpansion: boolean; argExpansions: boolean[] };
+  | { type: "variable-assignment"; assignments: AST.VariableAssignment[] }
+  | { type: "user-function"; name: string }
+  | {
+    type: "shell-builtin";
+    name: string;
+    args: string[];
+    builtin: BuiltinConfig;
+    argExpansions: boolean[];
+  }
+  | { type: "timeout"; args: string[] }
+  | { type: "fluent"; name: string; args: string[] }
+  | {
+    type: "specialized";
+    name: string;
+    args: string[];
+    hasMergeStreams: boolean;
+    argExpansions: boolean[];
+  }
+  | {
+    type: "standard";
+    name: string;
+    args: string[];
+    hasAssignments: boolean;
+    assignments: AST.VariableAssignment[];
+    hasMergeStreams: boolean;
+    nameHasExpansion: boolean;
+    argExpansions: boolean[];
+  };
 
 /**
  * Phase 1: Analyze command structure
@@ -299,7 +331,7 @@ type CommandStrategy =
  */
 function analyzeCommand(
   command: AST.Command,
-  ctx: VisitorContext
+  ctx: VisitorContext,
 ): CommandAnalysis {
   const hasNoCommand = command.name.type === "Word" && command.name.value === "";
   const isVariableAssignmentOnly = command.assignments.length > 0 && hasNoCommand;
@@ -310,9 +342,10 @@ function analyzeCommand(
   const hasAssignments = command.assignments.length > 0;
   const hasRedirects = command.redirects.length > 0;
   const hasMergeStreams = command.redirects.some(
-    (r) => (r.operator === ">&" || r.operator === "<&") &&
-           typeof r.target === "number" && r.target === 1 &&
-           r.fd === 2
+    (r) =>
+      (r.operator === ">&" || r.operator === "<&") &&
+      typeof r.target === "number" && r.target === 1 &&
+      r.fd === 2,
   );
   // SSH-532: Compute expansion metadata from AST, not string heuristics
   const nameHasExpansion = wordHasExpansion(command.name);
@@ -340,23 +373,23 @@ function selectCommandStrategy(
   command: AST.Command,
   analysis: CommandAnalysis,
   ctx: VisitorContext,
-  options?: { inPipeline?: boolean }
+  options?: { inPipeline?: boolean },
 ): CommandStrategy {
   // Variable assignment only
   if (analysis.isVariableAssignmentOnly) {
-    return { type: 'variable-assignment', assignments: command.assignments };
+    return { type: "variable-assignment", assignments: command.assignments };
   }
 
   // User function
   if (ctx.isFunction(analysis.name)) {
-    return { type: 'user-function', name: analysis.name };
+    return { type: "user-function", name: analysis.name };
   }
 
   // Shell builtin
   const builtin = SHELL_BUILTINS[analysis.name];
   if (builtin && !analysis.hasAssignments && !analysis.hasRedirects && !options?.inPipeline) {
     return {
-      type: 'shell-builtin',
+      type: "shell-builtin",
       name: analysis.name,
       args: analysis.args,
       builtin,
@@ -366,7 +399,7 @@ function selectCommandStrategy(
 
   // Timeout command
   if (analysis.name === "timeout") {
-    return { type: 'timeout', args: analysis.args };
+    return { type: "timeout", args: analysis.args };
   }
 
   // Fluent command (with constraint checking)
@@ -374,15 +407,17 @@ function selectCommandStrategy(
   // because $.cat("-") returns a Stream which cannot be piped from a Command
   const isCatReadingStdin = analysis.name === "cat" &&
     (analysis.args.length === 0 || (analysis.args.length === 1 && analysis.args[0] === "-"));
-  if (isFluentCommand(analysis.name) && !analysis.hasDynamicArgs && !analysis.hasAssignments &&
-      !analysis.hasRedirects && !(options?.inPipeline && isCatReadingStdin)) {
-    return { type: 'fluent', name: analysis.name, args: analysis.args };
+  if (
+    isFluentCommand(analysis.name) && !analysis.hasDynamicArgs && !analysis.hasAssignments &&
+    !analysis.hasRedirects && !(options?.inPipeline && isCatReadingStdin)
+  ) {
+    return { type: "fluent", name: analysis.name, args: analysis.args };
   }
 
   // Specialized command
   if (!analysis.hasAssignments && SPECIALIZED_COMMANDS.has(analysis.name)) {
     return {
-      type: 'specialized',
+      type: "specialized",
       name: analysis.name,
       args: analysis.args,
       hasMergeStreams: analysis.hasMergeStreams,
@@ -392,7 +427,7 @@ function selectCommandStrategy(
 
   // Standard command
   return {
-    type: 'standard',
+    type: "standard",
     name: analysis.name,
     args: analysis.args,
     hasAssignments: analysis.hasAssignments,
@@ -409,27 +444,32 @@ function selectCommandStrategy(
  */
 function executeCommandStrategy(
   strategy: CommandStrategy,
-  ctx: VisitorContext
+  ctx: VisitorContext,
 ): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean; isStream?: boolean } {
   switch (strategy.type) {
-    case 'variable-assignment': {
+    case "variable-assignment": {
       const assignments = strategy.assignments
         .map((a) => buildVariableAssignment(a, ctx))
         .join(", ");
       return { code: assignments, async: false };
     }
 
-    case 'user-function': {
+    case "user-function": {
       const cmdExpr = handleUserFunction(strategy.name);
       return { code: cmdExpr, async: true, isUserFunction: true };
     }
 
-    case 'shell-builtin': {
-      const result = handleShellBuiltin(strategy.name, strategy.args, strategy.builtin, strategy.argExpansions);
+    case "shell-builtin": {
+      const result = handleShellBuiltin(
+        strategy.name,
+        strategy.args,
+        strategy.builtin,
+        strategy.argExpansions,
+      );
       return { code: result.code, async: result.async };
     }
 
-    case 'timeout': {
+    case "timeout": {
       const timeoutResult = handleTimeoutCommand(strategy.args, ctx);
       if (timeoutResult) {
         return { code: timeoutResult.code, async: timeoutResult.async };
@@ -442,7 +482,7 @@ function executeCommandStrategy(
       return { code: cmdExpr, async: true };
     }
 
-    case 'fluent': {
+    case "fluent": {
       const fluentResult = buildFluentCommand(strategy.name, strategy.args, ctx);
       if (fluentResult !== null) {
         // SSH-424: Fluent commands return Command objects synchronously (no await needed)
@@ -450,7 +490,7 @@ function executeCommandStrategy(
           code: fluentResult.code,
           async: false,
           isTransform: fluentResult.isTransform,
-          isStream: fluentResult.isStream
+          isStream: fluentResult.isStream,
         };
       }
       // Fallback to standard if fluent returns null
@@ -458,12 +498,17 @@ function executeCommandStrategy(
       return { code: cmdExpr, async: true };
     }
 
-    case 'specialized': {
-      const cmdExpr = handleSpecializedCommand(strategy.name, strategy.args, strategy.hasMergeStreams, strategy.argExpansions);
+    case "specialized": {
+      const cmdExpr = handleSpecializedCommand(
+        strategy.name,
+        strategy.args,
+        strategy.hasMergeStreams,
+        strategy.argExpansions,
+      );
       return { code: cmdExpr, async: true };
     }
 
-    case 'standard': {
+    case "standard": {
       const cmdExpr = handleStandardCommand(
         strategy.name,
         strategy.args,
@@ -486,15 +531,17 @@ function executeCommandStrategy(
 function applyCommandRedirections(
   cmdExpr: string,
   redirects: AST.Redirection[],
-  ctx: VisitorContext
+  ctx: VisitorContext,
 ): string {
   let result = cmdExpr;
 
   // Apply redirections (except 2>&1 which is handled via mergeStreams option)
   for (const redirect of redirects) {
-    if ((redirect.operator === ">&" || redirect.operator === "<&") &&
-        typeof redirect.target === "number" && redirect.target === 1 &&
-        redirect.fd === 2) {
+    if (
+      (redirect.operator === ">&" || redirect.operator === "<&") &&
+      typeof redirect.target === "number" && redirect.target === 1 &&
+      redirect.fd === 2
+    ) {
       continue;
     }
     result = applyRedirection(result, redirect, ctx);
@@ -618,7 +665,11 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
 
   if (files.length > 0) {
     const file = `"${escapeForQuotes(files[0] ?? "")}"`;
-    return { code: `$.cat(${file}).lines().pipe(${transformCode})`, isTransform: false, isStream: true };
+    return {
+      code: `$.cat(${file}).lines().pipe(${transformCode})`,
+      isTransform: false,
+      isStream: true,
+    };
   }
 
   return { code: transformCode, isTransform: true, isStream: false };
@@ -700,17 +751,21 @@ function buildFluentCommand(
           // then .filter(x => !x.match) on the result would produce nothing.
           // Instead, read lines and filter out matches directly.
           let result = `$.cat(${file}).lines().filter(line => !${regexPattern}.test(line))`;
-          if (lineNumber) result += '.map((line, i) => `${i + 1}:${line}`)';
+          if (lineNumber) result += ".map((line, i) => `${i + 1}:${line}`)";
           return { code: result, isTransform: false, isStream: true };
         }
         let result = `$.cat(${file}).grep(${regexPattern})`;
-        if (lineNumber) result += '.map(m => `${m.line}:${m.content}`)';
+        if (lineNumber) result += ".map(m => `${m.line}:${m.content}`)";
         return { code: result, isTransform: false, isStream: true };
       }
 
       // grep as a transform
       if (invert) {
-        return { code: `$.filter((line) => !${regexPattern}.test(line))`, isTransform: true, isStream: false };
+        return {
+          code: `$.filter((line) => !${regexPattern}.test(line))`,
+          isTransform: true,
+          isStream: false,
+        };
       }
       return { code: `$.grep(${regexPattern})`, isTransform: true, isStream: false };
     }
@@ -730,8 +785,14 @@ function buildFluentCommand(
 
     // tr, cut, sed, awk are not fluent commands - they fall through to default
     default: {
-      const argsArray = args.length > 0 ? args.map(a => `"${escapeForQuotes(a)}"`).join(", ") : "";
-      return { code: `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`, isTransform: false, isStream: false };
+      const argsArray = args.length > 0
+        ? args.map((a) => `"${escapeForQuotes(a)}"`).join(", ")
+        : "";
+      return {
+        code: `$.cmd("${escapeForQuotes(name)}"${argsArray ? `, ${argsArray}` : ""})`,
+        isTransform: false,
+        isStream: false,
+      };
     }
   }
 }
@@ -744,10 +805,10 @@ export function applyRedirection(
   redirect: AST.Redirection,
   ctx: VisitorContext,
 ): string {
-  const target =
-    typeof redirect.target === "number"
-      ? redirect.target.toString()
-      : `"${escapeForQuotes(ctx.visitWord(redirect.target))}"`;
+  const target = typeof redirect.target === "number" ? redirect.target.toString() : formatArg(
+    ctx.visitWord(redirect.target),
+    wordHasExpansion(redirect.target),
+  );
 
   switch (redirect.operator) {
     case "<":
@@ -880,10 +941,15 @@ export function buildPipeline(
   // SSH-424: Preserve async=false for single fluent commands (even with background &)
   // If this is a single-command pipeline with no operators, preserve the original async value
   const isAsync = (parts.length === 1 && operators.length === 0)
-    ? parts[0]!.isAsync  // Use the isAsync field we now track
-    : true;  // Multi-command pipelines are always async
+    ? parts[0]!.isAsync // Use the isAsync field we now track
+    : true; // Multi-command pipelines are always async
 
-  return { code: result, async: isAsync, isStream: assembled.isStream, isPrintable: assembled.isPrintable };
+  return {
+    code: result,
+    async: isAsync,
+    isStream: assembled.isStream,
+    isPrintable: assembled.isPrintable,
+  };
 }
 
 /**
@@ -1009,7 +1075,7 @@ class PipelineAssembler {
         : `return ${part.code}`;
       this.wrapInAsyncIIFE(
         `await __printCmd(${this.isPromise ? `await ${this.code}` : this.code})`,
-        returnExpr
+        returnExpr,
       );
       // SSH-474: Preserve stream status from the returning part
       this.isStream = part.isStreamProducer;
@@ -1071,9 +1137,12 @@ class PipelineAssembler {
       // || operator: always wrap in try/catch IIFE
       const successResult = "return { code: 0, stdout: '', stderr: '', success: true };";
       if (bothNonPrintable) {
-        this.code = `(async () => { try { ${this.code}; ${successResult} } catch { ${part.code}; ${successResult} } })()`;
+        this.code =
+          `(async () => { try { ${this.code}; ${successResult} } catch { ${part.code}; ${successResult} } })()`;
       } else {
-        const tryExpr = leftPrintable ? `${leftExpr}; ${successResult}` : `${this.code}; ${successResult}`;
+        const tryExpr = leftPrintable
+          ? `${leftExpr}; ${successResult}`
+          : `${this.code}; ${successResult}`;
         this.code = `(async () => { try { ${tryExpr} } catch { ${rightExpr}; } })()`;
       }
     }
@@ -1244,7 +1313,8 @@ function flattenPipeline(
       // SSH-361: Track whether the command produces output that should be printed
       // SSH-424: For fluent commands, async=false but they still produce output
       // isPrintable should be true for all commands except variable assignments
-      const isPrintable = result.async || (result.isStream ?? false) || (result.isTransform ?? false);
+      const isPrintable = result.async || (result.isStream ?? false) ||
+        (result.isTransform ?? false);
       parts.push({
         code: result.code,
         isPrintable,
@@ -1271,7 +1341,13 @@ function flattenPipeline(
       }
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      parts.push({ code: buildStatementAsExpression(left, ctx), isPrintable: true, isTransform: false, isStreamProducer: false, isAsync: true });
+      parts.push({
+        code: buildStatementAsExpression(left, ctx),
+        isPrintable: true,
+        isTransform: false,
+        isStreamProducer: false,
+        isAsync: true,
+      });
     }
   }
 
@@ -1287,7 +1363,8 @@ function flattenPipeline(
       const result = buildCommand(cmd, ctx, { inPipeline: hasPipeOperator });
       // SSH-361: Track whether the command produces output that should be printed
       // SSH-424: For fluent commands, async=false but they still produce output
-      const isPrintable = result.async || (result.isStream ?? false) || (result.isTransform ?? false);
+      const isPrintable = result.async || (result.isStream ?? false) ||
+        (result.isTransform ?? false);
       parts.push({
         code: result.code,
         isPrintable,
@@ -1314,7 +1391,13 @@ function flattenPipeline(
       }
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      parts.push({ code: buildStatementAsExpression(cmd, ctx), isPrintable: true, isTransform: false, isStreamProducer: false, isAsync: true });
+      parts.push({
+        code: buildStatementAsExpression(cmd, ctx),
+        isPrintable: true,
+        isTransform: false,
+        isStreamProducer: false,
+        isAsync: true,
+      });
     }
   }
 }
@@ -1326,10 +1409,10 @@ function flattenPipeline(
 function buildStatementAsExpression(stmt: AST.Statement, ctx: VisitorContext): string {
   // Visit the statement to get its lines
   const result = ctx.visitStatement(stmt);
-  const lines = result.lines.map(l => l.trim()).filter(l => l.length > 0);
+  const lines = result.lines.map((l) => l.trim()).filter((l) => l.length > 0);
 
   // Wrap in async IIFE that executes the statements and returns success
-  return `(async () => { ${lines.join('; ')}; return { code: 0, stdout: '', stderr: '' }; })()`;
+  return `(async () => { ${lines.join("; ")}; return { code: 0, stdout: '', stderr: '' }; })()`;
 }
 
 /**
@@ -1361,7 +1444,7 @@ function isSafeAndOperand(cmd: AST.Statement): boolean {
     }
     // Nested && chain - all parts must be safe
     if (cmd.operator === "&&") {
-      return cmd.commands.every(c => isSafeAndOperand(c));
+      return cmd.commands.every((c) => isSafeAndOperand(c));
     }
     return false;
   }
@@ -1464,10 +1547,12 @@ export function visitPipeline(
     const nonVarStatements: AST.Statement[] = [];
 
     for (const stmt of statements) {
-      if (stmt.type === "Command" &&
-          stmt.assignments.length > 0 &&
-          stmt.name.type === "Word" &&
-          stmt.name.value === "") {
+      if (
+        stmt.type === "Command" &&
+        stmt.assignments.length > 0 &&
+        stmt.name.type === "Word" &&
+        stmt.name.value === ""
+      ) {
         // Pure variable assignment - hoist it
         const result = buildCommand(stmt, ctx);
         hoistedVars.push(result.code);
@@ -1491,7 +1576,7 @@ export function visitPipeline(
       }
 
       // If remaining statements are all safe (cd), emit them directly
-      const allSafe = nonVarStatements.every(stmt => {
+      const allSafe = nonVarStatements.every((stmt) => {
         if (stmt.type === "Command" && stmt.name.type === "Word" && stmt.name.value === "cd") {
           return true;
         }
@@ -1513,7 +1598,8 @@ export function visitPipeline(
         const stmt = nonVarStatements[0]!;
         if (stmt.type === "Command") {
           const result = buildCommand(stmt, ctx);
-          const isPrintable = result.async || (result.isStream ?? false) || (result.isTransform ?? false);
+          const isPrintable = result.async || (result.isStream ?? false) ||
+            (result.isTransform ?? false);
           if (isPrintable) {
             lines.push(`${indent}await __printCmd(${result.code});`);
           } else {
@@ -1530,7 +1616,7 @@ export function visitPipeline(
       // Create a synthetic pipeline from the remaining statements
       const syntheticPipeline: AST.Pipeline = {
         type: "Pipeline",
-        commands: nonVarStatements.map(stmt => ({
+        commands: nonVarStatements.map((stmt) => ({
           type: "Pipeline" as const,
           commands: [stmt],
           operator: null,
@@ -1574,7 +1660,7 @@ export function visitPipeline(
         `${indent}  const __child = __bgCmd.spawnBackground();`,
         `${indent}  __LAST_BG_PID = __child.pid;`,
         `${indent}})(); // background`,
-      ]
+      ],
     };
   }
 
@@ -1583,7 +1669,9 @@ export function visitPipeline(
     // For streams (from .trans()), iterate and print each line
     // SSH-476: If the result is async (wrapped in IIFE), await it first before iterating
     const streamExpr = result.async ? `await ${result.code}` : result.code;
-    return { lines: [`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`] };
+    return {
+      lines: [`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`],
+    };
   }
 
   // SSH-372: Don't wrap non-printable results (like shell builtins) in __printCmd
@@ -1620,7 +1708,10 @@ export function buildVariableAssignment(
     const elements = stmt.value.elements
       .map((el) => {
         const elementValue = ctx.visitWord(el as AST.Word);
-        return `"${escapeForQuotes(elementValue)}"`;
+        return formatArg(
+          elementValue,
+          wordHasExpansion(el as AST.Word | AST.ParameterExpansion | AST.CommandSubstitution),
+        );
       })
       .join(", ");
     value = `[${elements}]`;
@@ -1635,9 +1726,7 @@ export function buildVariableAssignment(
 
     // Check if the word has expansions (not just literal parts) and is not single-quoted
     // Single-quoted strings should remain literal
-    const hasExpansions = word.type === "Word" && word.parts.some(part =>
-      part.type !== "LiteralPart"
-    );
+    const hasExpansions = wordHasExpansion(word);
 
     if (hasExpansions && !word.singleQuoted) {
       // Use template literal syntax (backticks) for expansion evaluation
