@@ -7,6 +7,46 @@
 import { globToRegExp } from "@std/path";
 import type * as AST from "../../ast.ts";
 import type { StatementResult, VisitorContext } from "../types.ts";
+import { escapeForQuotes } from "../utils/mod.ts";
+
+function wordHasExpansion(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+): boolean {
+  if (word.type === "ParameterExpansion" || word.type === "CommandSubstitution") {
+    return true;
+  }
+
+  if (word.singleQuoted) {
+    return false;
+  }
+
+  if (
+    word.parts.some(
+      (part) => part.type !== "LiteralPart" && part.type !== "GlobPattern",
+    )
+  ) {
+    return true;
+  }
+
+  const first = word.parts[0];
+  return !!(
+    first &&
+    first.type === "LiteralPart" &&
+    !word.quoted &&
+    (first.value === "~" || first.value.startsWith("~/"))
+  );
+}
+
+function formatWordLiteral(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+  ctx: VisitorContext,
+): string {
+  const value = ctx.visitWord(word);
+  if (wordHasExpansion(word)) {
+    return `\`${value}\``;
+  }
+  return `"${escapeForQuotes(value)}"`;
+}
 
 // =============================================================================
 // If Statement Handler
@@ -73,7 +113,7 @@ export function visitForStatement(
 
   // Check if any item contains command substitution or other dynamic expansion
   const hasDynamicExpansion = stmt.iterable.some((item) => {
-    if (item.type === "CommandSubstitution") return true;
+    if (item.type === "ParameterExpansion" || item.type === "CommandSubstitution") return true;
     if (item.type === "Word" && item.parts.length > 0) {
       return item.parts.some((part) =>
         part.type === "CommandSubstitution" ||
@@ -94,12 +134,13 @@ export function visitForStatement(
     lines.push(`${indent}const ${tempVar} = [];`);
 
     for (const item of stmt.iterable) {
-      if (item.type === "CommandSubstitution") {
-        // Command substitution: evaluate and split by whitespace
+      if (item.type === "ParameterExpansion" || item.type === "CommandSubstitution") {
+        // Direct expansions are subject to bash word splitting in `for ... in`.
         const cmdSubExpr = ctx.visitWord(item);
-        // cmdSubExpr is ${await __cmdSubText(...)} - extract the inner part
         const innerExpr = cmdSubExpr.slice(2, -1); // Remove ${ and }
-        lines.push(`${indent}${tempVar}.push(...(${innerExpr}).split(/\\s+/).filter(s => s.length > 0));`);
+        lines.push(
+          `${indent}${tempVar}.push(...(${innerExpr}).split(/\\s+/).filter(s => s.length > 0));`,
+        );
       } else if (item.type === "Word" && item.parts.length > 0) {
         // Check if the word contains command substitution
         const hasCommandSub = item.parts.some((part) => part.type === "CommandSubstitution");
@@ -108,7 +149,9 @@ export function visitForStatement(
           // Word with command substitution: evaluate and split
           const wordExpr = ctx.visitWord(item);
           // Build a template literal evaluation that handles expansion
-          lines.push(`${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`);
+          lines.push(
+            `${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`,
+          );
         } else {
           // SSH-531: Check if word has unquoted parameter/arithmetic expansions
           // In bash, `for i in $var` splits $var's value on whitespace
@@ -118,7 +161,9 @@ export function visitForStatement(
           const wordExpr = ctx.visitWord(item);
           if (hasParamExpansion) {
             // Unquoted expansion: word-split at runtime
-            lines.push(`${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`);
+            lines.push(
+              `${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`,
+            );
           } else {
             // Quoted expansion or plain literal: keep as single item
             lines.push(`${indent}${tempVar}.push(\`${wordExpr}\`);`);
@@ -126,18 +171,14 @@ export function visitForStatement(
         }
       } else {
         // Plain word: add as string literal
-        const value = ctx.visitWord(item);
-        lines.push(`${indent}${tempVar}.push("${value}");`);
+        lines.push(`${indent}${tempVar}.push(${formatWordLiteral(item, ctx)});`);
       }
     }
 
     itemsExpr = tempVar;
   } else {
     // No dynamic expansion: build static array
-    const items = stmt.iterable.map((item) => {
-      const value = ctx.visitWord(item);
-      return `"${value}"`;
-    });
+    const items = stmt.iterable.map((item) => formatWordLiteral(item, ctx));
     itemsExpr = `[${items.join(", ")}]`;
   }
 
@@ -229,9 +270,7 @@ function visitLoop(
   lines.push(`${innerIndent}const ${testVar} = await ${testExpr.code};`);
 
   // Break condition differs: while breaks on failure, until breaks on success
-  const breakCondition = breakOnSuccess
-    ? `${testVar}.code === 0`
-    : `${testVar}.code !== 0`;
+  const breakCondition = breakOnSuccess ? `${testVar}.code === 0` : `${testVar}.code !== 0`;
   lines.push(`${innerIndent}if (${breakCondition}) break;`);
   lines.push("");
 
@@ -257,8 +296,7 @@ export function visitCaseStatement(
   const indent = ctx.getIndent();
 
   const wordVar = ctx.getTempVar();
-  const word = ctx.visitWord(stmt.word);
-  lines.push(`${indent}const ${wordVar} = "${word}";`);
+  lines.push(`${indent}const ${wordVar} = ${formatWordLiteral(stmt.word, ctx)};`);
 
   let first = true;
 
@@ -408,9 +446,7 @@ export function visitReturnStatement(
   ctx: VisitorContext,
 ): StatementResult {
   const indent = ctx.getIndent();
-  const value = stmt.value !== undefined
-    ? ctx.visitArithmetic(stmt.value)
-    : "0";
+  const value = stmt.value !== undefined ? ctx.visitArithmetic(stmt.value) : "0";
   return { lines: [`${indent}return ${value};`] };
 }
 
@@ -424,10 +460,12 @@ export function visitBreakStatement(
   if (stmt.count && stmt.count > 1) {
     // For break N where N > 1, we need a different approach
     // For now, just generate a comment and a simple break
-    return { lines: [
-      `${indent}// bash 'break ${stmt.count}' - breaking ${stmt.count} levels`,
-      `${indent}break;`
-    ]};
+    return {
+      lines: [
+        `${indent}// bash 'break ${stmt.count}' - breaking ${stmt.count} levels`,
+        `${indent}break;`,
+      ],
+    };
   }
   return { lines: [`${indent}break;`] };
 }
@@ -442,10 +480,12 @@ export function visitContinueStatement(
   if (stmt.count && stmt.count > 1) {
     // For continue N where N > 1, we need a different approach
     // For now, just generate a comment and a simple continue
-    return { lines: [
-      `${indent}// bash 'continue ${stmt.count}' - continuing ${stmt.count} levels`,
-      `${indent}continue;`
-    ]};
+    return {
+      lines: [
+        `${indent}// bash 'continue ${stmt.count}' - continuing ${stmt.count} levels`,
+        `${indent}continue;`,
+      ],
+    };
   }
   return { lines: [`${indent}continue;`] };
 }
