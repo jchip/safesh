@@ -24,9 +24,9 @@ import {
  */
 function findFirstUnescapedSlash(s: string): number {
   for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\' && i + 1 < s.length) {
+    if (s[i] === "\\" && i + 1 < s.length) {
       i++; // Skip escaped char
-    } else if (s[i] === '/') {
+    } else if (s[i] === "/") {
       return i;
     }
   }
@@ -41,7 +41,7 @@ function expandBraces(s: string): string[] | null {
   // Check for simple comma-separated braces: {a,b,c}
   const commaMatch = s.match(/^\{([^{}]+(?:,[^{}]+)+)\}$/);
   if (commaMatch && commaMatch[1]) {
-    return commaMatch[1].split(',');
+    return commaMatch[1].split(",");
   }
 
   // Check for range braces: {start..end} or {start..end..step}
@@ -110,7 +110,7 @@ export function visitWord(
 
     // Build from parts if they contain expansions
     if (word.parts.length > 0) {
-      return word.parts.map((part) => visitWordPart(part, ctx)).join("");
+      return word.parts.map((part) => visitWordPart(part, ctx, word.quoted)).join("");
     }
     // Fallback to escaped value
     return escapeForTemplate(word.value);
@@ -127,10 +127,14 @@ export function visitWord(
 /**
  * Visit a WordPart node
  */
-export function visitWordPart(part: AST.WordPart, ctx: VisitorContext): string {
+export function visitWordPart(
+  part: AST.WordPart,
+  ctx: VisitorContext,
+  quoted = false,
+): string {
   switch (part.type) {
     case "LiteralPart":
-      return visitLiteralPart(part, ctx);
+      return visitLiteralPart(part, ctx, quoted);
     case "ParameterExpansion":
       return visitParameterExpansion(part, ctx);
     case "CommandSubstitution":
@@ -156,8 +160,16 @@ export function visitWordPart(part: AST.WordPart, ctx: VisitorContext): string {
 /**
  * Visit a LiteralPart node with support for tilde and brace expansion
  */
-export function visitLiteralPart(part: AST.LiteralPart, ctx: VisitorContext): string {
+export function visitLiteralPart(
+  part: AST.LiteralPart,
+  ctx: VisitorContext,
+  quoted = false,
+): string {
   let value = part.value;
+
+  if (quoted) {
+    return escapeForTemplate(value);
+  }
 
   // SSH-301: Tilde Expansion
   // Handle ~ or ~/path at the start of the literal
@@ -178,7 +190,7 @@ export function visitLiteralPart(part: AST.LiteralPart, ctx: VisitorContext): st
   const braceExpansion = expandBraces(value);
   if (braceExpansion) {
     // Static expansion at transpile time
-    return braceExpansion.map(s => escapeForTemplate(s)).join(" ");
+    return braceExpansion.map((s) => escapeForTemplate(s)).join(" ");
   }
 
   // Check for braces embedded in the string (e.g., "file{1,2,3}.txt")
@@ -189,7 +201,7 @@ export function visitLiteralPart(part: AST.LiteralPart, ctx: VisitorContext): st
     if (expanded) {
       // Expand and concatenate with prefix/suffix
       return expanded
-        .map(s => escapeForTemplate(prefix + s + suffix))
+        .map((s) => escapeForTemplate(prefix + s + suffix))
         .join(" ");
     }
   }
@@ -320,7 +332,9 @@ export function visitParameterExpansion(
 
     case ":-":
       // ${VAR:-default} - use default if unset OR empty
-      return `\${(${jsParam} === undefined || ${jsParam} === "") ? "${escapeForQuotes(modifierArg)}" : ${jsParam}}`;
+      return `\${(${jsParam} === undefined || ${jsParam} === "") ? "${
+        escapeForQuotes(modifierArg)
+      }" : ${jsParam}}`;
 
     case "-":
       // ${VAR-default} - use default only if unset
@@ -379,7 +393,9 @@ export function visitParameterExpansion(
       const idx = findFirstUnescapedSlash(modifierArg);
       const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${jsParam}.replace("${escapeForQuotes(pattern)}", "${escapeForQuotes(replacement)}")}`;
+      return `\${${jsParam}.replace("${escapeForQuotes(pattern)}", "${
+        escapeForQuotes(replacement)
+      }")}`;
     }
 
     case "//": {
@@ -398,7 +414,8 @@ export function visitParameterExpansion(
       const offset = colonIdx >= 0 ? modifierArg.slice(0, colonIdx).trim() : modifierArg.trim();
       const length = colonIdx >= 0 ? modifierArg.slice(colonIdx + 1).trim() : undefined;
       // SSH-489: Use jsParam for local var, original param for ENV/VARS
-      const varExpr = `(typeof ${jsParam} !== "undefined" ? String(${jsParam}) : ($.ENV.${param} ?? $.VARS?.${param} ?? ""))`;
+      const varExpr =
+        `(typeof ${jsParam} !== "undefined" ? String(${jsParam}) : ($.ENV.${param} ?? $.VARS?.${param} ?? ""))`;
       if (length !== undefined) {
         // Negative length means "remove last N chars" in bash
         if (length.startsWith("-")) {
@@ -414,7 +431,9 @@ export function visitParameterExpansion(
       const idx = findFirstUnescapedSlash(modifierArg);
       const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${jsParam}.replace(/^${escapeRegex(pattern)}/, "${escapeForQuotes(replacement)}")}`;
+      return `\${${jsParam}.replace(/^${escapeRegex(pattern)}/, "${
+        escapeForQuotes(replacement)
+      }")}`;
     }
 
     case "/%": {
@@ -422,12 +441,17 @@ export function visitParameterExpansion(
       const idx = findFirstUnescapedSlash(modifierArg);
       const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${jsParam}.replace(/${escapeRegex(pattern)}$/, "${escapeForQuotes(replacement)}")}`;
+      return `\${${jsParam}.replace(/${escapeRegex(pattern)}$/, "${
+        escapeForQuotes(replacement)
+      }")}`;
     }
 
     default:
       // Unknown modifier, emit warning and use simple expansion
-      ctx.addDiagnostic({ level: 'warning', message: `Unsupported parameter modifier: ${modifier}` });
+      ctx.addDiagnostic({
+        level: "warning",
+        message: `Unsupported parameter modifier: ${modifier}`,
+      });
       return `\${${jsParam}}`;
   }
 }
