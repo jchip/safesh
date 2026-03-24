@@ -396,7 +396,16 @@ export class Parser {
       this.skipNewlines();
 
       // Parse the right side as a complete pipeline
-      const right = this.parsePipelineOnly(false);
+      const rightPipeline = this.parsePipelineOnly(false);
+      // Unwrap break/continue/return from their single-command wrapper pipeline
+      // so they appear directly in commands (they cannot be piped)
+      const singleCmd = rightPipeline.commands.length === 1 && rightPipeline.operator === null
+        ? rightPipeline.commands[0]
+        : undefined;
+      const isControlFlow = singleCmd?.type === "BreakStatement"
+        || singleCmd?.type === "ContinueStatement"
+        || singleCmd?.type === "ReturnStatement";
+      const right: AST.Statement = isControlFlow ? singleCmd! : rightPipeline;
 
       // Determine operator
       const op: AST.Pipeline["operator"] = operator.type === TokenType.AND_AND ? "&&" : "||";
@@ -445,7 +454,7 @@ export class Parser {
    * This has higher precedence than && and ||.
    */
   private parsePipelineOnly(negated: boolean): AST.Pipeline {
-    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement | AST.CaseStatement = this.parseCommand();
+    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement | AST.CaseStatement | AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement = this.parseCommand();
 
     // Handle pipe operators (| and |&)
     while (this.isAny(TokenType.PIPE, TokenType.PIPE_AMP)) {
@@ -492,13 +501,24 @@ export class Parser {
   // Commands
   // ===========================================================================
 
-  private parseCommand(): AST.Command | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement | AST.CaseStatement {
+  private parseCommand(): AST.Command | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement | AST.CaseStatement | AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement {
     const assignments: AST.VariableAssignment[] = [];
     const redirects: AST.Redirection[] = [];
 
     // Parse leading assignments (VAR=value)
     while (this.is(TokenType.ASSIGNMENT_WORD)) {
       assignments.push(this.parseVariableAssignment());
+    }
+
+    // break/continue/return can appear after && or || (e.g., cmd && break)
+    if (this.is(TokenType.RETURN)) {
+      return this.parseReturnStatement();
+    }
+    if (this.is(TokenType.BREAK)) {
+      return this.parseBreakStatement();
+    }
+    if (this.is(TokenType.CONTINUE)) {
+      return this.parseContinueStatement();
     }
 
     // Check for control flow keywords - these can be part of pipelines
