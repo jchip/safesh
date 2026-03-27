@@ -5,16 +5,16 @@
 import { ERROR_COMMAND_NOT_ALLOWED } from "./constants.ts";
 // Re-export defaults for backwards compatibility
 export {
+  MAX_PENDING_RETRIES,
+  PENDING_RETRY_TTL_MS as PENDING_RETRY_TTL,
   SCRIPT_OUTPUT_LIMIT,
   SHELL_MEMORY_LIMIT,
-  PENDING_RETRY_TTL_MS as PENDING_RETRY_TTL,
-  MAX_PENDING_RETRIES,
 } from "./defaults.ts";
 
 // Re-export types from new unified modules (DRY refactoring)
 export type { PendingCommand, PendingPathRequest } from "./pending.ts";
 export type { SessionData } from "./session.ts";
-export type { PathViolationInfo, ErrorHandlerOptions } from "./error-handlers.ts";
+export type { ErrorHandlerOptions, PathViolationInfo } from "./error-handlers.ts";
 export type { FindProjectRootOptions } from "./project-root.ts";
 
 // ============================================================================
@@ -314,6 +314,8 @@ export interface ExecOptions {
   stream?: boolean;
   /** Working directory override */
   cwd?: string;
+  /** Avoid inheriting the controlling TTY when the parent command runs in background */
+  backgroundSafe?: boolean;
 }
 
 export interface ExecResult {

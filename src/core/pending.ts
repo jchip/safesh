@@ -5,7 +5,11 @@
  * Eliminates ~20 lines of interface duplication.
  */
 
-import { generateTempId, getPendingFilePath as getTempFilePath, getPendingPathFilePath as getTempPathFilePath } from "./temp.ts";
+import {
+  generateTempId,
+  getPendingFilePath as getTempFilePath,
+  getPendingPathFilePath as getTempPathFilePath,
+} from "./temp.ts";
 import { readJsonFileSync } from "./io-utils.ts";
 
 /**
@@ -14,8 +18,8 @@ import { readJsonFileSync } from "./io-utils.ts";
  */
 export interface PendingCommand {
   id: string;
-  scriptHash: string;  // Hash of script content for finding cached script file
-  commands: string[];  // Disallowed commands (filled by initCmds)
+  scriptHash: string; // Hash of script content for finding cached script file
+  commands: string[]; // Disallowed commands (filled by initCmds)
   cwd: string;
   timeout?: number;
   runInBackground?: boolean;
@@ -32,6 +36,7 @@ export interface PendingPathRequest {
   operation: "read" | "write";
   cwd: string;
   scriptHash: string;
+  runInBackground?: boolean;
   createdAt: string;
 }
 
@@ -96,9 +101,7 @@ export function readPendingPath(id: string): PendingPathRequest | null {
  */
 export function deletePending(id: string, type: "command" | "path"): void {
   try {
-    const filePath = type === "command"
-      ? getTempFilePath(id)
-      : getTempPathFilePath(id);
+    const filePath = type === "command" ? getTempFilePath(id) : getTempPathFilePath(id);
     Deno.removeSync(filePath);
   } catch {
     // Silently ignore - file may have already been deleted

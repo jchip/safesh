@@ -28,19 +28,24 @@ import { loadConfig, mergeConfigs } from "../src/core/config.ts";
 import { checkCommandPermission } from "../src/core/command_permission.ts";
 import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
-import { getPendingFilePath, getScriptFilePath, generateTempId, getErrorLogPath, getSessionFilePath, getScriptsDir, getTempRoot, getPendingDir } from "../src/core/temp.ts";
-import type { SafeShellConfig, PendingCommand } from "../src/core/types.ts";
+import {
+  generateTempId,
+  getErrorLogPath,
+  getPendingDir,
+  getPendingFilePath,
+  getScriptFilePath,
+  getScriptsDir,
+  getSessionFilePath,
+  getTempRoot,
+} from "../src/core/temp.ts";
+import type { PendingCommand, SafeShellConfig } from "../src/core/types.ts";
 // New unified core modules (DRY refactoring)
 import { findProjectRoot, PROJECT_MARKERS } from "../src/core/project-root.ts";
 import { generatePendingId, writePendingCommand, writePendingPath } from "../src/core/pending.ts";
 import { getSessionAllowedCommands } from "../src/core/session.ts";
 import { generateInlineErrorHandler, logExecutionError } from "../src/core/error-handlers.ts";
 import { readStdinFully } from "../src/core/io-utils.ts";
-import {
-  detectHybridCommand,
-  detectTypeScript,
-  SAFESH_SIGNATURE,
-} from "../src/hooks/detection.ts";
+import { detectHybridCommand, detectTypeScript, SAFESH_SIGNATURE } from "../src/hooks/detection.ts";
 
 // =============================================================================
 // Configuration
@@ -63,7 +68,11 @@ function debug(message: string): void {
   if (DEBUG) {
     console.error(`[bash-prehook] ${message}`);
     try {
-      Deno.writeTextFileSync("/tmp/gemini_hook_debug.log", `[${new Date().toISOString()}] ${message}\n`, { append: true });
+      Deno.writeTextFileSync(
+        "/tmp/gemini_hook_debug.log",
+        `[${new Date().toISOString()}] ${message}\n`,
+        { append: true },
+      );
     } catch {}
   }
 }
@@ -83,16 +92,16 @@ async function hashContent(content: string): Promise<string> {
   content = `v${TRANSPILER_VERSION}:${content}`;
   const data = new TextEncoder().encode(content);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  
+
   // Convert 32-byte buffer to binary string safely
   const binary = String.fromCharCode(...new Uint8Array(hashBuffer));
-  
+
   // Convert to Base64 and make URL-safe (replace +/ with -_ and remove padding)
   const base64 = btoa(binary)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
-    
+
   return base64.slice(0, 16);
 }
 
@@ -108,7 +117,7 @@ function cleanupOldPendingFiles(): void {
 
     // Read all files in pending directory
     const entries = [...Deno.readDirSync(pendingDir)];
-    const files = entries.filter(e => e.isFile && e.name.endsWith('.json'));
+    const files = entries.filter((e) => e.isFile && e.name.endsWith(".json"));
 
     debug(`Pending file count: ${files.length}`);
 
@@ -158,7 +167,7 @@ function cleanupOldScripts(): void {
 
     // Read all files in scripts directory
     const entries = [...Deno.readDirSync(scriptsDir)];
-    const files = entries.filter(e => e.isFile && e.name.endsWith('.ts'));
+    const files = entries.filter((e) => e.isFile && e.name.endsWith(".ts"));
 
     debug(`Script file count: ${files.length}`);
 
@@ -244,17 +253,66 @@ function cleanupOldScripts(): void {
  * These are handled by the transpiler without spawning processes
  */
 const BUILTIN_COMMANDS = new Set([
-  "echo", "printf", "cd", "pwd", "pushd", "popd", "dirs",
-  "export", "unset", "local", "declare", "readonly", "typeset",
-  "source", ".", "eval", "exec", "exit", "return", "break", "continue",
-  "true", "false", ":", "test", "[", "[[",
-  "read", "mapfile", "readarray",
-  "set", "shopt", "shift", "getopts",
-  "trap", "wait", "jobs", "fg", "bg", "kill", "disown",
-  "alias", "unalias", "type", "which", "hash", "command", "builtin",
-  "let", "expr",
+  "echo",
+  "printf",
+  "cd",
+  "pwd",
+  "pushd",
+  "popd",
+  "dirs",
+  "export",
+  "unset",
+  "local",
+  "declare",
+  "readonly",
+  "typeset",
+  "source",
+  ".",
+  "eval",
+  "exec",
+  "exit",
+  "return",
+  "break",
+  "continue",
+  "true",
+  "false",
+  ":",
+  "test",
+  "[",
+  "[[",
+  "read",
+  "mapfile",
+  "readarray",
+  "set",
+  "shopt",
+  "shift",
+  "getopts",
+  "trap",
+  "wait",
+  "jobs",
+  "fg",
+  "bg",
+  "kill",
+  "disown",
+  "alias",
+  "unalias",
+  "type",
+  "which",
+  "hash",
+  "command",
+  "builtin",
+  "let",
+  "expr",
   // SafeShell built-in utilities (transpiled to __rm, __cp, etc.)
-  "rm", "rmdir", "cp", "mv", "mkdir", "touch", "ln", "chmod", "ls",
+  "rm",
+  "rmdir",
+  "cp",
+  "mv",
+  "mkdir",
+  "touch",
+  "ln",
+  "chmod",
+  "ls",
 ]);
 
 /**
@@ -283,7 +341,7 @@ function isSimpleStatement(stmt: AST.Statement): boolean {
 
     case "Pipeline":
       // Pipelines are OK if all commands are simple
-      return stmt.commands.every(cmd => isSimpleStatement(cmd));
+      return stmt.commands.every((cmd) => isSimpleStatement(cmd));
 
     case "VariableAssignment":
       // Variable assignments are OK if no command substitution in value
@@ -349,7 +407,14 @@ function hasComplexExpansions(cmd: AST.Command): boolean {
 /**
  * Check if value has command substitution
  */
-function hasComplexValue(value: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution | AST.ArithmeticExpansion | AST.ArrayLiteral): boolean {
+function hasComplexValue(
+  value:
+    | AST.Word
+    | AST.ParameterExpansion
+    | AST.CommandSubstitution
+    | AST.ArithmeticExpansion
+    | AST.ArrayLiteral,
+): boolean {
   if (value.type === "CommandSubstitution") {
     return true;
   }
@@ -436,7 +501,9 @@ function extractCommandsFromStatement(
     case "ForStatement":
     case "WhileStatement":
     case "UntilStatement": {
-      if ("test" in stmt && stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand") {
+      if (
+        "test" in stmt && stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand"
+      ) {
         extractCommandsFromStatement(stmt.test as AST.Statement, commands, options);
       }
       for (const s of stmt.body) {
@@ -493,17 +560,34 @@ function extractCommands(ast: AST.Program): Set<string> {
  */
 const DANGEROUS_COMMANDS = new Set([
   // File deletion/modification (rm uses builtin)
-  "rmdir", "unlink", "shred",
+  "rmdir",
+  "unlink",
+  "shred",
   // Permission/ownership changes (chmod uses builtin)
-  "chown", "chgrp",
+  "chown",
+  "chgrp",
   // Disk operations
-  "dd", "mkfs", "fdisk", "parted", "wipefs",
+  "dd",
+  "mkfs",
+  "fdisk",
+  "parted",
+  "wipefs",
   // System modifications
-  "mount", "umount", "kill", "killall", "pkill",
+  "mount",
+  "umount",
+  "kill",
+  "killall",
+  "pkill",
   // Package managers
-  "apt", "apt-get", "yum", "dnf", "pacman", "brew",
+  "apt",
+  "apt-get",
+  "yum",
+  "dnf",
+  "pacman",
+  "brew",
   // Low-level operations
-  "truncate", "fallocate",
+  "truncate",
+  "fallocate",
 ]);
 
 /**
@@ -557,7 +641,6 @@ async function getDisallowedCommands(
   return disallowed;
 }
 
-
 /**
  * Generic Hook Input format (Claude Code / Gemini CLI)
  * Supports both snake_case (Claude) and camelCase (Gemini potential)
@@ -599,23 +682,23 @@ interface ParsedCommand {
 function parseHookInput(input: string): ParsedCommand | null {
   try {
     const parsed = JSON.parse(input) as HookInput;
-    
+
     // Normalize fields
     const toolName = parsed.tool_name || parsed.toolName || "";
     const toolInput = parsed.tool_input || parsed.toolInput;
-    
+
     // Check if it's a supported tool
     if (/^(Bash|bash|run_shell_command)$/i.test(toolName) && toolInput?.command) {
       debug(`Parsed input for tool: ${toolName}`);
       debug(`Command: ${toolInput.command}`);
-      
+
       const timeout = toolInput.timeout;
       // Handle both boolean flag styles
       const runInBackground = toolInput.run_in_background ?? toolInput.runInBackground;
 
       debug(`Timeout: ${timeout}`);
       debug(`Run in background: ${runInBackground}`);
-      
+
       return {
         command: toolInput.command,
         timeout: timeout,
@@ -665,10 +748,10 @@ async function getBashCommand(): Promise<ParsedCommand> {
  * These are typically SafeShell CLI tools that should run directly
  */
 const PASSTHROUGH_COMMANDS = [
-  /^desh\b/,              // desh CLI (includes "desh retry")
-  /^\.\/src\/cli\/desh\.ts\b/,  // desh via path
-  /desh\.ts\b/,           // any desh.ts path
-  /^deno\b/,              // deno runtime (for tests, etc.)
+  /^desh\b/, // desh CLI (includes "desh retry")
+  /^\.\/src\/cli\/desh\.ts\b/, // desh via path
+  /desh\.ts\b/, // any desh.ts path
+  /^deno\b/, // deno runtime (for tests, etc.)
 ];
 
 /**
@@ -831,9 +914,16 @@ async function outputRewriteToDeshHeredoc(
 /**
  * Output the hook response with the desh command
  */
-function outputHookResponse(deshCommand: string, options?: { timeout?: number; runInBackground?: boolean; hookEventName?: string }): void {
+function outputHookResponse(
+  deshCommand: string,
+  options?: { timeout?: number; runInBackground?: boolean; hookEventName?: string },
+): void {
+  const command = options?.runInBackground
+    ? `SAFESH_RUN_IN_BACKGROUND=1 ${deshCommand}`
+    : deshCommand;
+
   // Build updatedInput preserving timeout and run_in_background
-  const updatedInput: Record<string, unknown> = { command: deshCommand };
+  const updatedInput: Record<string, unknown> = { command };
   if (options?.timeout !== undefined) {
     updatedInput.timeout = options.timeout;
   }
@@ -872,7 +962,12 @@ async function outputDenyWithRetry(
   disallowedCommands: string[],
   tsCode: string,
   projectDir: string,
-  options?: { timeout?: number; runInBackground?: boolean; originalCommand?: string; hookEventName?: string },
+  options?: {
+    timeout?: number;
+    runInBackground?: boolean;
+    originalCommand?: string;
+    hookEventName?: string;
+  },
 ): Promise<void> {
   const cmdList = disallowedCommands.join(", ");
 
@@ -942,7 +1037,11 @@ HINT: Use safesh TypeScript code with /*#*/ prefix - many shell utils are pre-ap
  * Output hook decision to rewrite command to desh
  * Uses file mode by default, heredoc if configured
  */
-async function outputRewriteToDesh(tsCode: string, projectDir: string, options?: DeshRewriteOptions): Promise<void> {
+async function outputRewriteToDesh(
+  tsCode: string,
+  projectDir: string,
+  options?: DeshRewriteOptions,
+): Promise<void> {
   if (DESH_MODE === "heredoc") {
     await outputRewriteToDeshHeredoc(tsCode, projectDir, options);
   } else {
@@ -1049,7 +1148,9 @@ async function main() {
       try {
         bashTsCode = transpile(bashAst, { imports: false, strict: false });
       } catch (transpileError) {
-        const errorMsg = transpileError instanceof Error ? transpileError.message : String(transpileError);
+        const errorMsg = transpileError instanceof Error
+          ? transpileError.message
+          : String(transpileError);
         throw new Error(`Failed to transpile bash part of hybrid command: ${errorMsg}`);
       }
 
@@ -1158,7 +1259,7 @@ ${tsCode}
       ast = parse(parsed.command);
     } catch (parseError) {
       // On parse error, show the command for debugging
-      const lines = parsed.command.split('\n');
+      const lines = parsed.command.split("\n");
       const errorMsg = parseError instanceof Error ? parseError.message : String(parseError);
       debug(`Parse error: ${errorMsg}`);
       debug(`Command (${lines.length} lines):`);
@@ -1203,11 +1304,11 @@ ${tsCode}
     // Check for known transpiler bugs that generate invalid TypeScript
     // These patterns indicate the transpiler couldn't handle the bash complexity
     const knownBadPatterns = [
-      /const\s+\w+\s+=\s+for\s+await/,  // "const x = for await" - invalid syntax
-      /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,  // "for (const x of ["${await..." - template in array
-      /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,  // Alternative: for (const x of ["...await
-      /\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.stdout\(\)/,  // Calling stdout() after multiple pipes - invalid (SSH-496: exclude cross-IIFE, SSH-498: exclude cross-template-literal, SSH-570: exclude cross-statement)
-      /\.lines\(\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.lines\(\)/,  // Calling .lines() twice with pipe - invalid (SSH-496: exclude cross-IIFE, SSH-498: exclude cross-template-literal, SSH-570: exclude cross-statement)
+      /const\s+\w+\s+=\s+for\s+await/, // "const x = for await" - invalid syntax
+      /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/, // "for (const x of ["${await..." - template in array
+      /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/, // Alternative: for (const x of ["...await
+      /\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.stdout\(\)/, // Calling stdout() after multiple pipes - invalid (SSH-496: exclude cross-IIFE, SSH-498: exclude cross-template-literal, SSH-570: exclude cross-statement)
+      /\.lines\(\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.lines\(\)/, // Calling .lines() twice with pipe - invalid (SSH-496: exclude cross-IIFE, SSH-498: exclude cross-template-literal, SSH-570: exclude cross-statement)
     ];
 
     for (const pattern of knownBadPatterns) {
@@ -1239,7 +1340,8 @@ ${tsCode}
         }
 
         // Brief console message with prominent error log path
-        const message = `[SAFESH] Transpiler Error: The bash script is too complex for automatic transpilation.
+        const message =
+          `[SAFESH] Transpiler Error: The bash script is too complex for automatic transpilation.
 
 ${errorFile ? `Full details saved to: ${errorFile}\n` : ""}
 Reason: The transpiler generated invalid TypeScript code.
@@ -1267,7 +1369,10 @@ Example:
     }
 
     // Prepend original bash command as a constant for error messages and wrap in error handler
-    const bashCommandEscaped = parsed.command.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+    const bashCommandEscaped = parsed.command.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(
+      /\$/g,
+      "\\$",
+    );
 
     // SSH-475: Save transpiled code before wrapping with error handler
     const transpiledCodeForErrorLog = tsCode;
@@ -1275,13 +1380,15 @@ Example:
     // Add global error handlers to catch all errors (sync and async)
     // SSH-475: Include transpiled code in error handler for detailed error logs
     tsCode = `const __ORIGINAL_BASH_COMMAND__ = \`${bashCommandEscaped}\`;
-${generateInlineErrorHandler({
+${
+      generateInlineErrorHandler({
         prefix: "Bash Command Error",
         errorLogPath: getErrorLogPath(),
         includeCommand: true,
         originalCommand: bashCommandEscaped,
         transpiledCode: transpiledCodeForErrorLog,
-      })}
+      })
+    }
 ${tsCode}
 `;
 
@@ -1320,8 +1427,8 @@ ${tsCode}
     let fullCommand = "";
     if (parsed?.command) {
       fullCommand = parsed.command;
-      const lines = parsed.command.split('\n');
-      const preview = lines.slice(0, 3).join('\n');
+      const lines = parsed.command.split("\n");
+      const preview = lines.slice(0, 3).join("\n");
       const more = lines.length > 3 ? `\n... (${lines.length} lines total)` : "";
       context = `\n\nCommand preview:\n${preview}${more}`;
     }
@@ -1332,7 +1439,7 @@ ${tsCode}
       `Command: ${fullCommand}`,
       `\nError: ${errorMsg}`,
       stack ? `\nStack trace:\n${stack}` : "",
-      "================================\n"
+      "================================\n",
     ].join("\n");
 
     // Save to error log file
