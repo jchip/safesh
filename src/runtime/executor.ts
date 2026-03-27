@@ -8,32 +8,41 @@ import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { executionError } from "../core/errors.ts";
 import { generateImportMap, validateImports } from "../core/import_map.ts";
-import type { ExecOptions, ExecResult, SafeShellConfig, Shell, Script, Job, ImportPolicy } from "../core/types.ts";
+import type {
+  ExecOptions,
+  ExecResult,
+  ImportPolicy,
+  Job,
+  SafeShellConfig,
+  Script,
+  Shell,
+} from "../core/types.ts";
 import { SCRIPT_OUTPUT_LIMIT } from "../core/types.ts";
-import { hashCode, buildEnv, getRealPathBoth, getLoginShellPath } from "../core/utils.ts";
+import { buildEnv, getLoginShellPath, getRealPathBoth, hashCode } from "../core/utils.ts";
+import { collectStreamBytesWithTimeout } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
-  buildPreamble,
-  buildFilePreamble,
-  buildFilePostamble,
   buildErrorHandler,
-  extractShellState,
+  buildFilePostamble,
+  buildFilePreamble,
+  buildPreamble,
   extractPreambleConfig,
+  extractShellState,
 } from "./preamble.ts";
-import { getEffectivePermissions, expandPath } from "../core/permissions.ts";
+import { expandPath, getEffectivePermissions } from "../core/permissions.ts";
 import {
-  JOB_MARKER,
   CMD_ERROR_MARKER,
-  INIT_ERROR_MARKER,
-  NET_ERROR_MARKER,
-  ENV_SHELL_ID,
   ENV_SCRIPT_ID,
+  ENV_SHELL_ID,
   ERROR_COMMAND_NOT_ALLOWED,
   ERROR_COMMANDS_BLOCKED,
   ERROR_NETWORK_BLOCKED,
+  INIT_ERROR_MARKER,
+  JOB_MARKER,
+  NET_ERROR_MARKER,
 } from "../core/constants.ts";
 import { DEFAULT_TIMEOUT_MS, TEMP_SCRIPT_DIR } from "../core/defaults.ts";
-import { SubprocessManager, buildDenoArgs } from "./subprocess-manager.ts";
+import { buildDenoArgs, SubprocessManager } from "./subprocess-manager.ts";
 import type { SubprocessOutput } from "./subprocess-manager.ts";
 
 // NOTE: filterExistingCommands cache and function removed since we now always
@@ -114,7 +123,7 @@ function enhancePermissionErrors(stderr: string, cwd: string, config: SafeShellC
   // If we found file permission errors, append context info
   if (hasMatch && firstAccessType) {
     const allowedPaths = firstAccessType === "write" ? perms.write : perms.read;
-    const expandedPaths = allowedPaths?.map(p => expandPath(p, cwd)) ?? [];
+    const expandedPaths = allowedPaths?.map((p) => expandPath(p, cwd)) ?? [];
     const lines = [
       enhanced.trim(),
       `CWD: ${cwd}`,
@@ -205,15 +214,15 @@ function processJobEvent(shell: Shell, script: Script, event: JobEvent): void {
       pid: event.pid ?? 0,
       status: "running",
       exitCode: undefined,
-      stdout: "", 
+      stdout: "",
       stderr: "",
       startedAt: new Date(event.startedAt ?? Date.now()),
       completedAt: undefined,
       duration: undefined,
     };
-    
+
     shell.jobs.set(job.id, job);
-    
+
     if (!script.jobIds.includes(job.id)) {
       script.jobIds.push(job.id);
     }
@@ -301,7 +310,12 @@ function extractBlockedCommands(
   cmdErrors: CommandErrorEvent[],
   initErrors: InitErrorEvent[],
   netErrors: NetworkErrorEvent[],
-): { blockedCommand?: string; blockedCommands?: string[]; notFoundCommands?: string[]; blockedHost?: string } {
+): {
+  blockedCommand?: string;
+  blockedCommands?: string[];
+  notFoundCommands?: string[];
+  blockedHost?: string;
+} {
   // Check for blocked command (legacy single command)
   const firstCmdError = cmdErrors[0];
   const blockedCommand = firstCmdError?.command;
@@ -317,7 +331,6 @@ function extractBlockedCommands(
 
   return { blockedCommand, blockedCommands, notFoundCommands, blockedHost };
 }
-
 
 /**
  * Build a path-based permission flag.
@@ -336,7 +349,7 @@ function buildPathPermission(
     }
   }
   if (allPaths.length) {
-    const expanded = allPaths.map(p => expandPath(p, cwd)).flatMap(getRealPathBoth).join(",");
+    const expanded = allPaths.map((p) => expandPath(p, cwd)).flatMap(getRealPathBoth).join(",");
     return `--${flag}=${expanded}`;
   }
   return null;
@@ -379,7 +392,7 @@ function buildDenyWritePermission(paths: string[], cwd: string): string | null {
  */
 function buildNetPermission(net: boolean | string[] | undefined): string {
   if (net === false) {
-    return "";  // Explicitly disabled
+    return ""; // Explicitly disabled
   } else if (Array.isArray(net) && net.length) {
     return `--allow-net=${net.join(",")}`;
   }
@@ -523,7 +536,12 @@ async function generateScriptFile(
   // Build full code with preamble, user code, and error handler
   const preambleConfig = extractPreambleConfig(config, cwd);
   const { preamble, preambleLineCount } = buildPreamble(shell, preambleConfig);
-  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell, !!preambleConfig.vfs?.enabled);
+  const errorHandler = buildErrorHandler(
+    scriptPath,
+    preambleLineCount,
+    !!shell,
+    !!preambleConfig.vfs?.enabled,
+  );
 
   // Structure: preamble (with async IIFE start) + user code + error handler (closes IIFE with catch)
   const fullCode = preamble + code + errorHandler;
@@ -628,7 +646,9 @@ function processExecutionResult(
   syncShellState(shell, extractedState);
 
   // Extract job events and command errors from stderr
-  const { cleanStderr, jobEvents, cmdErrors, initErrors, netErrors } = extractStderrEvents(output.stderr);
+  const { cleanStderr, jobEvents, cmdErrors, initErrors, netErrors } = extractStderrEvents(
+    output.stderr,
+  );
   if (shell && script && jobEvents.length > 0) {
     processJobEvents(shell, script, jobEvents);
   }
@@ -698,12 +718,19 @@ export async function executeCode(
   const { args, subprocessManager } = await buildDenoCommand(scriptPath, config, cwd, importPolicy);
 
   // Phase 5: Execute subprocess with real-time tracking
-  const output = await executeWithTracking(subprocessManager, args, cwd, config, timeoutMs, shell, script);
+  const output = await executeWithTracking(
+    subprocessManager,
+    args,
+    cwd,
+    config,
+    timeoutMs,
+    shell,
+    script,
+  );
 
   // Phase 6: Process result, extract events, enhance errors
   return processExecutionResult(output, config, cwd, shell, script);
 }
-
 
 /**
  * Find Deno config file (deno.json or deno.jsonc)
@@ -756,7 +783,9 @@ async function prepareFileExecution(
     fileCode = await Deno.readTextFile(absolutePath);
   } catch (error) {
     throw executionError(
-      `Failed to read file '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to read file '${filePath}': ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
   }
 
@@ -817,12 +846,13 @@ export async function executeFile(
   }
 
   // Spawn and collect output
-  const { status, stdout: rawStdout, stderr: rawStderr } = await subprocessManager.spawnAndCollectOutput({
-    args,
-    cwd,
-    env,
-    timeoutMs,
-  });
+  const { status, stdout: rawStdout, stderr: rawStderr } = await subprocessManager
+    .spawnAndCollectOutput({
+      args,
+      cwd,
+      env,
+      timeoutMs,
+    });
 
   // Extract shell state from stdout and sync back
   const { cleanOutput: stdout, ...extractedState } = extractShellState(rawStdout);
@@ -851,12 +881,50 @@ export async function executeFilePassthrough(
   options: ExecOptions = {},
 ): Promise<number> {
   const cwd = options.cwd ?? Deno.cwd();
+  const backgroundSafe = options.backgroundSafe ?? false;
 
   const { args } = await prepareFileExecution(filePath, config, cwd);
 
   const env = buildEnv(config);
 
-  // Spawn with inherited stdio for real-time output
+  if (backgroundSafe) {
+    // Backgrounded desh runs must not hand the controlling TTY to the wrapped
+    // script, or the whole job can be suspended by job control.
+    const command = new Deno.Command("deno", {
+      args,
+      cwd,
+      env,
+      stdout: "piped",
+      stderr: "piped",
+      stdin: "null",
+    });
+
+    const process = command.spawn();
+    const status = await process.status;
+
+    const abortController = new AbortController();
+    const streamTimeoutId = setTimeout(() => {
+      abortController.abort();
+    }, 1000);
+
+    const [stdoutBytes, stderrBytes] = await Promise.all([
+      collectStreamBytesWithTimeout(process.stdout, abortController.signal),
+      collectStreamBytesWithTimeout(process.stderr, abortController.signal),
+    ]);
+
+    clearTimeout(streamTimeoutId);
+
+    if (stdoutBytes.length > 0) {
+      await Deno.stdout.write(stdoutBytes);
+    }
+    if (stderrBytes.length > 0) {
+      await Deno.stderr.write(stderrBytes);
+    }
+
+    return status.code;
+  }
+
+  // Spawn with inherited stdio for real-time foreground passthrough
   const command = new Deno.Command("deno", {
     args,
     cwd,
@@ -889,9 +957,9 @@ async function* mergeStreams(
   let stderrPromise: Promise<StreamResult> | null = null;
 
   const createStdoutPromise = () =>
-    stdoutReader.read().then(result => ({ stream: "stdout" as const, result }));
+    stdoutReader.read().then((result) => ({ stream: "stdout" as const, result }));
   const createStderrPromise = () =>
-    stderrReader.read().then(result => ({ stream: "stderr" as const, result }));
+    stderrReader.read().then((result) => ({ stream: "stderr" as const, result }));
 
   while (!stdoutDone || !stderrDone) {
     // Start reads if not already pending
@@ -956,7 +1024,12 @@ export async function* executeCodeStreaming(
   // Build full code with preamble and error handler
   const preambleConfig = extractPreambleConfig(config, cwd);
   const { preamble, preambleLineCount } = buildPreamble(shell, preambleConfig);
-  const errorHandler = buildErrorHandler(scriptPath, preambleLineCount, !!shell, !!preambleConfig.vfs?.enabled);
+  const errorHandler = buildErrorHandler(
+    scriptPath,
+    preambleLineCount,
+    !!shell,
+    !!preambleConfig.vfs?.enabled,
+  );
   const fullCode = preamble + code + errorHandler;
 
   // Write script to temp file

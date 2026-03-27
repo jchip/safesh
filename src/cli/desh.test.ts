@@ -25,30 +25,31 @@ import { afterEach, beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
 import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import {
-  parseRetryArgs,
-  loadPendingCommand,
   applyPermissionChoice,
-  buildRetryConfig,
-  executeRetryScript,
-  // handleRetryPath functions
-  parseRetryPathArgs,
-  parsePathChoice,
-  loadPendingPathData,
   buildPathPermissions,
-  persistPathPermissions,
+  buildRetryConfig,
   buildRetryPathConfig,
   executeRetryPathScript,
+  executeRetryScript,
+  isBackgroundRewriteExecution,
+  loadPendingCommand,
+  loadPendingPathData,
+  parsePathChoice,
+  parseRetryArgs,
+  // handleRetryPath functions
+  parseRetryPathArgs,
   type PathPermissionChoice,
+  persistPathPermissions,
 } from "./desh.ts";
 import {
-  writePendingCommand,
-  writePendingPath,
   deletePending,
   generatePendingId,
   type PendingCommand,
   type PendingPathRequest,
+  writePendingCommand,
+  writePendingPath,
 } from "../core/pending.ts";
-import { getPendingFilePath, findScriptFilePath } from "../core/temp.ts";
+import { findScriptFilePath, getPendingFilePath } from "../core/temp.ts";
 import { getProjectConfigDir } from "../core/config.ts";
 
 // Test utilities
@@ -116,6 +117,18 @@ describe("desh - handleRetry decomposition", () => {
       const args = ["--id=test-123", "--choice=4"];
       const result = parseRetryArgs(args);
       assertEquals(result.choice, 4);
+    });
+  });
+
+  describe("isBackgroundRewriteExecution", () => {
+    it("detects background marker env var", () => {
+      assertEquals(isBackgroundRewriteExecution({ SAFESH_RUN_IN_BACKGROUND: "1" }), true);
+      assertEquals(isBackgroundRewriteExecution({ SAFESH_RUN_IN_BACKGROUND: "true" }), true);
+    });
+
+    it("defaults to false when marker is absent", () => {
+      assertEquals(isBackgroundRewriteExecution({}), false);
+      assertEquals(isBackgroundRewriteExecution({ SAFESH_RUN_IN_BACKGROUND: "0" }), false);
     });
   });
 
@@ -870,12 +883,24 @@ describe("desh - handleRetryPath decomposition", () => {
   describe("security validation - handleRetryPath", () => {
     it("validates all choice combinations parse correctly", () => {
       const validChoices = [
-        "r1", "r2", "r3",
-        "w1", "w2", "w3",
-        "rw1", "rw2", "rw3",
-        "r1d", "r2d", "r3d",
-        "w1d", "w2d", "w3d",
-        "rw1d", "rw2d", "rw3d",
+        "r1",
+        "r2",
+        "r3",
+        "w1",
+        "w2",
+        "w3",
+        "rw1",
+        "rw2",
+        "rw3",
+        "r1d",
+        "r2d",
+        "r3d",
+        "w1d",
+        "w2d",
+        "w3d",
+        "rw1d",
+        "rw2d",
+        "rw3d",
       ];
 
       for (const choice of validChoices) {

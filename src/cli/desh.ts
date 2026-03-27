@@ -19,11 +19,23 @@ import { loadConfig, loadSessionConfig, mergeConfigs, validateConfig } from "../
 import { executeCode, executeCodeStreaming, executeFilePassthrough } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
-import { getPendingFilePath, getSessionFilePath, findScriptFilePath } from "../core/temp.ts";
+import { findScriptFilePath, getPendingFilePath, getSessionFilePath } from "../core/temp.ts";
 // New unified core modules (DRY refactoring)
 import { findProjectRoot, PROJECT_MARKERS } from "../core/project-root.ts";
-import { readPendingCommand, readPendingPath, deletePending, type PendingCommand, type PendingPathRequest } from "../core/pending.ts";
-import { addSessionCommands, addSessionPaths, getSessionAllowedCommandsArray, getSessionPathPermissions, mergeSessionPermissions } from "../core/session.ts";
+import {
+  deletePending,
+  type PendingCommand,
+  type PendingPathRequest,
+  readPendingCommand,
+  readPendingPath,
+} from "../core/pending.ts";
+import {
+  addSessionCommands,
+  addSessionPaths,
+  getSessionAllowedCommandsArray,
+  getSessionPathPermissions,
+  mergeSessionPermissions,
+} from "../core/session.ts";
 import { readStdinFully } from "../core/io-utils.ts";
 import { addCommandsToConfig, addPathsToConfig } from "../core/config-persistence.ts";
 import { VERSION } from "../core/constants.ts";
@@ -57,6 +69,18 @@ export function parseRetryArgs(args: string[]): { id: string; choice: number } {
   }
 
   return { id, choice };
+}
+
+/**
+ * Detect background-safe execution requested by bash-prehook rewrite.
+ *
+ * Backgrounded rewritten commands still invoke desh in the outer shell, but
+ * the wrapped script itself must not inherit the controlling TTY.
+ */
+export function isBackgroundRewriteExecution(
+  env: Record<string, string> = Deno.env.toObject(),
+): boolean {
+  return env.SAFESH_RUN_IN_BACKGROUND === "1" || env.SAFESH_RUN_IN_BACKGROUND === "true";
 }
 
 /**
@@ -153,6 +177,7 @@ export async function executeRetryScript(
     const exitCode = await executeFilePassthrough(scriptPath, config, {
       cwd: pending.cwd,
       timeout: pending.timeout,
+      backgroundSafe: pending.runInBackground,
     });
 
     // Cleanup pending file on success (keep script file for caching)
@@ -279,7 +304,9 @@ export function parsePathChoice(choice: string): PathPermissionChoice {
   // Parse choice: r1, w1, rw1, r2, w2, rw2, r3, w3, rw3, or with 'd' for directory (r1d, w2d, etc.)
   const match = choice.match(/^(r|w|rw)([123])(d?)$/);
   if (!match) {
-    console.error(`Error: Invalid choice '${choice}'. Must be r1, w1, rw1, r2, w2, rw2, r3, w3, rw3 (or add 'd' for directory), or 4`);
+    console.error(
+      `Error: Invalid choice '${choice}'. Must be r1, w1, rw1, r2, w2, rw2, r3, w3, rw3 (or add 'd' for directory), or 4`,
+    );
     Deno.exit(1);
   }
 
@@ -298,7 +325,9 @@ export function parsePathChoice(choice: string): PathPermissionChoice {
  * @returns Pending path request and script file path
  * @throws Exits process with code 1 if not found
  */
-export async function loadPendingPathData(id: string): Promise<{ pending: PendingPathRequest; scriptFile: string }> {
+export async function loadPendingPathData(
+  id: string,
+): Promise<{ pending: PendingPathRequest; scriptFile: string }> {
   // Read pending path request
   const pending = readPendingPath(id);
   if (!pending) {
@@ -333,8 +362,8 @@ export function buildPathPermissions(
   if (choice.isDirectory) {
     // Grant permission to the directory instead of the file
     // Security note: Prevents directory traversal by using path parts
-    const pathParts = pending.path.split('/');
-    permissionPath = pathParts.slice(0, -1).join('/') || '/';
+    const pathParts = pending.path.split("/");
+    permissionPath = pathParts.slice(0, -1).join("/") || "/";
     console.error(`[safesh] Granting permission to directory: ${permissionPath}/`);
   }
 
@@ -399,7 +428,9 @@ export async function buildRetryPathConfig(
   pending: PendingPathRequest,
   readPaths: string[],
   writePaths: string[],
-): Promise<{ config: Awaited<ReturnType<typeof loadSessionConfig>>["config"]; projectDir: string }> {
+): Promise<
+  { config: Awaited<ReturnType<typeof loadSessionConfig>>["config"]; projectDir: string }
+> {
   // Load config and merge session permissions
   const { config, projectDir } = await loadSessionConfig(pending.cwd);
 
@@ -443,7 +474,10 @@ export async function executeRetryPathScript(
 
   try {
     // Execute with inherited stdio for real-time output passthrough
-    const exitCode = await executeFilePassthrough(scriptFile, config, { cwd: pending.cwd });
+    const exitCode = await executeFilePassthrough(scriptFile, config, {
+      cwd: pending.cwd,
+      backgroundSafe: pending.runInBackground,
+    });
 
     // Don't cleanup pending file yet - it may be needed for command retries
     // The file will be cleaned up by subsequent retries or manual cleanup
@@ -606,8 +640,11 @@ async function main() {
   const verbose = args.verbose as boolean;
   const quiet = args.quiet as boolean;
   const configPath = args.config as string | undefined;
+  const backgroundRewrite = isBackgroundRewriteExecution();
   // Default to streaming if stdout is a TTY, unless explicitly set
-  const stream = args.stream !== undefined ? args.stream as boolean : Deno.stdout.isTerminal();
+  const stream = backgroundRewrite
+    ? false
+    : (args.stream !== undefined ? args.stream as boolean : Deno.stdout.isTerminal());
 
   // Load config with projectDir
   let config;
@@ -704,7 +741,7 @@ async function main() {
     await executeInlineCode(code, config, verbose, stream);
   } else if (hasFile) {
     const filePath = args.file as string;
-    await executeFileCode(filePath, config, verbose);
+    await executeFileCode(filePath, config, verbose, backgroundRewrite);
   } else if (hasImport) {
     const importPath = args.import as string;
     await executeImportCode(importPath, config, verbose, stream);
@@ -765,11 +802,12 @@ async function executeFileCode(
   filePath: string,
   config: Awaited<ReturnType<typeof loadConfig>>,
   verbose: boolean,
+  backgroundSafe: boolean,
 ): Promise<void> {
   if (verbose) console.error(`Executing file: ${filePath}`);
 
   try {
-    const result = await executeFilePassthrough(filePath, config);
+    const result = await executeFilePassthrough(filePath, config, { backgroundSafe });
     Deno.exit(result);
   } catch (error) {
     if (error instanceof SafeShellError) {

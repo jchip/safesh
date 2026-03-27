@@ -57,8 +57,7 @@ export function detectPathViolation(error: unknown): PathViolationInfo {
   const errorMessage = err?.message || safeString(error);
   const errorCode = err?.code || "";
 
-  const isPathViolation =
-    PATH_VIOLATION_CODES.some((c) => errorCode === c) ||
+  const isPathViolation = PATH_VIOLATION_CODES.some((c) => errorCode === c) ||
     err?.name === "NotCapable" ||
     PATH_VIOLATION_MESSAGES.some((m) => errorMessage.includes(m));
 
@@ -205,6 +204,8 @@ export function handlePathViolationAndExit(
     operation: violation.operation ?? "read",
     cwd: options.cwd || Deno.cwd(),
     scriptHash: options.scriptHash || "",
+    runInBackground: Deno.env.get("SAFESH_RUN_IN_BACKGROUND") === "1" ||
+      Deno.env.get("SAFESH_RUN_IN_BACKGROUND") === "true",
     createdAt: new Date().toISOString(),
   };
 
@@ -316,12 +317,16 @@ export function generateInlineErrorHandler(
   includeListeners = true,
 ): string {
   // Escape command for embedding in template literal
-  const escapedCommand = options.originalCommand?.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  const escapedCommand = options.originalCommand?.replace(/\\/g, "\\\\").replace(/`/g, "\\`")
+    .replace(/\$/g, "\\$");
   // SSH-475: Escape transpiled code for embedding
-  const escapedTranspiledCode = options.transpiledCode?.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  const escapedTranspiledCode = options.transpiledCode?.replace(/\\/g, "\\\\").replace(/`/g, "\\`")
+    .replace(/\$/g, "\\$");
 
   const includeCommandCheck = options.includeCommand
-    ? `  const fullCommand = ${escapedCommand ? `\`${escapedCommand}\`` : "__ORIGINAL_BASH_COMMAND__"};\n`
+    ? `  const fullCommand = ${
+      escapedCommand ? `\`${escapedCommand}\`` : "__ORIGINAL_BASH_COMMAND__"
+    };\n`
     : "";
 
   const commandInMessage = options.includeCommand
@@ -382,7 +387,11 @@ ${msgChecks}
       path: path,
       operation: operation,
       cwd: Deno.cwd(),
-      ${options.includeCommand ? "command: fullCommand," : 'scriptHash: Deno.env.get("SAFESH_SCRIPT_HASH") || "",'}
+      ${
+    options.includeCommand
+      ? "command: fullCommand,"
+      : 'scriptHash: Deno.env.get("SAFESH_SCRIPT_HASH") || "",'
+  }
       createdAt: new Date().toISOString()
     };
 
@@ -422,7 +431,11 @@ ${cmdFailureChecks}
   // SSH-475: Build detailed error log with transpiled code if available
   const errorLogParts = [
     "=== Execution Error ===",
-    ${options.includeCommand ? `"Original Bash Command:\\n" + ${escapedCommand ? `\`${escapedCommand}\`` : "fullCommand"}` : '""'},
+    ${
+    options.includeCommand
+      ? `"Original Bash Command:\\n" + ${escapedCommand ? `\`${escapedCommand}\`` : "fullCommand"}`
+      : '""'
+  },
     ${escapedTranspiledCode ? '"\\nTranspiled TypeScript:\\n" + __TRANSPILED_CODE__' : '""'},
     \`\\nError: \${errorMessage}\`,
     error.stack ? \`\\nStack trace:\\n\${error.stack}\` : "",
@@ -440,8 +453,8 @@ ${commandInMessage}    \`\\nError: \${errorMessage}\`,
   if (!isCommandFailure${options.errorLogPath ? ` && "${options.errorLogPath}"` : ""}) {
     ${options.errorLogPath ? `const errorFile = \`${options.errorLogPath}\`;` : ""}
     try {
-      ${options.errorLogPath ? 'Deno.writeTextFileSync(errorFile, errorLogParts);' : ""}
-      ${options.errorLogPath ? 'console.error(\`\\nFull details saved to: \${errorFile}\`);' : ""}
+      ${options.errorLogPath ? "Deno.writeTextFileSync(errorFile, errorLogParts);" : ""}
+      ${options.errorLogPath ? "console.error(\`\\nFull details saved to: \${errorFile}\`);" : ""}
     } catch (e) {
       console.error("Warning: Could not write error log:", e);
     }
