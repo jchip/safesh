@@ -857,13 +857,10 @@ export class Command implements PromiseLike<CommandResult> {
     string | Uint8Array | ReadableStream<Uint8Array> | undefined
   > {
     if (this.upstream) {
-      // Execute upstream command and get its stdout
+      // Execute upstream command and get its stdout.
+      // Like real shell pipelines, pass stdout through regardless of exit code.
+      // The downstream command's exit code determines overall success.
       const result = await this.upstream.exec();
-      if (!result.success) {
-        throw new Error(
-          `Pipeline failed: upstream command exited with code ${result.code}`,
-        );
-      }
       return result.stdout;
     }
     return this.options.stdin;

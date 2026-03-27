@@ -468,17 +468,28 @@ Deno.test("cmd().pipe() - with stdout() stream", async () => {
   assertEquals(result, ["cherry", "banana", "apple"]);
 });
 
-Deno.test("cmd().pipe() - upstream failure throws error", async () => {
+Deno.test("cmd().pipe() - upstream failure passes stdout to downstream (shell semantics)", async () => {
   await initTestCmds();
-  // Use a command that will fail
-  try {
-    await cmd("sh", ["-c", "exit 1"]).pipe(_cat).exec();
-    assert(false, "Should have thrown");
-  } catch (error) {
-    assert(error instanceof Error);
-    assert(error.message.includes("Pipeline failed"));
-    assert(error.message.includes("code 1"));
-  }
+  // Like shell: `sh -c "echo output; exit 1" | cat`
+  // Downstream receives upstream stdout even when upstream exits non-zero
+  const result = await cmd("sh", ["-c", "echo 'output line'; exit 1"])
+    .pipe(_cat)
+    .exec();
+
+  // cat sees the output and succeeds; result reflects downstream exit code
+  assertEquals(result.success, true);
+  assertEquals(result.code, 0);
+  assertEquals(result.stdout.trim(), "output line");
+});
+
+Deno.test("cmd().pipe() - upstream failure with no output still runs downstream", async () => {
+  await initTestCmds();
+  // Upstream exits non-zero with no output; downstream (cat) still runs and exits 0
+  const result = await cmd("sh", ["-c", "exit 1"]).pipe(_cat).exec();
+
+  assertEquals(result.success, true);
+  assertEquals(result.code, 0);
+  assertEquals(result.stdout, "");
 });
 
 // ==================== str() and bytes() tests ====================
