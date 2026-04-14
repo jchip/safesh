@@ -5,16 +5,11 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
-import { transpile, BashTranspiler2 } from "./mod.ts";
+import { BashTranspiler2, transpile } from "./mod.ts";
 import { TranspilerContext } from "./context.ts";
 import { OutputEmitter } from "./emitter.ts";
 import { resolveOptions } from "./types.ts";
-import {
-  escapeForTemplate,
-  escapeForQuotes,
-  escapeRegex,
-  globToRegex,
-} from "./utils/escape.ts";
+import { escapeForQuotes, escapeForTemplate, escapeRegex, globToRegex } from "./utils/escape.ts";
 
 // Helper function for easier testing
 function transpileBash(bash: string): string {
@@ -203,8 +198,8 @@ describe("Transpiler2 - Simple Commands", () => {
     const output = transpile(ast);
 
     // SSH-372: Now uses $.ls() builtin (output type, so uses console.log)
-    assertStringIncludes(output, '$.ls()');
-    assertStringIncludes(output, 'console.log');
+    assertStringIncludes(output, "$.ls()");
+    assertStringIncludes(output, "console.log");
   });
 
   it("should transpile command with arguments", () => {
@@ -234,7 +229,7 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("ls");
     const output = transpile(ast, { imports: false });
 
-    assertEquals(output.includes('import { $ }'), false);
+    assertEquals(output.includes("import { $ }"), false);
   });
 
   // SSH-484: Variable expansion in command names
@@ -292,7 +287,10 @@ describe("Transpiler2 - Timeout Command", () => {
 
   it("should transpile timeout with command arguments", () => {
     const code = transpileBash("timeout 10 curl -s -L https://api.example.com");
-    assertStringIncludes(code, '$.cmd({ timeout: 10000 }, "curl", "-s", "-L", "https://api.example.com")');
+    assertStringIncludes(
+      code,
+      '$.cmd({ timeout: 10000 }, "curl", "-s", "-L", "https://api.example.com")',
+    );
   });
 
   it("should transpile timeout with quoted arguments", () => {
@@ -303,13 +301,13 @@ describe("Transpiler2 - Timeout Command", () => {
   it("should transpile timeout in pipeline", () => {
     const code = transpileBash("timeout 5 curl -s https://api.example.com | grep data");
     assertStringIncludes(code, '$.cmd({ timeout: 5000 }, "curl"');
-    assertStringIncludes(code, '.pipe');
+    assertStringIncludes(code, ".pipe");
   });
 
   it("should transpile timeout with variable substitution", () => {
     const code = transpileBash("timeout 5 echo $PATH");
-    assertStringIncludes(code, '$.cmd({ timeout: 5000 }');
-    assertStringIncludes(code, 'PATH');
+    assertStringIncludes(code, "$.cmd({ timeout: 5000 }");
+    assertStringIncludes(code, "PATH");
   });
 
   it("should transpile timeout with command substitution", () => {
@@ -456,12 +454,16 @@ describe("Transpiler2 - Pipelines", () => {
     // Variable assignment should NOT be wrapped in __printCmd
     // Invalid: await __printCmd(let BRANCH = ...)
     // Valid: let BRANCH = ...; then use the var
-    assertEquals(output.includes("__printCmd(let"), false, "Variable assignment should not be wrapped in __printCmd");
+    assertEquals(
+      output.includes("__printCmd(let"),
+      false,
+      "Variable assignment should not be wrapped in __printCmd",
+    );
 
     // The variable assignment should still be present
     assertStringIncludes(output, "let BRANCH");
     // SSH-372: The echo command now uses $.echo builtin
-    assertStringIncludes(output, '$.echo');
+    assertStringIncludes(output, "$.echo");
   });
 
   it("should handle multiple variable assignments in && chain (SSH-362)", () => {
@@ -475,20 +477,26 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, 'let A = "1"');
     assertStringIncludes(output, 'let B = "2"');
     // The echo command should be present
-    assertStringIncludes(output, '$.echo');
+    assertStringIncludes(output, "$.echo");
   });
 
   it("should preserve variable scope in && chains with multiple uses (SSH-472)", () => {
-    const ast = parse('mkdir -p dir && cd dir && SRC="/path/file.png" && sips -z 1 "$SRC" && sips -z 2 "$SRC"');
+    const ast = parse(
+      'mkdir -p dir && cd dir && SRC="/path/file.png" && sips -z 1 "$SRC" && sips -z 2 "$SRC"',
+    );
     const output = transpile(ast);
 
     // Variable should be hoisted to outer scope, not inside nested IIFEs
     // The let SRC should come BEFORE the await __printCmd
-    const srcIndex = output.indexOf('let SRC');
-    const printCmdIndex = output.indexOf('await __printCmd');
+    const srcIndex = output.indexOf("let SRC");
+    const printCmdIndex = output.indexOf("await __printCmd");
     assertEquals(srcIndex > 0, true, "Should have variable assignment");
     assertEquals(printCmdIndex > 0, true, "Should have __printCmd");
-    assertEquals(srcIndex < printCmdIndex, true, "Variable should be defined before pipeline execution");
+    assertEquals(
+      srcIndex < printCmdIndex,
+      true,
+      "Variable should be defined before pipeline execution",
+    );
 
     // Both sips commands should use SRC with proper variable lookup
     // SSH-484: Now uses typeof check for local var then $.ENV/$.VARS fallback
@@ -510,7 +518,11 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, ".head(10)");
 
     // Should NOT have .stdout() called on the IIFE result
-    assertEquals(output.includes("})().stdout()"), false, "Should not call .stdout() on IIFE result");
+    assertEquals(
+      output.includes("})().stdout()"),
+      false,
+      "Should not call .stdout() on IIFE result",
+    );
   });
 
   it("should use .stdout().lines().pipe() for command-to-transform pipelines (SSH-364)", () => {
@@ -539,7 +551,7 @@ describe("Transpiler2 - Pipelines", () => {
 
     // When piping from a stream (after head) to a command (awk), should use toCmdLines
     assertStringIncludes(output, ".pipe($.toCmdLines(");
-    assertStringIncludes(output, 'awk');
+    assertStringIncludes(output, "awk");
   });
 
   it("should handle complex pipeline: command | transform | command", () => {
@@ -549,6 +561,21 @@ describe("Transpiler2 - Pipelines", () => {
     // git log -> .stdout().lines() -> .pipe($.head(5)) -> .pipe($.toCmdLines(awk))
     assertStringIncludes(output, ".stdout().lines().pipe($.head(5))");
     assertStringIncludes(output, ".pipe($.toCmdLines(");
+  });
+
+  it("should transpile command | while read loop as a stream consumer", () => {
+    const ast = parse('git log --oneline | while read hash msg; do echo "$hash|$msg"; done');
+    const output = transpile(ast);
+
+    assertEquals(
+      output.includes(".pipe((async () =>"),
+      false,
+      "piped while-read loops must not be emitted as .pipe(async IIFE)",
+    );
+    assertStringIncludes(output, "for await (const");
+    assertStringIncludes(output, ".stdout().lines()");
+    assertStringIncludes(output, "let hash =");
+    assertStringIncludes(output, "let msg =");
   });
 
   it("should use $.cmd() for echo in pipe context", () => {
@@ -575,7 +602,11 @@ describe("Transpiler2 - Pipelines", () => {
 
     // Standalone echo (not in pipeline) should still use $.echo builtin
     assertStringIncludes(output, '$.echo("test")');
-    assertEquals(output.includes('$.cmd("echo"'), false, "Standalone echo should use $.echo builtin");
+    assertEquals(
+      output.includes('$.cmd("echo"'),
+      false,
+      "Standalone echo should use $.echo builtin",
+    );
   });
 
   it("should handle && chains with fluent commands that have file arguments (SSH-474)", () => {
@@ -592,8 +623,11 @@ describe("Transpiler2 - Pipelines", () => {
 
     // Should NOT have invalid patterns like __printCmd returning a stream
     // The final output should iterate the stream, not pass it to __printCmd
-    assertEquals(output.includes("await __printCmd((async ()"), false,
-      "Should not wrap stream-returning IIFE in __printCmd");
+    assertEquals(
+      output.includes("await __printCmd((async ()"),
+      false,
+      "Should not wrap stream-returning IIFE in __printCmd",
+    );
   });
 
   it("should handle cd && cmd | grep pattern correctly (SSH-476)", () => {
@@ -613,8 +647,11 @@ describe("Transpiler2 - Pipelines", () => {
     // SSH-494: The IIFE must NOT wrap the stream return in __printCmd,
     // because __printCmd consumes the stream and returns a number (exit code),
     // making the for-await fail with "is not async iterable"
-    assertEquals(output.includes("return await __printCmd"), false,
-      "Stream return in IIFE should not be wrapped in __printCmd");
+    assertEquals(
+      output.includes("return await __printCmd"),
+      false,
+      "Stream return in IIFE should not be wrapped in __printCmd",
+    );
   });
 
   it("should not wrap stream in __printCmd inside && IIFE (SSH-494)", () => {
@@ -633,16 +670,17 @@ describe("Transpiler2 - Pipelines", () => {
       const output = transpile(ast);
 
       // Should iterate stream with for-await
-      assertStringIncludes(output, "for await",
-        `${cmd}: should use for-await to iterate stream`);
+      assertStringIncludes(output, "for await", `${cmd}: should use for-await to iterate stream`);
 
       // The IIFE should return the stream directly, NOT wrapped in __printCmd
-      assertEquals(output.includes("return await __printCmd"), false,
-        `${cmd}: IIFE should not wrap stream return in __printCmd`);
+      assertEquals(
+        output.includes("return await __printCmd"),
+        false,
+        `${cmd}: IIFE should not wrap stream return in __printCmd`,
+      );
 
       // Should still have the stream pipeline
-      assertStringIncludes(output, ".pipe(",
-        `${cmd}: should have pipe in the stream chain`);
+      assertStringIncludes(output, ".pipe(", `${cmd}: should have pipe in the stream chain`);
     }
   });
 
@@ -654,7 +692,7 @@ describe("Transpiler2 - Pipelines", () => {
     // cat in pipeline should use $.cmd("cat"), not $.cat("-")
     // because $.cat("-") returns a Stream which cannot be piped from a Command
     assertStringIncludes(output, '$.cmd("cat")');
-    assertEquals(output.includes('$.cat("-")'), false, "Should not use $.cat(\"-\") in pipeline");
+    assertEquals(output.includes('$.cat("-")'), false, 'Should not use $.cat("-") in pipeline');
   });
 
   it("should use $.cmd for cat with stdin arg in pipeline (SSH-482)", () => {
@@ -663,7 +701,7 @@ describe("Transpiler2 - Pipelines", () => {
 
     // cat - in pipeline should also use $.cmd("cat")
     assertStringIncludes(output, '$.cmd("cat"');
-    assertEquals(output.includes('$.cat("-")'), false, "Should not use $.cat(\"-\") in pipeline");
+    assertEquals(output.includes('$.cat("-")'), false, 'Should not use $.cat("-") in pipeline');
   });
 
   // SSH-496: knownBadPatterns false positive for && chains with piped grep
@@ -698,8 +736,11 @@ describe("Transpiler2 - Pipelines", () => {
 
       for (let i = 0; i < knownBadPatterns.length; i++) {
         const pattern = knownBadPatterns[i]!;
-        assertEquals(pattern.test(output), false,
-          `Pattern ${i} should NOT match valid output for: ${cmd}\nOutput: ${output}`);
+        assertEquals(
+          pattern.test(output),
+          false,
+          `Pattern ${i} should NOT match valid output for: ${cmd}\nOutput: ${output}`,
+        );
       }
     }
   });
@@ -785,10 +826,10 @@ describe("Transpiler2 - Control Flow", () => {
     const ast = parse("case $x in a) echo A;; b) echo B;; esac");
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'if (');
-    assertStringIncludes(output, '/^a');
-    assertStringIncludes(output, '.test(');
-    assertStringIncludes(output, '} else if (');
+    assertStringIncludes(output, "if (");
+    assertStringIncludes(output, "/^a");
+    assertStringIncludes(output, ".test(");
+    assertStringIncludes(output, "} else if (");
   });
 
   it("should transpile function declaration", () => {
@@ -939,7 +980,7 @@ describe("Transpiler2 - Array Assignments", () => {
 
     // SSH-484: Variable expansion now includes proper lookup chain
     assertStringIncludes(output, 'let arr = ["one"');
-    assertStringIncludes(output, '$.ENV.VAR');
+    assertStringIncludes(output, "$.ENV.VAR");
     assertStringIncludes(output, '"three"]');
   });
 
@@ -1082,7 +1123,7 @@ describe("Transpiler2 - Grouping", () => {
     assertStringIncludes(output, "await (async () => {");
     // SSH-372: Now uses $.cd and $.ls builtins
     assertStringIncludes(output, '$.cd("/tmp")');
-    assertStringIncludes(output, '$.ls()');
+    assertStringIncludes(output, "$.ls()");
     assertStringIncludes(output, "})();");
   });
 
@@ -1134,7 +1175,7 @@ describe("Transpiler2 - Test Expressions", () => {
   });
 
   it("should transpile regex match", () => {
-    const ast = parse('[[ $str =~ ^[0-9]+$ ]]');
+    const ast = parse("[[ $str =~ ^[0-9]+$ ]]");
     const output = transpile(ast);
 
     assertStringIncludes(output, "new RegExp");
@@ -1196,7 +1237,7 @@ describe("BashTranspiler2 Class", () => {
     const output = transpiler.transpile(ast);
 
     // SSH-372: Check 4-space indentation inside async IIFE (echo is prints type, no await)
-    assertStringIncludes(output, '    $.echo');
+    assertStringIncludes(output, "    $.echo");
   });
 
   it("should be reusable for multiple transpilations", () => {
@@ -1227,20 +1268,20 @@ describe("Diagnostic System", () => {
     // Since all real modifiers are supported, we'll need to check the implementation logic
 
     // For now, just verify the API exists
-    ctx.addDiagnostic({ level: 'warning', message: 'Test warning' });
+    ctx.addDiagnostic({ level: "warning", message: "Test warning" });
     const diagnostics = ctx.getDiagnostics();
 
     assertEquals(diagnostics.length, 1);
-    assertEquals(diagnostics[0]?.level, 'warning');
-    assertEquals(diagnostics[0]?.message, 'Test warning');
+    assertEquals(diagnostics[0]?.level, "warning");
+    assertEquals(diagnostics[0]?.message, "Test warning");
   });
 
   it("should clear diagnostics", () => {
     const options = resolveOptions();
     const ctx = new TranspilerContext(options);
 
-    ctx.addDiagnostic({ level: 'warning', message: 'Warning 1' });
-    ctx.addDiagnostic({ level: 'error', message: 'Error 1' });
+    ctx.addDiagnostic({ level: "warning", message: "Warning 1" });
+    ctx.addDiagnostic({ level: "error", message: "Error 1" });
     assertEquals(ctx.getDiagnostics().length, 2);
 
     ctx.clearDiagnostics();
@@ -1251,15 +1292,15 @@ describe("Diagnostic System", () => {
     const options = resolveOptions();
     const ctx = new TranspilerContext(options);
 
-    ctx.addDiagnostic({ level: 'error', message: 'Error message' });
-    ctx.addDiagnostic({ level: 'warning', message: 'Warning message' });
-    ctx.addDiagnostic({ level: 'info', message: 'Info message' });
+    ctx.addDiagnostic({ level: "error", message: "Error message" });
+    ctx.addDiagnostic({ level: "warning", message: "Warning message" });
+    ctx.addDiagnostic({ level: "info", message: "Info message" });
 
     const diagnostics = ctx.getDiagnostics();
     assertEquals(diagnostics.length, 3);
-    assertEquals(diagnostics[0]?.level, 'error');
-    assertEquals(diagnostics[1]?.level, 'warning');
-    assertEquals(diagnostics[2]?.level, 'info');
+    assertEquals(diagnostics[0]?.level, "error");
+    assertEquals(diagnostics[1]?.level, "warning");
+    assertEquals(diagnostics[2]?.level, "info");
   });
 
   it("should support diagnostic with location", () => {
@@ -1267,9 +1308,9 @@ describe("Diagnostic System", () => {
     const ctx = new TranspilerContext(options);
 
     ctx.addDiagnostic({
-      level: 'warning',
-      message: 'Test warning',
-      location: { line: 10, column: 5 }
+      level: "warning",
+      message: "Test warning",
+      location: { line: 10, column: 5 },
     });
 
     const diagnostics = ctx.getDiagnostics();
@@ -1282,10 +1323,10 @@ describe("Diagnostic System", () => {
     const options = resolveOptions();
     const ctx = new TranspilerContext(options);
 
-    ctx.addDiagnostic({ level: 'warning', message: 'Warning 1' });
+    ctx.addDiagnostic({ level: "warning", message: "Warning 1" });
     const diagnostics1 = ctx.getDiagnostics();
 
-    ctx.addDiagnostic({ level: 'error', message: 'Error 1' });
+    ctx.addDiagnostic({ level: "error", message: "Error 1" });
     const diagnostics2 = ctx.getDiagnostics();
 
     // First call should not be affected by second diagnostic
@@ -1307,7 +1348,7 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
 
     // Options should be used (strict mode adds "use strict")
     assertStringIncludes(output, '"use strict"');
-    assertStringIncludes(output, 'import { $ }');
+    assertStringIncludes(output, "import { $ }");
   });
 
   it("should handle buildCommand through visitor context", () => {
@@ -1418,8 +1459,8 @@ describe("BashTranspiler2 - Error Handling", () => {
         {
           type: "InvalidStatementType" as any,
           // This simulates an unknown AST node type
-        }
-      ]
+        },
+      ],
     };
 
     try {
@@ -1498,7 +1539,7 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
   });
 
   it("should handle CaseStatement", () => {
-    const script = 'case $var in a) echo A;; b) echo B;; esac';
+    const script = "case $var in a) echo A;; b) echo B;; esac";
     const ast = parse(script);
     const output = transpile(ast);
     // Case statements are transpiled to if-else chains
@@ -1613,7 +1654,7 @@ describe("BashTranspiler2 - Indent Stripping Safety (SSH-507)", () => {
     const output = transpile(ast);
 
     // The "  hello" string should be preserved intact
-    assertStringIncludes(output, '  hello');
+    assertStringIncludes(output, "  hello");
     // Should still have proper indentation
     assertStringIncludes(output, '$.echo("  hello")');
   });
@@ -1649,7 +1690,7 @@ describe("BashTranspiler2 - Indent Stripping Safety (SSH-507)", () => {
     const output = transpile(ast);
 
     // The string "  indented content" should survive indent stripping
-    assertStringIncludes(output, '  indented content');
+    assertStringIncludes(output, "  indented content");
   });
 });
 

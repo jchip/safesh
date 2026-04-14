@@ -13,6 +13,7 @@ import {
   collectFlagOptions,
   collectFlagOptionsAndFiles,
   escapeForQuotes,
+  escapeRegex,
   parseCountArg,
   sanitizeVarName,
   templateEscapedToRegexSource,
@@ -895,6 +896,169 @@ interface PipelinePart {
   isAsync: boolean;
 }
 
+interface ReadLoopConsumer {
+  loop: AST.WhileStatement;
+  variables: string[];
+  ifs: string;
+}
+
+function getStaticWordValue(
+  word:
+    | AST.Word
+    | AST.ParameterExpansion
+    | AST.CommandSubstitution
+    | AST.ArithmeticExpansion
+    | AST.ArrayLiteral,
+): string | null {
+  if (word.type !== "Word") return null;
+  if (
+    word.parts.some(
+      (part) => part.type !== "LiteralPart" && part.type !== "GlobPattern",
+    )
+  ) {
+    return null;
+  }
+  return word.value;
+}
+
+function getReadLoopTestCommand(
+  test: AST.WhileStatement["test"],
+): AST.Command | null {
+  if (test.type === "Command") return test;
+  if (test.type === "Pipeline" && test.commands.length === 1) {
+    const [cmd] = test.commands;
+    return cmd?.type === "Command" ? cmd : null;
+  }
+  return null;
+}
+
+function extractReadLoopConsumer(stmt: AST.Statement): ReadLoopConsumer | null {
+  if (stmt.type !== "WhileStatement") return null;
+  if ((stmt.redirects?.length ?? 0) > 0) return null;
+
+  const testCmd = getReadLoopTestCommand(stmt.test);
+  if (!testCmd) return null;
+
+  const commandName = getStaticWordValue(testCmd.name);
+  if (commandName !== "read") return null;
+
+  let ifs = " \t";
+  for (const assignment of testCmd.assignments) {
+    if (assignment.name !== "IFS") return null;
+    const value = getStaticWordValue(assignment.value);
+    if (value === null) return null;
+    ifs = value;
+  }
+
+  const variables: string[] = [];
+  let parsingVariables = false;
+
+  for (const arg of testCmd.args) {
+    const value = getStaticWordValue(arg);
+    if (value === null) return null;
+
+    if (!parsingVariables) {
+      if (value === "--") {
+        parsingVariables = true;
+        continue;
+      }
+      if (value.startsWith("-")) {
+        if (value === "-r") continue;
+        return null;
+      }
+      parsingVariables = true;
+    }
+
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+      return null;
+    }
+    variables.push(value);
+  }
+
+  if (variables.length === 0) {
+    variables.push("REPLY");
+  }
+
+  return {
+    loop: stmt,
+    variables,
+    ifs,
+  };
+}
+
+function buildReadLoopConsumerExpression(
+  pipeline: AST.Pipeline,
+  readLoop: ReadLoopConsumer,
+  ctx: VisitorContext,
+): string {
+  const upstreamPipeline: AST.Pipeline = {
+    type: "Pipeline",
+    commands: pipeline.commands.slice(0, -1),
+    operator: "|",
+    background: false,
+    negated: false,
+  };
+
+  const upstream = buildPipeline(upstreamPipeline, ctx);
+  const upstreamExpr = upstream.isStream
+    ? (upstream.async ? `(await ${upstream.code})` : upstream.code)
+    : upstream.code;
+  const lineStreamExpr = upstream.isStream
+    ? `${upstreamExpr}.lines()`
+    : `${upstreamExpr}.stdout().lines()`;
+
+  const lineVar = ctx.getTempVar("line");
+  const sourceVar = ctx.getTempVar("read");
+  const partsVar = ctx.getTempVar("parts");
+  const bodyLines: string[] = [];
+
+  const sourceExpr = readLoop.ifs === "" ? lineVar : `${lineVar}.trim()`;
+  bodyLines.push(`const ${sourceVar} = ${sourceExpr};`);
+
+  if (readLoop.variables.length === 1) {
+    const jsName = sanitizeVarName(readLoop.variables[0]!);
+    bodyLines.push(`let ${jsName} = ${sourceVar};`);
+  } else {
+    if (readLoop.ifs === "") {
+      bodyLines.push(`const ${partsVar} = [${sourceVar}];`);
+    } else {
+      const splitRegex = readLoop.ifs === " \t"
+        ? "/[ \\t]+/"
+        : `new RegExp("[${escapeRegex(readLoop.ifs)}]+")`;
+      bodyLines.push(
+        `const ${partsVar} = ${sourceVar} === "" ? [] : ${sourceVar}.split(${splitRegex});`,
+      );
+    }
+
+    const joiner = formatArg(readLoop.ifs[0] ?? "");
+    const lastIndex = readLoop.variables.length - 1;
+    for (let i = 0; i < readLoop.variables.length; i++) {
+      const jsName = sanitizeVarName(readLoop.variables[i]!);
+      if (i === lastIndex) {
+        bodyLines.push(
+          `let ${jsName} = ${partsVar}.length > ${i} ? ${partsVar}.slice(${i}).join(${joiner}) : "";`,
+        );
+      } else {
+        bodyLines.push(`let ${jsName} = ${partsVar}[${i}] ?? "";`);
+      }
+    }
+  }
+
+  for (const stmt of readLoop.loop.body) {
+    const result = ctx.visitStatement(stmt);
+    bodyLines.push(...result.lines.map((line) => line.trim()).filter(Boolean));
+  }
+
+  const inner = bodyLines.map((line) => `    ${line}`).join("\n");
+
+  return `(async () => {
+  for await (const ${lineVar} of ${lineStreamExpr}) {
+${inner}
+  }
+  return { code: 0, stdout: '', stderr: '', success: true };
+})()`;
+}
+
 /**
  * Build a pipeline expression (without await/semicolon)
  */
@@ -902,6 +1066,25 @@ export function buildPipeline(
   pipeline: AST.Pipeline,
   ctx: VisitorContext,
 ): ExpressionResult & { isStream?: boolean; isPrintable?: boolean } {
+  if (
+    !pipeline.background &&
+    !pipeline.negated &&
+    pipeline.operator === "|" &&
+    pipeline.commands.length >= 2
+  ) {
+    const readLoop = extractReadLoopConsumer(
+      pipeline.commands[pipeline.commands.length - 1]!,
+    );
+    if (readLoop) {
+      return {
+        code: buildReadLoopConsumerExpression(pipeline, readLoop, ctx),
+        async: true,
+        isStream: false,
+        isPrintable: false,
+      };
+    }
+  }
+
   // Single command, no pipeline
   if (pipeline.commands.length === 1 && !pipeline.background) {
     const cmd = pipeline.commands[0];
