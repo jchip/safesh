@@ -454,7 +454,8 @@ describe("Real-World Monitoring Scripts", () => {
     `;
     const code = transpileBash(script);
     assertStringIncludes(code, "df");
-    assertStringIncludes(code, "while (true)");
+    assertStringIncludes(code, "for await (const");
+    assertStringIncludes(code, "let line =");
   });
 
   it("should transpile a process monitor", () => {
@@ -548,7 +549,7 @@ describe("Complex Parameter Expansions", () => {
   });
 
   it("should handle expansion in arithmetic", () => {
-    const code = transpileBash('echo $((${COUNT:-0} + 1))');
+    const code = transpileBash("echo $((${COUNT:-0} + 1))");
     assertStringIncludes(code, "COUNT");
   });
 });
