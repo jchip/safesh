@@ -371,6 +371,29 @@ describe("Fluent Commands - Comprehensive", () => {
       const output = transpile(ast);
       assertStringIncludes(output, "$.tail(15)");
     });
+
+    it("should fall back to $.cmd for head -c (byte count)", () => {
+      const ast = parse("head -c 300");
+      const output = transpile(ast);
+      assertStringIncludes(output, '$.cmd("head"');
+      assertStringIncludes(output, '"-c"');
+      assertStringIncludes(output, '"300"');
+    });
+
+    it("should fall back to $.cmd for tail -c (byte count)", () => {
+      const ast = parse("tail -c 100");
+      const output = transpile(ast);
+      assertStringIncludes(output, '$.cmd("tail"');
+      assertStringIncludes(output, '"-c"');
+      assertStringIncludes(output, '"100"');
+    });
+
+    it("should handle pipeline with head -c without pipe() error", () => {
+      const ast = parse("cat file.txt | head -c 300");
+      const output = transpile(ast);
+      assertStringIncludes(output, '$.cmd("head"');
+      assertStringIncludes(output, '"-c"');
+    });
   });
 
   describe("sed and awk fallback", () => {
