@@ -773,6 +773,10 @@ function buildFluentCommand(
 
     case "head":
     case "tail":
+      // -c flag means byte count, incompatible with line-based $.head/$.tail transforms
+      if (args.includes("-c")) return null;
+      return buildSimpleFluentCommand(name, args);
+
     case "sort":
     case "uniq":
     case "wc":
