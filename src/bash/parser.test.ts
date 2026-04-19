@@ -69,6 +69,25 @@ describe("Bash Parser", () => {
       assertEquals((cmd.args[0] as AST.Word).value, "hello world");
       assertEquals((cmd.args[0] as AST.Word).singleQuoted, true);
     });
+
+    it("should parse unquoted reserved words as command arguments", () => {
+      const ast = parse("echo if then else fi do done case esac in time");
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+
+      assertEquals((cmd.name as AST.Word).value, "echo");
+      assertEquals(cmd.args.length, 10);
+      assertEquals((cmd.args[0] as AST.Word).value, "if");
+      assertEquals((cmd.args[1] as AST.Word).value, "then");
+      assertEquals((cmd.args[2] as AST.Word).value, "else");
+      assertEquals((cmd.args[3] as AST.Word).value, "fi");
+      assertEquals((cmd.args[4] as AST.Word).value, "do");
+      assertEquals((cmd.args[5] as AST.Word).value, "done");
+      assertEquals((cmd.args[6] as AST.Word).value, "case");
+      assertEquals((cmd.args[7] as AST.Word).value, "esac");
+      assertEquals((cmd.args[8] as AST.Word).value, "in");
+      assertEquals((cmd.args[9] as AST.Word).value, "time");
+    });
   });
 
   describe("Pipelines", () => {
@@ -313,7 +332,7 @@ EOF`);
       assertEquals(cmd.assignments[0]?.name, "URL");
       assertEquals(
         (cmd.assignments[0]?.value as AST.Word).value,
-        "http://example.com?foo=bar"
+        "http://example.com?foo=bar",
       );
     });
 
@@ -788,6 +807,24 @@ EOF`);
       assertEquals(ast.body.length, 3);
     });
 
+    it("should parse semicolon-separated statements containing a time-prefixed command", () => {
+      const ast = parse(
+        `ssh -F /Users/joel.chen/.colima/_lima/colima/ssh.config lima-colima -O cancel -L 0.0.0.0:18080:0.0.0.0:18080 2>&1; sleep 1; echo "after cancel:"; lsof -iTCP:18080 -sTCP:LISTEN 2>&1; echo "---issuing forward---"; time ssh -F /Users/joel.chen/.colima/_lima/colima/ssh.config lima-colima -O forward -L 0.0.0.0:18080:0.0.0.0:18080 2>&1; echo "immediately after forward:"; lsof -iTCP:18080 -sTCP:LISTEN 2>&1; echo "---connect test---"; python3 -c "import socket;s=socket.socket();s.settimeout(2);s.connect(('127.0.0.1',18080));print('OK connected')" 2>&1`,
+      );
+
+      assertEquals(ast.body.length, 10);
+
+      const timedPipeline = ast.body[5] as AST.Pipeline;
+      const timedCommand = timedPipeline.commands[0] as AST.Command;
+      assertEquals((timedCommand.name as AST.Word).value, "time");
+      assertEquals((timedCommand.args[0] as AST.Word).value, "ssh");
+
+      const pythonPipeline = ast.body[9] as AST.Pipeline;
+      const pythonCommand = pythonPipeline.commands[0] as AST.Command;
+      assertEquals((pythonCommand.name as AST.Word).value, "python3");
+      assertEquals((pythonCommand.args[0] as AST.Word).value, "-c");
+    });
+
     it("should handle empty lines", () => {
       const ast = parse(`
         cmd1
@@ -838,7 +875,7 @@ EOF`);
       assertThrows(
         () => parse("if test -f file\nthen\necho hello"),
         Error,
-        "Expected"
+        "Expected",
       );
     });
 
@@ -846,7 +883,7 @@ EOF`);
       assertThrows(
         () => parse("for x in a b c\ndo\necho $x"),
         Error,
-        "Expected"
+        "Expected",
       );
     });
 
@@ -854,14 +891,14 @@ EOF`);
       assertThrows(
         () => parse("while true\ndo\necho loop"),
         Error,
-        "Expected"
+        "Expected",
       );
     });
 
     it("should throw on unexpected token", () => {
       assertThrows(
         () => parse("if then fi"),
-        Error
+        Error,
       );
     });
   });
@@ -1272,7 +1309,7 @@ fi`);
 
       // Check that context is included
       const hasContext = result.diagnostics.some(
-        (d) => d.context && d.context.includes("if")
+        (d) => d.context && d.context.includes("if"),
       );
       assertEquals(hasContext, true);
     });
@@ -1280,33 +1317,53 @@ fi`);
 
   describe("Parser Error Context", () => {
     it("should provide context for error in until loop", () => {
-      assertThrows(() => {
-        parse("until true; do fi; done");
-      }, Error, "until");
+      assertThrows(
+        () => {
+          parse("until true; do fi; done");
+        },
+        Error,
+        "until",
+      );
     });
 
     it("should provide context for error in case statement", () => {
-      assertThrows(() => {
-        parse("case $x in\n  a) fi;;\nesac");
-      }, Error, "case");
+      assertThrows(
+        () => {
+          parse("case $x in\n  a) fi;;\nesac");
+        },
+        Error,
+        "case",
+      );
     });
 
     it("should provide context for error in function", () => {
-      assertThrows(() => {
-        parse("function foo { fi; }");
-      }, Error, "brace group");
+      assertThrows(
+        () => {
+          parse("function foo { fi; }");
+        },
+        Error,
+        "brace group",
+      );
     });
 
     it("should provide context for error in subshell", () => {
-      assertThrows(() => {
-        parse("( fi )");
-      }, Error, "subshell");
+      assertThrows(
+        () => {
+          parse("( fi )");
+        },
+        Error,
+        "subshell",
+      );
     });
 
     it("should provide context for error in brace group", () => {
-      assertThrows(() => {
-        parse("{ fi; }");
-      }, Error, "brace group");
+      assertThrows(
+        () => {
+          parse("{ fi; }");
+        },
+        Error,
+        "brace group",
+      );
     });
 
     it("should parse command substitution without error", () => {

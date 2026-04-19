@@ -9,19 +9,24 @@ import { Lexer, Token, TokenType } from "./lexer.ts";
 import type * as AST from "./ast.ts";
 import { parseArithmetic } from "./arithmetic-parser.ts";
 import {
-  UNARY_TEST_OPERATORS,
   BINARY_TEST_OPERATORS,
-  REDIRECTION_TOKEN_TYPES,
   FD_PREFIXABLE_REDIRECTIONS,
-  REDIRECTION_OPERATOR_MAP,
-  TWO_CHAR_PARAM_MODIFIERS,
-  SINGLE_CHAR_PARAM_MODIFIERS,
-  isFdPrefixableRedirection,
-  isUnaryTestOperator,
   getBinaryTestOperator,
   getRedirectionOperator,
+  isFdPrefixableRedirection,
+  isUnaryTestOperator,
+  REDIRECTION_OPERATOR_MAP,
+  REDIRECTION_TOKEN_TYPES,
+  SINGLE_CHAR_PARAM_MODIFIERS,
+  TWO_CHAR_PARAM_MODIFIERS,
+  UNARY_TEST_OPERATORS,
 } from "./operators.ts";
-import { Shell, getCapabilities, getDefaultShell, type ShellCapabilities } from "./shell-dialect.ts";
+import {
+  getCapabilities,
+  getDefaultShell,
+  Shell,
+  type ShellCapabilities,
+} from "./shell-dialect.ts";
 import { IdGenerator, type TokenId } from "./token-id.ts";
 import { PositionMap } from "./position-map.ts";
 
@@ -161,6 +166,47 @@ export class Parser {
     return types.includes(this.currentToken.type);
   }
 
+  private isReservedWord(type: TokenType = this.currentToken.type): boolean {
+    switch (type) {
+      case TokenType.IF:
+      case TokenType.THEN:
+      case TokenType.ELSE:
+      case TokenType.ELIF:
+      case TokenType.FI:
+      case TokenType.FOR:
+      case TokenType.WHILE:
+      case TokenType.UNTIL:
+      case TokenType.DO:
+      case TokenType.DONE:
+      case TokenType.CASE:
+      case TokenType.ESAC:
+      case TokenType.IN:
+      case TokenType.FUNCTION:
+      case TokenType.SELECT:
+      case TokenType.TIME:
+      case TokenType.COPROC:
+      case TokenType.RETURN:
+      case TokenType.BREAK:
+      case TokenType.CONTINUE:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private isWordLike(type: TokenType = this.currentToken.type): boolean {
+    return type === TokenType.WORD ||
+      type === TokenType.NAME ||
+      type === TokenType.NUMBER ||
+      this.isReservedWord(type);
+  }
+
+  private isCommandNameToken(type: TokenType = this.currentToken.type): boolean {
+    return type === TokenType.WORD ||
+      type === TokenType.NAME ||
+      type === TokenType.TIME;
+  }
+
   private skip(type: TokenType): boolean {
     if (this.is(type)) {
       this.advance();
@@ -298,7 +344,7 @@ export class Parser {
   private addDiagnostic(
     severity: AST.DiagnosticSeverity,
     message: string,
-    code?: string
+    code?: string,
   ): void {
     this.diagnostics.push({
       severity,
@@ -402,9 +448,9 @@ export class Parser {
       const singleCmd = rightPipeline.commands.length === 1 && rightPipeline.operator === null
         ? rightPipeline.commands[0]
         : undefined;
-      const isControlFlow = singleCmd?.type === "BreakStatement"
-        || singleCmd?.type === "ContinueStatement"
-        || singleCmd?.type === "ReturnStatement";
+      const isControlFlow = singleCmd?.type === "BreakStatement" ||
+        singleCmd?.type === "ContinueStatement" ||
+        singleCmd?.type === "ReturnStatement";
       const right: AST.Statement = isControlFlow ? singleCmd! : rightPipeline;
 
       // Determine operator
@@ -454,7 +500,22 @@ export class Parser {
    * This has higher precedence than && and ||.
    */
   private parsePipelineOnly(negated: boolean): AST.Pipeline {
-    let left: AST.Command | AST.Pipeline | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement | AST.CaseStatement | AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement = this.parseCommand();
+    let left:
+      | AST.Command
+      | AST.Pipeline
+      | AST.TestCommand
+      | AST.ArithmeticCommand
+      | AST.BraceGroup
+      | AST.Subshell
+      | AST.WhileStatement
+      | AST.UntilStatement
+      | AST.ForStatement
+      | AST.CStyleForStatement
+      | AST.IfStatement
+      | AST.CaseStatement
+      | AST.BreakStatement
+      | AST.ContinueStatement
+      | AST.ReturnStatement = this.parseCommand();
 
     // Handle pipe operators (| and |&)
     while (this.isAny(TokenType.PIPE, TokenType.PIPE_AMP)) {
@@ -501,7 +562,21 @@ export class Parser {
   // Commands
   // ===========================================================================
 
-  private parseCommand(): AST.Command | AST.TestCommand | AST.ArithmeticCommand | AST.BraceGroup | AST.Subshell | AST.WhileStatement | AST.UntilStatement | AST.ForStatement | AST.CStyleForStatement | AST.IfStatement | AST.CaseStatement | AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement {
+  private parseCommand():
+    | AST.Command
+    | AST.TestCommand
+    | AST.ArithmeticCommand
+    | AST.BraceGroup
+    | AST.Subshell
+    | AST.WhileStatement
+    | AST.UntilStatement
+    | AST.ForStatement
+    | AST.CStyleForStatement
+    | AST.IfStatement
+    | AST.CaseStatement
+    | AST.BreakStatement
+    | AST.ContinueStatement
+    | AST.ReturnStatement {
     const assignments: AST.VariableAssignment[] = [];
     const redirects: AST.Redirection[] = [];
 
@@ -560,16 +635,12 @@ export class Parser {
     }
 
     // Parse command name
-    if (
-      !this.is(TokenType.WORD) &&
-      !this.is(TokenType.NAME) &&
-      assignments.length === 0
-    ) {
+    if (!this.isCommandNameToken() && assignments.length === 0) {
       throw this.error("Expected command name");
     }
 
     let name: AST.Word;
-    if (this.is(TokenType.WORD) || this.is(TokenType.NAME)) {
+    if (this.isCommandNameToken()) {
       const token = this.advance();
       // SSH-484: Parse word parts for variable expansion in command names
       name = {
@@ -610,10 +681,8 @@ export class Parser {
     const args: (AST.Word | AST.ParameterExpansion | AST.CommandSubstitution)[] = [];
 
     while (
+      this.isWordLike() ||
       this.isAny(
-        TokenType.WORD,
-        TokenType.NAME,
-        TokenType.NUMBER,
         TokenType.ASSIGNMENT_WORD, // SSH-569: name=value after command name is an argument, not assignment
         TokenType.BANG, // Allow ! as argument for test/[ commands
         TokenType.LESS,
@@ -665,7 +734,11 @@ export class Parser {
           value: token.value,
           quoted: token.quoted || false,
           singleQuoted: token.singleQuoted || false,
-          parts: this.parseWordParts(token.value, token.quoted || false, token.singleQuoted || false),
+          parts: this.parseWordParts(
+            token.value,
+            token.quoted || false,
+            token.singleQuoted || false,
+          ),
         });
       } else {
         args.push(this.parseWord());
@@ -688,7 +761,7 @@ export class Parser {
   private parseIfStatement(): AST.IfStatement {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
-    
+
     return this.runInContext({ type: "if", startLine, startColumn }, () => {
       // Accept either IF or ELIF (for recursive elif handling)
       if (this.is(TokenType.IF)) {
@@ -785,7 +858,7 @@ export class Parser {
    */
   private parseCStyleForStatement(
     startLine: number,
-    startColumn: number
+    startColumn: number,
   ): AST.CStyleForStatement {
     return this.runInContext({ type: "for", variable: "(C-style)", startLine, startColumn }, () => {
       this.expect(TokenType.DPAREN_START);
@@ -828,7 +901,13 @@ export class Parser {
       this.expect(TokenType.DONE);
 
       const redirects = this.collectTrailingRedirections();
-      const cForResult: AST.CStyleForStatement = { type: "CStyleForStatement", init, test, update, body };
+      const cForResult: AST.CStyleForStatement = {
+        type: "CStyleForStatement",
+        init,
+        test,
+        update,
+        body,
+      };
       if (redirects.length > 0) cForResult.redirects = redirects;
       return cForResult;
     });
@@ -880,7 +959,7 @@ export class Parser {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
     const contextType = keyword === TokenType.WHILE ? "while" : "until";
-    
+
     return this.runInContext({ type: contextType, startLine, startColumn }, () => {
       this.expect(keyword);
       this.skipNewlines();
@@ -911,7 +990,7 @@ export class Parser {
   private parseCaseStatement(): AST.CaseStatement {
     const startLine = this.currentToken.line;
     const startColumn = this.currentToken.column;
-    
+
     return this.runInContext({ type: "case", startLine, startColumn }, () => {
       this.expect(TokenType.CASE);
       const word = this.parseWord();
@@ -1043,7 +1122,10 @@ export class Parser {
     // Optional return value (exit code)
     let value: AST.ArithmeticExpression | undefined;
 
-    if (!this.isAny(TokenType.NEWLINE, TokenType.SEMICOLON, TokenType.EOF) && !this.is(TokenType.PIPE) && !this.is(TokenType.AND_AND) && !this.is(TokenType.OR_OR)) {
+    if (
+      !this.isAny(TokenType.NEWLINE, TokenType.SEMICOLON, TokenType.EOF) &&
+      !this.is(TokenType.PIPE) && !this.is(TokenType.AND_AND) && !this.is(TokenType.OR_OR)
+    ) {
       // Parse the value as an arithmetic expression
       const token = this.currentToken;
       if (token.type === TokenType.NAME || token.type === TokenType.NUMBER) {
@@ -1275,8 +1357,10 @@ export class Parser {
     this.skipNewlines();
 
     // Check for binary operators
-    if (this.is(TokenType.DBRACK_END) || this.is(TokenType.AND_AND) ||
-        this.is(TokenType.OR_OR) || this.is(TokenType.RPAREN)) {
+    if (
+      this.is(TokenType.DBRACK_END) || this.is(TokenType.AND_AND) ||
+      this.is(TokenType.OR_OR) || this.is(TokenType.RPAREN)
+    ) {
       // Just a string test (non-empty check)
       return {
         type: "StringTest",
@@ -1307,7 +1391,7 @@ export class Parser {
   }
 
   private parseTestWord(): AST.Word | AST.ParameterExpansion {
-    if (this.isAny(TokenType.WORD, TokenType.NAME, TokenType.NUMBER)) {
+    if (this.isWordLike()) {
       return this.parseWord();
     }
     throw this.error("Expected word in test expression");
@@ -1538,8 +1622,10 @@ export class Parser {
 
     if (this.is(TokenType.NUMBER) && (operator === ">&" || operator === "<&")) {
       target = parseInt(this.advance().value, 10);
-    } else if (this.is(TokenType.WORD) && this.currentToken.value === "-" &&
-               (operator === ">&" || operator === "<&")) {
+    } else if (
+      this.is(TokenType.WORD) && this.currentToken.value === "-" &&
+      (operator === ">&" || operator === "<&")
+    ) {
       // Handle close FD syntax: >&- or <&-
       target = this.parseWord();
     } else if (operator === "<<" || operator === "<<-") {
@@ -1579,9 +1665,7 @@ export class Parser {
   // ===========================================================================
 
   private parseWord(): AST.Word {
-    const token = this.isAny(TokenType.WORD, TokenType.NAME, TokenType.NUMBER)
-      ? this.advance()
-      : this.expect(TokenType.WORD);
+    const token = this.isWordLike() ? this.advance() : this.expect(TokenType.WORD);
 
     const id = this.nextId();
     const loc = this.tokenLoc(token);
@@ -1706,7 +1790,7 @@ export class Parser {
    */
   private tryParseDollarExpansion(
     value: string,
-    pos: number
+    pos: number,
   ): { part: AST.WordPart; newPos: number } | null {
     const next = value[pos + 1];
 
@@ -1763,7 +1847,7 @@ export class Parser {
    */
   private tryParseBacktickSubstitution(
     value: string,
-    pos: number
+    pos: number,
   ): { part: AST.CommandSubstitution; newPos: number } {
     const endIdx = this.findMatchingBacktick(value, pos + 1);
     const content = value.slice(pos + 1, endIdx);
@@ -1785,7 +1869,7 @@ export class Parser {
     scanStart: number,
     open: string,
     close: string,
-    initialDepth: number
+    initialDepth: number,
   ): { content: string; end: number } {
     let depth = initialDepth;
     let pos = scanStart;
@@ -1974,7 +2058,7 @@ export class Parser {
    */
   private parseCommandSubstitutionContent(
     content: string,
-    backtick: boolean
+    backtick: boolean,
   ): AST.CommandSubstitution {
     // Recursively parse the inner commands
     const innerParser = new Parser(content);
@@ -2002,7 +2086,7 @@ export class Parser {
    */
   private parseProcessSubstitutionContent(
     operator: "<(" | ">(",
-    content: string
+    content: string,
   ): AST.ProcessSubstitution {
     const innerParser = new Parser(content);
     const innerProgram = innerParser.parse();
@@ -2022,7 +2106,9 @@ export class Parser {
     const statements: AST.Statement[] = [];
 
     while (!this.isAny(...terminators) && !this.is(TokenType.EOF)) {
-      if (this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON) || this.is(TokenType.COMMENT)) {
+      if (
+        this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON) || this.is(TokenType.COMMENT)
+      ) {
         this.advance();
         continue;
       }
