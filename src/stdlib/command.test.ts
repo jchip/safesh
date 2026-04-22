@@ -492,6 +492,30 @@ Deno.test("cmd().pipe() - upstream failure with no output still runs downstream"
   assertEquals(result.stdout, "");
 });
 
+Deno.test("cmd().pipe() - large pipeline output does not deadlock", async () => {
+  await initTestCmds();
+
+  const lineCount = 10000;
+  const script = `i=0; while [ "$i" -lt ${lineCount} ]; do printf "line-%s\\n" "$i"; i=$((i+1)); done`;
+  let timeoutId: number | undefined;
+
+  try {
+    const result = await Promise.race([
+      cmd("sh", ["-c", script]).pipe(_cat).exec(),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("pipeline timed out")), 5000);
+      }),
+    ]);
+
+    assertEquals(result.success, true);
+    assertEquals(result.stdout.split("\n").filter(Boolean).length, lineCount);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+});
+
 // ==================== str() and bytes() tests ====================
 
 Deno.test("str() - simple heredoc-style usage", async () => {
