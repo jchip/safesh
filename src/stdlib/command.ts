@@ -459,9 +459,15 @@ export class Command implements PromiseLike<CommandResult> {
       }, this.options.timeout);
     }
 
+    const abortController = new AbortController();
+    let streamTimeoutId: number | undefined;
+
     try {
-      // SSH-429: Wait for process to exit first, then collect streams with timeout
-      // This prevents hanging when child processes spawn daemons that inherit stdio
+      // Drain stdout/stderr immediately so large outputs do not block the child
+      // before it exits. After exit we still keep SSH-429's grace-period abort
+      // to handle daemons that inherit the pipes and never close them.
+      const stdoutPromise = collectStreamBytesWithTimeout(process.stdout, abortController.signal);
+      const stderrPromise = collectStreamBytesWithTimeout(process.stderr, abortController.signal);
 
       // Write stdin and wait for process to exit concurrently
       const stdinPromise = this.setupStdin(process, stdinData);
@@ -472,21 +478,15 @@ export class Command implements PromiseLike<CommandResult> {
         ? (await Promise.all([statusPromise, stdinPromise]))[0]
         : await statusPromise;
 
-      // After process exits, give streams a grace period to flush
-      // If a daemon inherited the streams, they won't close - so we timeout
+      // After process exits, give streams a grace period to flush.
+      // If a daemon inherited the streams, they won't close - so we abort
+      // the collectors after a short timeout and return whatever was captured.
       const STREAM_FLUSH_TIMEOUT_MS = 1000; // 1 second
-      const abortController = new AbortController();
-
-      // Set timeout to abort stream collection if streams don't close
-      const streamTimeoutId = setTimeout(() => {
+      streamTimeoutId = setTimeout(() => {
         abortController.abort();
       }, STREAM_FLUSH_TIMEOUT_MS);
 
-      // Collect streams with timeout support
-      const [stdoutBytes, stderrBytes] = await Promise.all([
-        collectStreamBytesWithTimeout(process.stdout, abortController.signal),
-        collectStreamBytesWithTimeout(process.stderr, abortController.signal),
-      ]);
+      const [stdoutBytes, stderrBytes] = await Promise.all([stdoutPromise, stderrPromise]);
 
       // Clear stream timeout
       clearTimeout(streamTimeoutId);
@@ -530,6 +530,10 @@ export class Command implements PromiseLike<CommandResult> {
       if (timeoutId !== undefined) {
         clearTimeout(timeoutId);
       }
+      if (streamTimeoutId !== undefined) {
+        clearTimeout(streamTimeoutId);
+      }
+      abortController.abort();
       throw err;
     }
   }
