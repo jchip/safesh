@@ -101,11 +101,10 @@ export function visitWord(
   ctx: VisitorContext,
 ): string {
   if (word.type === "Word") {
-    // Single-quoted strings are completely literal - no escaping needed
-    // They will be wrapped in double quotes by formatArg(), so we just need
-    // to escape for double-quote context
+    // Single-quoted strings are completely literal. Return the raw value so
+    // downstream emitters can escape once for their target context.
     if (word.singleQuoted) {
-      return escapeForQuotes(word.value);
+      return word.value;
     }
 
     // Build from parts if they contain expansions

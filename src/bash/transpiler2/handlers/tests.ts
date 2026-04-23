@@ -6,6 +6,17 @@
 
 import type * as AST from "../../ast.ts";
 import type { VisitorContext } from "../types.ts";
+import { escapeForTemplate } from "../utils/mod.ts";
+
+function formatWordForTemplate(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+  ctx: VisitorContext,
+): string {
+  if (word.type === "Word" && word.singleQuoted) {
+    return escapeForTemplate(word.value);
+  }
+  return ctx.visitWord(word);
+}
 
 // =============================================================================
 // Test Condition Dispatcher
@@ -46,7 +57,7 @@ export function visitUnaryTest(
   test: AST.UnaryTest,
   ctx: VisitorContext,
 ): string {
-  const arg = ctx.visitWord(test.argument);
+  const arg = formatWordForTemplate(test.argument, ctx);
 
   switch (test.operator) {
     // File existence tests
@@ -119,8 +130,8 @@ export function visitBinaryTest(
   test: AST.BinaryTest,
   ctx: VisitorContext,
 ): string {
-  const left = ctx.visitWord(test.left);
-  const right = ctx.visitWord(test.right);
+  const left = formatWordForTemplate(test.left, ctx);
+  const right = formatWordForTemplate(test.right, ctx);
 
   switch (test.operator) {
     // String comparison
@@ -204,6 +215,6 @@ export function visitStringTest(
   test: AST.StringTest,
   ctx: VisitorContext,
 ): string {
-  const value = ctx.visitWord(test.value);
+  const value = formatWordForTemplate(test.value, ctx);
   return `(\`${value}\`).length > 0`;
 }
