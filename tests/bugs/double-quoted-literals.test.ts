@@ -8,6 +8,28 @@ function transpileBash(bash: string): string {
   return transpile(ast);
 }
 
+async function captureFirstCmdArgs(bash: string): Promise<unknown[]> {
+  const code = transpileBash(bash).replace(/^import .*;\n\n/, "");
+  const calls: unknown[][] = [];
+  const run = new Function(
+    "$",
+    "__printCmd",
+    `${code}; return undefined;`,
+  ) as ($: { cmd: (...args: unknown[]) => unknown }, __printCmd: (cmd: unknown) => unknown) => Promise<void>;
+
+  await run(
+    {
+      cmd: (...args: unknown[]) => {
+        calls.push(args);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    },
+    async (cmd: unknown) => cmd,
+  );
+
+  return calls[0] ?? [];
+}
+
 describe("Bug: Double-Quoted Literals", () => {
   it("should preserve object literals inside node -e payloads", () => {
     const command =
@@ -25,5 +47,11 @@ describe("Bug: Double-Quoted Literals", () => {
 
     assertStringIncludes(code, '"{a,b}"');
     assertEquals(code.includes('"a b"'), false);
+  });
+
+  it("should preserve single-quoted JSON payloads in external command args", async () => {
+    const args = await captureFirstCmdArgs(`curl -d '{"iplCode":"test"}'`);
+
+    assertEquals(args, ["curl", "-d", '{"iplCode":"test"}']);
   });
 });
