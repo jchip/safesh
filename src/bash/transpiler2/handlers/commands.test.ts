@@ -96,6 +96,18 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       assertStringIncludes(output, "$.cat(\"file.txt\")");
     });
 
+    it("should use standard command strategy for cat with options", () => {
+      const script = "cat -n packages/core/pom.xml | sed -n '70,100p'";
+      const output = transpile(parse(script));
+
+      assertStringIncludes(output, '$.cmd("cat", "-n", "packages/core/pom.xml")');
+      assertEquals(
+        output.includes('$.cat("-n"'),
+        false,
+        "cat flags must not be treated as file paths",
+      );
+    });
+
     it("should select fluent strategy for grep", () => {
       const script = "grep pattern";
       const output = transpile(parse(script));

@@ -404,13 +404,12 @@ function selectCommandStrategy(
   }
 
   // Fluent command (with constraint checking)
-  // SSH-482: cat with no args or stdin (-) in pipeline should not use fluent
-  // because $.cat("-") returns a Stream which cannot be piped from a Command
-  const isCatReadingStdin = analysis.name === "cat" &&
-    (analysis.args.length === 0 || (analysis.args.length === 1 && analysis.args[0] === "-"));
+  // $.cat(...) is a file stream helper, not a full cat command implementation.
+  const catRequiresStandardCommand = analysis.name === "cat" &&
+    (analysis.args.length !== 1 || (analysis.args[0]?.startsWith("-") ?? false));
   if (
     isFluentCommand(analysis.name) && !analysis.hasDynamicArgs && !analysis.hasAssignments &&
-    !analysis.hasRedirects && !(options?.inPipeline && isCatReadingStdin)
+    !analysis.hasRedirects && !catRequiresStandardCommand
   ) {
     return { type: "fluent", name: analysis.name, args: analysis.args };
   }
