@@ -460,6 +460,18 @@ function executeCommandStrategy(
     }
 
     case "shell-builtin": {
+      if (strategy.builtin.type === "prints") {
+        const captureVar = ctx.getStdoutCapture();
+        if (captureVar) {
+          const formattedArgs = strategy.args.map((a, i) => formatArg(a, strategy.argExpansions?.[i]));
+          const captured = formattedArgs.length === 0
+            ? '""'
+            : formattedArgs.length === 1
+            ? formattedArgs[0]!
+            : `[${formattedArgs.join(", ")}].join(" ")`;
+          return { code: `${captureVar}.push(${captured})`, async: false };
+        }
+      }
       const result = handleShellBuiltin(
         strategy.name,
         strategy.args,
@@ -1063,6 +1075,147 @@ ${inner}
 }
 
 /**
+ * Build the downstream pipeline with captured output injected as stdin into the first command.
+ * Used when a while read loop is in the middle of a pipeline.
+ */
+function buildDownstreamWithStdin(
+  downstreamCommands: AST.Statement[],
+  captureVar: string,
+  ctx: VisitorContext,
+): string {
+  if (downstreamCommands.length === 0) {
+    return `Promise.resolve({ code: 0, stdout: ${captureVar}.join("\\n"), stderr: "", success: true })`;
+  }
+
+  const parts: PipelinePart[] = [];
+  const operators: (string | null)[] = [];
+  const synthPipeline: AST.Pipeline = {
+    type: "Pipeline",
+    commands: downstreamCommands,
+    operator: "|",
+    background: false,
+    negated: false,
+  };
+  flattenPipeline(synthPipeline, parts, operators, ctx);
+
+  if (parts.length === 0) {
+    return `Promise.resolve({ code: 0, stdout: ${captureVar}.join("\\n"), stderr: "", success: true })`;
+  }
+
+  if (parts[0]!.isTransform) {
+    // Downstream starts with a Transform (e.g. $.grep(), $.sort()) — use $.fromArray()
+    // to feed the captured lines into the transform chain and collect results.
+    let chain = `$.fromArray(${captureVar})`;
+    for (const part of parts) {
+      chain += `.pipe(${part.code})`;
+    }
+    chain += `.collect()`;
+    return `(async () => {
+    const __collected = await ${chain};
+    return { code: 0, stdout: __collected.join("\\n"), stderr: "", success: true };
+  })()`;
+  }
+
+  // Downstream starts with a Command — inject captured output as stdin.
+  parts[0]!.code = `${parts[0]!.code}.stdin(${captureVar}.join("\\n"))`;
+
+  const analysis = analyzePipelineStructure(operators);
+  const assembled = assemblePipeline(parts, operators, analysis);
+
+  return `${assembled.code}.exec()`;
+}
+
+/**
+ * Build a mid-pipeline while read loop expression.
+ * Handles: upstream | while read x; do ...; done | downstream
+ * Captures loop body stdout and feeds it to downstream via .stdin().
+ */
+function buildMidReadLoopExpression(
+  pipeline: AST.Pipeline,
+  readLoopIndex: number,
+  readLoop: ReadLoopConsumer,
+  ctx: VisitorContext,
+): string {
+  const upstreamPipeline: AST.Pipeline = {
+    type: "Pipeline",
+    commands: pipeline.commands.slice(0, readLoopIndex),
+    operator: "|",
+    background: false,
+    negated: false,
+  };
+  const upstream = buildPipeline(upstreamPipeline, ctx);
+  const upstreamExpr = upstream.isStream
+    ? (upstream.async ? `(await ${upstream.code})` : upstream.code)
+    : upstream.code;
+  const lineStreamExpr = upstream.isStream
+    ? `${upstreamExpr}.lines()`
+    : `${upstreamExpr}.stdout().lines()`;
+
+  const captureVar = ctx.getTempVar("__out");
+  const lineVar = ctx.getTempVar("line");
+  const sourceVar = ctx.getTempVar("read");
+  const partsVar = ctx.getTempVar("parts");
+  const bodyLines: string[] = [];
+
+  const sourceExpr = readLoop.ifs === "" ? lineVar : `${lineVar}.trim()`;
+  bodyLines.push(`const ${sourceVar} = ${sourceExpr};`);
+
+  if (readLoop.variables.length === 1) {
+    const jsName = sanitizeVarName(readLoop.variables[0]!);
+    bodyLines.push(`let ${jsName} = ${sourceVar};`);
+  } else {
+    if (readLoop.ifs === "") {
+      bodyLines.push(`const ${partsVar} = [${sourceVar}];`);
+    } else {
+      const splitRegex = readLoop.ifs === " \t"
+        ? "/[ \\t]+/"
+        : `new RegExp("[${escapeRegex(readLoop.ifs)}]+")`;
+      bodyLines.push(
+        `const ${partsVar} = ${sourceVar} === "" ? [] : ${sourceVar}.split(${splitRegex});`,
+      );
+    }
+    const joiner = formatArg(readLoop.ifs[0] ?? "");
+    const lastIndex = readLoop.variables.length - 1;
+    for (let i = 0; i < readLoop.variables.length; i++) {
+      const jsName = sanitizeVarName(readLoop.variables[i]!);
+      if (i === lastIndex) {
+        bodyLines.push(
+          `let ${jsName} = ${partsVar}.length > ${i} ? ${partsVar}.slice(${i}).join(${joiner}) : "";`,
+        );
+      } else {
+        bodyLines.push(`let ${jsName} = ${partsVar}[${i}] ?? "";`);
+      }
+    }
+  }
+
+  // Visit loop body with stdout capture active so echo → captureVar.push(...)
+  ctx.setStdoutCapture(captureVar);
+  try {
+    for (const stmt of readLoop.loop.body) {
+      const result = ctx.visitStatement(stmt);
+      bodyLines.push(...result.lines.map((line) => line.trim()).filter(Boolean));
+    }
+  } finally {
+    ctx.setStdoutCapture(null);
+  }
+
+  const inner = bodyLines.map((line) => `    ${line}`).join("\n");
+  const downstreamCode = buildDownstreamWithStdin(
+    pipeline.commands.slice(readLoopIndex + 1),
+    captureVar,
+    ctx,
+  );
+
+  return `(async () => {
+  const ${captureVar}: string[] = [];
+  for await (const ${lineVar} of ${lineStreamExpr}) {
+${inner}
+  }
+  return await ${downstreamCode};
+})()`;
+}
+
+/**
  * Build a pipeline expression (without await/semicolon)
  */
 export function buildPipeline(
@@ -1085,6 +1238,20 @@ export function buildPipeline(
         isStream: false,
         isPrintable: false,
       };
+    }
+
+    // Check for while read in middle positions (index 1 to length-2).
+    // Start from 1 so upstream is never empty (reading from process stdin is not handled).
+    for (let i = 1; i < pipeline.commands.length - 1; i++) {
+      const midReadLoop = extractReadLoopConsumer(pipeline.commands[i]!);
+      if (midReadLoop) {
+        return {
+          code: buildMidReadLoopExpression(pipeline, i, midReadLoop, ctx),
+          async: true,
+          isStream: false,
+          isPrintable: true,
+        };
+      }
     }
   }
 

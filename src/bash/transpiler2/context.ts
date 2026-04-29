@@ -44,6 +44,7 @@ export class TranspilerContext {
   private currentScope: VariableScope;
   private diagnostics: Diagnostic[] = [];
   private functionRegistry: FunctionRegistry;
+  private stdoutCaptureVar: string | null = null;
 
   constructor(options: ResolvedOptions) {
     this.options = options;
@@ -175,6 +176,20 @@ export class TranspilerContext {
   /** Check if a name is a declared user-defined function */
   isFunction(name: string): boolean {
     return this.functionRegistry.functions.has(name);
+  }
+
+  // ===========================================================================
+  // Stdout Capture
+  // ===========================================================================
+
+  /** Get the current stdout capture variable name (null if not in capture mode) */
+  getStdoutCapture(): string | null {
+    return this.stdoutCaptureVar;
+  }
+
+  /** Set stdout capture variable name; null to disable */
+  setStdoutCapture(varName: string | null): void {
+    this.stdoutCaptureVar = varName;
   }
 
   // ===========================================================================

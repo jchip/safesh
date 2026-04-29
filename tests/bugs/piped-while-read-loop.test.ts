@@ -29,11 +29,34 @@ b two words
 });
 
 Deno.test("piped while IFS= read -r preserves raw line content", async () => {
-  const code = transpileForExecution(`printf "  spaced value  
-" | while IFS= read -r line; do echo "[$line]"; done`);
+  const code = transpileForExecution(`printf "  spaced value  \n" | while IFS= read -r line; do echo "[$line]"; done`);
 
   const result = await executeCode(code, EXEC_CONFIG, { cwd: Deno.cwd() });
 
   assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
   assertEquals(result.stdout.trim(), "[  spaced value  ]");
+});
+
+Deno.test("piped while read loop in middle of pipeline feeds downstream", async () => {
+  const code = transpileForExecution(`printf "a foo
+b bar
+c baz
+" | while read letter word; do echo "$letter:$word"; done | grep "b:"`);
+
+  const result = await executeCode(code, EXEC_CONFIG, { cwd: Deno.cwd() });
+
+  assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+  assertEquals(result.stdout.trim(), "b:bar");
+});
+
+Deno.test("piped while read loop in middle with multi-stage downstream", async () => {
+  const code = transpileForExecution(`printf "3 c
+1 a
+2 b
+" | while read n w; do echo "$n $w"; done | sort -k1,1n | grep "2"`);
+
+  const result = await executeCode(code, EXEC_CONFIG, { cwd: Deno.cwd() });
+
+  assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+  assertEquals(result.stdout.trim(), "2 b");
 });

@@ -111,6 +111,8 @@ export class BashTranspiler2 {
       isFunction: (name: string) => ctx.isFunction(name),
       addDiagnostic: (diagnostic) => ctx.addDiagnostic(diagnostic),
       getDiagnostics: () => ctx.getDiagnostics(),
+      getStdoutCapture: () => ctx.getStdoutCapture(),
+      setStdoutCapture: (varName) => ctx.setStdoutCapture(varName),
 
       visitStatement(stmt: AST.Statement): StatementResult {
         return self.visitStatement(stmt, this);
