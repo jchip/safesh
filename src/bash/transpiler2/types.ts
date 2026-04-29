@@ -131,6 +131,12 @@ export interface VisitorContext {
   /** Check if a name is a declared user-defined function */
   isFunction(name: string): boolean;
 
+  /** Get stdout capture variable name (null if not in capture mode) */
+  getStdoutCapture(): string | null;
+
+  /** Set stdout capture variable name; null to disable */
+  setStdoutCapture(varName: string | null): void;
+
   /** Add a diagnostic message */
   addDiagnostic(diagnostic: Diagnostic): void;
 
