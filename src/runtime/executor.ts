@@ -471,6 +471,110 @@ interface ExecutionContext {
   importPolicy: ImportPolicy;
 }
 
+function hasLocalDollarBinding(code: string): boolean {
+  const hasDollarSpecifier = (specifiers: string) =>
+    specifiers.split(",").some((specifier) => {
+      const trimmed = specifier.trim();
+      return trimmed === "$" || /\bas\s+\$$/.test(trimmed);
+    });
+
+  for (const match of code.matchAll(/^\s*import\s*\{([^}]*)\}/gm)) {
+    if (hasDollarSpecifier(match[1] ?? "")) return true;
+  }
+  for (const match of code.matchAll(/\b(?:const|let|var)\s*\{([^}]*)\}/g)) {
+    if (hasDollarSpecifier(match[1] ?? "")) return true;
+  }
+
+  return /\b(?:const|let|var|function|class)\s+\$[\s=(]/.test(code);
+}
+
+function rewriteDollarApiReferences(code: string): string {
+  if (!hasLocalDollarBinding(code) || !code.includes("$.")) {
+    return code;
+  }
+
+  let result = "";
+  let state: "code" | "single" | "double" | "template" | "lineComment" | "blockComment" = "code";
+
+  for (let i = 0; i < code.length; i++) {
+    const char = code[i]!;
+    const next = code[i + 1];
+    const prev = result[result.length - 1];
+
+    if (state === "lineComment") {
+      result += char;
+      if (char === "\n") state = "code";
+      continue;
+    }
+
+    if (state === "blockComment") {
+      result += char;
+      if (char === "*" && next === "/") {
+        result += next;
+        i++;
+        state = "code";
+      }
+      continue;
+    }
+
+    if (state === "single" || state === "double" || state === "template") {
+      result += char;
+      if (char === "\\") {
+        if (next !== undefined) {
+          result += next;
+          i++;
+        }
+        continue;
+      }
+      if (
+        (state === "single" && char === "'") ||
+        (state === "double" && char === '"') ||
+        (state === "template" && char === "`")
+      ) {
+        state = "code";
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      result += char + next;
+      i++;
+      state = "lineComment";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      result += char + next;
+      i++;
+      state = "blockComment";
+      continue;
+    }
+    if (char === "'") {
+      result += char;
+      state = "single";
+      continue;
+    }
+    if (char === '"') {
+      result += char;
+      state = "double";
+      continue;
+    }
+    if (char === "`") {
+      result += char;
+      state = "template";
+      continue;
+    }
+
+    if (char === "$" && next === "." && (!prev || !/[A-Za-z0-9_$.]/.test(prev))) {
+      result += "(globalThis as any).$";
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
 /**
  * Phase 1: Prepare execution context
  * Resolves CWD, timeout, and validates imports
@@ -542,9 +646,10 @@ async function generateScriptFile(
     !!shell,
     !!preambleConfig.vfs?.enabled,
   );
+  const executionCode = rewriteDollarApiReferences(code);
 
   // Structure: preamble (with async IIFE start) + user code + error handler (closes IIFE with catch)
-  const fullCode = preamble + code + errorHandler;
+  const fullCode = preamble + executionCode + errorHandler;
 
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
@@ -798,7 +903,7 @@ async function prepareFileExecution(
   const filePostamble = buildFilePostamble(!!shell);
 
   // Wrap file code with preamble and postamble
-  const wrappedCode = filePreamble + fileCode + filePostamble;
+  const wrappedCode = filePreamble + rewriteDollarApiReferences(fileCode) + filePostamble;
 
   // Write wrapped code to temp file
   await ensureDir(TEMP_SCRIPT_DIR);
@@ -1030,7 +1135,7 @@ export async function* executeCodeStreaming(
     !!shell,
     !!preambleConfig.vfs?.enabled,
   );
-  const fullCode = preamble + code + errorHandler;
+  const fullCode = preamble + rewriteDollarApiReferences(code) + errorHandler;
 
   // Write script to temp file
   await Deno.writeTextFile(scriptPath, fullCode);
