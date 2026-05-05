@@ -494,7 +494,14 @@ function rewriteDollarApiReferences(code: string): string {
   }
 
   let result = "";
-  let state: "code" | "single" | "double" | "template" | "lineComment" | "blockComment" = "code";
+  let state: "code" | "single" | "double" | "template" | "lineComment" | "blockComment" | "regex" =
+    "code";
+  let inRegexClass = false;
+
+  const startsRegex = () => {
+    const prev = result.trimEnd().at(-1);
+    return !prev || /[([{:;,=!?&|]/.test(prev);
+  };
 
   for (let i = 0; i < code.length; i++) {
     const char = code[i]!;
@@ -512,6 +519,29 @@ function rewriteDollarApiReferences(code: string): string {
       if (char === "*" && next === "/") {
         result += next;
         i++;
+        state = "code";
+      }
+      continue;
+    }
+
+    if (state === "regex") {
+      result += char;
+      if (char === "\\") {
+        if (next !== undefined) {
+          result += next;
+          i++;
+        }
+        continue;
+      }
+      if (char === "[") {
+        inRegexClass = true;
+        continue;
+      }
+      if (char === "]") {
+        inRegexClass = false;
+        continue;
+      }
+      if (char === "/" && !inRegexClass) {
         state = "code";
       }
       continue;
@@ -546,6 +576,12 @@ function rewriteDollarApiReferences(code: string): string {
       result += char + next;
       i++;
       state = "blockComment";
+      continue;
+    }
+    if (char === "/" && startsRegex()) {
+      result += char;
+      state = "regex";
+      inRegexClass = false;
       continue;
     }
     if (char === "'") {
