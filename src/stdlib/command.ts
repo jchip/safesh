@@ -374,6 +374,28 @@ export class Command implements PromiseLike<CommandResult> {
   }
 
   /**
+   * Add environment variables for this command.
+   *
+   * Creates a new Command with the same cmd/args and merged environment.
+   *
+   * @param env - Environment variables to add or override
+   * @returns New Command instance with env configured
+   *
+   * @example
+   * ```ts
+   * const { stdout } = await cmd("sh", "-c", "echo $TEST_VAR")
+   *   .env({ TEST_VAR: "value" })
+   *   .collect();
+   * ```
+   */
+  env(env: Record<string, string>): Command {
+    return new Command(this.cmd, this.args, {
+      ...this.options,
+      env: { ...(this.options.env ?? {}), ...env },
+    });
+  }
+
+  /**
    * Execute command and return stdout as string
    *
    * Convenience method for command substitution $(...)
@@ -419,6 +441,15 @@ export class Command implements PromiseLike<CommandResult> {
       // Separate mode: keep stdout and stderr separate
       return await this.execSeparate();
     }
+  }
+
+  /**
+   * Execute command and collect buffered stdout/stderr.
+   *
+   * Alias for exec(), matching other fluent APIs that terminate with collect().
+   */
+  async collect(): Promise<CommandResult> {
+    return await this.exec();
   }
 
   /**

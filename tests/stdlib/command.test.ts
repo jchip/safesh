@@ -78,6 +78,16 @@ describe("command execution (SSH-195)", { sanitizeResources: false, sanitizeOps:
       assertStringIncludes(result.stdout, "test_value");
     });
 
+    it("supports chainable env with collect", async () => {
+      if (Deno.build.os !== "windows") {
+        const { stdout } = await cmd("sh", "-c", "echo $TEST_VAR")
+          .env({ TEST_VAR: "chain_value" })
+          .collect();
+
+        assertStringIncludes(stdout, "chain_value");
+      }
+    });
+
     it("can be awaited directly (thenable)", async () => {
       const result = await cmd("echo", "direct");
 
