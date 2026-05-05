@@ -6,6 +6,7 @@ import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { buildPermissionFlags, executeCode, executeFile } from "../src/runtime/executor.ts";
 import type { SafeShellConfig, Shell } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
+import { generateInlineErrorHandler } from "../src/core/error-handlers.ts";
 import { join, toFileUrl } from "@std/path";
 
 /** Create a test Shell object with required properties */
@@ -349,6 +350,42 @@ Deno.test("SSH-9: executeFile preserves SafeShell $ APIs when file imports $", a
       import { $ } from ${JSON.stringify(toFileUrl(importedModule).href)};
       const content = await $.fs.read("deno.json");
       console.log(content.includes("safesh") ? "found" : "not found");
+    `;
+    await Deno.writeTextFile(testFile, code);
+
+    const result = await executeFile(testFile, testConfig);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "found");
+  } finally {
+    await Deno.remove(testDir, { recursive: true });
+  }
+});
+
+Deno.test("SSH-13: executeFile preserves SafeShell $ APIs after inline error handler", async () => {
+  const testDir = join(Deno.cwd(), ".temp", `safesh-dollar-shadow-${Date.now()}`);
+  const importedModule = join(testDir, "foreign-dollar.ts");
+  const testFile = join(testDir, "test-dollar-shadow.ts");
+
+  try {
+    await Deno.mkdir(testDir, { recursive: true });
+    await Deno.writeTextFile(importedModule, "export const $ = {};\n");
+    await Deno.writeTextFile(join(testDir, "sample.txt"), "content");
+    const inlineErrorHandler = generateInlineErrorHandler({
+      prefix: "TypeScript Error",
+      includeCommand: false,
+      errorLogPath: join(testDir, "error.log"),
+    });
+    const code = `
+      const ignored = /"([^"]+)"/;
+      Deno.env.set("SAFESH_SCRIPT_ID", "test-script");
+      Deno.env.set("SAFESH_SCRIPT_HASH", "test-hash");
+      Deno.env.set("SAFESH_ALLOW_PROJECT_COMMANDS", "true");
+      console.error("# /*#*/ ${testDir}");
+      ${inlineErrorHandler}
+      import { $ } from ${JSON.stringify(toFileUrl(importedModule).href)};
+      const entries = await $.fs.readDir(${JSON.stringify(testDir)});
+      console.log(entries.some((entry) => entry.name === "sample.txt") ? "found" : "missing");
     `;
     await Deno.writeTextFile(testFile, code);
 
