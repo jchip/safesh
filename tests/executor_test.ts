@@ -3,10 +3,10 @@
  */
 
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { executeCode, executeFile, buildPermissionFlags } from "../src/runtime/executor.ts";
+import { buildPermissionFlags, executeCode, executeFile } from "../src/runtime/executor.ts";
 import type { SafeShellConfig, Shell } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 
 /** Create a test Shell object with required properties */
 function makeTestShell(overrides: Partial<Shell> = {}): Shell {
@@ -335,6 +335,29 @@ Deno.test("executeFile - supports imports in file", async () => {
     } catch {
       // Ignore cleanup errors
     }
+  }
+});
+
+Deno.test("SSH-9: executeFile preserves SafeShell $ APIs when file imports $", async () => {
+  const testDir = await Deno.makeTempDir({ prefix: "safesh-dollar-shadow-" });
+  const importedModule = join(testDir, "foreign-dollar.ts");
+  const testFile = join(testDir, "test-dollar-shadow.ts");
+
+  try {
+    await Deno.writeTextFile(importedModule, "export const $ = {};\n");
+    const code = `
+      import { $ } from ${JSON.stringify(toFileUrl(importedModule).href)};
+      const content = await $.fs.read("deno.json");
+      console.log(content.includes("safesh") ? "found" : "not found");
+    `;
+    await Deno.writeTextFile(testFile, code);
+
+    const result = await executeFile(testFile, testConfig);
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "found");
+  } finally {
+    await Deno.remove(testDir, { recursive: true });
   }
 });
 
