@@ -95,6 +95,9 @@ export interface CommandResult {
 
   /** True if exit code is 0 */
   success: boolean;
+
+  /** Bash-compatible exit codes for each stage in the pipeline */
+  pipeStatus?: number[];
 }
 
 /**
@@ -109,6 +112,9 @@ export interface StreamChunk {
 
   /** Exit code (for exit chunks) */
   code?: number;
+
+  /** Bash-compatible exit codes for each stage in the pipeline */
+  pipeStatus?: number[];
 }
 
 /**
@@ -159,6 +165,7 @@ export interface CommandOptions {
 export class Command implements PromiseLike<CommandResult> {
   /** Upstream command whose stdout becomes this command's stdin */
   private upstream?: Command;
+  private upstreamResult?: CommandResult;
 
   constructor(
     private cmd: string,
@@ -228,6 +235,12 @@ export class Command implements PromiseLike<CommandResult> {
       return writeStdin(process.stdin, stdinData);
     }
     return undefined;
+  }
+
+  private getPipeStatus(exitCode: number): number[] {
+    const upstreamStatus = this.upstreamResult?.pipeStatus ??
+      (this.upstreamResult ? [this.upstreamResult.code] : []);
+    return [...upstreamStatus, exitCode];
   }
 
   /**
@@ -530,6 +543,7 @@ export class Command implements PromiseLike<CommandResult> {
       // Emit job end event
       const exitCode = timedOut ? 124 : status.code;
       emitJobEnd(jobId, exitCode, startTime);
+      const pipeStatus = this.getPipeStatus(exitCode);
 
       const stdoutStr = decoder.decode(stdoutBytes);
       const stderrStr = decoder.decode(stderrBytes);
@@ -555,6 +569,7 @@ export class Command implements PromiseLike<CommandResult> {
         stderr: stderrStr,
         code: exitCode,
         success: exitCode === 0,
+        pipeStatus,
       };
     } catch (err) {
       // Clear timeout on error
@@ -591,6 +606,7 @@ export class Command implements PromiseLike<CommandResult> {
   private async execMerged(): Promise<CommandResult> {
     let output = "";
     let code = 0;
+    let pipeStatus: number[] | undefined;
 
     // Use streaming to preserve order
     for await (const chunk of this.stream()) {
@@ -600,6 +616,7 @@ export class Command implements PromiseLike<CommandResult> {
         }
       } else if (chunk.type === "exit") {
         code = chunk.code ?? 0;
+        pipeStatus = chunk.pipeStatus;
       }
     }
 
@@ -609,6 +626,7 @@ export class Command implements PromiseLike<CommandResult> {
       output,
       code,
       success: code === 0,
+      pipeStatus: pipeStatus ?? [code],
     };
   }
 
@@ -695,8 +713,9 @@ export class Command implements PromiseLike<CommandResult> {
       // Emit job end event
       const exitCode = timedOut ? 124 : status.code;
       emitJobEnd(jobId, exitCode, startTime);
+      const pipeStatus = this.getPipeStatus(exitCode);
 
-      yield { type: "exit", code: exitCode };
+      yield { type: "exit", code: exitCode, pipeStatus };
     } catch (err) {
       // Clear timeout on error
       if (timeoutId !== undefined) {
@@ -896,8 +915,10 @@ export class Command implements PromiseLike<CommandResult> {
       // Like real shell pipelines, pass stdout through regardless of exit code.
       // The downstream command's exit code determines overall success.
       const result = await this.upstream.exec();
+      this.upstreamResult = result;
       return result.stdout;
     }
+    this.upstreamResult = undefined;
     return this.options.stdin;
   }
 

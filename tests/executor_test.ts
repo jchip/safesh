@@ -85,6 +85,21 @@ Deno.test("executeCode - captures stderr", async () => {
   assertStringIncludes(result.stderr, "error message");
 });
 
+Deno.test("SSH-16: executeCode exposes PIPESTATUS after pipeline", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const result = await executeCode(
+    `
+await __printCmd($.cmd("false").pipe($.cmd("true")));
+$.echo(\`EXIT=\${PIPESTATUS[0]}\`);
+`,
+    testConfig,
+  );
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "EXIT=1");
+});
+
 Deno.test("executeCode - returns non-zero exit code on error", async () => {
   const result = await executeCode(
     'throw new Error("test error");',
