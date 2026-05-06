@@ -916,7 +916,7 @@ export class Command implements PromiseLike<CommandResult> {
       // The downstream command's exit code determines overall success.
       const result = await this.upstream.exec();
       this.upstreamResult = result;
-      return result.stdout;
+      return result.output ?? result.stdout;
     }
     this.upstreamResult = undefined;
     return this.options.stdin;

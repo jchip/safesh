@@ -100,6 +100,36 @@ $.echo(\`EXIT=\${PIPESTATUS[0]}\`);
   assertStringIncludes(result.stdout, "EXIT=1");
 });
 
+Deno.test("SSH-17: executeCode pipes merged output through downstream command", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const outputPath = "/tmp/safesh-ssh17-merged-pipe.out";
+  try {
+    await Deno.remove(outputPath);
+  } catch {
+    // Ignore missing file
+  }
+
+  const result = await executeCode(
+    `
+await __printCmd($.cmd({ mergeStreams: true }, "sh", "-c", "echo out; echo err >&2; exit 7").pipe($.cmd("tee", "${outputPath}")));
+$.echo(\`EXIT=\${PIPESTATUS[0]}\`);
+`,
+    testConfig,
+  );
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, "out");
+  assertStringIncludes(result.stdout, "err");
+  assertStringIncludes(result.stdout, "EXIT=7");
+
+  const output = await Deno.readTextFile(outputPath);
+  assertStringIncludes(output, "out");
+  assertStringIncludes(output, "err");
+
+  await Deno.remove(outputPath);
+});
+
 Deno.test("executeCode - returns non-zero exit code on error", async () => {
   const result = await executeCode(
     'throw new Error("test error");',
