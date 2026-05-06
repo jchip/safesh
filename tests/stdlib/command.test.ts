@@ -294,6 +294,23 @@ describe("command execution (SSH-195)", { sanitizeResources: false, sanitizeOps:
         assertStringIncludes(result.stdout, "apple");
       }
     });
+
+    it("pipes merged stdout and stderr to downstream command", async () => {
+      if (Deno.build.os !== "windows") {
+        const result = await cmd(
+          { mergeStreams: true },
+          "sh",
+          "-c",
+          "echo out; echo err >&2",
+        )
+          .pipe(cmd("cat"))
+          .exec();
+
+        assertEquals(result.success, true);
+        assertStringIncludes(result.stdout, "out");
+        assertStringIncludes(result.stdout, "err");
+      }
+    });
   });
 
   describe("error handling", () => {
