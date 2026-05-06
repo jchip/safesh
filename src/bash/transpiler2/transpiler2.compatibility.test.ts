@@ -953,6 +953,7 @@ describe("Common Utility Patterns", () => {
       `);
       assertStringIncludes(code, ".pipe(");
       assertStringIncludes(code, "PIPESTATUS");
+      assertStringIncludes(code, 'typeof PIPESTATUS !== "undefined"');
     });
   });
 });

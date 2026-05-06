@@ -260,6 +260,19 @@ export function visitParameterExpansion(
     // $1, $2, etc - Positional parameters
     return `\${__POSITIONAL_PARAMS__?.[${parseInt(param) - 1}] || ""}`;
   }
+  const embeddedSubscript = param.match(/^([A-Za-z_][A-Za-z0-9_]*)\[(.+)\]$/);
+  if (embeddedSubscript && !modifier) {
+    const arrayName = embeddedSubscript[1]!;
+    const arrayIndex = embeddedSubscript[2]!;
+    if (arrayName !== "PIPESTATUS") {
+      return `\${typeof ${param} !== "undefined" ? ${param} : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`;
+    }
+    const jsArrayName = sanitizeVarName(arrayName);
+    if (arrayIndex === "@" || arrayIndex === "*") {
+      return `\${Array.isArray(${jsArrayName}) ? ${jsArrayName}.join(" ") : ($.VARS?.${arrayName} ?? []).join?.(" ") ?? ""}`;
+    }
+    return `\${(typeof ${jsArrayName} !== "undefined" ? ${jsArrayName}?.[${arrayIndex}] : $.VARS?.${arrayName}?.[${arrayIndex}]) ?? ""}`;
+  }
 
   // SSH-330: Handle indirect variable reference ${!ref}
   // The parser prefixes the parameter name with '!' for indirection

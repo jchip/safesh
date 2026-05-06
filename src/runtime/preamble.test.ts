@@ -78,8 +78,12 @@ describe("preamble", () => {
       };
       const { preamble } = buildPreamble(undefined, config);
 
-      // Should have null check: if (!result) return 1;
-      assertEquals(preamble.includes("if (!result) return 1"), true, "Should check for null result");
+      // Should have null check before accessing result properties
+      assertEquals(
+        preamble.includes("if (!result) return __setPipeStatus(undefined, 1)"),
+        true,
+        "Should check for null result",
+      );
     });
 
     it("includes fallback for result.code", () => {
@@ -104,7 +108,11 @@ describe("preamble", () => {
 
       // The preamble should contain both the null check and the fallback
       // This ensures __printCmd handles null/undefined results gracefully
-      assertEquals(preamble.includes("if (!result) return 1"), true, "Should check for null/undefined");
+      assertEquals(
+        preamble.includes("if (!result) return __setPipeStatus(undefined, 1)"),
+        true,
+        "Should check for null/undefined",
+      );
       assertEquals(preamble.includes("result.code ?? 1"), true, "Should have fallback for missing code");
 
       // Should have logic to handle stdout and stderr without crashing
@@ -134,8 +142,16 @@ describe("preamble", () => {
       const { preamble } = buildPreamble(undefined, config);
 
       // Should return 1 for null and use actual code when present
-      assertEquals(preamble.includes("return 1"), true, "Should return 1 for null");
-      assertEquals(preamble.includes("return result.code ?? 1"), true, "Should return actual code or 1");
+      assertEquals(
+        preamble.includes("return __setPipeStatus(undefined, 1)"),
+        true,
+        "Should return 1 for null",
+      );
+      assertEquals(
+        preamble.includes("return __setPipeStatus(result.pipeStatus, result.code ?? 1)"),
+        true,
+        "Should return actual code or 1",
+      );
     });
 
     it("handles mergeStreams output via result.output", () => {
