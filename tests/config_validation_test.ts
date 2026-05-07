@@ -7,6 +7,7 @@ import {
   DEFAULT_CONFIG,
   validateConfig,
 } from "../src/core/config.ts";
+import { checkCommandPermission } from "../src/core/command_permission.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 
 // ============================================================================
@@ -20,6 +21,15 @@ Deno.test("DEFAULT_CONFIG - has safe defaults", () => {
   assertEquals(DEFAULT_CONFIG.permissions?.write, ["/tmp", "/dev/null", "${HOME}/.claude"]);
   assertEquals(DEFAULT_CONFIG.permissions?.net, []);
   assertEquals(DEFAULT_CONFIG.imports?.blocked?.includes("npm:*"), true);
+});
+
+Deno.test("SSH-18: DEFAULT_CONFIG allows python3", async () => {
+  const result = await checkCommandPermission("python3", DEFAULT_CONFIG, Deno.cwd());
+
+  assertEquals(result.allowed, true);
+  if (result.allowed) {
+    assertEquals(result.resolvedPath, "python3");
+  }
 });
 
 Deno.test("DEFAULT_CONFIG - passes validation with no errors", () => {
