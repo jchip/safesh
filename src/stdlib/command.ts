@@ -587,6 +587,24 @@ export class Command implements PromiseLike<CommandResult> {
   /**
    * Write content to a file (for redirections)
    */
+  private async prepareRedirectFile(
+    redirect?: { path: string; options?: RedirectOptions },
+  ): Promise<void> {
+    if (!redirect) return;
+    await this.writeToFile(redirect.path, "", redirect.options);
+  }
+
+  private async appendRedirectChunk(
+    redirect: { path: string; options?: RedirectOptions },
+    content?: string,
+  ): Promise<void> {
+    if (!content) return;
+    await this.writeToFile(redirect.path, content, {
+      ...redirect.options,
+      append: true,
+    });
+  }
+
   private async writeToFile(
     path: string,
     content: string,
@@ -656,6 +674,9 @@ export class Command implements PromiseLike<CommandResult> {
     const stdinData = await this.resolveStdin();
     const hasStdin = stdinData !== undefined;
 
+    await this.prepareRedirectFile(this.options.stdoutFile);
+    await this.prepareRedirectFile(this.options.stderrFile);
+
     const process = this.spawnProcess(this.createCommand(hasStdin));
 
     // Emit job start event
@@ -689,10 +710,18 @@ export class Command implements PromiseLike<CommandResult> {
       // Start writing stdin in background (don't await yet)
       const stdinPromise = this.setupStdin(process, stdinData);
 
-      if (this.options.mergeStreams) {
-        yield* this.mergeStreams(process.stdout, process.stderr);
-      } else {
-        yield* this.separateStreams(process.stdout, process.stderr);
+      const chunks = this.options.mergeStreams
+        ? this.mergeStreams(process.stdout, process.stderr)
+        : this.separateStreams(process.stdout, process.stderr);
+
+      for await (const chunk of chunks) {
+        if (chunk.type === "stdout" && this.options.stdoutFile) {
+          await this.appendRedirectChunk(this.options.stdoutFile, chunk.data);
+        } else if (chunk.type === "stderr" && this.options.stderrFile) {
+          await this.appendRedirectChunk(this.options.stderrFile, chunk.data);
+        } else {
+          yield chunk;
+        }
       }
 
       // Wait for stdin to finish writing
