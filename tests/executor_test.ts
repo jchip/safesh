@@ -130,6 +130,26 @@ $.echo(\`EXIT=\${PIPESTATUS[0]}\`);
   await Deno.remove(outputPath);
 });
 
+Deno.test("SSH-19: __printCmd respects stderr redirection to /dev/null", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const result = await executeCode(
+    `
+await __printCmd($.cmd("ls", "-la", "/tmp/safesh-ssh19-missing-*").stderr("/dev/null"));
+`,
+    {
+      ...testConfig,
+      permissions: {
+        ...testConfig.permissions,
+        write: ["/tmp", "/dev/null"],
+      },
+    },
+  );
+
+  assertEquals(result.success, true);
+  assertEquals(result.stderr, "");
+});
+
 Deno.test("executeCode - returns non-zero exit code on error", async () => {
   const result = await executeCode(
     'throw new Error("test error");',
