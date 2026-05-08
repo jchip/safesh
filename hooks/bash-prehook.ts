@@ -833,6 +833,7 @@ interface DeshRewriteOptions {
   isDirectTs?: boolean;
   originalCommand?: string;
   hookEventName?: string;
+  cwd?: string;
 }
 
 /**
@@ -863,7 +864,7 @@ ${tsCode}`;
     id: pendingId,
     scriptHash: hash,
     commands: [],
-    cwd: Deno.cwd(),
+    cwd: options?.cwd ?? Deno.cwd(),
     timeout: options?.timeout,
     runInBackground: options?.runInBackground,
     createdAt: new Date().toISOString(),
@@ -967,6 +968,7 @@ async function outputDenyWithRetry(
     runInBackground?: boolean;
     originalCommand?: string;
     hookEventName?: string;
+    cwd?: string;
   },
 ): Promise<void> {
   const cmdList = disallowedCommands.join(", ");
@@ -1002,7 +1004,7 @@ async function outputDenyWithRetry(
     id: pendingId,
     scriptHash: hash,
     commands: disallowedCommands,
-    cwd: Deno.cwd(),
+    cwd: options?.cwd ?? Deno.cwd(),
     timeout: options?.timeout,
     runInBackground: options?.runInBackground,
     createdAt: new Date().toISOString(),
@@ -1226,6 +1228,8 @@ ${combinedTsCode}
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
         isDirectTs: true,
+        hookEventName: parsed.hookEventName,
+        cwd,
       });
       Deno.exit(0);
     }
@@ -1249,6 +1253,7 @@ ${tsCode}
         runInBackground: parsed.runInBackground,
         isDirectTs: true,
         hookEventName: parsed.hookEventName,
+        cwd,
       });
       Deno.exit(0);
     }
@@ -1401,6 +1406,7 @@ ${tsCode}
         runInBackground: parsed.runInBackground,
         originalCommand: parsed.command,
         hookEventName: parsed.hookEventName,
+        cwd,
       });
       Deno.exit(0);
     }
@@ -1415,6 +1421,7 @@ ${tsCode}
       runInBackground: parsed.runInBackground,
       originalCommand: parsed.command,
       hookEventName: parsed.hookEventName,
+      cwd,
     });
     Deno.exit(0);
   } catch (error) {

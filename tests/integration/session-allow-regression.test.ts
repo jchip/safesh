@@ -15,6 +15,8 @@ import {
 } from "../../src/core/session.ts";
 import { findProjectRoot } from "../../src/core/project-root.ts";
 import { REAL_TMP } from "../helpers.ts";
+import { deletePending, readPendingCommand } from "../../src/core/pending.ts";
+import { applyPermissionChoice } from "../../src/cli/desh.ts";
 
 const testDir = `${REAL_TMP}/safesh-regression-test`;
 const projectDir = `${testDir}/project`;
@@ -76,5 +78,67 @@ describe("SSH-378 session-allow regression", { sanitizeResources: false, sanitiz
 
     assertEquals(root1, root2, "Both should find same project root");
     assertEquals(root1, projectDir, "Should find project root");
+  });
+
+  it("blocked hook retry records the command cwd override", async () => {
+    const hookProjectDir = `${testDir}/hook-project`;
+    await Deno.mkdir(`${hookProjectDir}/.git`, { recursive: true });
+
+    const command = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-read",
+        "--allow-write",
+        "--allow-env",
+        "--allow-run",
+        "hooks/bash-prehook.ts",
+      ],
+      cwd: Deno.cwd(),
+      env: {
+        BASH_PREHOOK_CWD: hookProjectDir,
+        CLAUDE_SESSION_ID: "ssh-24-hook-cwd",
+      },
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    });
+
+    const child = command.spawn();
+    const writer = child.stdin.getWriter();
+    await writer.write(
+      new TextEncoder().encode(
+        JSON.stringify({
+          hookEventName: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: { command: "ssh24blockedcmd --version" },
+        }),
+      ),
+    );
+    await writer.close();
+
+    const output = await child.output();
+    const stdout = new TextDecoder().decode(output.stdout);
+    const stderr = new TextDecoder().decode(output.stderr);
+    const match = stdout.match(/desh retry --id=([0-9-]+) --choice=/);
+    assert(match, `Expected retry id in hook output. stdout=${stdout} stderr=${stderr}`);
+
+    const pendingId = match[1]!;
+    const originalError = console.error;
+    try {
+      const pending = readPendingCommand(pendingId);
+      assert(pending, "Expected pending command to be written");
+      assertEquals(pending.cwd, hookProjectDir);
+
+      console.error = () => {};
+      await applyPermissionChoice(3, pending, pendingId);
+      const allowedCommands = getSessionAllowedCommands(hookProjectDir);
+      assert(
+        allowedCommands.has("ssh24blockedcmd"),
+        "choice 3 should be visible to the hook project",
+      );
+    } finally {
+      console.error = originalError;
+      deletePending(pendingId, "command");
+    }
   });
 });
