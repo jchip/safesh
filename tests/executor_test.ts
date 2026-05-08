@@ -3,6 +3,7 @@
  */
 
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { parse, transpile } from "../src/bash/mod.ts";
 import { buildPermissionFlags, executeCode, executeFile } from "../src/runtime/executor.ts";
 import type { SafeShellConfig, Shell } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
@@ -148,6 +149,17 @@ await __printCmd($.cmd("ls", "-la", "/tmp/safesh-ssh19-missing-*").stderr("/dev/
 
   assertEquals(result.success, true);
   assertEquals(result.stderr, "");
+});
+
+Deno.test("SSH-21: transpiled pwd; ls does not print unresolved Promise", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const code = transpile(parse("pwd; ls"), { imports: false, strict: false });
+  const result = await executeCode(code, testConfig);
+
+  assertEquals(result.success, true);
+  assertStringIncludes(result.stdout, Deno.cwd());
+  assertEquals(result.stdout.includes("[object Promise]"), false);
 });
 
 Deno.test("executeCode - returns non-zero exit code on error", async () => {

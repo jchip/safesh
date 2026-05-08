@@ -232,7 +232,8 @@ describe("SSH-372 - Shell Builtins", () => {
       const output = transpile(ast);
 
       // pwd returns a value that should be printed
-      assertStringIncludes(output, 'console.log($.pwd()');
+      assertStringIncludes(output, "console.log");
+      assertStringIncludes(output, "await Promise.resolve($.pwd())");
     });
 
     it("should not await prints type builtins", () => {
