@@ -141,4 +141,39 @@ describe("SSH-378 session-allow regression", { sanitizeResources: false, sanitiz
       deletePending(pendingId, "command");
     }
   });
+
+  it("choice 3 command allow is visible from canonical repo and worktree roots", async () => {
+    const repoDir = `${testDir}/canonical-repo`;
+    const worktreeDir = `${repoDir}/.worktrees/EXP-188`;
+
+    await Deno.mkdir(`${repoDir}/.git/worktrees/EXP-188`, { recursive: true });
+    await Deno.mkdir(worktreeDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${worktreeDir}/.git`,
+      `gitdir: ${repoDir}/.git/worktrees/EXP-188\n`,
+    );
+
+    const originalError = console.error;
+    try {
+      console.error = () => {};
+      await applyPermissionChoice(3, {
+        id: "ssh-25-worktree-session",
+        scriptHash: "ssh-25-worktree-session",
+        commands: ["tmux"],
+        cwd: worktreeDir,
+        createdAt: new Date().toISOString(),
+      }, "ssh-25-worktree-session");
+    } finally {
+      console.error = originalError;
+    }
+
+    assert(
+      getSessionAllowedCommands(repoDir).has("tmux"),
+      "canonical repo session should include tmux",
+    );
+    assert(
+      getSessionAllowedCommands(worktreeDir).has("tmux"),
+      "worktree root session should include tmux",
+    );
+  });
 });
