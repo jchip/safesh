@@ -83,6 +83,51 @@ export function isBackgroundRewriteExecution(
   return env.SAFESH_RUN_IN_BACKGROUND === "1" || env.SAFESH_RUN_IN_BACKGROUND === "true";
 }
 
+function getWorktreeRoot(cwd: string): string | undefined {
+  const marker = "/.worktrees/";
+  const markerIndex = cwd.indexOf(marker);
+  if (markerIndex === -1) return undefined;
+
+  const rest = cwd.slice(markerIndex + marker.length);
+  const worktreeName = rest.split("/")[0];
+  if (!worktreeName) return undefined;
+
+  return cwd.slice(0, markerIndex + marker.length + worktreeName.length);
+}
+
+async function addSessionCommandsForCwd(
+  commands: string[],
+  projectDir: string,
+  cwd: string,
+): Promise<void> {
+  const sessionDirs = new Set([projectDir]);
+  const worktreeRoot = getWorktreeRoot(cwd);
+  if (worktreeRoot) {
+    sessionDirs.add(worktreeRoot);
+  }
+
+  for (const dir of sessionDirs) {
+    await addSessionCommands(commands, dir);
+  }
+}
+
+async function addSessionPathsForCwd(
+  readPaths: string[],
+  writePaths: string[],
+  projectDir: string,
+  cwd: string,
+): Promise<void> {
+  const sessionDirs = new Set([projectDir]);
+  const worktreeRoot = getWorktreeRoot(cwd);
+  if (worktreeRoot) {
+    sessionDirs.add(worktreeRoot);
+  }
+
+  for (const dir of sessionDirs) {
+    await addSessionPaths(readPaths, writePaths, dir);
+  }
+}
+
 /**
  * Load pending command from file.
  *
@@ -131,7 +176,7 @@ export async function applyPermissionChoice(
 
   // Choice 3 = Session allow - update session file
   if (choice === 3) {
-    await addSessionCommands(pending.commands, projectDir);
+    await addSessionCommandsForCwd(pending.commands, projectDir, pending.cwd);
     console.error(`[safesh] Added to session-allow: ${pending.commands.join(", ")}`);
   }
 
@@ -407,7 +452,7 @@ export async function persistPathPermissions(
   } else if (scope === 2) {
     // Session allow - update session file
     // Security audit: Session permission grant logged
-    await addSessionPaths(readPaths, writePaths, projectDir);
+    await addSessionPathsForCwd(readPaths, writePaths, projectDir, cwd);
     const msg = [];
     if (readPaths.length > 0) msg.push(`read: ${readPaths.join(", ")}`);
     if (writePaths.length > 0) msg.push(`write: ${writePaths.join(", ")}`);
