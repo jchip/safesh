@@ -5,6 +5,7 @@
  * Eliminates ~60 lines of duplication between bash-prehook.ts and desh.ts.
  */
 
+import { resolve } from "@std/path";
 import { ensureDirSync } from "./io-utils.ts";
 
 /**
@@ -31,6 +32,30 @@ export interface FindProjectRootOptions {
    * @default true
    */
   stopAtHome?: boolean;
+}
+
+function getConventionalWorktreeParent(dir: string, gitFile: string): string | undefined {
+  try {
+    const stat = Deno.statSync(gitFile);
+    if (!stat.isFile) return undefined;
+
+    const content = Deno.readTextFileSync(gitFile).trim();
+    const match = /^gitdir:\s*(.+)$/.exec(content);
+    const rawGitDir = match?.[1]?.trim();
+    if (!rawGitDir) return undefined;
+
+    const gitDir = rawGitDir.startsWith("/") ? rawGitDir : resolve(dir, rawGitDir);
+    const worktreeMarker = "/.git/worktrees/";
+    const markerIndex = gitDir.lastIndexOf(worktreeMarker);
+    if (markerIndex === -1) return undefined;
+
+    const parentProject = gitDir.slice(0, markerIndex);
+    if (dir.startsWith(`${parentProject}/.worktrees/`)) {
+      return parentProject;
+    }
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -68,6 +93,9 @@ export function findProjectRoot(
     if (stopAtHome && homeDir && dir === homeDir) {
       break;
     }
+
+    const worktreeParent = getConventionalWorktreeParent(dir, `${dir}/.git`);
+    if (worktreeParent) return worktreeParent;
 
     // Check for project markers
     for (const marker of PROJECT_MARKERS) {
