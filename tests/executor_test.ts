@@ -162,6 +162,41 @@ Deno.test("SSH-21: transpiled pwd; ls does not print unresolved Promise", async 
   assertEquals(result.stdout.includes("[object Promise]"), false);
 });
 
+Deno.test("SSH-23: initCmds auto-allows absolute project command", async () => {
+  if (Deno.build.os === "windows") return;
+
+  const projectDir = await Deno.makeTempDir({ prefix: "safesh-ssh23-" });
+  const scriptPath = `${projectDir}/scripts/tool.sh`;
+
+  await Deno.mkdir(`${projectDir}/scripts`, { recursive: true });
+  await Deno.writeTextFile(scriptPath, "#!/bin/sh\necho tool-ok\n");
+  await Deno.chmod(scriptPath, 0o755);
+
+  try {
+    const result = await executeCode(
+      `
+const [tool] = await $.initCmds(["${scriptPath}"]);
+await __printCmd(tool());
+`,
+      {
+        ...testConfig,
+        projectDir,
+        allowProjectCommands: true,
+        permissions: {
+          ...testConfig.permissions,
+          read: [Deno.cwd(), "/tmp", projectDir],
+          write: ["/tmp", projectDir],
+        },
+      },
+    );
+
+    assertEquals(result.success, true);
+    assertStringIncludes(result.stdout, "tool-ok");
+  } finally {
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
 Deno.test("executeCode - returns non-zero exit code on error", async () => {
   const result = await executeCode(
     'throw new Error("test error");',

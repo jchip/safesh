@@ -142,6 +142,17 @@ async function checkPermission(
     if (isInAllowedList(command, allowedCommands)) {
       return { allowed: true, resolvedPath: command };
     }
+    if (allowProjectCommands && projectDir) {
+      const absoluteProjectDir = projectDir.startsWith("/")
+        ? projectDir
+        : resolvePath(cwd, projectDir);
+      if (isPathWithin(command, absoluteProjectDir)) {
+        if (await checkCommandExists(command)) {
+          return { allowed: true, resolvedPath: command };
+        }
+        return { allowed: false, error: ERROR_COMMAND_NOT_FOUND, command };
+      }
+    }
     return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command };
   }
 

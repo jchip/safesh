@@ -166,6 +166,12 @@ export async function checkCommandPermission(
     if (isCommandAllowed(command, allowedCommands)) {
       return { allowed: true, resolvedPath: command };
     }
+    if (allowProjectCommands && projectDir && isPathWithin(command, projectDir)) {
+      if (await commandExists(command)) {
+        return { allowed: true, resolvedPath: command };
+      }
+      return { allowed: false, error: ERROR_COMMAND_NOT_FOUND, command };
+    }
     return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command };
   }
 

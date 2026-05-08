@@ -186,6 +186,24 @@ describe("project-root", () => {
     assertEquals(result, innerProject);
   });
 
+  it("treats conventional .worktrees checkout as parent project", () => {
+    const projectDir = `${tempDir}/repo`;
+    const worktreeDir = `${projectDir}/.worktrees/feature`;
+    const subdir = `${worktreeDir}/src`;
+
+    Deno.mkdirSync(`${projectDir}/.git/worktrees/feature`, { recursive: true });
+    Deno.mkdirSync(`${worktreeDir}/.claude`, { recursive: true });
+    Deno.mkdirSync(subdir, { recursive: true });
+    Deno.writeTextFileSync(
+      `${worktreeDir}/.git`,
+      `gitdir: ${projectDir}/.git/worktrees/feature\n`,
+    );
+
+    const result = findProjectRoot(subdir, { createConfig: false });
+
+    assertEquals(result, projectDir);
+  });
+
   it("respects stopAtHome=false option", () => {
     // Create a fake home directory with a marker
     const fakeHome = `${tempDir}/fake-home`;
