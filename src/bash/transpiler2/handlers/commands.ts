@@ -102,8 +102,12 @@ function handleShellBuiltin(
 
   if (builtin.type === "output") {
     // Output builtins should print their result
+    const outputExpr = `${builtin.fn}(${argsArray})`;
     return {
-      code: `console.log(${builtin.fn}(${argsArray}).toString())`,
+      code: `console.log(` +
+        `((__out: unknown) => Array.isArray(__out) ? __out.join("\\n") : String(__out))` +
+        `(await Promise.resolve(${outputExpr}))` +
+        `)`,
       async: false,
     };
   } else if (builtin.type === "prints") {

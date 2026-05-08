@@ -81,7 +81,7 @@ function debug(message: string): void {
  * Transpiler cache version. Bump this whenever the transpiler or preamble
  * output changes to invalidate cached scripts.
  */
-const TRANSPILER_VERSION = 2;
+const TRANSPILER_VERSION = 3;
 
 /**
  * Generate SHA-256 hash for content-based script caching
