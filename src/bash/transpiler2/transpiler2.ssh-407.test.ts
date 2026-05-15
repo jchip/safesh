@@ -112,6 +112,20 @@ EOF`;
       assertStringIncludes(result.stdout ?? "", "hello from heredoc");
     });
 
+    it("should preserve literal backticks from heredoc in command substitution", async () => {
+      const input = `printf '%s' "$(cat <<'EOF'
+EXP-204: add \`fyn ipl\` CLI
+EOF
+)"`;
+      const code = transpile(parse(input), { imports: false, strict: false });
+
+      const config = await loadConfig(Deno.cwd());
+      const result = await executeCode(code, config, { cwd: Deno.cwd() });
+
+      assertEquals(result.code, 0, result.stderr);
+      assertEquals(result.stdout, "EXP-204: add `fyn ipl` CLI");
+    });
+
     it("should execute cat with heredoc in append mode", async () => {
       const testFile = `/tmp/ssh-407-append-${Date.now()}.md`;
 

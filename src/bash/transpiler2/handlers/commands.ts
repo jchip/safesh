@@ -72,6 +72,21 @@ function wordHasExpansion(
   return false;
 }
 
+function formatRedirectionTarget(redirect: AST.Redirection, ctx: VisitorContext): string {
+  if (typeof redirect.target === "number") {
+    return redirect.target.toString();
+  }
+
+  if (redirect.operator === "<<" || redirect.operator === "<<-") {
+    return `"${escapeForQuotes(redirect.target.value)}"`;
+  }
+
+  return formatArg(
+    ctx.visitWord(redirect.target),
+    wordHasExpansion(redirect.target),
+  );
+}
+
 /**
  * specialized command wrappers that provide enhanced functionality
  * These commands use dedicated wrapper functions instead of generic $.cmd()
@@ -894,10 +909,7 @@ export function applyRedirection(
   redirect: AST.Redirection,
   ctx: VisitorContext,
 ): string {
-  const target = typeof redirect.target === "number" ? redirect.target.toString() : formatArg(
-    ctx.visitWord(redirect.target),
-    wordHasExpansion(redirect.target),
-  );
+  const target = formatRedirectionTarget(redirect, ctx);
 
   switch (redirect.operator) {
     case "<":
