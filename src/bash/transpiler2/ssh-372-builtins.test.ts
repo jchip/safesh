@@ -145,6 +145,21 @@ describe("SSH-372 - Shell Builtins", () => {
     assertStringIncludes(output, 'console.log');
   });
 
+  it("should not spawn external set for shell option commands", () => {
+    for (
+      const script of [
+        "set -e\necho ok",
+        "set -euo pipefail\necho ok",
+        "set -o pipefail\necho ok",
+      ]
+    ) {
+      const output = transpile(parse(script));
+
+      assertEquals(output.includes('$.cmd("set"'), false, "Should not spawn external set");
+      assertStringIncludes(output, '$.echo("ok")');
+    }
+  });
+
   describe("Builtins with env assignments should use $.cmd()", () => {
     it("should use $.cmd() when cd has env assignment", () => {
       const ast = parse("VAR=value cd /tmp");
