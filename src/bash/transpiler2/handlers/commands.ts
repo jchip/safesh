@@ -303,6 +303,7 @@ interface CommandAnalysis {
 type CommandStrategy =
   | { type: "variable-assignment"; assignments: AST.VariableAssignment[] }
   | { type: "user-function"; name: string }
+  | { type: "shell-option" }
   | {
     type: "shell-builtin";
     name: string;
@@ -329,6 +330,63 @@ type CommandStrategy =
     nameHasExpansion: boolean;
     argExpansions: boolean[];
   };
+
+const SET_OPTION_NAMES = new Set([
+  "allexport",
+  "braceexpand",
+  "emacs",
+  "errexit",
+  "errtrace",
+  "functrace",
+  "hashall",
+  "histexpand",
+  "history",
+  "ignoreeof",
+  "interactive-comments",
+  "keyword",
+  "monitor",
+  "noclobber",
+  "noexec",
+  "noglob",
+  "nolog",
+  "notify",
+  "nounset",
+  "onecmd",
+  "physical",
+  "pipefail",
+  "posix",
+  "privileged",
+  "verbose",
+  "vi",
+  "xtrace",
+]);
+
+function isShellOptionSetCommand(args: string[]): boolean {
+  if (args.length === 0) return false;
+
+  let expectsOptionName = false;
+  for (const arg of args) {
+    if (expectsOptionName) {
+      if (!SET_OPTION_NAMES.has(arg)) return false;
+      expectsOptionName = false;
+      continue;
+    }
+
+    if (arg === "-o" || arg === "+o") {
+      expectsOptionName = true;
+      continue;
+    }
+
+    if (/^[+-][A-Za-z]+$/.test(arg)) {
+      expectsOptionName = arg.slice(1).includes("o");
+      continue;
+    }
+
+    if (!SET_OPTION_NAMES.has(arg)) return false;
+  }
+
+  return !expectsOptionName;
+}
 
 /**
  * Phase 1: Analyze command structure
@@ -388,6 +446,13 @@ function selectCommandStrategy(
   // User function
   if (ctx.isFunction(analysis.name)) {
     return { type: "user-function", name: analysis.name };
+  }
+
+  if (
+    analysis.name === "set" && !analysis.hasAssignments && !analysis.hasRedirects &&
+    !options?.inPipeline && isShellOptionSetCommand(analysis.args)
+  ) {
+    return { type: "shell-option" };
   }
 
   // Shell builtin
@@ -461,6 +526,10 @@ function executeCommandStrategy(
     case "user-function": {
       const cmdExpr = handleUserFunction(strategy.name);
       return { code: cmdExpr, async: true, isUserFunction: true };
+    }
+
+    case "shell-option": {
+      return { code: "void 0", async: false };
     }
 
     case "shell-builtin": {
