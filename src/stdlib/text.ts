@@ -88,6 +88,69 @@ export interface GrepOptions extends SandboxOptions {
   after?: number;
 }
 
+interface GrepCommandOptions {
+  recursive: boolean;
+  filesWithMatches: boolean;
+  include?: string;
+}
+
+function parseGrepArgs(args: string[]): GrepCommandOptions {
+  const options: GrepCommandOptions = {
+    recursive: false,
+    filesWithMatches: false,
+  };
+
+  for (const arg of args) {
+    if (arg === "-r" || arg === "--recursive") {
+      options.recursive = true;
+    } else if (arg === "-l" || arg === "--files-with-matches") {
+      options.filesWithMatches = true;
+    } else if (arg.startsWith("--include=")) {
+      options.include = arg.slice("--include=".length);
+    } else {
+      throw new TypeError(`$.text.grep() unsupported grep argument: ${arg}`);
+    }
+  }
+
+  if (!options.filesWithMatches) {
+    throw new TypeError("$.text.grep() command-style arguments currently require -l");
+  }
+
+  return options;
+}
+
+async function grepFilesWithArgs(
+  pattern: RegExp | string,
+  args: string[],
+  searchRoot: string,
+): Promise<string[]> {
+  validateStringOrArray(args, "$.text.grep()");
+  const options = parseGrepArgs(args);
+  const include = options.include ?? "*";
+  const globPatterns = options.recursive ? [include, `**/${include}`] : [include];
+  const files = new Set<string>();
+
+  for (const globPattern of globPatterns) {
+    for (const filePath of await globPaths(globPattern, { cwd: searchRoot })) {
+      files.add(filePath);
+    }
+  }
+
+  const matches: string[] = [];
+  for (const filePath of files) {
+    try {
+      const content = await fs.read(filePath);
+      if (grep(pattern, content).length > 0) {
+        matches.push(filePath);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return matches;
+}
+
 /**
  * Search for pattern in text
  *
@@ -108,17 +171,35 @@ export interface GrepOptions extends SandboxOptions {
 export function grep(
   pattern: RegExp | string,
   input: string,
-  options: Omit<GrepOptions, keyof SandboxOptions> = {},
-): GrepMatch[] {
+  options?: Omit<GrepOptions, keyof SandboxOptions>,
+): GrepMatch[];
+export function grep(
+  pattern: RegExp | string,
+  args: string[],
+  path?: string,
+): Promise<string[]>;
+export function grep(
+  pattern: RegExp | string,
+  input: string | string[],
+  options: Omit<GrepOptions, keyof SandboxOptions> | string = {},
+): GrepMatch[] | Promise<string[]> {
+  if (Array.isArray(input)) {
+    return grepFilesWithArgs(pattern, input, typeof options === "string" ? options : ".");
+  }
+
   validateString(input, "$.text.grep()");
+  const grepOptions = typeof options === "string" ? {} : options;
 
   const matches: GrepMatch[] = [];
   // No 'g' flag: we test line-by-line, and 'g' breaks match() capture groups
   const regex = typeof pattern === "string"
-    ? new RegExp(pattern, options.ignoreCase ? "i" : "")
-    : options.ignoreCase
-      ? new RegExp(pattern.source, pattern.flags.replace(/g/g, "") + (pattern.flags.includes("i") ? "" : "i"))
-      : new RegExp(pattern.source, pattern.flags.replace(/g/g, ""));
+    ? new RegExp(pattern, grepOptions.ignoreCase ? "i" : "")
+    : grepOptions.ignoreCase
+    ? new RegExp(
+      pattern.source,
+      pattern.flags.replace(/g/g, "") + (pattern.flags.includes("i") ? "" : "i"),
+    )
+    : new RegExp(pattern.source, pattern.flags.replace(/g/g, ""));
 
   const lines = input.split("\n");
   const seen = new Set<string>();
@@ -131,10 +212,10 @@ export function grep(
     const hasMatch = match !== null;
 
     // Handle invert
-    if (options.invert ? hasMatch : !hasMatch) continue;
+    if (grepOptions.invert ? hasMatch : !hasMatch) continue;
 
     // Handle unique
-    if (options.unique) {
+    if (grepOptions.unique) {
       const key = hasMatch ? match[0] : line;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -148,7 +229,7 @@ export function grep(
     });
 
     // Handle limit
-    if (options.limit && matches.length >= options.limit) break;
+    if (grepOptions.limit && matches.length >= grepOptions.limit) break;
   }
 
   return matches;

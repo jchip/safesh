@@ -98,6 +98,39 @@ line 5: HELLO`;
     });
   });
 
+  describe("command-style grep", () => {
+    it("supports recursive file listing with include patterns", async () => {
+      await Deno.mkdir(`${testDir}/frontend`, { recursive: true });
+      await Deno.mkdir(`${testDir}/services/api`, { recursive: true });
+      await Deno.writeTextFile(
+        `${testDir}/Dockerfile`,
+        "COPY frontend/package.json ./frontend/package.json\n",
+      );
+      await Deno.writeTextFile(
+        `${testDir}/services/api/Dockerfile.dev`,
+        "COPY frontend/package.json ./frontend/package.json\n",
+      );
+      await Deno.writeTextFile(
+        `${testDir}/frontend/package.json`,
+        "COPY frontend/package.json ./frontend/package.json\n",
+      );
+
+      const matches = await text.grep("COPY frontend/package.json", [
+        "-r",
+        "-l",
+        "--include=Dockerfile*",
+      ], testDir);
+
+      assertEquals(
+        matches.sort(),
+        [
+          `${testDir}/Dockerfile`,
+          `${testDir}/services/api/Dockerfile.dev`,
+        ].sort(),
+      );
+    });
+  });
+
   describe("head", () => {
     const lines = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12";
 
