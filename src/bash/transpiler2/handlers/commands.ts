@@ -403,6 +403,22 @@ function isShellOptionSetCommand(args: string[]): boolean {
   return !expectsOptionName;
 }
 
+const LS_BUILTIN_FLAGS = new Set(["a", "A", "d", "l", "R", "h"]);
+
+function canUseShellBuiltin(name: string, args: string[]): boolean {
+  if (name !== "ls") return true;
+
+  for (const arg of args) {
+    if (!arg.startsWith("-") || arg === "-") continue;
+    if (arg === "--" || arg.startsWith("--")) return false;
+    for (const flag of arg.slice(1)) {
+      if (!LS_BUILTIN_FLAGS.has(flag)) return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Phase 1: Analyze command structure
  * Parses and analyzes the command to extract relevant metadata
@@ -472,7 +488,10 @@ function selectCommandStrategy(
 
   // Shell builtin
   const builtin = SHELL_BUILTINS[analysis.name];
-  if (builtin && !analysis.hasAssignments && !analysis.hasRedirects && !options?.inPipeline) {
+  if (
+    builtin && !analysis.hasAssignments && !analysis.hasRedirects && !options?.inPipeline &&
+    canUseShellBuiltin(analysis.name, analysis.args)
+  ) {
     return {
       type: "shell-builtin",
       name: analysis.name,
