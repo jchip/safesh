@@ -154,6 +154,9 @@ export interface CommandOptions {
 
   /** Redirect stderr to file */
   stderrFile?: { path: string; options?: RedirectOptions };
+
+  /** Redirect stdout to stderr (for 1>&2) */
+  stdoutToStderr?: boolean;
 }
 
 /**
@@ -545,8 +548,10 @@ export class Command implements PromiseLike<CommandResult> {
       emitJobEnd(jobId, exitCode, startTime);
       const pipeStatus = this.getPipeStatus(exitCode);
 
-      const stdoutStr = decoder.decode(stdoutBytes);
-      const stderrStr = decoder.decode(stderrBytes);
+      const rawStdout = decoder.decode(stdoutBytes);
+      const rawStderr = decoder.decode(stderrBytes);
+      const stdoutStr = this.options.stdoutToStderr ? "" : rawStdout;
+      const stderrStr = this.options.stdoutToStderr ? rawStderr + rawStdout : rawStderr;
 
       // Handle file redirections
       if (this.options.stdoutFile) {
@@ -715,12 +720,15 @@ export class Command implements PromiseLike<CommandResult> {
         : this.separateStreams(process.stdout, process.stderr);
 
       for await (const chunk of chunks) {
-        if (chunk.type === "stdout" && this.options.stdoutFile) {
-          await this.appendRedirectChunk(this.options.stdoutFile, chunk.data);
-        } else if (chunk.type === "stderr" && this.options.stderrFile) {
-          await this.appendRedirectChunk(this.options.stderrFile, chunk.data);
+        const effectiveChunk: StreamChunk = this.options.stdoutToStderr && chunk.type === "stdout"
+          ? { ...chunk, type: "stderr" }
+          : chunk;
+        if (effectiveChunk.type === "stdout" && this.options.stdoutFile) {
+          await this.appendRedirectChunk(this.options.stdoutFile, effectiveChunk.data);
+        } else if (effectiveChunk.type === "stderr" && this.options.stderrFile) {
+          await this.appendRedirectChunk(this.options.stderrFile, effectiveChunk.data);
         } else {
-          yield chunk;
+          yield effectiveChunk;
         }
       }
 
@@ -907,6 +915,18 @@ export class Command implements PromiseLike<CommandResult> {
     }
     // Stream mode
     return new FluentStream(this.streamOne("stderr"));
+  }
+
+  /**
+   * Redirect stdout to stderr (fd duplication: 1>&2).
+   */
+  stdoutToStderr(): Command {
+    const next = new Command(this.cmd, this.args, {
+      ...this.options,
+      stdoutToStderr: true,
+    });
+    next.upstream = this.upstream;
+    return next;
   }
 
   /**

@@ -11,14 +11,17 @@
  * instead of $.tee(...)
  */
 
-import { assertStringIncludes, assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parse } from "../../src/bash/parser.ts";
 import { transpile } from "../../src/bash/transpiler2/mod.ts";
+import { executeCode } from "../../src/runtime/executor.ts";
+import type { SafeShellConfig } from "../../src/core/types.ts";
+import { REAL_TMP } from "../helpers.ts";
 
 function transpileBash(bash: string): string {
   const ast = parse(bash);
-  return transpile(ast);
+  return transpile(ast, { imports: false, strict: false });
 }
 
 describe("Bug: tee Command Transpilation", () => {
@@ -79,5 +82,44 @@ describe("Bug: tee Command Transpilation", () => {
 
     // Should NOT use $.tee() transform which expects a function
     assertEquals(code.includes(".pipe($.tee("), false);
+  });
+
+  it("should handle tee stdout duplication to stderr", async () => {
+    const testDir = await Deno.makeTempDir({ dir: REAL_TMP });
+    const sourceFile = `${testDir}/WorkflowState.java`;
+    const teeFile = `${testDir}/ws.txt`;
+    const config: SafeShellConfig = {
+      permissions: {
+        read: [Deno.cwd(), testDir, "/tmp"],
+        write: [testDir, "/tmp"],
+      },
+      timeout: 5000,
+    };
+
+    try {
+      await Deno.writeTextFile(
+        sourceFile,
+        "class WorkflowState {\n  metadata = true;\n  pendingInput = false;\n}\n",
+      );
+
+      const code = transpileBash(
+        `grep -n "metadata\\|pendingInput" ${sourceFile} | tee ${teeFile} 1>&2 ; ls -l ${teeFile}`,
+      );
+
+      assertStringIncludes(code, ".stdoutToStderr()");
+      assertEquals(code.includes(".stderr(2)"), false);
+
+      const result = await executeCode(code, config, { cwd: Deno.cwd() });
+      const teeContent = await Deno.readTextFile(teeFile);
+
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertStringIncludes(teeContent, "2:  metadata = true;");
+      assertStringIncludes(teeContent, "3:  pendingInput = false;");
+      assertStringIncludes(result.stderr, "2:  metadata = true;");
+      assertStringIncludes(result.stderr, "3:  pendingInput = false;");
+      assertStringIncludes(result.stdout, "ws.txt");
+    } finally {
+      await Deno.remove(testDir, { recursive: true });
+    }
   });
 });

@@ -400,10 +400,11 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "grep -v -n pattern file.txt";
       const output = transpile(parse(script));
 
-      // Should use .lines().filter() with line number mapping
+      // Should preserve original file line numbers before filtering.
       assertStringIncludes(output, '$.cat("file.txt")');
-      assertStringIncludes(output, ".lines().filter(line => !/pattern/.test(line))");
-      assertStringIncludes(output, ".map(");
+      assertStringIncludes(output, ".lines().map((line, i) => ({ line, number: i + 1 }))");
+      assertStringIncludes(output, ".filter(({ line }) => !/pattern/.test(line))");
+      assertStringIncludes(output, ".map(({ line, number }) => `${number}:${line}`)");
     });
   });
 
