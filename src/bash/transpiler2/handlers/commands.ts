@@ -965,10 +965,23 @@ export function visitCommand(
 ): StatementResult {
   const result = buildCommand(command, ctx);
   const indent = ctx.getIndent();
+  const captureVar = ctx.getStdoutCapture();
 
   // Wrap command execution with __printCmd to print output
   // This only applies to standalone commands (statements), not commands in pipelines/expressions
   // Don't wrap user-defined functions as they don't return CommandResult
+  if (captureVar && result.async && !result.isUserFunction) {
+    const resultVar = ctx.getTempVar("__cmd");
+    const stdoutVar = ctx.getTempVar("__stdout");
+    return {
+      lines: [
+        `${indent}const ${resultVar} = await ${result.code};`,
+        `${indent}const ${stdoutVar} = ${resultVar}.output ?? ${resultVar}.stdout;`,
+        `${indent}if (${stdoutVar}) ${captureVar}.push(...String(${stdoutVar}).split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1));`,
+        `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
+      ],
+    };
+  }
   if (result.async && !result.isUserFunction) {
     return { lines: [`${indent}await __printCmd(${result.code});`] };
   } else if (result.async) {
@@ -1000,6 +1013,14 @@ interface ReadLoopConsumer {
   loop: AST.WhileStatement;
   variables: string[];
   ifs: string;
+}
+
+function isStderrDiscardRedirect(redirect: AST.Redirection): boolean {
+  if (redirect.fd !== 2) return false;
+  if (redirect.operator !== ">" && redirect.operator !== ">>" && redirect.operator !== ">|") {
+    return false;
+  }
+  return typeof redirect.target !== "number" && getStaticWordValue(redirect.target) === "/dev/null";
 }
 
 function getStaticWordValue(
@@ -1034,7 +1055,9 @@ function getReadLoopTestCommand(
 
 function extractReadLoopConsumer(stmt: AST.Statement): ReadLoopConsumer | null {
   if (stmt.type !== "WhileStatement") return null;
-  if ((stmt.redirects?.length ?? 0) > 0) return null;
+  if ((stmt.redirects?.length ?? 0) > 0 && !stmt.redirects?.every(isStderrDiscardRedirect)) {
+    return null;
+  }
 
   const testCmd = getReadLoopTestCommand(stmt.test);
   if (!testCmd) return null;
