@@ -712,7 +712,7 @@ describe("Transpiler2 - Pipelines", () => {
       /const\s+\w+\s+=\s+for\s+await/,
       /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/,
       /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/,
-      /\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.stdout\(\)/,
+      /\.pipe\(\$\.(?:grep|head|tail|sort|uniq|wc|filter|map|flatMap|take|tee)\((?:(?!\breturn\b)[^\n`]){0,500}\)\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.stdout\(\)/,
       /\.lines\(\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.lines\(\)/,
     ];
 
@@ -728,6 +728,8 @@ describe("Transpiler2 - Pipelines", () => {
       'curl -sk --max-time 3 https://example.com 2>&1| head -5; echo "---"; curl -sk --max-time 3 http://localhost:8080 2>&1 | head -3',
       // SSH-571: docker exec with multiple args, 2>&1 | head, semicolon-separated
       'docker exec workflow-engine-traefik wget -q -O- --timeout=3 http://localhost:80 2>&1 | head -5; echo "---"; docker exec workflow-engine-mailpit wget -q -O- --timeout=3 http://mailpit:8025 2>&1 | head -5',
+      // SSH-34: command-to-command pipes remain Command objects before .stdout()
+      'tmux capture-pane -t 0:5.3 -p -S - 2>&1 | grep -A 20 "91e9f273" | grep -A 15 "Unexpected error" | head -30',
     ];
 
     for (const cmd of validCommands) {
