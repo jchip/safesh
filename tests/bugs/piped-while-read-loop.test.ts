@@ -60,3 +60,15 @@ Deno.test("piped while read loop in middle with multi-stage downstream", async (
   assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
   assertEquals(result.stdout.trim(), "2 b");
 });
+
+Deno.test("piped while read loop with stderr redirect captures command stdout for downstream", async () => {
+  const code = transpileForExecution(`printf "a
+b
+c
+" | while read line; do /bin/echo "$line"; done 2>/dev/null | head -2`);
+
+  const result = await executeCode(code, EXEC_CONFIG, { cwd: Deno.cwd() });
+
+  assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+  assertEquals(result.stdout.trim().split("\n"), ["a", "b"]);
+});
