@@ -18,6 +18,12 @@ import { cmd, Command, type CommandOptions, type CommandResult, type CommandFn, 
  */
 type Transform<T, U> = (stream: AsyncIterable<T>) => AsyncIterable<U>;
 
+async function writeCommandStderr(result: CommandResult): Promise<void> {
+  if (result.stderr) {
+    await Deno.stderr.write(new TextEncoder().encode(result.stderr));
+  }
+}
+
 /**
  * Helper to collect stream, pipe to command, and return result
  *
@@ -104,6 +110,7 @@ export function toCmd(
 ): Transform<string, string> {
   return async function* (stream: AsyncIterable<string>) {
     const result = await execStreamToCmd(stream, commandFnOrCmd, args, options, "toCmd");
+    await writeCommandStderr(result);
 
     // Yield stdout
     yield result.stdout;
@@ -140,6 +147,7 @@ export function toCmdLines(
 ): Transform<string, string> {
   return async function* (stream: AsyncIterable<string>) {
     const result = await execStreamToCmd(stream, commandFnOrCmd, args, options, "toCmdLines");
+    await writeCommandStderr(result);
 
     // Yield each line from stdout
     const outputLines = result.stdout.split("\n");

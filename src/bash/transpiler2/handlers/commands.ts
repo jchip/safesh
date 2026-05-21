@@ -846,16 +846,21 @@ function buildFluentCommand(
       if (files.length > 0) {
         // grep pattern file -> $.cat(file).grep(pattern) - this is a stream chain
         const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+        if (lineNumber) {
+          const predicate = invert ? `!${regexPattern}.test(line)` : `${regexPattern}.test(line)`;
+          const result = `$.cat(${file}).lines().map((line, i) => ({ line, number: i + 1 }))` +
+            `.filter(({ line }) => ${predicate})` +
+            ".map(({ line, number }) => `${number}:${line}`)";
+          return { code: result, isTransform: false, isStream: true };
+        }
         if (invert) {
           // SSH-503: grep -v with file - skip .grep() since it filters FOR the pattern,
           // then .filter(x => !x.match) on the result would produce nothing.
           // Instead, read lines and filter out matches directly.
-          let result = `$.cat(${file}).lines().filter(line => !${regexPattern}.test(line))`;
-          if (lineNumber) result += ".map((line, i) => `${i + 1}:${line}`)";
+          const result = `$.cat(${file}).lines().filter(line => !${regexPattern}.test(line))`;
           return { code: result, isTransform: false, isStream: true };
         }
-        let result = `$.cat(${file}).grep(${regexPattern})`;
-        if (lineNumber) result += ".map(m => `${m.line}:${m.content}`)";
+        const result = `$.cat(${file}).grep(${regexPattern})`;
         return { code: result, isTransform: false, isStream: true };
       }
 
@@ -942,6 +947,10 @@ export function applyRedirection(
       // SSH-299: Here-document with tab stripping
       return `${cmdExpr}.stdin(${target}, { stripTabs: true })`;
     case ">&":
+      if ((redirect.fd ?? 1) === 1 && redirect.target === 2) {
+        return `${cmdExpr}.stdoutToStderr()`;
+      }
+      return `${cmdExpr}.stderr(${target})`;
     case "<&":
       return `${cmdExpr}.stderr(${target})`;
     case "&>":
