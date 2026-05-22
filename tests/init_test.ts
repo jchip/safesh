@@ -7,7 +7,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { initCmds } from "../src/stdlib/command.ts";
+import { CMD_NAME_SYMBOL, initCmds } from "../src/stdlib/command.ts";
 
 // ============================================================================
 // Basic Registration Tests (No $.config - file execution mode)
@@ -37,4 +37,34 @@ Deno.test("initCmds - basic command names work", async () => {
 
   assertEquals(typeof git, "function");
   assertEquals(typeof deno, "function");
+});
+
+Deno.test("initCmds - session allows exact relative path command", async () => {
+  const globalWithDollar = globalThis as typeof globalThis & {
+    $?: Record<symbol, unknown>;
+  };
+  const originalDollar = globalWithDollar.$;
+
+  globalWithDollar.$ = {
+    [Symbol.for("safesh.config")]: {
+      allowedCommands: [],
+      sessionAllowedCommands: ["./node_modules/.bin/mocha"],
+      cwd: "/tmp/original",
+      projectDir: "/tmp/project",
+      allowProjectCommands: false,
+    },
+  };
+
+  try {
+    const [mocha] = await initCmds(["./node_modules/.bin/mocha"]);
+
+    assertEquals(typeof mocha, "function");
+    assertEquals(mocha![CMD_NAME_SYMBOL], "./node_modules/.bin/mocha");
+  } finally {
+    if (originalDollar === undefined) {
+      delete globalWithDollar.$;
+    } else {
+      globalWithDollar.$ = originalDollar;
+    }
+  }
 });

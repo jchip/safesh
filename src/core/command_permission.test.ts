@@ -292,6 +292,34 @@ Deno.test("checkCommandPermission - session commands work with path-based comman
   }
 });
 
+Deno.test("checkCommandPermission - session allows exact relative path command", async () => {
+  const tmpDir = await Deno.makeTempDir();
+  const projectDir = `${tmpDir}/project`;
+  const packageDir = `${projectDir}/packages/fyn`;
+  const command = "./node_modules/.bin/mocha";
+  const sessionCmds = new Set([command]);
+
+  try {
+    await Deno.mkdir(`${packageDir}/node_modules/.bin`, { recursive: true });
+    await Deno.writeTextFile(`${packageDir}/node_modules/.bin/mocha`, "#!/bin/sh\n");
+
+    const config = makeConfig({
+      projectDir,
+      allowProjectCommands: false,
+      permissions: { run: [] },
+    });
+
+    const result = await checkCommandPermission(command, config, projectDir, sessionCmds);
+
+    assertEquals(result.allowed, true);
+    if (result.allowed) {
+      assertEquals(result.resolvedPath, command);
+    }
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+  }
+});
+
 Deno.test("checkMultipleCommands - session commands passed through", async () => {
   const config = makeConfig({ permissions: { run: ["git"] } });
   const sessionCmds = new Set(["cargo"]);

@@ -142,6 +142,57 @@ describe("SSH-378 session-allow regression", { sanitizeResources: false, sanitiz
     }
   });
 
+  it("bash-prehook honors session-allowed relative command after cd", async () => {
+    const hookProjectDir = `${testDir}/hook-relative-project`;
+    const packageDir = `${hookProjectDir}/packages/fyn`;
+    await Deno.mkdir(`${packageDir}/node_modules/.bin`, { recursive: true });
+    await Deno.mkdir(`${hookProjectDir}/.git`, { recursive: true });
+    await Deno.writeTextFile(`${packageDir}/node_modules/.bin/mocha`, "#!/bin/sh\n");
+    await addSessionCommands(["./node_modules/.bin/mocha"], hookProjectDir);
+
+    const command = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-read",
+        "--allow-write",
+        "--allow-env",
+        "--allow-run",
+        "hooks/bash-prehook.ts",
+      ],
+      cwd: Deno.cwd(),
+      env: {
+        BASH_PREHOOK_CWD: hookProjectDir,
+        CLAUDE_SESSION_ID: "regression-test-session",
+      },
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    });
+
+    const child = command.spawn();
+    const writer = child.stdin.getWriter();
+    await writer.write(
+      new TextEncoder().encode(
+        JSON.stringify({
+          hookEventName: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: `cd ${packageDir} && ./node_modules/.bin/mocha --version`,
+          },
+        }),
+      ),
+    );
+    await writer.close();
+
+    const output = await child.output();
+    const stdout = new TextDecoder().decode(output.stdout);
+    const stderr = new TextDecoder().decode(output.stderr);
+
+    assertEquals(output.code, 0, `stdout=${stdout} stderr=${stderr}`);
+    assert(!stdout.includes("[SAFESH] BLOCKED"), `should not block: ${stdout}`);
+    assert(stdout.includes('permissionDecision":"allow'), `should allow/rewrite: ${stdout}`);
+  });
+
   it("choice 3 command allow is visible from canonical repo and worktree roots", async () => {
     const repoDir = `${testDir}/canonical-repo`;
     const worktreeDir = `${repoDir}/.worktrees/EXP-188`;

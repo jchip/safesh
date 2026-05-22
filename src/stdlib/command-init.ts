@@ -128,7 +128,12 @@ async function checkPermission(
     return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command };
   }
 
-  // Has `/` - check basename first
+  // Has `/` - honor exact relative/absolute entries before resolving.
+  if (isInAllowedList(command, allowedCommands)) {
+    return { allowed: true, resolvedPath: command };
+  }
+
+  // Check basename next
   const cmdBasename = getBasename(command);
   if (isInAllowedList(cmdBasename, allowedCommands)) {
     const resolvedPath = command.startsWith("/")

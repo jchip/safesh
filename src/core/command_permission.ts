@@ -103,6 +103,7 @@ export function isCommandAllowed(
  * Is command basic name only (no `/`)?
  * ├─ Yes → allowed_check(basename)
  * └─ No (has `/`)
+ *    ├─ command in allowed? → Yes → ALLOWED
  *    ├─ basename in allowed? → Yes → ALLOWED
  *    └─ No
  *       ├─ Full path (starts with `/`)? → Yes → allowed_check(verbatim)
@@ -150,6 +151,10 @@ export async function checkCommandPermission(
   }
 
   // No (has `/`)
+  if (isCommandAllowed(command, allowedCommands)) {
+    return { allowed: true, resolvedPath: command };
+  }
+
   const cmdBasename = basename(command);
 
   // basename in allowed? → Yes → ALLOWED
