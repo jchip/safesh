@@ -2351,6 +2351,79 @@ function flattenAndChain(
   }
 }
 
+function isControlStatement(
+  stmt: AST.Statement | undefined,
+): stmt is AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement {
+  return stmt?.type === "BreakStatement" ||
+    stmt?.type === "ContinueStatement" ||
+    stmt?.type === "ReturnStatement";
+}
+
+function buildPrintableStatusLines(
+  result: ExpressionResult & { isStream?: boolean; isPrintable?: boolean },
+  statusVar: string,
+  indent: string,
+): string[] {
+  if (result.isStream || result.isPrintable) {
+    const expr = result.isStream && result.async ? `await ${result.code}` : result.code;
+    return [`${indent}const ${statusVar} = await __printCmd(${expr});`];
+  }
+
+  if (result.async) {
+    const leftVar = `${statusVar}Result`;
+    return [
+      `${indent}const ${leftVar} = await ${result.code};`,
+      `${indent}if (${leftVar}?.stderr) await Deno.stderr.write(new TextEncoder().encode(${leftVar}.stderr + (${leftVar}.stderr.endsWith("\\n") ? "" : "\\n")));`,
+      `${indent}const ${statusVar} = typeof ${leftVar} === "number" ? ${leftVar} : (${leftVar}?.code ?? 0);`,
+    ];
+  }
+
+  const leftVar = `${statusVar}Result`;
+  return [
+    `${indent}const ${leftVar} = ${result.code};`,
+    `${indent}if (${leftVar}?.stderr) await Deno.stderr.write(new TextEncoder().encode(${leftVar}.stderr + (${leftVar}.stderr.endsWith("\\n") ? "" : "\\n")));`,
+    `${indent}const ${statusVar} = typeof ${leftVar} === "number" ? ${leftVar} : (${leftVar}?.code ?? 0);`,
+  ];
+}
+
+function visitLogicalControlPipeline(
+  pipeline: AST.Pipeline,
+  ctx: VisitorContext,
+): StatementResult | null {
+  if (
+    pipeline.background ||
+    (pipeline.operator !== "&&" && pipeline.operator !== "||") ||
+    pipeline.commands.length < 2
+  ) {
+    return null;
+  }
+
+  const control = pipeline.commands[pipeline.commands.length - 1];
+  if (!isControlStatement(control)) return null;
+
+  const leftPipeline: AST.Pipeline = {
+    type: "Pipeline",
+    commands: pipeline.commands.slice(0, -1),
+    operator: pipeline.operator,
+    background: false,
+    negated: pipeline.negated,
+  };
+  const left = buildPipeline(leftPipeline, ctx);
+  const indent = ctx.getIndent();
+  const statusVar = ctx.getTempVar("__code");
+  const lines = buildPrintableStatusLines(left, statusVar, indent);
+  const condition = pipeline.operator === "&&" ? `${statusVar} === 0` : `${statusVar} !== 0`;
+
+  lines.push(`${indent}if (${condition}) {`);
+  ctx.indent();
+  const controlResult = ctx.visitStatement(control);
+  lines.push(...controlResult.lines);
+  ctx.dedent();
+  lines.push(`${indent}}`);
+
+  return { lines };
+}
+
 /**
  * Visit a pipeline statement
  */
@@ -2370,6 +2443,9 @@ export function visitPipeline(
     }
     return ctx.visitStatement(cmd);
   }
+
+  const logicalControl = visitLogicalControlPipeline(pipeline, ctx);
+  if (logicalControl) return logicalControl;
 
   // SSH-472: For && chains, we need to preserve variable scope.
   // First, check if this chain has any variable assignments that need hoisting.
