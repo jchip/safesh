@@ -43,6 +43,17 @@ Deno.test("SSH-47: DEFAULT_CONFIG allows rg like grep", async () => {
   }
 });
 
+Deno.test("SSH-51: DEFAULT_CONFIG allows fd like find", async () => {
+  const findResult = await checkCommandPermission("find", DEFAULT_CONFIG, Deno.cwd());
+  const fdResult = await checkCommandPermission("fd", DEFAULT_CONFIG, Deno.cwd());
+
+  assertEquals(findResult.allowed, true);
+  assertEquals(fdResult.allowed, true);
+  if (fdResult.allowed) {
+    assertEquals(fdResult.resolvedPath, "fd");
+  }
+});
+
 Deno.test("DEFAULT_CONFIG - passes validation with no errors", () => {
   const result = validateConfig(DEFAULT_CONFIG);
   assertEquals(result.errors.length, 0);
