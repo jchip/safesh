@@ -85,6 +85,46 @@ export function escapeForQuotes(str: string): string {
 }
 
 /**
+ * Reverse escapeForTemplate() for literal values that will be emitted into a
+ * non-template string context.
+ */
+export function templateEscapedToLiteral(templateEscaped: string): string {
+  let result = "";
+
+  for (let i = 0; i < templateEscaped.length;) {
+    if (templateEscaped[i] !== "\\") {
+      result += templateEscaped[i];
+      i++;
+      continue;
+    }
+
+    const start = i;
+    while (templateEscaped[i] === "\\") i++;
+    const slashCount = i - start;
+    const next = templateEscaped[i];
+    const nextAfter = templateEscaped[i + 1];
+
+    if (next === "$" && nextAfter === "{" && slashCount >= 2 && slashCount % 2 === 0) {
+      result += "\\".repeat((slashCount - 2) / 2) + "${";
+      i += 2;
+      continue;
+    }
+
+    result += "\\".repeat(Math.floor(slashCount / 2));
+    if (slashCount % 2 === 1) {
+      if (next === "$" || next === "`") {
+        result += next;
+        i++;
+      } else {
+        result += "\\";
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Escape a string for safe inclusion in single-quoted strings.
  * Used when generating string literals.
  */

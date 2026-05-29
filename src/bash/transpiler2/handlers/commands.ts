@@ -16,6 +16,7 @@ import {
   escapeRegex,
   parseCountArg,
   sanitizeVarName,
+  templateEscapedToLiteral,
   templateEscapedToRegexSource,
 } from "../utils/mod.ts";
 import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
@@ -31,14 +32,17 @@ import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
  * @param hasExpansion - Explicit flag: true for template literal, false for double-quoted.
  *   When omitted, detects unescaped `${` via regex. Explicit flag avoids false positives
  *   from escaped `\${` that still contains the `${` substring (SSH-532).
+ * @param templateEscapedLiteral - Whether arg came from escapeForTemplate() and needs to
+ *   be restored before escaping for a double-quoted string.
  */
-function formatArg(arg: string, hasExpansion?: boolean): string {
+function formatArg(arg: string, hasExpansion?: boolean, templateEscapedLiteral = false): string {
   // SSH-532: Use explicit AST metadata when available; otherwise detect unescaped ${
   const isTemplate = hasExpansion ?? /(?<!\\)\$\{/.test(arg);
   if (isTemplate) {
     return `\`${arg}\``;
   }
-  return `"${escapeForQuotes(arg)}"`;
+  const literal = templateEscapedLiteral ? templateEscapedToLiteral(arg) : arg;
+  return `"${escapeForQuotes(literal)}"`;
 }
 
 /**
@@ -72,6 +76,13 @@ function wordHasExpansion(
   return false;
 }
 
+function wordIsTemplateEscapedLiteral(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+): boolean {
+  return word.type === "Word" && !word.singleQuoted &&
+    (word.parts.length === 0 || word.parts.every((part) => part.type === "LiteralPart"));
+}
+
 function formatRedirectionTarget(redirect: AST.Redirection, ctx: VisitorContext): string {
   if (typeof redirect.target === "number") {
     return redirect.target.toString();
@@ -84,6 +95,7 @@ function formatRedirectionTarget(redirect: AST.Redirection, ctx: VisitorContext)
   return formatArg(
     ctx.visitWord(redirect.target),
     wordHasExpansion(redirect.target),
+    wordIsTemplateEscapedLiteral(redirect.target),
   );
 }
 
@@ -146,7 +158,11 @@ function handleShellBuiltin(
   }
 }
 
-function handleTmuxSendKeys(args: string[], argExpansions?: boolean[]): string | null {
+function handleTmuxSendKeys(
+  args: string[],
+  argExpansions?: boolean[],
+  argTemplateEscapedLiterals?: boolean[],
+): string | null {
   // Check for pattern: tmux send-keys -t <target> [-c <client>] <text> C-m
   if (args.length > 0 && args[0] === "send-keys" && args[args.length - 1] === "C-m") {
     let target: string | null = null;
@@ -159,13 +175,13 @@ function handleTmuxSendKeys(args: string[], argExpansions?: boolean[]): string |
       const nextArg = args[i + 1];
 
       if (arg === "-t" && nextArg) {
-        target = formatArg(nextArg, argExpansions?.[i + 1]);
+        target = formatArg(nextArg, argExpansions?.[i + 1], argTemplateEscapedLiterals?.[i + 1]);
         i++; // skip next arg
       } else if (arg === "-c" && nextArg) {
-        client = formatArg(nextArg, argExpansions?.[i + 1]);
+        client = formatArg(nextArg, argExpansions?.[i + 1], argTemplateEscapedLiterals?.[i + 1]);
         i++; // skip next arg
       } else if (arg) {
-        textArgs.push(formatArg(arg, argExpansions?.[i]));
+        textArgs.push(formatArg(arg, argExpansions?.[i], argTemplateEscapedLiterals?.[i]));
       }
     }
 
@@ -189,6 +205,8 @@ function handleTmuxSendKeys(args: string[], argExpansions?: boolean[]): string |
 function handleTimeoutCommand(
   args: string[],
   ctx: VisitorContext,
+  argExpansions?: boolean[],
+  argTemplateEscapedLiterals?: boolean[],
 ): { code: string; async: boolean } | null {
   if (args.length < 2) return null;
 
@@ -226,10 +244,15 @@ function handleTimeoutCommand(
   const cmdArgs = args.slice(2);
 
   // Build the command with timeout option
-  const argsArray = cmdArgs.length > 0 ? cmdArgs.map((a) => formatArg(a)).join(", ") : "";
-  const code = `$.cmd({ timeout: ${timeoutMs} }, ${formatArg(cmdName)}${
-    argsArray ? `, ${argsArray}` : ""
-  })`;
+  const argsArray = cmdArgs.length > 0
+    ? cmdArgs.map((a, i) =>
+      formatArg(a, argExpansions?.[i + 2], argTemplateEscapedLiterals?.[i + 2])
+    )
+      .join(", ")
+    : "";
+  const code = `$.cmd({ timeout: ${timeoutMs} }, ${
+    formatArg(cmdName, argExpansions?.[1], argTemplateEscapedLiterals?.[1])
+  }${argsArray ? `, ${argsArray}` : ""})`;
 
   return { code, async: true };
 }
@@ -239,15 +262,17 @@ function handleSpecializedCommand(
   args: string[],
   hasMergeStreams: boolean,
   argExpansions?: boolean[],
+  argTemplateEscapedLiterals?: boolean[],
 ): string {
   // Special handling for tmux send-keys
   if (name === "tmux") {
-    const tmuxResult = handleTmuxSendKeys(args, argExpansions);
+    const tmuxResult = handleTmuxSendKeys(args, argExpansions, argTemplateEscapedLiterals);
     if (tmuxResult) return tmuxResult;
   }
 
   const argsArray = args.length > 0
-    ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
+    ? args.map((a, i) => formatArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i]))
+      .join(", ")
     : "";
   if (hasMergeStreams) {
     return `$.${name}({ mergeStreams: true }${argsArray ? `, ${argsArray}` : ""})`;
@@ -264,9 +289,11 @@ function handleStandardCommand(
   ctx: VisitorContext,
   nameHasExpansion?: boolean,
   argExpansions?: boolean[],
+  nameTemplateEscapedLiteral?: boolean,
+  argTemplateEscapedLiterals?: boolean[],
 ): string {
   // SSH-484: Use formatArg for command name to support variable expansion
-  const formattedName = formatArg(name, nameHasExpansion);
+  const formattedName = formatArg(name, nameHasExpansion, nameTemplateEscapedLiteral);
 
   if (hasAssignments) {
     const envEntries = assignments
@@ -276,14 +303,17 @@ function handleStandardCommand(
         return `${a.name}: "${escapedValue}"`;
       })
       .join(", ");
-    const argsArray = args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ");
+    const argsArray = args
+      .map((a, i) => formatArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i]))
+      .join(", ");
     return `$.cmd({ env: { ${envEntries} } }, ${formattedName}${
       argsArray ? `, ${argsArray}` : ""
     })`;
   }
 
   const argsArray = args.length > 0
-    ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
+    ? args.map((a, i) => formatArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i]))
+      .join(", ")
     : "";
   if (hasMergeStreams) {
     return `$.cmd({ mergeStreams: true }, ${formattedName}${argsArray ? `, ${argsArray}` : ""})`;
@@ -310,6 +340,8 @@ interface CommandAnalysis {
   nameHasExpansion: boolean;
   /** SSH-532: Per-arg flags indicating real expansions */
   argExpansions: boolean[];
+  nameTemplateEscapedLiteral: boolean;
+  argTemplateEscapedLiterals: boolean[];
 }
 
 /**
@@ -326,14 +358,28 @@ type CommandStrategy =
     builtin: BuiltinConfig;
     argExpansions: boolean[];
   }
-  | { type: "timeout"; args: string[] }
-  | { type: "fluent"; name: string; args: string[] }
+  | {
+    type: "timeout";
+    args: string[];
+    argExpansions: boolean[];
+    argTemplateEscapedLiterals: boolean[];
+  }
+  | {
+    type: "fluent";
+    name: string;
+    args: string[];
+    nameHasExpansion: boolean;
+    argExpansions: boolean[];
+    nameTemplateEscapedLiteral: boolean;
+    argTemplateEscapedLiterals: boolean[];
+  }
   | {
     type: "specialized";
     name: string;
     args: string[];
     hasMergeStreams: boolean;
     argExpansions: boolean[];
+    argTemplateEscapedLiterals: boolean[];
   }
   | {
     type: "standard";
@@ -344,6 +390,8 @@ type CommandStrategy =
     hasMergeStreams: boolean;
     nameHasExpansion: boolean;
     argExpansions: boolean[];
+    nameTemplateEscapedLiteral: boolean;
+    argTemplateEscapedLiterals: boolean[];
   };
 
 const SET_OPTION_NAMES = new Set([
@@ -444,6 +492,8 @@ function analyzeCommand(
   // SSH-532: Compute expansion metadata from AST, not string heuristics
   const nameHasExpansion = wordHasExpansion(command.name);
   const argExpansions = command.args.map((arg) => wordHasExpansion(arg));
+  const nameTemplateEscapedLiteral = wordIsTemplateEscapedLiteral(command.name);
+  const argTemplateEscapedLiterals = command.args.map((arg) => wordIsTemplateEscapedLiteral(arg));
   const hasDynamicArgs = argExpansions.some(Boolean);
 
   return {
@@ -456,6 +506,8 @@ function analyzeCommand(
     isVariableAssignmentOnly,
     nameHasExpansion,
     argExpansions,
+    nameTemplateEscapedLiteral,
+    argTemplateEscapedLiterals,
   };
 }
 
@@ -503,7 +555,12 @@ function selectCommandStrategy(
 
   // Timeout command
   if (analysis.name === "timeout") {
-    return { type: "timeout", args: analysis.args };
+    return {
+      type: "timeout",
+      args: analysis.args,
+      argExpansions: analysis.argExpansions,
+      argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
+    };
   }
 
   // Fluent command (with constraint checking)
@@ -514,7 +571,15 @@ function selectCommandStrategy(
     isFluentCommand(analysis.name) && !analysis.hasDynamicArgs && !analysis.hasAssignments &&
     !analysis.hasRedirects && !catRequiresStandardCommand
   ) {
-    return { type: "fluent", name: analysis.name, args: analysis.args };
+    return {
+      type: "fluent",
+      name: analysis.name,
+      args: analysis.args,
+      nameHasExpansion: analysis.nameHasExpansion,
+      argExpansions: analysis.argExpansions,
+      nameTemplateEscapedLiteral: analysis.nameTemplateEscapedLiteral,
+      argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
+    };
   }
 
   // Specialized command
@@ -525,6 +590,7 @@ function selectCommandStrategy(
       args: analysis.args,
       hasMergeStreams: analysis.hasMergeStreams,
       argExpansions: analysis.argExpansions,
+      argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
     };
   }
 
@@ -538,6 +604,8 @@ function selectCommandStrategy(
     hasMergeStreams: analysis.hasMergeStreams,
     nameHasExpansion: analysis.nameHasExpansion,
     argExpansions: analysis.argExpansions,
+    nameTemplateEscapedLiteral: analysis.nameTemplateEscapedLiteral,
+    argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
   };
 }
 
@@ -570,7 +638,9 @@ function executeCommandStrategy(
       if (strategy.builtin.type === "prints") {
         const captureVar = ctx.getStdoutCapture();
         if (captureVar) {
-          const formattedArgs = strategy.args.map((a, i) => formatArg(a, strategy.argExpansions?.[i]));
+          const formattedArgs = strategy.args.map((a, i) =>
+            formatArg(a, strategy.argExpansions?.[i])
+          );
           const captured = formattedArgs.length === 0
             ? '""'
             : formattedArgs.length === 1
@@ -589,7 +659,12 @@ function executeCommandStrategy(
     }
 
     case "timeout": {
-      const timeoutResult = handleTimeoutCommand(strategy.args, ctx);
+      const timeoutResult = handleTimeoutCommand(
+        strategy.args,
+        ctx,
+        strategy.argExpansions,
+        strategy.argTemplateEscapedLiterals,
+      );
       if (timeoutResult) {
         return { code: timeoutResult.code, async: timeoutResult.async };
       }
@@ -597,7 +672,18 @@ function executeCommandStrategy(
       // Extract command name and args from timeout args
       const cmdName = strategy.args[1] ?? "";
       const cmdArgs = strategy.args.slice(2);
-      const cmdExpr = handleStandardCommand(cmdName, cmdArgs, false, [], false, ctx);
+      const cmdExpr = handleStandardCommand(
+        cmdName,
+        cmdArgs,
+        false,
+        [],
+        false,
+        ctx,
+        strategy.argExpansions[1],
+        strategy.argExpansions.slice(2),
+        strategy.argTemplateEscapedLiterals[1],
+        strategy.argTemplateEscapedLiterals.slice(2),
+      );
       return { code: cmdExpr, async: true };
     }
 
@@ -613,7 +699,18 @@ function executeCommandStrategy(
         };
       }
       // Fallback to standard if fluent returns null
-      const cmdExpr = handleStandardCommand(strategy.name, strategy.args, false, [], false, ctx);
+      const cmdExpr = handleStandardCommand(
+        strategy.name,
+        strategy.args,
+        false,
+        [],
+        false,
+        ctx,
+        strategy.nameHasExpansion,
+        strategy.argExpansions,
+        strategy.nameTemplateEscapedLiteral,
+        strategy.argTemplateEscapedLiterals,
+      );
       return { code: cmdExpr, async: true };
     }
 
@@ -623,6 +720,7 @@ function executeCommandStrategy(
         strategy.args,
         strategy.hasMergeStreams,
         strategy.argExpansions,
+        strategy.argTemplateEscapedLiterals,
       );
       return { code: cmdExpr, async: true };
     }
@@ -637,6 +735,8 @@ function executeCommandStrategy(
         ctx,
         strategy.nameHasExpansion,
         strategy.argExpansions,
+        strategy.nameTemplateEscapedLiteral,
+        strategy.argTemplateEscapedLiterals,
       );
       return { code: cmdExpr, async: true };
     }
