@@ -122,7 +122,7 @@ function handleShellBuiltin(
   args: string[],
   builtin: { fn: string; type: string },
   argExpansions?: boolean[],
-): { code: string; async: boolean } {
+): ExpressionResult & { isSilentShellBuiltin?: boolean } {
   const argsArray = args.length > 0
     ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
     : "";
@@ -150,10 +150,11 @@ function handleShellBuiltin(
       async: true,
     };
   } else {
-    // Silent builtins (cd, pushd, popd) - just execute
+    // Silent builtins (cd, pushd, popd) suppress stdout but may return stderr.
     return {
       code: `${builtin.fn}(${argsArray})`,
       async: false,
+      isSilentShellBuiltin: true,
     };
   }
 }
@@ -394,6 +395,13 @@ type CommandStrategy =
     argTemplateEscapedLiterals: boolean[];
   };
 
+type CommandExpressionResult = ExpressionResult & {
+  isUserFunction?: boolean;
+  isTransform?: boolean;
+  isStream?: boolean;
+  isSilentShellBuiltin?: boolean;
+};
+
 const SET_OPTION_NAMES = new Set([
   "allexport",
   "braceexpand",
@@ -616,7 +624,7 @@ function selectCommandStrategy(
 function executeCommandStrategy(
   strategy: CommandStrategy,
   ctx: VisitorContext,
-): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean; isStream?: boolean } {
+): CommandExpressionResult {
   switch (strategy.type) {
     case "variable-assignment": {
       const assignments = strategy.assignments
@@ -655,7 +663,7 @@ function executeCommandStrategy(
         strategy.builtin,
         strategy.argExpansions,
       );
-      return { code: result.code, async: result.async };
+      return result;
     }
 
     case "timeout": {
@@ -777,7 +785,7 @@ export function buildCommand(
   command: AST.Command,
   ctx: VisitorContext,
   options?: { inPipeline?: boolean },
-): ExpressionResult & { isUserFunction?: boolean; isTransform?: boolean; isStream?: boolean } {
+): CommandExpressionResult {
   // Phase 1: Analyze command
   const analysis = analyzeCommand(command, ctx);
 
@@ -1127,6 +1135,15 @@ export function visitCommand(
     const streamExpr = result.async ? `await ${result.code}` : result.code;
     return {
       lines: [`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`],
+    };
+  }
+  if (result.isSilentShellBuiltin) {
+    const resultVar = ctx.getTempVar("__cmd");
+    return {
+      lines: [
+        `${indent}const ${resultVar} = ${result.code};`,
+        `${indent}if (${resultVar}?.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr + (${resultVar}.stderr.endsWith("\\n") ? "" : "\\n")));`,
+      ],
     };
   }
   if (result.async && !result.isUserFunction) {
