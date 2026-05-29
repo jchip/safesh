@@ -1875,8 +1875,11 @@ class PipelineAssembler {
         ? `const __code = await __printCmd(${leftValue});`
         : `const __left: any = ${leftValue}; if (__left?.stderr) await Deno.stderr.write(new TextEncoder().encode(__left.stderr + (__left.stderr.endsWith("\\n") ? "" : "\\n"))); const __code = typeof __left === "number" ? __left : (__left?.code ?? 0);`;
 
+      const shortCircuitResult = part.isStreamProducer
+        ? `__setPipeStatus(undefined, __code); return $.empty();`
+        : `return { code: __code, stdout: '', stderr: '', success: false };`;
       this.code =
-        `(async () => { ${leftSetup} if (__code === 0) { ${rightExpr}; } return { code: __code, stdout: '', stderr: '', success: false }; })()`;
+        `(async () => { ${leftSetup} if (__code === 0) { ${rightExpr}; } ${shortCircuitResult} })()`;
       this.isPromise = true;
     } else {
       // Build left expression: wrap in __printCmd if printable, resolve promise if needed
@@ -1885,7 +1888,9 @@ class PipelineAssembler {
         : this.code;
 
       // || operator: always wrap in try/catch IIFE
-      const successResult = "return { code: 0, stdout: '', stderr: '', success: true };";
+      const successResult = part.isStreamProducer
+        ? "__setPipeStatus(undefined, 0); return $.empty();"
+        : "return { code: 0, stdout: '', stderr: '', success: true };";
       if (bothNonPrintable) {
         this.code =
           `(async () => { try { ${this.code}; ${successResult} } catch { ${part.code}; ${successResult} } })()`;
