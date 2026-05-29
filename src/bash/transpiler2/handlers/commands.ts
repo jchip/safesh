@@ -122,38 +122,66 @@ function handleShellBuiltin(
   args: string[],
   builtin: { fn: string; type: string },
   argExpansions?: boolean[],
-): ExpressionResult & { isSilentShellBuiltin?: boolean } {
+  hasRedirects = false,
+): ExpressionResult & {
+  isShellBuiltin?: boolean;
+  isSilentShellBuiltin?: boolean;
+  formatsOutput?: boolean;
+} {
   const argsArray = args.length > 0
     ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
     : "";
 
   if (builtin.type === "output") {
-    // Output builtins should print their result
     const outputExpr = `${builtin.fn}(${argsArray})`;
+    if (hasRedirects) {
+      return {
+        code: outputExpr,
+        async: false,
+        isShellBuiltin: true,
+        formatsOutput: true,
+      };
+    }
+
+    // Output builtins should print their result
     return {
       code: `console.log(` +
         `((__out: unknown) => Array.isArray(__out) ? __out.join("\\n") : String(__out))` +
         `(await Promise.resolve(${outputExpr}))` +
         `)`,
       async: false,
+      isShellBuiltin: true,
     };
   } else if (builtin.type === "prints") {
+    if (hasRedirects && name === "echo") {
+      return {
+        code: argsArray
+          ? `${builtin.fn}({ silent: true }, ${argsArray})`
+          : `${builtin.fn}({ silent: true })`,
+        async: false,
+        isShellBuiltin: true,
+      };
+    }
+
     // Prints builtins already output, just execute
     return {
       code: `${builtin.fn}(${argsArray})`,
       async: false,
+      isShellBuiltin: true,
     };
   } else if (builtin.type === "async") {
     // Async builtins that need await
     return {
       code: `${builtin.fn}(${argsArray})`,
       async: true,
+      isShellBuiltin: true,
     };
   } else {
     // Silent builtins (cd, pushd, popd) suppress stdout but may return stderr.
     return {
       code: `${builtin.fn}(${argsArray})`,
       async: false,
+      isShellBuiltin: true,
       isSilentShellBuiltin: true,
     };
   }
@@ -358,6 +386,7 @@ type CommandStrategy =
     args: string[];
     builtin: BuiltinConfig;
     argExpansions: boolean[];
+    hasRedirects: boolean;
   }
   | {
     type: "timeout";
@@ -399,7 +428,9 @@ type CommandExpressionResult = ExpressionResult & {
   isUserFunction?: boolean;
   isTransform?: boolean;
   isStream?: boolean;
+  isShellBuiltin?: boolean;
   isSilentShellBuiltin?: boolean;
+  formatsOutput?: boolean;
 };
 
 const SET_OPTION_NAMES = new Set([
@@ -473,6 +504,16 @@ function canUseShellBuiltin(name: string, args: string[]): boolean {
   }
 
   return true;
+}
+
+function canUseBuiltinWithRedirects(redirects: AST.Redirection[]): boolean {
+  return redirects.every((redirect) => {
+    if (redirect.operator === ">" || redirect.operator === ">>" || redirect.operator === ">|") {
+      const fd = redirect.fd ?? 1;
+      return fd === 1 || fd === 2;
+    }
+    return redirect.operator === "&>" || redirect.operator === "&>>";
+  });
 }
 
 /**
@@ -558,6 +599,22 @@ function selectCommandStrategy(
       args: analysis.args,
       builtin,
       argExpansions: analysis.argExpansions,
+      hasRedirects: false,
+    };
+  }
+
+  if (
+    builtin && !analysis.hasAssignments && analysis.hasRedirects && !options?.inPipeline &&
+    canUseShellBuiltin(analysis.name, analysis.args) &&
+    canUseBuiltinWithRedirects(command.redirects)
+  ) {
+    return {
+      type: "shell-builtin",
+      name: analysis.name,
+      args: analysis.args,
+      builtin,
+      argExpansions: analysis.argExpansions,
+      hasRedirects: true,
     };
   }
 
@@ -662,6 +719,7 @@ function executeCommandStrategy(
         strategy.args,
         strategy.builtin,
         strategy.argExpansions,
+        strategy.hasRedirects,
       );
       return result;
     }
@@ -777,6 +835,63 @@ function applyCommandRedirections(
   return result;
 }
 
+function buildRedirectWrite(
+  streamName: "__stdout" | "__stderr",
+  target: string,
+  append: boolean,
+  index: number,
+): string {
+  const targetVar = `__target${index}`;
+  const options = append ? "{ append: true }" : "{}";
+  return `const ${targetVar} = ${target}; if (${targetVar} !== "/dev/null") Deno.writeTextFileSync(${targetVar}, ${streamName}, ${options}); ${streamName} = "";`;
+}
+
+function applyBuiltinRedirections(
+  cmdExpr: string,
+  redirects: AST.Redirection[],
+  ctx: VisitorContext,
+  options: { formatsOutput?: boolean } = {},
+): string {
+  const lines: string[] = [
+    `let __result: any;`,
+    `try { __result = await Promise.resolve(${cmdExpr}); } catch (__error) { __result = { stdout: "", stderr: __error instanceof Error ? __error.message : String(__error), code: 1 }; }`,
+    `const __code = typeof __result === "boolean" ? (__result ? 0 : 1) : (__result ? (__result.code ?? 0) : 1);`,
+    `let __stdout = Array.isArray(__result) ? __result.join("\\n") : ((typeof __result === "boolean" || __result == null) ? "" : (typeof __result.stdout === "string" ? __result.stdout : String(__result)));`,
+    `let __stderr = (typeof __result?.stderr === "string") ? __result.stderr : "";`,
+  ];
+
+  if (options.formatsOutput) {
+    lines.push(`if (__stdout) __stdout += "\\n";`);
+  }
+
+  for (let i = 0; i < redirects.length; i++) {
+    const redirect = redirects[i]!;
+    const target = formatRedirectionTarget(redirect, ctx);
+    const append = redirect.operator === ">>" || redirect.operator === "&>>";
+
+    if (redirect.operator === ">" || redirect.operator === ">>" || redirect.operator === ">|") {
+      const fd = redirect.fd ?? 1;
+      if (fd === 2) {
+        lines.push(buildRedirectWrite("__stderr", target, append, i));
+      } else {
+        lines.push(buildRedirectWrite("__stdout", target, append, i));
+      }
+    } else if (redirect.operator === "&>" || redirect.operator === "&>>") {
+      const targetVar = `__target${i}`;
+      const optionsArg = append ? "{ append: true }" : "{}";
+      lines.push(
+        `const ${targetVar} = ${target}; if (${targetVar} !== "/dev/null") Deno.writeTextFileSync(${targetVar}, __stdout + __stderr, ${optionsArg}); __stdout = ""; __stderr = "";`,
+      );
+    }
+  }
+
+  lines.push(
+    `return { stdout: __stdout, stderr: __stderr, code: __code, success: __code === 0 };`,
+  );
+
+  return `(async () => { ${lines.join(" ")} })()`;
+}
+
 /**
  * Build command - Main orchestrator
  * Coordinates the 4 phases to transpile a command
@@ -796,6 +911,17 @@ export function buildCommand(
   const result = executeCommandStrategy(strategy, ctx);
 
   // Phase 4: Apply redirections
+  if (result.isShellBuiltin && command.redirects.length > 0) {
+    return {
+      ...result,
+      code: applyBuiltinRedirections(result.code, command.redirects, ctx, {
+        formatsOutput: result.formatsOutput,
+      }),
+      async: true,
+      isSilentShellBuiltin: false,
+    };
+  }
+
   const finalCode = applyCommandRedirections(result.code, command.redirects, ctx);
 
   return { ...result, code: finalCode };
@@ -1738,27 +1864,26 @@ class PipelineAssembler {
     const leftPrintable = this.isPrintable;
     const bothNonPrintable = !leftPrintable && !part.isPrintable;
 
-    // Build left expression: wrap in __printCmd if printable, resolve promise if needed
-    const leftExpr = leftPrintable
-      ? `await __printCmd(${this.isPromise ? `await ${this.code}` : this.code})`
-      : this.code;
-
     // Build right expression: wrap in __printCmd if printable (SSH-494: skip for streams)
     const rightExpr = (part.isPrintable && !part.isStreamProducer)
       ? `return await __printCmd(${part.code})`
       : `return ${part.code}`;
 
     if (op === "&&") {
-      if (bothNonPrintable) {
-        // Non-printable && non-printable: simple sequential
-        this.code = `${this.code}; ${part.code}`;
-        this.updateStreamState(false, false);
-        this.isPromise = false;
-        return;
-      }
-      // Wrap in IIFE: execute first, then return second
-      this.wrapInAsyncIIFE(leftExpr, rightExpr);
+      const leftValue = this.isPromise ? `await ${this.code}` : this.code;
+      const leftSetup = leftPrintable
+        ? `const __code = await __printCmd(${leftValue});`
+        : `const __left: any = ${leftValue}; if (__left?.stderr) await Deno.stderr.write(new TextEncoder().encode(__left.stderr + (__left.stderr.endsWith("\\n") ? "" : "\\n"))); const __code = typeof __left === "number" ? __left : (__left?.code ?? 0);`;
+
+      this.code =
+        `(async () => { ${leftSetup} if (__code === 0) { ${rightExpr}; } return { code: __code, stdout: '', stderr: '', success: false }; })()`;
+      this.isPromise = true;
     } else {
+      // Build left expression: wrap in __printCmd if printable, resolve promise if needed
+      const leftExpr = leftPrintable
+        ? `await __printCmd(${this.isPromise ? `await ${this.code}` : this.code})`
+        : this.code;
+
       // || operator: always wrap in try/catch IIFE
       const successResult = "return { code: 0, stdout: '', stderr: '', success: true };";
       if (bothNonPrintable) {
@@ -1772,7 +1897,7 @@ class PipelineAssembler {
       }
     }
 
-    if (part.isPrintable) this.isPrintable = false;
+    this.isPrintable = false;
     // SSH-474: Preserve stream status from the returning (right) part
     this.isStream = part.isStreamProducer;
     this.isLineStream = false;

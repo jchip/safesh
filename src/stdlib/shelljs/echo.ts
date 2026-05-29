@@ -15,6 +15,8 @@ export interface EchoOptions {
   noNewline?: boolean;
   /** Interpret backslash escapes */
   escapes?: boolean;
+  /** Return output without writing to stdout */
+  silent?: boolean;
 }
 
 /**
@@ -63,11 +65,13 @@ export function echo(
     output += "\n";
   }
 
-  // Actually print to stdout (like real echo)
-  if (options.noNewline) {
-    Deno.stdout.writeSync(new TextEncoder().encode(output));
-  } else {
-    console.log(output.slice(0, -1)); // remove trailing newline, console.log adds one
+  // Actually print to stdout (like real echo), unless the transpiler is handling redirection.
+  if (!options.silent) {
+    if (options.noNewline) {
+      Deno.stdout.writeSync(new TextEncoder().encode(output));
+    } else {
+      console.log(output.slice(0, -1)); // remove trailing newline, console.log adds one
+    }
   }
 
   return ShellString.ok(output);

@@ -178,21 +178,21 @@ describe("SSH-372 - Shell Builtins", () => {
     });
   });
 
-  describe("Builtins with redirections should use $.cmd()", () => {
-    it("should use $.cmd() when echo has stdout redirection", () => {
+  describe("Builtins with redirections should stay builtins", () => {
+    it("should use $.echo when echo has stdout redirection", () => {
       const ast = parse("echo hello > file.txt");
       const output = transpile(ast);
 
-      assertStringIncludes(output, '$.cmd("echo"');
-      assertEquals(output.includes('$.echo'), false, "Should not use $.echo with redirection");
+      assertStringIncludes(output, "$.echo({ silent: true }");
+      assertEquals(output.includes('$.cmd("echo"'), false, "Should not use $.cmd for echo");
     });
 
-    it("should use $.cmd() when pwd has stdout redirection", () => {
+    it("should use $.pwd when pwd has stdout redirection", () => {
       const ast = parse("pwd > current_dir.txt");
       const output = transpile(ast);
 
-      assertStringIncludes(output, '$.cmd("pwd"');
-      assertEquals(output.includes('$.pwd'), false, "Should not use $.pwd with redirection");
+      assertStringIncludes(output, "$.pwd()");
+      assertEquals(output.includes('$.cmd("pwd"'), false, "Should not use $.cmd for pwd");
     });
   });
 

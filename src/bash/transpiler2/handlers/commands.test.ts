@@ -21,7 +21,10 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "echo test > out.txt";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, ".stdout(\"out.txt\")");
+      assertStringIncludes(output, "$.echo({ silent: true }");
+      assertStringIncludes(output, "Deno.writeTextFileSync");
+      assertStringIncludes(output, '"out.txt"');
+      assertEquals(output.includes('$.cmd("echo"'), false);
     });
 
     it("should detect command with environment variables", () => {
@@ -222,21 +225,31 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "echo test > out.txt";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, '.stdout("out.txt")');
+      assertStringIncludes(output, "$.echo({ silent: true }");
+      assertStringIncludes(output, "Deno.writeTextFileSync");
+      assertStringIncludes(output, '"out.txt"');
+      assertEquals(output.includes('$.cmd("echo"'), false);
     });
 
     it("should apply stderr redirection", () => {
       const script = "ls /nonexistent 2> err.txt";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, '.stderr("err.txt")');
+      assertStringIncludes(output, '$.ls("/nonexistent")');
+      assertStringIncludes(output, "Deno.writeTextFileSync");
+      assertStringIncludes(output, '"err.txt"');
+      assertEquals(output.includes('$.cmd("ls"'), false);
     });
 
     it("should apply append redirection", () => {
       const script = "echo append >> log.txt";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, '.stdout("log.txt", { append: true })');
+      assertStringIncludes(output, "$.echo({ silent: true }");
+      assertStringIncludes(output, "Deno.writeTextFileSync");
+      assertStringIncludes(output, '"log.txt"');
+      assertStringIncludes(output, "{ append: true }");
+      assertEquals(output.includes('$.cmd("echo"'), false);
     });
 
     it("should apply stderr append redirection", () => {
