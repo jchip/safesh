@@ -101,4 +101,21 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
       assertEquals(result.stdout.includes("const unrelated = true;"), false);
     });
   });
+
+  it("should generate valid TypeScript for an empty grep pattern", async () => {
+    await withFixture(async (testDir, config) => {
+      const code = transpileBash(
+        `cat start-local-infra.js | grep -n "" | head -1
+echo done`,
+      );
+
+      assertEquals(code.includes("$.grep(//"), false, code);
+
+      const result = await executeCode(code, config, { cwd: testDir });
+
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertStringIncludes(result.stdout, "#!/usr/bin/env node");
+      assertStringIncludes(result.stdout, "done");
+    });
+  });
 });
