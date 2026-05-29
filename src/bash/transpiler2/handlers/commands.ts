@@ -1305,6 +1305,15 @@ interface ReadLoopConsumer {
   ifs: string;
 }
 
+interface ReadCommandConsumer {
+  variables: string[];
+  ifs: string;
+}
+
+interface ReadGroupConsumer extends ReadCommandConsumer {
+  body: AST.Statement[];
+}
+
 function isStderrDiscardRedirect(redirect: AST.Redirection): boolean {
   if (redirect.fd !== 2) return false;
   if (redirect.operator !== ">" && redirect.operator !== ">>" && redirect.operator !== ">|") {
@@ -1343,20 +1352,21 @@ function getReadLoopTestCommand(
   return null;
 }
 
-function extractReadLoopConsumer(stmt: AST.Statement): ReadLoopConsumer | null {
-  if (stmt.type !== "WhileStatement") return null;
-  if ((stmt.redirects?.length ?? 0) > 0 && !stmt.redirects?.every(isStderrDiscardRedirect)) {
-    return null;
+function getSingleCommand(stmt: AST.Statement): AST.Command | null {
+  if (stmt.type === "Command") return stmt;
+  if (stmt.type === "Pipeline" && stmt.commands.length === 1) {
+    const [cmd] = stmt.commands;
+    return cmd?.type === "Command" ? cmd : null;
   }
+  return null;
+}
 
-  const testCmd = getReadLoopTestCommand(stmt.test);
-  if (!testCmd) return null;
-
-  const commandName = getStaticWordValue(testCmd.name);
+function extractReadCommandConsumer(command: AST.Command): ReadCommandConsumer | null {
+  const commandName = getStaticWordValue(command.name);
   if (commandName !== "read") return null;
 
   let ifs = " \t";
-  for (const assignment of testCmd.assignments) {
+  for (const assignment of command.assignments) {
     if (assignment.name !== "IFS") return null;
     const value = getStaticWordValue(assignment.value);
     if (value === null) return null;
@@ -1366,7 +1376,7 @@ function extractReadLoopConsumer(stmt: AST.Statement): ReadLoopConsumer | null {
   const variables: string[] = [];
   let parsingVariables = false;
 
-  for (const arg of testCmd.args) {
+  for (const arg of command.args) {
     const value = getStaticWordValue(arg);
     if (value === null) return null;
 
@@ -1392,11 +1402,81 @@ function extractReadLoopConsumer(stmt: AST.Statement): ReadLoopConsumer | null {
     variables.push("REPLY");
   }
 
+  return { variables, ifs };
+}
+
+function extractReadLoopConsumer(stmt: AST.Statement): ReadLoopConsumer | null {
+  if (stmt.type !== "WhileStatement") return null;
+  if ((stmt.redirects?.length ?? 0) > 0 && !stmt.redirects?.every(isStderrDiscardRedirect)) {
+    return null;
+  }
+
+  const testCmd = getReadLoopTestCommand(stmt.test);
+  if (!testCmd) return null;
+
+  const readCommand = extractReadCommandConsumer(testCmd);
+  if (!readCommand) return null;
+
   return {
     loop: stmt,
-    variables,
-    ifs,
+    ...readCommand,
   };
+}
+
+function extractReadGroupConsumer(stmt: AST.Statement): ReadGroupConsumer | null {
+  if (stmt.type !== "Subshell" && stmt.type !== "BraceGroup") return null;
+  if ((stmt.redirections?.length ?? 0) > 0) return null;
+
+  const [first, ...body] = stmt.body;
+  if (!first) return null;
+
+  const readCommand = getSingleCommand(first);
+  if (!readCommand) return null;
+
+  const readConsumer = extractReadCommandConsumer(readCommand);
+  if (!readConsumer) return null;
+
+  return { ...readConsumer, body };
+}
+
+function buildReadAssignmentLines(
+  readConsumer: ReadCommandConsumer,
+  sourceVar: string,
+  partsVar: string,
+): string[] {
+  const lines: string[] = [];
+
+  if (readConsumer.variables.length === 1) {
+    const jsName = sanitizeVarName(readConsumer.variables[0]!);
+    lines.push(`let ${jsName} = ${sourceVar};`);
+    return lines;
+  }
+
+  if (readConsumer.ifs === "") {
+    lines.push(`const ${partsVar} = [${sourceVar}];`);
+  } else {
+    const splitRegex = readConsumer.ifs === " \t"
+      ? "/[ \\t]+/"
+      : `new RegExp("[${escapeRegex(readConsumer.ifs)}]+")`;
+    lines.push(
+      `const ${partsVar} = ${sourceVar} === "" ? [] : ${sourceVar}.split(${splitRegex});`,
+    );
+  }
+
+  const joiner = formatArg(readConsumer.ifs[0] ?? "");
+  const lastIndex = readConsumer.variables.length - 1;
+  for (let i = 0; i < readConsumer.variables.length; i++) {
+    const jsName = sanitizeVarName(readConsumer.variables[i]!);
+    if (i === lastIndex) {
+      lines.push(
+        `let ${jsName} = ${partsVar}.length > ${i} ? ${partsVar}.slice(${i}).join(${joiner}) : "";`,
+      );
+    } else {
+      lines.push(`let ${jsName} = ${partsVar}[${i}] ?? "";`);
+    }
+  }
+
+  return lines;
 }
 
 function buildReadLoopConsumerExpression(
@@ -1427,35 +1507,7 @@ function buildReadLoopConsumerExpression(
 
   const sourceExpr = readLoop.ifs === "" ? lineVar : `${lineVar}.trim()`;
   bodyLines.push(`const ${sourceVar} = ${sourceExpr};`);
-
-  if (readLoop.variables.length === 1) {
-    const jsName = sanitizeVarName(readLoop.variables[0]!);
-    bodyLines.push(`let ${jsName} = ${sourceVar};`);
-  } else {
-    if (readLoop.ifs === "") {
-      bodyLines.push(`const ${partsVar} = [${sourceVar}];`);
-    } else {
-      const splitRegex = readLoop.ifs === " \t"
-        ? "/[ \\t]+/"
-        : `new RegExp("[${escapeRegex(readLoop.ifs)}]+")`;
-      bodyLines.push(
-        `const ${partsVar} = ${sourceVar} === "" ? [] : ${sourceVar}.split(${splitRegex});`,
-      );
-    }
-
-    const joiner = formatArg(readLoop.ifs[0] ?? "");
-    const lastIndex = readLoop.variables.length - 1;
-    for (let i = 0; i < readLoop.variables.length; i++) {
-      const jsName = sanitizeVarName(readLoop.variables[i]!);
-      if (i === lastIndex) {
-        bodyLines.push(
-          `let ${jsName} = ${partsVar}.length > ${i} ? ${partsVar}.slice(${i}).join(${joiner}) : "";`,
-        );
-      } else {
-        bodyLines.push(`let ${jsName} = ${partsVar}[${i}] ?? "";`);
-      }
-    }
-  }
+  bodyLines.push(...buildReadAssignmentLines(readLoop, sourceVar, partsVar));
 
   for (const stmt of readLoop.loop.body) {
     const result = ctx.visitStatement(stmt);
@@ -1468,6 +1520,50 @@ function buildReadLoopConsumerExpression(
   for await (const ${lineVar} of ${lineStreamExpr}) {
 ${inner}
   }
+  return { code: 0, stdout: '', stderr: '', success: true };
+})()`;
+}
+
+function buildReadGroupConsumerExpression(
+  pipeline: AST.Pipeline,
+  readGroup: ReadGroupConsumer,
+  ctx: VisitorContext,
+): string {
+  const upstreamPipeline: AST.Pipeline = {
+    type: "Pipeline",
+    commands: pipeline.commands.slice(0, -1),
+    operator: "|",
+    background: false,
+    negated: false,
+  };
+
+  const upstream = buildPipeline(upstreamPipeline, ctx);
+  const upstreamExpr = upstream.isStream
+    ? (upstream.async ? `(await ${upstream.code})` : upstream.code)
+    : upstream.code;
+  const lineStreamExpr = upstream.isStream
+    ? `${upstreamExpr}.lines()`
+    : `${upstreamExpr}.stdout().lines()`;
+
+  const lineVar = ctx.getTempVar("line");
+  const sourceVar = ctx.getTempVar("read");
+  const partsVar = ctx.getTempVar("parts");
+  const bodyLines: string[] = [];
+
+  bodyLines.push(`const ${lineVar} = (await ${lineStreamExpr}.first()) ?? "";`);
+  const sourceExpr = readGroup.ifs === "" ? lineVar : `${lineVar}.trim()`;
+  bodyLines.push(`const ${sourceVar} = ${sourceExpr};`);
+  bodyLines.push(...buildReadAssignmentLines(readGroup, sourceVar, partsVar));
+
+  for (const stmt of readGroup.body) {
+    const result = ctx.visitStatement(stmt);
+    bodyLines.push(...result.lines.map((line) => line.trim()).filter(Boolean));
+  }
+
+  const inner = bodyLines.map((line) => `  ${line}`).join("\n");
+
+  return `(async () => {
+${inner}
   return { code: 0, stdout: '', stderr: '', success: true };
 })()`;
 }
@@ -1557,34 +1653,7 @@ function buildMidReadLoopExpression(
 
   const sourceExpr = readLoop.ifs === "" ? lineVar : `${lineVar}.trim()`;
   bodyLines.push(`const ${sourceVar} = ${sourceExpr};`);
-
-  if (readLoop.variables.length === 1) {
-    const jsName = sanitizeVarName(readLoop.variables[0]!);
-    bodyLines.push(`let ${jsName} = ${sourceVar};`);
-  } else {
-    if (readLoop.ifs === "") {
-      bodyLines.push(`const ${partsVar} = [${sourceVar}];`);
-    } else {
-      const splitRegex = readLoop.ifs === " \t"
-        ? "/[ \\t]+/"
-        : `new RegExp("[${escapeRegex(readLoop.ifs)}]+")`;
-      bodyLines.push(
-        `const ${partsVar} = ${sourceVar} === "" ? [] : ${sourceVar}.split(${splitRegex});`,
-      );
-    }
-    const joiner = formatArg(readLoop.ifs[0] ?? "");
-    const lastIndex = readLoop.variables.length - 1;
-    for (let i = 0; i < readLoop.variables.length; i++) {
-      const jsName = sanitizeVarName(readLoop.variables[i]!);
-      if (i === lastIndex) {
-        bodyLines.push(
-          `let ${jsName} = ${partsVar}.length > ${i} ? ${partsVar}.slice(${i}).join(${joiner}) : "";`,
-        );
-      } else {
-        bodyLines.push(`let ${jsName} = ${partsVar}[${i}] ?? "";`);
-      }
-    }
-  }
+  bodyLines.push(...buildReadAssignmentLines(readLoop, sourceVar, partsVar));
 
   // Visit loop body with stdout capture active so echo → captureVar.push(...)
   ctx.setStdoutCapture(captureVar);
@@ -1632,6 +1701,18 @@ export function buildPipeline(
     if (readLoop) {
       return {
         code: buildReadLoopConsumerExpression(pipeline, readLoop, ctx),
+        async: true,
+        isStream: false,
+        isPrintable: false,
+      };
+    }
+
+    const readGroup = extractReadGroupConsumer(
+      pipeline.commands[pipeline.commands.length - 1]!,
+    );
+    if (readGroup) {
+      return {
+        code: buildReadGroupConsumerExpression(pipeline, readGroup, ctx),
         async: true,
         isStream: false,
         isPrintable: false,
