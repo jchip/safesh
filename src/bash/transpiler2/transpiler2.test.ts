@@ -508,9 +508,8 @@ describe("Transpiler2 - Pipelines", () => {
     const ast = parse('cat file | jq "." || cat file | head -10');
     const output = transpile(ast);
 
-    // Should have try/catch for ||
-    assertStringIncludes(output, "try {");
-    assertStringIncludes(output, "catch {");
+    // Should branch on the pipeline exit status for ||
+    assertStringIncludes(output, "__code !== 0");
 
     // The fallback branch should include the full pipe chain (cat | head)
     // not just "cat" which would then have .stdout() applied incorrectly
