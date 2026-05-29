@@ -54,7 +54,7 @@ const SAFE_COMMANDS = [
   // Text Processing
   // ============================================================================
   "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs",
-  "sed", "awk", "grep", "egrep", "fgrep",
+  "sed", "awk", "grep", "rg", "egrep", "fgrep",
   "diff", "cmp", "comm", "paste", "join", "column",
   "fold", "fmt", "nl", "rev", "tac", "expand", "unexpand",
   "strings", "jq", "yq", "python3",
