@@ -261,7 +261,8 @@ describe("Docker Entrypoint Scripts", () => {
 
       exec "$@"
     `);
-    assertStringIncludes(code, '"set"');
+    assertStringIncludes(code, "void 0");
+    assertEquals(code.includes('$.cmd("set"'), false);
     assertStringIncludes(code, '"exec"');
   });
 
@@ -628,7 +629,8 @@ describe("Common Utility Patterns", () => {
         set -u
         set -o pipefail
       `);
-      assertStringIncludes(code, '"set"');
+      assertEquals(code.includes('$.cmd("set"'), false);
+      assertEquals((code.match(/void 0/g) ?? []).length, 3);
     });
 
     it("should handle error function pattern", () => {
@@ -995,7 +997,8 @@ describe("Integration Tests - Complete Scripts", () => {
 
       log "Deployment completed successfully"
     `);
-    assertStringIncludes(code, '"set"');
+    assertStringIncludes(code, "void 0");
+    assertEquals(code.includes('$.cmd("set"'), false);
     assertStringIncludes(code, "function log");
     assertStringIncludes(code, '"npm", "run", "build"');
     assertStringIncludes(code, '"npm", "test"');
