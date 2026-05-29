@@ -925,21 +925,25 @@ function buildFluentCommand(
 
       for (let i = 0; i < args.length; i++) {
         const arg = args[i];
-        if (arg === "-v") {
-          invert = true;
-        } else if (arg === "-i") {
-          ignoreCase = true;
-        } else if (arg === "-n") {
-          lineNumber = true;
-        } else if (arg === "-r" || arg === "-R" || arg?.includes("r") && arg.startsWith("-")) {
-          // Check for -r, -R, or combined flags like -rn, -rin, etc.
-          recursive = true;
-        } else if (arg === "-A" || arg === "-B" || arg === "-C" || arg === "-m") {
-          // SSH-568: These flags take numeric arguments and aren't supported by fluent grep.
-          // Fall back to $.cmd("grep", ...) for correctness.
-          return null;
-        } else if (arg?.startsWith("-")) {
-          // Skip other options (simple flags like -E, -F, -c, -l, -q, etc.)
+
+        if (arg?.startsWith("--")) {
+          // Skip long options for now.
+        } else if (arg?.startsWith("-") && arg.length > 1) {
+          for (const flag of arg.slice(1)) {
+            if (flag === "v") {
+              invert = true;
+            } else if (flag === "i") {
+              ignoreCase = true;
+            } else if (flag === "n") {
+              lineNumber = true;
+            } else if (flag === "r" || flag === "R") {
+              recursive = true;
+            } else if (flag === "A" || flag === "B" || flag === "C" || flag === "m") {
+              // SSH-568: These flags take numeric arguments and aren't supported by fluent grep.
+              // Fall back to $.cmd("grep", ...) for correctness.
+              return null;
+            }
+          }
         } else if (!pattern) {
           pattern = arg ?? "";
         } else {
@@ -979,7 +983,7 @@ function buildFluentCommand(
           const result = `$.cat(${file}).lines().filter(line => !${regexPattern}.test(line))`;
           return { code: result, isTransform: false, isStream: true };
         }
-        const result = `$.cat(${file}).grep(${regexPattern})`;
+        const result = `$.cat(${file}).lines().grep(${regexPattern})`;
         return { code: result, isTransform: false, isStream: true };
       }
 
@@ -1108,6 +1112,21 @@ export function visitCommand(
         `${indent}if (${stdoutVar}) ${captureVar}.push(...String(${stdoutVar}).split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1));`,
         `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
       ],
+    };
+  }
+  if (captureVar && result.isStream) {
+    const streamExpr = result.async ? `await ${result.code}` : result.code;
+    const lineVar = ctx.getTempVar("__line");
+    return {
+      lines: [
+        `${indent}for await (const ${lineVar} of ${streamExpr}) { ${captureVar}.push(String(${lineVar})); }`,
+      ],
+    };
+  }
+  if (result.isStream) {
+    const streamExpr = result.async ? `await ${result.code}` : result.code;
+    return {
+      lines: [`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`],
     };
   }
   if (result.async && !result.isUserFunction) {
