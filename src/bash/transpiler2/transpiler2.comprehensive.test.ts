@@ -433,10 +433,10 @@ describe("Pipelines - Complex Scenarios", () => {
   it("should handle OR pipeline", () => {
     const ast = parse("cmd1 || cmd2");
     const output = transpile(ast);
-    // || generates async IIFE with try/catch, not .catch()
+    // || checks exit status explicitly; non-zero commands don't throw.
     assertStringIncludes(output, "(async () =>");
-    assertStringIncludes(output, "try {");
-    assertStringIncludes(output, "} catch {");
+    assertStringIncludes(output, "__captureCmd");
+    assertStringIncludes(output, "__code !== 0");
   });
 
   it("should handle pipeline with redirections", () => {
@@ -463,9 +463,9 @@ describe("Pipelines - Complex Scenarios", () => {
   it("should handle two-command OR chain", () => {
     const ast = parse("cmd1 || cmd2");
     const output = transpile(ast);
-    // || generates async IIFE with try/catch, not .catch()
+    // || checks exit status explicitly; non-zero commands don't throw.
     assertStringIncludes(output, "(async () =>");
-    assertStringIncludes(output, "try {");
+    assertStringIncludes(output, "__code !== 0");
   });
 });
 

@@ -1297,6 +1297,8 @@ interface PipelinePart {
   isStreamProducer: boolean;
   /** Whether this part needs await (true for $.cmd(), false for fluent commands) - SSH-424 */
   isAsync: boolean;
+  /** Whether this part resolves to a command result object rather than a Command */
+  isResultObject?: boolean;
 }
 
 interface ReadLoopConsumer {
@@ -1619,6 +1621,28 @@ function buildDownstreamWithStdin(
   return `${assembled.code}.exec()`;
 }
 
+function resultObjectToLineStream(expr: string): string {
+  return `$.fromArray(((result: any) => String(result?.output ?? result?.stdout ?? "").split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1))(${expr}))`;
+}
+
+function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorContext): string {
+  const captureVar = ctx.getTempVar("__out");
+  const previousCapture = ctx.getStdoutCapture();
+
+  ctx.setStdoutCapture(captureVar);
+  let result: StatementResult;
+  try {
+    result = ctx.visitStatement(stmt);
+  } finally {
+    ctx.setStdoutCapture(previousCapture);
+  }
+
+  const lines = result.lines.map((line) => line.trim()).filter((line) => line.length > 0);
+  return `(async () => { const ${captureVar}: string[] = []; ${
+    lines.join("; ")
+  }; return { code: 0, stdout: ${captureVar}.join("\\n"), stderr: "", success: true }; })()`;
+}
+
 /**
  * Build a mid-pipeline while read loop expression.
  * Handles: upstream | while read x; do ...; done | downstream
@@ -1688,7 +1712,7 @@ ${inner}
 export function buildPipeline(
   pipeline: AST.Pipeline,
   ctx: VisitorContext,
-): ExpressionResult & { isStream?: boolean; isPrintable?: boolean } {
+): ExpressionResult & { isStream?: boolean; isPrintable?: boolean; isResultObject?: boolean } {
   if (
     !pipeline.background &&
     !pipeline.negated &&
@@ -1762,7 +1786,7 @@ export function buildPipeline(
   const analysis = analyzePipelineStructure(operators);
 
   // Assemble the pipeline
-  const assembled = assemblePipeline(parts, operators, analysis);
+  const assembled = assemblePipeline(parts, operators, analysis, ctx.getStdoutCapture() !== null);
 
   // Handle negation (! operator)
   let result = assembled.code;
@@ -1781,6 +1805,7 @@ export function buildPipeline(
     async: isAsync,
     isStream: assembled.isStream,
     isPrintable: assembled.isPrintable,
+    isResultObject: assembled.isResultObject,
   };
 }
 
@@ -1833,13 +1858,17 @@ class PipelineAssembler {
   private isPromise: boolean;
   private isStream: boolean;
   private isLineStream: boolean;
+  private isResultObject: boolean;
+  private captureOutput: boolean;
 
-  constructor(initialPart: PipelinePart) {
+  constructor(initialPart: PipelinePart, captureOutput: boolean) {
     this.code = initialPart.code;
     this.isPrintable = initialPart.isPrintable;
     this.isStream = initialPart.isStreamProducer;
-    this.isPromise = false;
+    this.isPromise = (initialPart.isResultObject ?? false) && initialPart.isAsync;
     this.isLineStream = false;
+    this.isResultObject = initialPart.isResultObject ?? false;
+    this.captureOutput = captureOutput;
   }
 
   getResult() {
@@ -1847,6 +1876,7 @@ class PipelineAssembler {
       code: this.code,
       isStream: this.isStream,
       isPrintable: this.isPrintable,
+      isResultObject: this.isResultObject,
     };
   }
 
@@ -1867,7 +1897,6 @@ class PipelineAssembler {
    */
   appendOr(part: PipelinePart): void {
     this.handleLogicalOp("||", part);
-    this.resetPromiseState();
   }
 
   /**
@@ -1888,6 +1917,7 @@ class PipelineAssembler {
     this.isPrintable = true;
     // SSH-409: isStream reflects whether result is actually a stream
     this.isStream = part.isStreamProducer || part.isTransform;
+    this.isResultObject = false;
   }
 
   /**
@@ -1942,51 +1972,40 @@ class PipelineAssembler {
     op: "&&" | "||",
     part: PipelinePart,
   ): void {
-    const leftPrintable = this.isPrintable;
-    const bothNonPrintable = !leftPrintable && !part.isPrintable;
-
-    // Build right expression: wrap in __printCmd if printable (SSH-494: skip for streams)
-    const rightExpr = (part.isPrintable && !part.isStreamProducer)
-      ? `return await __printCmd(${part.code})`
-      : `return ${part.code}`;
-
-    if (op === "&&") {
-      const leftValue = this.isPromise ? `await ${this.code}` : this.code;
-      const leftSetup = leftPrintable
-        ? `const __code = await __printCmd(${leftValue});`
-        : `const __left: any = ${leftValue}; if (__left?.stderr) await Deno.stderr.write(new TextEncoder().encode(__left.stderr + (__left.stderr.endsWith("\\n") ? "" : "\\n"))); const __code = typeof __left === "number" ? __left : (__left?.code ?? 0);`;
-
-      const shortCircuitResult = part.isStreamProducer
-        ? `__setPipeStatus(undefined, __code); return $.empty();`
-        : `return { code: __code, stdout: '', stderr: '', success: false };`;
-      this.code =
-        `(async () => { ${leftSetup} if (__code === 0) { ${rightExpr}; } ${shortCircuitResult} })()`;
-      this.isPromise = true;
-    } else {
-      // Build left expression: wrap in __printCmd if printable, resolve promise if needed
-      const leftExpr = leftPrintable
-        ? `await __printCmd(${this.isPromise ? `await ${this.code}` : this.code})`
-        : this.code;
-
-      // || operator: always wrap in try/catch IIFE
-      const successResult = part.isStreamProducer
-        ? "__setPipeStatus(undefined, 0); return $.empty();"
-        : "return { code: 0, stdout: '', stderr: '', success: true };";
-      if (bothNonPrintable) {
-        this.code =
-          `(async () => { try { ${this.code}; ${successResult} } catch { ${part.code}; ${successResult} } })()`;
-      } else {
-        const tryExpr = leftPrintable
-          ? `${leftExpr}; ${successResult}`
-          : `${this.code}; ${successResult}`;
-        this.code = `(async () => { try { ${tryExpr} } catch { ${rightExpr}; } })()`;
-      }
+    if (part.isStreamProducer && !this.captureOutput) {
+      this.handleLogicalStreamOp(op, part);
+      return;
     }
 
-    this.isPrintable = false;
-    // SSH-474: Preserve stream status from the returning (right) part
-    this.isStream = part.isStreamProducer;
+    const leftValue = this.isPromise ? `await ${this.code}` : this.code;
+    const condition = op === "&&" ? "__code === 0" : "__code !== 0";
+
+    this.code =
+      `(async () => { const __left: any = await __captureCmd(${leftValue}); const __code = __left.code ?? 0; if (${condition}) { const __right: any = await __captureCmd(${part.code}); const __rightCode = __right.code ?? 0; return { code: __rightCode, stdout: (__left.stdout ?? "") + (__right.stdout ?? ""), stderr: (__left.stderr ?? "") + (__right.stderr ?? ""), success: __rightCode === 0, pipeStatus: __right.pipeStatus }; } return { code: __code, stdout: __left.stdout ?? "", stderr: __left.stderr ?? "", success: __code === 0, pipeStatus: __left.pipeStatus }; })()`;
+    this.isPromise = true;
+    this.isPrintable = true;
+    this.isStream = false;
     this.isLineStream = false;
+    this.isResultObject = true;
+  }
+
+  private handleLogicalStreamOp(
+    op: "&&" | "||",
+    part: PipelinePart,
+  ): void {
+    const leftValue = this.isPromise ? `await ${this.code}` : this.code;
+    const leftSetup = this.isPrintable
+      ? `const __code = await __printCmd(${leftValue});`
+      : `const __left: any = await __captureCmd(${leftValue}); if (__left.stdout) await Deno.stdout.write(new TextEncoder().encode(__left.stdout)); if (__left.stderr) await Deno.stderr.write(new TextEncoder().encode(__left.stderr)); const __code = __left.code ?? 0;`;
+    const condition = op === "&&" ? "__code === 0" : "__code !== 0";
+
+    this.code =
+      `(async () => { ${leftSetup} if (${condition}) { return ${part.code}; } __setPipeStatus(undefined, __code); return $.empty(); })()`;
+    this.isPromise = true;
+    this.isPrintable = false;
+    this.isStream = true;
+    this.isLineStream = false;
+    this.isResultObject = false;
   }
 
   /**
@@ -2000,6 +2019,9 @@ class PipelineAssembler {
     } else if (this.isStream) {
       // Stream producer (like $.cat) - need .lines() to split content into lines
       this.code = `${this.code}.lines().pipe(${part.code})`;
+      this.isLineStream = true;
+    } else if (this.isResultObject) {
+      this.code = `${resultObjectToLineStream(this.code)}.pipe(${part.code})`;
       this.isLineStream = true;
     } else {
       // Command - convert to line stream first, then apply transform
@@ -2028,6 +2050,9 @@ class PipelineAssembler {
       // When piping from a stream to a command, need to use toCmdLines transform
       this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
       this.isLineStream = true;
+    } else if (this.isResultObject) {
+      this.code = `${resultObjectToLineStream(this.code)}.pipe($.toCmdLines(${part.code}))`;
+      this.isLineStream = true;
     } else {
       // When piping from a command to a command, can pipe directly
       this.code = `${this.code}.pipe(${part.code})`;
@@ -2051,6 +2076,7 @@ class PipelineAssembler {
   private updateStreamState(isStream: boolean, isLineStream: boolean): void {
     this.isStream = isStream;
     this.isLineStream = isLineStream;
+    this.isResultObject = false;
   }
 
   /**
@@ -2078,12 +2104,13 @@ function assemblePipeline(
   parts: PipelinePart[],
   operators: (string | null)[],
   analysis: PipelineAnalysis,
-): { code: string; isStream: boolean; isPrintable: boolean } {
+  captureOutput = false,
+): { code: string; isStream: boolean; isPrintable: boolean; isResultObject: boolean } {
   if (parts.length === 0) {
-    return { code: "", isStream: false, isPrintable: false };
+    return { code: "", isStream: false, isPrintable: false, isResultObject: false };
   }
 
-  const assembler = new PipelineAssembler(parts[0]!);
+  const assembler = new PipelineAssembler(parts[0]!, captureOutput);
 
   for (let i = 1; i < parts.length; i++) {
     const op = operators[i - 1];
@@ -2170,6 +2197,7 @@ function flattenPipeline(
           isTransform: false,
           isStreamProducer: result.isStream ?? false,
           isAsync: result.async,
+          isResultObject: result.isResultObject ?? false,
         });
       } else {
         // Flatten for &&/|| chains and single commands to preserve variable scope
@@ -2177,12 +2205,16 @@ function flattenPipeline(
       }
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
+      const capturesStdout = hasPipeOperator && pipeline.commands.length > 1;
       parts.push({
-        code: buildStatementAsExpression(left, ctx),
-        isPrintable: true,
+        code: capturesStdout
+          ? buildStatementAsCapturedExpression(left, ctx)
+          : buildStatementAsExpression(left, ctx),
+        isPrintable: !capturesStdout,
         isTransform: false,
         isStreamProducer: false,
         isAsync: true,
+        isResultObject: capturesStdout,
       });
     }
   }
@@ -2220,6 +2252,7 @@ function flattenPipeline(
           isTransform: false,
           isStreamProducer: result.isStream ?? false,
           isAsync: result.async,
+          isResultObject: result.isResultObject ?? false,
         });
       } else {
         // Flatten for &&/|| chains and single commands to preserve variable scope
@@ -2227,12 +2260,16 @@ function flattenPipeline(
       }
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
+      const capturesStdout = hasPipeOperator && i < pipeline.commands.length - 1;
       parts.push({
-        code: buildStatementAsExpression(cmd, ctx),
-        isPrintable: true,
+        code: capturesStdout
+          ? buildStatementAsCapturedExpression(cmd, ctx)
+          : buildStatementAsExpression(cmd, ctx),
+        isPrintable: !capturesStdout,
         isTransform: false,
         isStreamProducer: false,
         isAsync: true,
+        isResultObject: capturesStdout,
       });
     }
   }
@@ -2574,6 +2611,38 @@ export function visitPipeline(
         `${indent}})(); // background`,
       ],
     };
+  }
+
+  const captureVar = ctx.getStdoutCapture();
+  if (captureVar) {
+    if (result.isStream) {
+      const streamExpr = result.async ? `await ${result.code}` : result.code;
+      const lineVar = ctx.getTempVar("__line");
+      return {
+        lines: [
+          `${indent}for await (const ${lineVar} of ${streamExpr}) { ${captureVar}.push(String(${lineVar})); }`,
+        ],
+      };
+    }
+
+    if (result.isPrintable || result.isResultObject) {
+      const resultVar = ctx.getTempVar("__cmd");
+      const stdoutVar = ctx.getTempVar("__stdout");
+      const resultExpr = result.async
+        ? `await ${result.code}`
+        : `await Promise.resolve(${result.code})`;
+      return {
+        lines: [
+          `${indent}const ${resultVar} = ${resultExpr};`,
+          `${indent}const ${stdoutVar} = ${resultVar}.output ?? ${resultVar}.stdout;`,
+          `${indent}if (${stdoutVar}) ${captureVar}.push(...String(${stdoutVar}).split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1));`,
+          `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
+        ],
+      };
+    }
+
+    const prefix = result.async ? "await " : "";
+    return { lines: [`${indent}${prefix}${result.code};`] };
   }
 
   // SSH-364: Handle stream vs command output differently
