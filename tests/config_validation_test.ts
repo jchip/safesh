@@ -32,6 +32,17 @@ Deno.test("SSH-18: DEFAULT_CONFIG allows python3", async () => {
   }
 });
 
+Deno.test("SSH-47: DEFAULT_CONFIG allows rg like grep", async () => {
+  const grepResult = await checkCommandPermission("grep", DEFAULT_CONFIG, Deno.cwd());
+  const rgResult = await checkCommandPermission("rg", DEFAULT_CONFIG, Deno.cwd());
+
+  assertEquals(grepResult.allowed, true);
+  assertEquals(rgResult.allowed, true);
+  if (rgResult.allowed) {
+    assertEquals(rgResult.resolvedPath, "rg");
+  }
+});
+
 Deno.test("DEFAULT_CONFIG - passes validation with no errors", () => {
   const result = validateConfig(DEFAULT_CONFIG);
   assertEquals(result.errors.length, 0);
