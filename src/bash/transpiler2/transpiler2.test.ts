@@ -1087,14 +1087,21 @@ describe("Transpiler2 - Redirections", () => {
     const ast = parse("echo hello > file.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '.stdout("file.txt")');
+    assertStringIncludes(output, "$.echo({ silent: true }");
+    assertStringIncludes(output, "Deno.writeTextFileSync");
+    assertStringIncludes(output, '"file.txt"');
+    assertEquals(output.includes('$.cmd("echo"'), false);
   });
 
   it("should transpile append redirection", () => {
     const ast = parse("echo hello >> file.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '.stdout("file.txt", { append: true })');
+    assertStringIncludes(output, "$.echo({ silent: true }");
+    assertStringIncludes(output, "Deno.writeTextFileSync");
+    assertStringIncludes(output, '"file.txt"');
+    assertStringIncludes(output, "{ append: true }");
+    assertEquals(output.includes('$.cmd("echo"'), false);
   });
 
   it("should transpile input redirection", () => {

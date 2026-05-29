@@ -1448,13 +1448,20 @@ describe("Redirections - All Types", () => {
   it("should handle output redirection >", () => {
     const ast = parse("echo hello > output.txt");
     const output = transpile(ast);
-    assertStringIncludes(output, '.stdout("output.txt")');
+    assertStringIncludes(output, "$.echo({ silent: true }");
+    assertStringIncludes(output, "Deno.writeTextFileSync");
+    assertStringIncludes(output, '"output.txt"');
+    assertEquals(output.includes('$.cmd("echo"'), false);
   });
 
   it("should handle append redirection >>", () => {
     const ast = parse("echo hello >> output.txt");
     const output = transpile(ast);
-    assertStringIncludes(output, '.stdout("output.txt", { append: true })');
+    assertStringIncludes(output, "$.echo({ silent: true }");
+    assertStringIncludes(output, "Deno.writeTextFileSync");
+    assertStringIncludes(output, '"output.txt"');
+    assertStringIncludes(output, "{ append: true }");
+    assertEquals(output.includes('$.cmd("echo"'), false);
   });
 
   it("should handle combined stdout and stderr &>", () => {

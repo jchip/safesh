@@ -607,14 +607,21 @@ describe("Security - Redirection Safety", () => {
     const ast = parse('echo data > /tmp/output.txt');
     const output = transpile(ast);
 
-    assertStringIncludes(output, '.stdout("/tmp/output.txt")');
+    assertStringIncludes(output, "$.echo({ silent: true }");
+    assertStringIncludes(output, "Deno.writeTextFileSync");
+    assertStringIncludes(output, '"/tmp/output.txt"');
+    assertEquals(output.includes('$.cmd("echo"'), false);
   });
 
   it("should handle append redirection safely", () => {
     const ast = parse('echo data >> /tmp/output.txt');
     const output = transpile(ast);
 
-    assertStringIncludes(output, '.stdout("/tmp/output.txt", { append: true })');
+    assertStringIncludes(output, "$.echo({ silent: true }");
+    assertStringIncludes(output, "Deno.writeTextFileSync");
+    assertStringIncludes(output, '"/tmp/output.txt"');
+    assertStringIncludes(output, "{ append: true }");
+    assertEquals(output.includes('$.cmd("echo"'), false);
   });
 
   it("should handle input redirection safely", () => {
@@ -629,7 +636,10 @@ describe("Security - Redirection Safety", () => {
     const output = transpile(ast);
 
     // Should transpile (runtime will enforce permissions)
-    assertStringIncludes(output, '.stdout("/etc/passwd")');
+    assertStringIncludes(output, "$.echo({ silent: true }");
+    assertStringIncludes(output, "Deno.writeTextFileSync");
+    assertStringIncludes(output, '"/etc/passwd"');
+    assertEquals(output.includes('$.cmd("echo"'), false);
   });
 
   it("should handle stderr redirection safely", () => {
@@ -660,7 +670,10 @@ describe("Security - Redirection Safety", () => {
     const output = transpile(ast);
 
     // Filename with shell metacharacters should be safe
-    assertStringIncludes(output, '.stdout("file;rm -rf /")');
+    assertStringIncludes(output, "$.echo({ silent: true }");
+    assertStringIncludes(output, "Deno.writeTextFileSync");
+    assertStringIncludes(output, '"file;rm -rf /"');
+    assertEquals(output.includes('$.cmd("echo"'), false);
   });
 
   it("should handle multiple redirections safely", () => {
