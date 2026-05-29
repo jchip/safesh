@@ -1050,7 +1050,7 @@ function buildFluentCommand(
     case "grep": {
       // $.grep(pattern) as transform or $.grep(pattern, file)
       // Parse grep options
-      let pattern = "";
+      let pattern: string | undefined;
       let files: string[] = [];
       let invert = false;
       let ignoreCase = false;
@@ -1078,7 +1078,7 @@ function buildFluentCommand(
               return null;
             }
           }
-        } else if (!pattern) {
+        } else if (pattern === undefined) {
           pattern = arg ?? "";
         } else {
           files.push(arg ?? "");
@@ -1096,9 +1096,9 @@ function buildFluentCommand(
       // regex literal causes \\[ to open an unclosed character class.
       // templateEscapedToRegexSource() reverses the template escaping then applies
       // BRE→JS conversions so the result is safe inside /.../.
-      const regexSource = templateEscapedToRegexSource(pattern);
+      const regexSource = templateEscapedToRegexSource(pattern ?? "");
       const flags = ignoreCase ? "i" : "";
-      const regexPattern = `/${regexSource}/${flags}`;
+      const regexPattern = regexSource === "" ? `/(?:)/${flags}` : `/${regexSource}/${flags}`;
 
       if (files.length > 0) {
         // grep pattern file -> $.cat(file).grep(pattern) - this is a stream chain
