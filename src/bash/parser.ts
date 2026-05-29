@@ -1805,7 +1805,7 @@ export class Parser {
 
     // $(command)
     if (next === "(") {
-      const result = this.extractDelimited(value, pos + 2, "(", ")", 1);
+      const result = this.extractCommandSubstitutionDelimited(value, pos + 2);
       return {
         part: this.parseCommandSubstitutionContent(result.content, false),
         newPos: result.end + 1,
@@ -1898,6 +1898,139 @@ export class Parser {
 
     const content = value.slice(scanStart, pos - initialDepth);
     return { content, end: pos - 1 };
+  }
+
+  private extractCommandSubstitutionDelimited(
+    value: string,
+    scanStart: number,
+  ): { content: string; end: number } {
+    const pendingHeredocs: Array<{ delimiter: string; stripTabs: boolean }> = [];
+    let depth = 1;
+    let pos = scanStart;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    while (pos < value.length && depth > 0) {
+      const char = value[pos]!;
+
+      if (inSingleQuote) {
+        if (char === "'") inSingleQuote = false;
+        pos++;
+        continue;
+      }
+
+      if (inDoubleQuote) {
+        if (char === "\\" && pos + 1 < value.length) {
+          pos += 2;
+          continue;
+        }
+        if (char === '"') inDoubleQuote = false;
+        pos++;
+        continue;
+      }
+
+      const heredoc = this.tryReadHeredocMarker(value, pos);
+      if (heredoc) {
+        pendingHeredocs.push({
+          delimiter: heredoc.delimiter,
+          stripTabs: heredoc.stripTabs,
+        });
+        pos = heredoc.end;
+        continue;
+      }
+
+      if (char === "'") {
+        inSingleQuote = true;
+      } else if (char === '"') {
+        inDoubleQuote = true;
+      } else if (char === "\\" && pos + 1 < value.length) {
+        pos += 2;
+        continue;
+      } else if (char === "(") {
+        depth++;
+      } else if (char === ")") {
+        depth--;
+      }
+
+      pos++;
+
+      if (char === "\n") {
+        while (pendingHeredocs.length > 0 && pos < value.length) {
+          pos = this.skipHeredocBody(value, pos, pendingHeredocs.shift()!);
+        }
+      }
+    }
+
+    const end = pos - 1;
+    return { content: value.slice(scanStart, end), end };
+  }
+
+  private tryReadHeredocMarker(
+    value: string,
+    pos: number,
+  ): { delimiter: string; stripTabs: boolean; end: number } | null {
+    if (value[pos] !== "<" || value[pos + 1] !== "<") {
+      return null;
+    }
+
+    let scan = pos + 2;
+    let stripTabs = false;
+    if (value[scan] === "-") {
+      stripTabs = true;
+      scan++;
+    }
+
+    while (value[scan] === " " || value[scan] === "\t") {
+      scan++;
+    }
+
+    let delimiter = "";
+    if (value[scan] === "'" || value[scan] === '"') {
+      const quote = value[scan]!;
+      scan++;
+      while (scan < value.length && value[scan] !== quote) {
+        delimiter += value[scan]!;
+        scan++;
+      }
+      if (value[scan] === quote) {
+        scan++;
+      }
+    } else {
+      if (value[scan] === "\\" || value[scan] === "$") {
+        scan++;
+      }
+      while (scan < value.length && /[a-zA-Z0-9_]/.test(value[scan]!)) {
+        delimiter += value[scan]!;
+        scan++;
+      }
+    }
+
+    return delimiter ? { delimiter, stripTabs, end: scan } : null;
+  }
+
+  private skipHeredocBody(
+    value: string,
+    pos: number,
+    heredoc: { delimiter: string; stripTabs: boolean },
+  ): number {
+    while (pos < value.length) {
+      const lineStart = pos;
+      while (pos < value.length && value[pos] !== "\n") {
+        pos++;
+      }
+
+      const line = value.slice(lineStart, pos);
+      const checkLine = heredoc.stripTabs ? line.replace(/^\t+/, "") : line;
+      if (checkLine === heredoc.delimiter) {
+        return pos < value.length && value[pos] === "\n" ? pos + 1 : pos;
+      }
+
+      if (pos < value.length && value[pos] === "\n") {
+        pos++;
+      }
+    }
+
+    return pos;
   }
 
   /**
