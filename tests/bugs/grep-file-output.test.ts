@@ -63,6 +63,26 @@ describe("Bug: grep file output", () => {
     });
   });
 
+  it("should apply newline-separated cd before grep with a relative file path", async () => {
+    await withFixture(async (testDir, config) => {
+      const code = transpileBash(
+        `cd ${testDir}
+grep -nE "trust-mock|backend" start-local-infra.js`,
+      );
+
+      assertStringIncludes(code, `$.cd("${testDir}")`);
+      assertStringIncludes(code, ".lines().map");
+
+      const result = await executeCode(code, config, { cwd: Deno.cwd() });
+
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertStringIncludes(result.stdout, "3:const service = 'trust-mock';");
+      assertStringIncludes(result.stdout, "5:const backend = 'remote';");
+      assertEquals(result.stdout.includes("#!/usr/bin/env node"), false);
+      assertEquals(result.stdout.includes("const unrelated = true;"), false);
+    });
+  });
+
   it("should print matching lines for standalone grep with a file argument", async () => {
     await withFixture(async (testDir, config) => {
       const code = transpileBash(
