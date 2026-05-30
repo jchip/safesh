@@ -2396,6 +2396,54 @@ function isControlStatement(
     stmt?.type === "ReturnStatement";
 }
 
+function containsControlStatement(stmt: AST.Statement): boolean {
+  if (isControlStatement(stmt)) return true;
+
+  if (stmt.type === "Pipeline") {
+    return stmt.commands.some((cmd) => containsControlStatement(cmd));
+  }
+
+  if (stmt.type === "BraceGroup") {
+    return stmt.body.some((bodyStmt) => containsControlStatement(bodyStmt));
+  }
+
+  if (stmt.type === "IfStatement") {
+    const alternate = Array.isArray(stmt.alternate)
+      ? stmt.alternate.some((bodyStmt) => containsControlStatement(bodyStmt))
+      : stmt.alternate
+      ? containsControlStatement(stmt.alternate)
+      : false;
+
+    return stmt.consequent.some((bodyStmt) => containsControlStatement(bodyStmt)) || alternate;
+  }
+
+  if (
+    stmt.type === "ForStatement" ||
+    stmt.type === "CStyleForStatement" ||
+    stmt.type === "WhileStatement" ||
+    stmt.type === "UntilStatement"
+  ) {
+    return stmt.body.some((bodyStmt) => containsControlStatement(bodyStmt));
+  }
+
+  if (stmt.type === "CaseStatement") {
+    return stmt.cases.some((caseClause) =>
+      caseClause.body.some((bodyStmt) => containsControlStatement(bodyStmt))
+    );
+  }
+
+  return false;
+}
+
+function isLogicalControlTarget(stmt: AST.Statement | undefined): stmt is AST.Statement {
+  return !!stmt && (isControlStatement(stmt) ||
+    (stmt.type === "BraceGroup" && containsControlStatement(stmt)) ||
+    (stmt.type === "Pipeline" &&
+      stmt.operator === null &&
+      stmt.commands.length === 1 &&
+      isLogicalControlTarget(stmt.commands[0])));
+}
+
 function buildPrintableStatusLines(
   result: ExpressionResult & { isStream?: boolean; isPrintable?: boolean },
   statusVar: string,
@@ -2436,7 +2484,7 @@ function visitLogicalControlPipeline(
   }
 
   const control = pipeline.commands[pipeline.commands.length - 1];
-  if (!isControlStatement(control)) return null;
+  if (!isLogicalControlTarget(control)) return null;
 
   const leftPipeline: AST.Pipeline = {
     type: "Pipeline",
