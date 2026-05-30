@@ -34,4 +34,20 @@ describe("Bug: logical pipeline break", () => {
     assertEquals(result.stdout.includes("after-1"), false);
     assertEquals(result.stdout.includes("after-2"), false);
   });
+
+  it("keeps break in loop scope inside a successful logical brace group", async () => {
+    const code = transpileBash(
+      `for p in 1 2; do printf "$p\\n" | grep 1 && { echo "hit-$p"; break; }; echo "after-$p"; done; echo done`,
+    );
+
+    assertEquals(code.includes("(async () => { {;"), false, code);
+
+    const result = await executeCode(code, config, { cwd: Deno.cwd() });
+
+    assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+    assertStringIncludes(result.stdout, "hit-1");
+    assertStringIncludes(result.stdout, "done");
+    assertEquals(result.stdout.includes("after-1"), false);
+    assertEquals(result.stdout.includes("after-2"), false);
+  });
 });
