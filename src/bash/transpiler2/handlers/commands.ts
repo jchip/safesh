@@ -123,17 +123,38 @@ function handleShellBuiltin(
   builtin: { fn: string; type: string },
   argExpansions?: boolean[],
   hasRedirects = false,
+  captureOutput = false,
 ): ExpressionResult & {
   isShellBuiltin?: boolean;
   isSilentShellBuiltin?: boolean;
   formatsOutput?: boolean;
 } {
+  if (name === "exit") {
+    const code = args.length > 0
+      ? `Number(${formatArg(args[0] ?? "0", argExpansions?.[0])}) || 0`
+      : "0";
+    return {
+      code: `Deno.exit(${code})`,
+      async: false,
+      isShellBuiltin: true,
+      isSilentShellBuiltin: true,
+    };
+  }
+
   const argsArray = args.length > 0
     ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
     : "";
 
   if (builtin.type === "output") {
     const outputExpr = `${builtin.fn}(${argsArray})`;
+    if (captureOutput) {
+      return {
+        code: outputExpr,
+        async: false,
+        isShellBuiltin: true,
+      };
+    }
+
     if (hasRedirects) {
       return {
         code: outputExpr,
@@ -153,7 +174,7 @@ function handleShellBuiltin(
       isShellBuiltin: true,
     };
   } else if (builtin.type === "prints") {
-    if (hasRedirects && name === "echo") {
+    if ((hasRedirects || captureOutput) && name === "echo") {
       return {
         code: argsArray
           ? `${builtin.fn}({ silent: true }, ${argsArray})`
@@ -681,6 +702,7 @@ function selectCommandStrategy(
 function executeCommandStrategy(
   strategy: CommandStrategy,
   ctx: VisitorContext,
+  options?: { captureOutput?: boolean },
 ): CommandExpressionResult {
   switch (strategy.type) {
     case "variable-assignment": {
@@ -720,6 +742,7 @@ function executeCommandStrategy(
         strategy.builtin,
         strategy.argExpansions,
         strategy.hasRedirects,
+        options?.captureOutput ?? false,
       );
       return result;
     }
@@ -899,7 +922,7 @@ function applyBuiltinRedirections(
 export function buildCommand(
   command: AST.Command,
   ctx: VisitorContext,
-  options?: { inPipeline?: boolean },
+  options?: { inPipeline?: boolean; captureOutput?: boolean },
 ): CommandExpressionResult {
   // Phase 1: Analyze command
   const analysis = analyzeCommand(command, ctx);
@@ -908,7 +931,7 @@ export function buildCommand(
   const strategy = selectCommandStrategy(command, analysis, ctx, options);
 
   // Phase 3: Execute strategy
-  const result = executeCommandStrategy(strategy, ctx);
+  const result = executeCommandStrategy(strategy, ctx, options);
 
   // Phase 4: Apply redirections
   if (result.isShellBuiltin && command.redirects.length > 0) {
@@ -2157,9 +2180,11 @@ function flattenPipeline(
   parts: PipelinePart[],
   operators: (string | null)[],
   ctx: VisitorContext,
+  captureOutput = pipeline.commands.length > 1,
 ): void {
   // Check if this pipeline uses pipe operator (|) - only then we're in a "true" pipeline
   const hasPipeOperator = pipeline.operator === "|";
+  const capturesCommandOutput = captureOutput || pipeline.commands.length > 1;
 
   // Helper to check if a nested pipeline should be built as a complete expression
   // Only | pipe chains should be complete expressions within ||/&& operators
@@ -2172,7 +2197,10 @@ function flattenPipeline(
   const left = pipeline.commands[0];
   if (left) {
     if (left.type === "Command") {
-      const result = buildCommand(left, ctx, { inPipeline: hasPipeOperator });
+      const result = buildCommand(left, ctx, {
+        inPipeline: hasPipeOperator,
+        captureOutput: capturesCommandOutput,
+      });
       // SSH-361: Track whether the command produces output that should be printed
       // SSH-424: For fluent commands, async=false but they still produce output
       // isPrintable should be true for all commands except variable assignments
@@ -2201,7 +2229,7 @@ function flattenPipeline(
         });
       } else {
         // Flatten for &&/|| chains and single commands to preserve variable scope
-        flattenPipeline(left, parts, operators, ctx);
+        flattenPipeline(left, parts, operators, ctx, capturesCommandOutput);
       }
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
@@ -2228,7 +2256,10 @@ function flattenPipeline(
     if (!cmd) continue;
 
     if (cmd.type === "Command") {
-      const result = buildCommand(cmd, ctx, { inPipeline: hasPipeOperator });
+      const result = buildCommand(cmd, ctx, {
+        inPipeline: hasPipeOperator,
+        captureOutput: capturesCommandOutput,
+      });
       // SSH-361: Track whether the command produces output that should be printed
       // SSH-424: For fluent commands, async=false but they still produce output
       const isPrintable = result.async || (result.isStream ?? false) ||
@@ -2256,7 +2287,7 @@ function flattenPipeline(
         });
       } else {
         // Flatten for &&/|| chains and single commands to preserve variable scope
-        flattenPipeline(cmd, parts, operators, ctx);
+        flattenPipeline(cmd, parts, operators, ctx, capturesCommandOutput);
       }
     } else {
       // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE

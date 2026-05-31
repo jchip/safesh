@@ -493,7 +493,18 @@ export function visitCommandSubstitution(
   for (const stmt of cs.command) {
     // For simple commands/pipelines, get the expression directly
     // For other statements, fall back to visitStatement
-    if (stmt.type === "Command" || stmt.type === "Pipeline") {
+    if (stmt.type === "Command") {
+      const expr = ctx.buildCommand(stmt, { captureOutput: true });
+      innerExprs.push(expr.code);
+    } else if (
+      stmt.type === "Pipeline" &&
+      stmt.commands.length === 1 &&
+      stmt.commands[0]?.type === "Command" &&
+      !stmt.background
+    ) {
+      const expr = ctx.buildCommand(stmt.commands[0], { captureOutput: true });
+      innerExprs.push(expr.code);
+    } else if (stmt.type === "Pipeline") {
       const expr = ctx.buildCommandExpression(stmt);
       innerExprs.push(expr.code);
     } else {

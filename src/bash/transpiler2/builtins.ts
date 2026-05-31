@@ -36,4 +36,5 @@ export const SHELL_BUILTINS: Record<string, BuiltinConfig> = {
   mv: { fn: "$.mv", type: "async" },
   mkdir: { fn: "$.mkdir", type: "async" },
   touch: { fn: "$.touch", type: "async" },
+  exit: { fn: "Deno.exit", type: "silent" },
 };

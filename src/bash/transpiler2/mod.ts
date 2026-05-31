@@ -21,13 +21,13 @@ import * as handlers from "./handlers/mod.ts";
 
 // Re-exports
 export type {
-  TranspilerOptions,
-  ResolvedOptions,
   ExpressionResult,
+  ResolvedOptions,
   StatementResult,
+  TranspilerOptions,
   VisitorContext,
 } from "./types.ts";
-export { resolveOptions, isFluentCommand, FLUENT_COMMANDS } from "./types.ts";
+export { FLUENT_COMMANDS, isFluentCommand, resolveOptions } from "./types.ts";
 export type { ASTVisitor } from "./visitor.ts";
 export { TranspilerContext } from "./context.ts";
 export { OutputEmitter } from "./emitter.ts";
@@ -103,8 +103,7 @@ export class BashTranspiler2 {
       getTempVar: (prefix?: string) => ctx.getTempVar(prefix),
       getOptions: () => ctx.getOptions(),
       isDeclared: (name: string) => ctx.isDeclared(name),
-      declareVariable: (name: string, type?: "const" | "let") =>
-        ctx.declareVariable(name, type),
+      declareVariable: (name: string, type?: "const" | "let") => ctx.declareVariable(name, type),
       pushScope: () => ctx.pushScope(),
       popScope: () => ctx.popScope(),
       declareFunction: (name: string) => ctx.declareFunction(name),
@@ -132,19 +131,24 @@ export class BashTranspiler2 {
         return handlers.visitArithmeticExpression(expr, this);
       },
 
-      buildCommand(cmd: AST.Command): ExpressionResult {
-        return handlers.buildCommand(cmd, this);
+      buildCommand(
+        cmd: AST.Command,
+        options?: { inPipeline?: boolean; captureOutput?: boolean },
+      ): ExpressionResult {
+        return handlers.buildCommand(cmd, this, options);
       },
 
       buildCommandExpression(stmt: AST.Command | AST.Pipeline): ExpressionResult {
         if (stmt.type === "Command") {
-          return handlers.buildCommand(stmt, this);
+          return handlers.buildCommand(stmt, this, { captureOutput: true });
         } else {
           return handlers.buildPipeline(stmt, this);
         }
       },
 
-      buildTestExpression(test: AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand): ExpressionResult {
+      buildTestExpression(
+        test: AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand,
+      ): ExpressionResult {
         if (test.type === "TestCommand") {
           // For [[ ... ]] test commands, return the expression result directly
           const expr = handlers.visitTestCondition(test.expression, this);
@@ -161,10 +165,15 @@ export class BashTranspiler2 {
             const jsOp = test.operator === "&&" ? "&&" : "||";
             const parts: string[] = [];
             for (const cmd of test.commands) {
-              const inner = this.buildTestExpression(cmd as AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand);
+              const inner = this.buildTestExpression(
+                cmd as AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand,
+              );
               parts.push(`(await ${inner.code}).code === 0`);
             }
-            return { code: `{ code: (${parts.join(` ${jsOp} `)}) ? 0 : 1, stdout: '', stderr: '' }`, async: true };
+            return {
+              code: `{ code: (${parts.join(` ${jsOp} `)}) ? 0 : 1, stdout: '', stderr: '' }`,
+              async: true,
+            };
           }
           // For pipelines, check the first command
           const firstCmd = test.commands[0];

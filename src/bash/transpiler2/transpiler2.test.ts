@@ -1583,7 +1583,7 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
     const output = transpile(ast);
     // Should parse and transpile without error
     assertStringIncludes(output, "$.cd");
-    assertStringIncludes(output, '$.echo("test")');
+    assertStringIncludes(output, '$.echo({ silent: true }, "test")');
   });
 
   it("should handle BraceGroup", () => {
