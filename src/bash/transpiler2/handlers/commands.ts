@@ -1051,6 +1051,24 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
   return { code: transformCode, isTransform: true, isStream: false };
 }
 
+function hasGlobPattern(path: string): boolean {
+  return /[*?[\]{}]/.test(path);
+}
+
+function formatFileArgs(files: string[]): string {
+  return files.map((file) => `"${escapeForQuotes(file)}"`).join(", ");
+}
+
+function buildTextFileStream(files: string[]): string {
+  if (files.length === 1 && !hasGlobPattern(files[0] ?? "")) {
+    return `$.cat("${escapeForQuotes(files[0] ?? "")}").lines()`;
+  }
+
+  return `$.src(${formatFileArgs(files)})` +
+    `.map((file) => typeof file.contents === "string" ? file.contents : new TextDecoder().decode(file.contents))` +
+    `.lines()`;
+}
+
 /**
  * Build a fluent-style command (cat, grep, etc.)
  */
@@ -1125,10 +1143,10 @@ function buildFluentCommand(
 
       if (files.length > 0) {
         // grep pattern file -> $.cat(file).grep(pattern) - this is a stream chain
-        const file = `"${escapeForQuotes(files[0] ?? "")}"`;
+        const fileStream = buildTextFileStream(files);
         if (lineNumber) {
           const predicate = invert ? `!${regexPattern}.test(line)` : `${regexPattern}.test(line)`;
-          const result = `$.cat(${file}).lines().map((line, i) => ({ line, number: i + 1 }))` +
+          const result = `${fileStream}.map((line, i) => ({ line, number: i + 1 }))` +
             `.filter(({ line }) => ${predicate})` +
             ".map(({ line, number }) => `${number}:${line}`)";
           return { code: result, isTransform: false, isStream: true };
@@ -1137,10 +1155,10 @@ function buildFluentCommand(
           // SSH-503: grep -v with file - skip .grep() since it filters FOR the pattern,
           // then .filter(x => !x.match) on the result would produce nothing.
           // Instead, read lines and filter out matches directly.
-          const result = `$.cat(${file}).lines().filter(line => !${regexPattern}.test(line))`;
+          const result = `${fileStream}.filter(line => !${regexPattern}.test(line))`;
           return { code: result, isTransform: false, isStream: true };
         }
-        const result = `$.cat(${file}).lines().grep(${regexPattern})`;
+        const result = `${fileStream}.grep(${regexPattern})`;
         return { code: result, isTransform: false, isStream: true };
       }
 

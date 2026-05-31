@@ -102,6 +102,33 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
     });
   });
 
+  it("should expand globbed file operands for grep after cd", async () => {
+    await withFixture(async (testDir, config) => {
+      const srcDir = `${testDir}/src`;
+      await Deno.mkdir(srcDir);
+      await Deno.writeTextFile(
+        `${srcDir}/App.tsx`,
+        "const steps = execution.steps.map((step) => step.startTime);\n",
+      );
+      await Deno.writeTextFile(
+        `${srcDir}/api.ts`,
+        "const entries = Object.entries(inspectionState).sort();\n",
+      );
+
+      const code = transpileBash(
+        `cd ${srcDir}
+grep -nE "steps|executions|sort|order|Object.entries|\\.map\\(|startTime|inspectionState" *.tsx *.ts | grep -iE "step|sort|order|execution|startTime|entries" | head -30`,
+      );
+
+      const result = await executeCode(code, config, { cwd: testDir });
+
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertStringIncludes(result.stdout, "steps.map");
+      assertStringIncludes(result.stdout, "Object.entries");
+      assertEquals(result.stderr, "");
+    });
+  });
+
   it("should generate valid TypeScript for an empty grep pattern", async () => {
     await withFixture(async (testDir, config) => {
       const code = transpileBash(
