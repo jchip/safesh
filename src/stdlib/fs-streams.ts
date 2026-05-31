@@ -13,9 +13,9 @@ import { FluentStream } from "./fluent-stream.ts";
 import { validatePath } from "../core/permissions.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 import { expandGlob, type ExpandGlobOptions } from "@std/fs/expand-glob";
-import { resolve, dirname, relative, join } from "@std/path";
+import { dirname, join, relative, resolve } from "@std/path";
 import { ensureDir } from "@std/fs/ensure-dir";
-import { getRealPath, getDefaultConfig } from "../core/utils.ts";
+import { getDefaultConfig, getRealPath } from "../core/utils.ts";
 import { getGlobBase as getGlobBaseRaw } from "./glob.ts";
 
 /**
@@ -260,13 +260,23 @@ export function cat(path: string, options: GlobOptions = {}): Stream<string> {
   const config = options.config ?? getDefaultConfig(cwd);
 
   const iterable = (async function* () {
-    // Validate path is within sandbox
-    const validPath = await validatePath(path, config, cwd, "read");
+    try {
+      // Validate path is within sandbox
+      const validPath = await validatePath(path, config, cwd, "read");
 
-    // Read file contents
-    const contents = await Deno.readTextFile(validPath);
+      // Read file contents
+      const contents = await Deno.readTextFile(validPath);
 
-    yield contents;
+      yield contents;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        throw new Error(`cat: ${path}: No such file or directory`);
+      }
+      if (error instanceof Deno.errors.PermissionDenied) {
+        throw new Error(`cat: ${path}: Permission denied`);
+      }
+      throw error;
+    }
   })();
 
   return createStream(iterable);

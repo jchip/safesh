@@ -89,7 +89,7 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
         `grep -E "trust-mock|backend" start-local-infra.js`,
       );
 
-      assertStringIncludes(code, "for await");
+      assertStringIncludes(code, "__printCmd");
       assertStringIncludes(code, ".lines().grep");
 
       const result = await executeCode(code, config, { cwd: testDir });

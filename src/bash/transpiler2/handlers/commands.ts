@@ -1301,7 +1301,7 @@ export function visitCommand(
   if (result.isStream) {
     const streamExpr = result.async ? `await ${result.code}` : result.code;
     return {
-      lines: [`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`],
+      lines: [`${indent}await __printCmd(${streamExpr});`],
     };
   }
   if (result.isSilentShellBuiltin) {
