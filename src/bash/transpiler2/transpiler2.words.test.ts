@@ -455,7 +455,7 @@ describe("Word Expansion - Command Substitution", () => {
     const ast = parse(script);
     const result = transpile(ast);
     assertStringIncludes(result, "await __cmdSubText");
-    assertStringIncludes(result, '$.echo("hello")');
+    assertStringIncludes(result, '$.echo({ silent: true }, "hello")');
   });
 
   it("should strip trailing newlines from command substitution", () => {

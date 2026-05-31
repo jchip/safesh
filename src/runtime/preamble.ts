@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { Shell, SafeShellConfig } from "../core/types.ts";
+import type { SafeShellConfig, Shell } from "../core/types.ts";
 import { SHELL_STATE_MARKER } from "../core/constants.ts";
 import { getSessionAllowedCommandsArray } from "../core/session.ts";
 
@@ -84,12 +84,14 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
     cwd,
     projectTemp: config.projectTemp,
     vfs: config.vfs,
-    permissions: config.permissions ? {
-      read: config.permissions.read,
-      write: config.permissions.write,
-      denyRead: config.permissions.denyRead,
-      denyWrite: config.permissions.denyWrite,
-    } : undefined,
+    permissions: config.permissions
+      ? {
+        read: config.permissions.read,
+        write: config.permissions.write,
+        denyRead: config.permissions.denyRead,
+        denyWrite: config.permissions.denyWrite,
+      }
+      : undefined,
   };
 }
 
@@ -104,7 +106,10 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
  * - Streaming shell API (cat, glob, git, lines, grep, map, filter, etc.)
  * - ShellJS-like commands (echo, cd, pwd, chmod, etc.)
  */
-export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): { preamble: string; preambleLineCount: number } {
+export function buildPreamble(
+  shell?: Shell,
+  preambleConfig?: PreambleConfig,
+): { preamble: string; preambleLineCount: number } {
   const stdlibPath = getStdlibPath();
 
   // Shell context values (or defaults if no shell)
@@ -150,11 +155,13 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
       `import { VirtualFileSystem as __VirtualFileSystem, setupVFS as __setupVFS } from 'file://${vfsPath}mod.ts';`,
       "",
       "// Initialize VFS",
-      `const __vfs = new __VirtualFileSystem(${JSON.stringify({
-        prefix: preambleConfig.vfs.prefix,
-        maxSize: preambleConfig.vfs.maxSize,
-        maxFiles: preambleConfig.vfs.maxFiles,
-      })});`,
+      `const __vfs = new __VirtualFileSystem(${
+        JSON.stringify({
+          prefix: preambleConfig.vfs.prefix,
+          maxSize: preambleConfig.vfs.maxSize,
+          maxFiles: preambleConfig.vfs.maxFiles,
+        })
+      });`,
       "",
     );
 
@@ -270,6 +277,16 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `    __setPipeStatus(undefined, 1);`,
     `    return { code: 1, stdout: "", stderr: "", success: false };`,
     `  }`,
+    `  if (typeof result === "string") {`,
+    `    const __stdout = result ? result + "\\n" : "";`,
+    `    __setPipeStatus(undefined, 0);`,
+    `    return { code: 0, stdout: __stdout, stderr: "", success: true };`,
+    `  }`,
+    `  if (Array.isArray(result)) {`,
+    `    const __stdout = result.length ? result.join("\\n") + "\\n" : "";`,
+    `    __setPipeStatus(undefined, 0);`,
+    `    return { code: 0, stdout: __stdout, stderr: "", success: true };`,
+    `  }`,
     `  const __code = result.code ?? 0;`,
     `  const __stdout = result.output ?? result.stdout ?? "";`,
     `  const __stderr = result.output ? "" : (result.stderr ?? "");`,
@@ -285,6 +302,7 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     "// Helper to extract text from command substitution result (SSH-360)",
     `async function __cmdSubText(__result: unknown): Promise<string> {`,
     `  if (__result === undefined || __result === null) return "";`,
+    `  if (Array.isArray(__result)) return __result.join("\\n").replace(/\\n+$/, "");`,
     `  if (typeof (__result as any).text === "function") return (await (__result as any).text()).replace(/\\n+$/, "");`,
     `  if (typeof (__result as any).collect === "function") return (await (__result as any).collect()).join("\\n").replace(/\\n+$/, "");`,
     `  if (typeof __result === "string") return __result.replace(/\\n+$/, "");`,
@@ -344,7 +362,9 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     `  }),`,
     `  VARS: ${JSON.stringify(shellVars)},`,
     `  // Internal (Symbol-keyed)`,
-    `  [Symbol.for('safesh.config')]: ${preambleConfig ? JSON.stringify(preambleConfig) : "undefined"},`,
+    `  [Symbol.for('safesh.config')]: ${
+      preambleConfig ? JSON.stringify(preambleConfig) : "undefined"
+    },`,
     `  // Namespaced modules`,
     `  fs: __fs, text: __text,`,
     `  // Command execution`,
@@ -385,7 +405,7 @@ export function buildPreamble(shell?: Shell, preambleConfig?: PreambleConfig): {
     // Close the $ object without VFS
     const lastLine = preambleLines[preambleLines.length - 1];
     if (lastLine) {
-      preambleLines[preambleLines.length - 1] = lastLine.replace(/,$/, '');
+      preambleLines[preambleLines.length - 1] = lastLine.replace(/,$/, "");
     }
   }
 
@@ -603,7 +623,9 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
     `    }`,
     `  }),`,
     `  VARS: ${JSON.stringify(shellVars)},`,
-    `  [Symbol.for('safesh.config')]: ${preambleConfig ? JSON.stringify(preambleConfig) : "undefined"},`,
+    `  [Symbol.for('safesh.config')]: ${
+      preambleConfig ? JSON.stringify(preambleConfig) : "undefined"
+    },`,
     `  fs: __fs, text: __text,`,
     `  cmd: __cmd,`,
     `  git: __git, docker: __docker, tmux: __tmux, tmuxSubmit: __tmuxSubmit, str: __str, bytes: __bytes, toCmd: __toCmd, toCmdLines: __toCmdLines, initCmds: __initCmds,`,
@@ -649,7 +671,12 @@ export function buildFilePostamble(hasShell: boolean): string {
  * @param preambleLineCount - Number of preamble lines (for line number offset)
  * @param hasShell - Whether to output shell state after execution
  */
-export function buildErrorHandler(scriptPath: string, preambleLineCount: number, hasShell: boolean, vfsEnabled = false): string {
+export function buildErrorHandler(
+  scriptPath: string,
+  preambleLineCount: number,
+  hasShell: boolean,
+  vfsEnabled = false,
+): string {
   const shellOutput = hasShell
     ? `console.log("${SHELL_STATE_MARKER}" + JSON.stringify({ CWD: Deno.cwd(), ENV: $.ENV, VARS: $.VARS }));`
     : "";
@@ -716,9 +743,7 @@ export function extractShellState(output: string): {
   vars?: Record<string, unknown>;
 } {
   const outputLines = output.split("\n");
-  const stateLineIndex = outputLines.findIndex((line) =>
-    line.startsWith(SHELL_STATE_MARKER)
-  );
+  const stateLineIndex = outputLines.findIndex((line) => line.startsWith(SHELL_STATE_MARKER));
 
   if (stateLineIndex === -1) {
     return { cleanOutput: output };
@@ -732,7 +757,11 @@ export function extractShellState(output: string): {
   const cleanOutput = outputLines.join("\n");
 
   try {
-    const state = JSON.parse(jsonStr) as { CWD?: string; ENV?: Record<string, string>; VARS?: Record<string, unknown> };
+    const state = JSON.parse(jsonStr) as {
+      CWD?: string;
+      ENV?: Record<string, string>;
+      VARS?: Record<string, unknown>;
+    };
     return { cleanOutput, cwd: state.CWD, env: state.ENV, vars: state.VARS };
   } catch {
     return { cleanOutput: output };

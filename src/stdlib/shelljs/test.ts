@@ -32,9 +32,24 @@ import type { SandboxOptions } from "../fs.ts";
  */
 export async function test(
   expression: string,
-  path: string,
+  pathOrOperator?: string,
+  valueOrOptions?: string | SandboxOptions,
   _options?: SandboxOptions,
 ): Promise<boolean> {
+  if (typeof valueOrOptions === "string") {
+    switch (pathOrOperator) {
+      case "=":
+      case "==":
+        return expression === valueOrOptions;
+      case "!=":
+        return expression !== valueOrOptions;
+      default:
+        return false;
+    }
+  }
+
+  const path = pathOrOperator ?? "";
+
   try {
     switch (expression) {
       case "-b": // block device

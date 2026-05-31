@@ -158,11 +158,16 @@ export interface VisitorContext {
   visitArithmetic(expr: AST.ArithmeticExpression): string;
 
   /** Build a command expression (without await) */
-  buildCommand(cmd: AST.Command): ExpressionResult;
+  buildCommand(
+    cmd: AST.Command,
+    options?: { inPipeline?: boolean; captureOutput?: boolean },
+  ): ExpressionResult;
 
   /** Build a command or pipeline expression (for command substitution) */
   buildCommandExpression(stmt: AST.Command | AST.Pipeline): ExpressionResult;
 
   /** Build test expression for if/while conditions */
-  buildTestExpression(test: AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand): ExpressionResult;
+  buildTestExpression(
+    test: AST.Pipeline | AST.Command | AST.TestCommand | AST.ArithmeticCommand,
+  ): ExpressionResult;
 }
