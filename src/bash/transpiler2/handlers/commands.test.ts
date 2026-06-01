@@ -324,12 +324,13 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
   });
 
   describe("Flag Propagation (isAsync, isTransform, isStream)", () => {
-    it("should set isAsync=false for shell builtins", () => {
+    it("should wrap output shell builtins in printable command results", () => {
       const script = "pwd";
       const output = transpile(parse(script));
 
-      // Builtins are synchronous, no await needed (but wrapped in console.log)
-      assertStringIncludes(output, "console.log");
+      // Output builtins are wrapped so thrown builtin errors become command status.
+      assertStringIncludes(output, "__printCmd");
+      assertStringIncludes(output, "try { __result");
       assertStringIncludes(output, "$.pwd()");
     });
 

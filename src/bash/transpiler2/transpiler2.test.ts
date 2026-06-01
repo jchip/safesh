@@ -197,9 +197,9 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("ls");
     const output = transpile(ast);
 
-    // SSH-372: Now uses $.ls() builtin (output type, so uses console.log)
+    // SSH-372: Now uses $.ls() builtin.
     assertStringIncludes(output, "$.ls()");
-    assertStringIncludes(output, "console.log");
+    assertStringIncludes(output, "__printCmd");
   });
 
   it("should transpile command with arguments", () => {
