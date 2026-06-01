@@ -7,7 +7,7 @@
  */
 
 import { ShellString } from "./types.ts";
-import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
+import { expandTilde, flattenArgs, parseOptions } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
 import { validatePath } from "../../core/permissions.ts";
 import { getDefaultConfig } from "../../core/utils.ts";
@@ -37,6 +37,91 @@ const OPTIONS_MAP: OptionsMap = {
  */
 export function parseTouchOptions(optStr: string): TouchOptions {
   return parseOptions(optStr, OPTIONS_MAP) as TouchOptions;
+}
+
+function parseTouchTimestamp(timestamp: string): Date {
+  const match = timestamp.match(/^(\d{8}|\d{10}|\d{12})(?:\.(\d{1,2}))?$/);
+  if (!match) {
+    throw new Error(`touch: invalid date format '${timestamp}'`);
+  }
+
+  const digits = match[1]!;
+  const seconds = match[2] ? Number(match[2].padEnd(2, "0")) : 0;
+  let year: number;
+  let offset: number;
+
+  if (digits.length === 12) {
+    year = Number(digits.slice(0, 4));
+    offset = 4;
+  } else if (digits.length === 10) {
+    const yy = Number(digits.slice(0, 2));
+    year = yy >= 69 ? 1900 + yy : 2000 + yy;
+    offset = 2;
+  } else {
+    year = new Date().getFullYear();
+    offset = 0;
+  }
+
+  const month = Number(digits.slice(offset, offset + 2));
+  const day = Number(digits.slice(offset + 2, offset + 4));
+  const hour = Number(digits.slice(offset + 4, offset + 6));
+  const minute = Number(digits.slice(offset + 6, offset + 8));
+  const date = new Date(year, month - 1, day, hour, minute, seconds);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day ||
+    date.getHours() !== hour ||
+    date.getMinutes() !== minute ||
+    date.getSeconds() !== seconds
+  ) {
+    throw new Error(`touch: invalid date format '${timestamp}'`);
+  }
+
+  return date;
+}
+
+function parseTouchStringArgs(args: string[]): { options: TouchOptions; paths: string[] } {
+  const options: TouchOptions = {};
+  const paths: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--") {
+      paths.push(...args.slice(i + 1));
+      break;
+    }
+
+    if (!arg.startsWith("-") || arg === "-") {
+      paths.push(arg, ...args.slice(i + 1));
+      break;
+    }
+
+    const flags = arg.slice(1);
+    for (let j = 0; j < flags.length; j++) {
+      const flag = flags[j]!;
+      if (flag === "a") {
+        options.accessOnly = true;
+      } else if (flag === "c") {
+        options.noCreate = true;
+      } else if (flag === "m") {
+        options.modifyOnly = true;
+      } else if (flag === "t") {
+        const inlineTimestamp = flags.slice(j + 1);
+        const timestamp = inlineTimestamp || args[++i];
+        if (!timestamp) {
+          throw new Error("touch: option requires an argument -- t");
+        }
+        options.date = parseTouchTimestamp(timestamp);
+        break;
+      } else {
+        throw new Error(`Option not recognized: ${flag}`);
+      }
+    }
+  }
+
+  return { options, paths };
 }
 
 /**
@@ -69,14 +154,17 @@ export async function touch(
   let allPaths: string[];
 
   // Parse arguments
-  if (typeof optionsOrPath === "string" && optionsOrPath.startsWith("-")) {
-    options = parseTouchOptions(optionsOrPath);
-    allPaths = flattenArgs(...paths);
-  } else if (typeof optionsOrPath === "object" && !Array.isArray(optionsOrPath)) {
+  if (typeof optionsOrPath === "object" && !Array.isArray(optionsOrPath)) {
     options = optionsOrPath;
     allPaths = flattenArgs(...paths);
   } else {
-    allPaths = flattenArgs(optionsOrPath as string, ...paths);
+    try {
+      const parsed = parseTouchStringArgs(flattenArgs(optionsOrPath as string, ...paths));
+      options = parsed.options;
+      allPaths = parsed.paths;
+    } catch (error) {
+      return new ShellString("", error instanceof Error ? error.message : String(error), 1);
+    }
   }
 
   if (allPaths.length === 0) {
