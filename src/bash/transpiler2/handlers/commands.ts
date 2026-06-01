@@ -2692,19 +2692,20 @@ export function visitPipeline(
   const result = buildPipeline(pipeline, ctx);
 
   if (pipeline.background) {
-    // SSH-XXX: Spawn background job and track PID for $!
-    // Convert the command to a spawned child process so we can get its PID
-    // If the result is async (e.g., wrapped in IIFE for cd), await it first
-    const bgCode = result.async
-      ? `${indent}  const __bgCmd = await (async () => { return ${result.code}; })();` // SSH-572: Wrap in IIFE to avoid semicolon syntax error
-      : `${indent}  const __bgCmd = ${result.code};`;
+    const printBackgroundResult = result.isPrintable || result.isStream || result.isResultObject;
 
     return {
       lines: [
         `${indent}(async () => {`,
-        bgCode,
-        `${indent}  const __child = __bgCmd.spawnBackground();`,
-        `${indent}  __LAST_BG_PID = __child.pid;`,
+        `${indent}  const __bgCmd = ${result.code};`,
+        `${indent}  if (__bgCmd && typeof __bgCmd.spawnBackground === "function") {`,
+        `${indent}    const __child = __bgCmd.spawnBackground();`,
+        `${indent}    __LAST_BG_PID = __child.pid;`,
+        `${indent}  } else {`,
+        printBackgroundResult
+          ? `${indent}    await __printCmd(await Promise.resolve(__bgCmd));`
+          : `${indent}    await Promise.resolve(__bgCmd);`,
+        `${indent}  }`,
         `${indent}})(); // background`,
       ],
     };
