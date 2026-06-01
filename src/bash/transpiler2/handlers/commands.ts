@@ -449,6 +449,7 @@ type CommandExpressionResult = ExpressionResult & {
   isUserFunction?: boolean;
   isTransform?: boolean;
   isStream?: boolean;
+  isVariableAssignment?: boolean;
   isShellBuiltin?: boolean;
   isSilentShellBuiltin?: boolean;
   formatsOutput?: boolean;
@@ -709,7 +710,7 @@ function executeCommandStrategy(
       const assignments = strategy.assignments
         .map((a) => buildVariableAssignment(a, ctx))
         .join(", ");
-      return { code: assignments, async: false };
+      return { code: assignments, async: false, isVariableAssignment: true };
     }
 
     case "user-function": {
@@ -932,6 +933,10 @@ export function buildCommand(
 
   // Phase 3: Execute strategy
   const result = executeCommandStrategy(strategy, ctx, options);
+
+  if (result.isVariableAssignment && command.redirects.every(isStderrDiscardRedirect)) {
+    return result;
+  }
 
   // Phase 4: Apply redirections
   if (result.isShellBuiltin && command.redirects.length > 0) {
