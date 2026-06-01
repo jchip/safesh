@@ -25,8 +25,8 @@ describe("SSH-372 - Shell Builtins", () => {
 
     assertStringIncludes(output, '$.pwd()');
     assertEquals(output.includes('$.cmd("pwd"'), false, "Should not use $.cmd for pwd");
-    // pwd is output type, so should print result
-    assertStringIncludes(output, 'console.log');
+    // pwd is output type, so should print a command-style result
+    assertStringIncludes(output, "__printCmd");
   });
 
   it("should use $.echo for echo command", () => {
@@ -59,8 +59,8 @@ describe("SSH-372 - Shell Builtins", () => {
 
     assertStringIncludes(output, '$.dirs()');
     assertEquals(output.includes('$.cmd("dirs"'), false, "Should not use $.cmd for dirs");
-    // dirs is output type, so should print result
-    assertStringIncludes(output, 'console.log');
+    // dirs is output type, so should print a command-style result
+    assertStringIncludes(output, "__printCmd");
   });
 
   it("should use $.test for test command", () => {
@@ -141,8 +141,8 @@ describe("SSH-372 - Shell Builtins", () => {
 
     assertStringIncludes(output, '$.ls("-la")');
     assertEquals(output.includes('$.cmd("ls"'), false, "Should not use $.cmd for ls");
-    // ls is output type, so should print result
-    assertStringIncludes(output, 'console.log');
+    // ls is output type, so should print a command-style result
+    assertStringIncludes(output, "__printCmd");
   });
 
   it("should not spawn external set for shell option commands", () => {
@@ -242,12 +242,12 @@ describe("SSH-372 - Shell Builtins", () => {
   });
 
   describe("Builtin output handling", () => {
-    it("should wrap output type builtins with console.log", () => {
+    it("should wrap output type builtins as command-style results", () => {
       const ast = parse("pwd");
       const output = transpile(ast);
 
       // pwd returns a value that should be printed
-      assertStringIncludes(output, "console.log");
+      assertStringIncludes(output, "__printCmd");
       assertStringIncludes(output, "await Promise.resolve($.pwd())");
     });
 

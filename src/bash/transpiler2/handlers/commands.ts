@@ -117,6 +117,26 @@ function handleUserFunction(name: string): string {
   return `${name}()`;
 }
 
+function buildOutputResultExpression(cmdExpr: string, formatsOutput = false): string {
+  const lines = [
+    `let __result: any;`,
+    `try { __result = await Promise.resolve(${cmdExpr}); } catch (__error) { __result = { stdout: "", stderr: __error instanceof Error ? __error.message : String(__error), code: 1 }; }`,
+    `const __code = typeof __result === "boolean" ? (__result ? 0 : 1) : (__result ? (__result.code ?? 0) : 1);`,
+    `let __stdout = Array.isArray(__result) ? __result.join("\\n") : ((typeof __result === "boolean" || __result == null) ? "" : (typeof __result.stdout === "string" ? __result.stdout : String(__result)));`,
+    `let __stderr = (typeof __result?.stderr === "string") ? __result.stderr : "";`,
+  ];
+
+  if (formatsOutput) {
+    lines.push(`if (__stdout) __stdout += "\\n";`);
+  }
+
+  lines.push(
+    `return { stdout: __stdout, stderr: __stderr, code: __code, success: __code === 0 };`,
+  );
+
+  return `(async () => { ${lines.join(" ")} })()`;
+}
+
 function handleShellBuiltin(
   name: string,
   args: string[],
@@ -166,11 +186,8 @@ function handleShellBuiltin(
 
     // Output builtins should print their result
     return {
-      code: `console.log(` +
-        `((__out: unknown) => Array.isArray(__out) ? __out.join("\\n") : String(__out))` +
-        `(await Promise.resolve(${outputExpr}))` +
-        `)`,
-      async: false,
+      code: buildOutputResultExpression(outputExpr, true),
+      async: true,
       isShellBuiltin: true,
     };
   } else if (builtin.type === "prints") {
