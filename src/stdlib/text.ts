@@ -88,10 +88,19 @@ export interface GrepOptions extends SandboxOptions {
   after?: number;
 }
 
+export interface GrepGlobOptions extends GrepOptions {
+  /** File glob pattern(s) to search */
+  glob: string | string[];
+}
+
 interface GrepCommandOptions {
   recursive: boolean;
   filesWithMatches: boolean;
   include?: string;
+}
+
+function isGrepGlobOptions(input: unknown): input is GrepGlobOptions {
+  return typeof input === "object" && input !== null && !Array.isArray(input) && "glob" in input;
 }
 
 function parseGrepArgs(args: string[]): GrepCommandOptions {
@@ -151,6 +160,35 @@ async function grepFilesWithArgs(
   return matches;
 }
 
+async function grepFilesWithGlobOptions(
+  pattern: RegExp | string,
+  options: GrepGlobOptions,
+): Promise<string[]> {
+  validateStringOrArray(options.glob, "$.text.grep() glob");
+  const globPatterns = Array.isArray(options.glob) ? options.glob : [options.glob];
+  const files = new Set<string>();
+
+  for (const globPattern of globPatterns) {
+    for (const filePath of await globPaths(globPattern, { cwd: options.cwd }, options.config)) {
+      files.add(filePath);
+    }
+  }
+
+  const matches: string[] = [];
+  for (const filePath of files) {
+    try {
+      const content = await fs.read(filePath, options);
+      if (grep(pattern, content, options).length > 0) {
+        matches.push(filePath);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return matches;
+}
+
 /**
  * Search for pattern in text
  *
@@ -180,11 +218,19 @@ export function grep(
 ): Promise<string[]>;
 export function grep(
   pattern: RegExp | string,
-  input: string | string[],
+  options: GrepGlobOptions,
+): Promise<string[]>;
+export function grep(
+  pattern: RegExp | string,
+  input: string | string[] | GrepGlobOptions,
   options: Omit<GrepOptions, keyof SandboxOptions> | string = {},
 ): GrepMatch[] | Promise<string[]> {
   if (Array.isArray(input)) {
     return grepFilesWithArgs(pattern, input, typeof options === "string" ? options : ".");
+  }
+
+  if (isGrepGlobOptions(input)) {
+    return grepFilesWithGlobOptions(pattern, input);
   }
 
   validateString(input, "$.text.grep()");
