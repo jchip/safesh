@@ -99,6 +99,29 @@ line 5: HELLO`;
   });
 
   describe("command-style grep", () => {
+    it("supports file listing with glob options", async () => {
+      await Deno.mkdir(`${testDir}/src`, { recursive: true });
+      await Deno.writeTextFile(
+        `${testDir}/src/app.ts`,
+        "const flag = 'NEXT_PUBLIC_ENABLE_LOCAL_SESSION';\n",
+      );
+      await Deno.writeTextFile(
+        `${testDir}/src/app.js`,
+        "const other = 'nothing';\n",
+      );
+      await Deno.writeTextFile(
+        `${testDir}/ignored.txt`,
+        "NEXT_PUBLIC_ENABLE_LOCAL_SESSION\n",
+      );
+
+      const matches = await text.grep("NEXT_PUBLIC_ENABLE_LOCAL_SESSION", {
+        glob: ["**/*.ts", "**/*.js"],
+        cwd: testDir,
+      });
+
+      assertEquals(matches, [`${testDir}/src/app.ts`]);
+    });
+
     it("supports recursive file listing with include patterns", async () => {
       await Deno.mkdir(`${testDir}/frontend`, { recursive: true });
       await Deno.mkdir(`${testDir}/services/api`, { recursive: true });
