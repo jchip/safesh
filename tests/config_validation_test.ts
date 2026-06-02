@@ -8,6 +8,7 @@ import {
   validateConfig,
 } from "../src/core/config.ts";
 import { checkCommandPermission } from "../src/core/command_permission.ts";
+import { createRegistry } from "../src/external/registry.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 
 // ============================================================================
@@ -52,6 +53,17 @@ Deno.test("SSH-51: DEFAULT_CONFIG allows fd like find", async () => {
   if (fdResult.allowed) {
     assertEquals(fdResult.resolvedPath, "fd");
   }
+});
+
+Deno.test("SSH-70: DEFAULT_CONFIG allows swift", async () => {
+  const result = await checkCommandPermission("swift", DEFAULT_CONFIG, Deno.cwd());
+  const registry = createRegistry(DEFAULT_CONFIG);
+
+  assertEquals(result.allowed, true);
+  if (result.allowed) {
+    assertEquals(result.resolvedPath, "swift");
+  }
+  assertEquals(registry.isWhitelisted("swift"), true);
 });
 
 Deno.test("DEFAULT_CONFIG - passes validation with no errors", () => {

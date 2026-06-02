@@ -142,6 +142,7 @@ const SAFE_COMMANDS = [
   // ============================================================================
   "brew", "apt", "apt-cache", "dpkg", "rpm", "yum", "dnf", "pacman", "apk",
   "pip", "pip3", "gem", "cargo", "go", "rustc", "rustup",
+  "swift",
   "fyn", "nvx", "xrun", "npm", "pnpm", "yarn",
   // NOTE: node, deno, bun removed - can execute arbitrary code, require explicit permission
 
