@@ -31,6 +31,10 @@ export const DEFAULT_COMMAND_CONFIGS: Record<string, ExternalCommandConfig> = {
     allow: true,
     pathArgs: { autoDetect: true, validateSandbox: true },
   },
+  swift: {
+    allow: true,
+    pathArgs: { autoDetect: true, validateSandbox: true },
+  },
   deno: {
     allow: ["run", "test", "check", "lint", "fmt", "compile", "doc", "info"],
     denyFlags: ["--allow-all", "-A"],
