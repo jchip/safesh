@@ -33,6 +33,28 @@ function findFirstUnescapedSlash(s: string): number {
   return -1;
 }
 
+function shellVarProperty(param: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(param) ? `.${param}` : `[${JSON.stringify(param)}]`;
+}
+
+function shellVarOptionalProperty(param: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(param) ? `?.${param}` : `?.[${JSON.stringify(param)}]`;
+}
+
+function shellVarValueExpression(param: string, jsParam: string): string {
+  const prop = shellVarProperty(param);
+  return `(typeof ${jsParam} !== "undefined" ? ${jsParam} : ($.ENV${prop} ?? $.VARS${
+    shellVarOptionalProperty(param)
+  } ?? ""))`;
+}
+
+function shellVarDefinedExpression(param: string, jsParam: string): string {
+  const prop = shellVarProperty(param);
+  return `(typeof ${jsParam} !== "undefined" || $.ENV${prop} !== undefined || $.VARS${
+    shellVarOptionalProperty(param)
+  } !== undefined)`;
+}
+
 /**
  * Detect and expand brace patterns like {a,b,c} or {1..10}
  * Returns array of expanded strings or null if not a brace pattern
@@ -332,6 +354,8 @@ export function visitParameterExpansion(
   const modifierArg = expansion.modifierArg
     ? visitWord(expansion.modifierArg as AST.Word, ctx)
     : "";
+  const varExpr = shellVarValueExpression(param, jsParam);
+  const varDefinedExpr = shellVarDefinedExpression(param, jsParam);
 
   switch (modifier) {
     case "length":
@@ -344,13 +368,11 @@ export function visitParameterExpansion(
 
     case ":-":
       // ${VAR:-default} - use default if unset OR empty
-      return `\${(${jsParam} === undefined || ${jsParam} === "") ? "${
-        escapeForQuotes(modifierArg)
-      }" : ${jsParam}}`;
+      return `\${${varExpr} === "" ? "${escapeForQuotes(modifierArg)}" : ${varExpr}}`;
 
     case "-":
       // ${VAR-default} - use default only if unset
-      return `\${${jsParam} !== undefined ? ${jsParam} : "${escapeForQuotes(modifierArg)}"}`;
+      return `\${${varDefinedExpr} ? ${varExpr} : "${escapeForQuotes(modifierArg)}"}`;
 
     case ":=":
     case "=":

@@ -796,8 +796,10 @@ describe("Variable Expansion - All Modifiers", () => {
     it("should handle ${VAR:-default} (use default if unset/null)", () => {
       const ast = parse('echo "${VAR:-default_value}"');
       const output = transpile(ast);
-      // SSH-296: :- should check for both undefined AND empty string
-      assertStringIncludes(output, "VAR === undefined || VAR === \"\"");
+      // SSH-69: :- should read locals, env, and shell vars without bare ReferenceError
+      assertStringIncludes(output, "$.ENV.VAR");
+      assertStringIncludes(output, "$.VARS?.VAR");
+      assertStringIncludes(output, '=== ""');
     });
 
     it("should handle ${VAR-default} (use default if unset only)", () => {
