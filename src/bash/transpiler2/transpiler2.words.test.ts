@@ -233,7 +233,9 @@ describe("Parameter Expansion - Default Values", () => {
     const script = 'echo "${unset:-default}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "unset === undefined || unset === ");
+    assertStringIncludes(result, "$.ENV.unset");
+    assertStringIncludes(result, "$.VARS?.unset");
+    assertStringIncludes(result, '=== ""');
     assertStringIncludes(result, "default");
   });
 
