@@ -172,7 +172,10 @@ export function templateEscapedToRegexSource(templateEscapedPattern: string): st
     "^" + quantifiers.split("").map((q) => "\\" + q).join(""),
   );
 
-  // 6. Escape the regex delimiter /
+  // 6. Basic grep treats unescaped parentheses as literals; JS regex does not.
+  p = p.replace(/(?<!\\)[()]/g, "\\$&");
+
+  // 7. Escape the regex delimiter /
   p = p.replace(/\//g, "\\/");
 
   return p;

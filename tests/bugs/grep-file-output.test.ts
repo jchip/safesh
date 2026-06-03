@@ -102,6 +102,30 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
     });
   });
 
+  it("should treat basic grep literal parentheses as literals", async () => {
+    await withFixture(async (testDir, config) => {
+      await Deno.writeTextFile(
+        `${testDir}/InspectionOrderCache.java`,
+        [
+          "public class InspectionOrderCache {",
+          "  public List<String> n() {",
+          "    return orderedNames;",
+          "  }",
+          "}",
+        ].join("\n") + "\n",
+      );
+
+      const code = transpileBash(
+        `grep "public List<String> n(" InspectionOrderCache.java`,
+      );
+
+      const result = await executeCode(code, config, { cwd: testDir });
+
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertStringIncludes(result.stdout, "public List<String> n() {");
+    });
+  });
+
   it("should expand globbed file operands for grep after cd", async () => {
     await withFixture(async (testDir, config) => {
       const srcDir = `${testDir}/src`;
