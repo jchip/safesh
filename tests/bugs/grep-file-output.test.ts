@@ -126,6 +126,28 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
     });
   });
 
+  it("should use grep count semantics for -c", async () => {
+    await withFixture(async (testDir, config) => {
+      await Deno.writeTextFile(
+        `${testDir}/InspectionOrderCache.java`,
+        [
+          "orderedNames.add(first);",
+          "ignored.add(second);",
+          "orderedNames.add(third);",
+        ].join("\n") + "\n",
+      );
+
+      const code = transpileBash(
+        `grep -c "orderedNames" InspectionOrderCache.java`,
+      );
+
+      const result = await executeCode(code, config, { cwd: testDir });
+
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertEquals(result.stdout.trim(), "2");
+    });
+  });
+
   it("should expand globbed file operands for grep after cd", async () => {
     await withFixture(async (testDir, config) => {
       const srcDir = `${testDir}/src`;

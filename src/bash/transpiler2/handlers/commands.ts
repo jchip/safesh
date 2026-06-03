@@ -1135,6 +1135,8 @@ function buildFluentCommand(
               lineNumber = true;
             } else if (flag === "r" || flag === "R") {
               recursive = true;
+            } else if (flag === "c") {
+              return null;
             } else if (flag === "A" || flag === "B" || flag === "C" || flag === "m") {
               // SSH-568: These flags take numeric arguments and aren't supported by fluent grep.
               // Fall back to $.cmd("grep", ...) for correctness.
