@@ -467,6 +467,7 @@ type CommandExpressionResult = ExpressionResult & {
   isTransform?: boolean;
   isStream?: boolean;
   isVariableAssignment?: boolean;
+  assignmentNames?: string[];
   isShellBuiltin?: boolean;
   isSilentShellBuiltin?: boolean;
   formatsOutput?: boolean;
@@ -727,7 +728,12 @@ function executeCommandStrategy(
       const assignments = strategy.assignments
         .map((a) => buildVariableAssignment(a, ctx))
         .join(", ");
-      return { code: assignments, async: false, isVariableAssignment: true };
+      return {
+        code: assignments,
+        async: false,
+        isVariableAssignment: true,
+        assignmentNames: strategy.assignments.map((assignment) => assignment.name),
+      };
     }
 
     case "user-function": {
@@ -1364,6 +1370,10 @@ interface PipelinePart {
   isAsync: boolean;
   /** Whether this part resolves to a command result object rather than a Command */
   isResultObject?: boolean;
+  /** Whether this part is an assignment-only command statement */
+  isVariableAssignment?: boolean;
+  /** Original assignment names, used to sync expression-wrapped assignments */
+  assignmentNames?: string[];
 }
 
 interface ReadLoopConsumer {
@@ -1690,6 +1700,18 @@ function resultObjectToLineStream(expr: string): string {
   return `$.fromArray(((result: any) => String(result?.output ?? result?.stdout ?? "").split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1))(${expr}))`;
 }
 
+function assignmentResultExpression(code: string, assignmentNames: string[] = []): string {
+  const sync = assignmentSyncCode(assignmentNames);
+  return `(async () => { ${code}; ${sync}return { code: 0, stdout: "", stderr: "", success: true }; })()`;
+}
+
+function assignmentSyncCode(assignmentNames: string[] = []): string {
+  const syncVars = assignmentNames
+    .map((name) => `$.VARS[${JSON.stringify(name)}] = ${sanitizeVarName(name)}`)
+    .join("; ");
+  return syncVars.length > 0 ? `${syncVars}; ` : "";
+}
+
 function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorContext): string {
   const captureVar = ctx.getTempVar("__out");
   const previousCapture = ctx.getStdoutCapture();
@@ -1777,7 +1799,13 @@ ${inner}
 export function buildPipeline(
   pipeline: AST.Pipeline,
   ctx: VisitorContext,
-): ExpressionResult & { isStream?: boolean; isPrintable?: boolean; isResultObject?: boolean } {
+): ExpressionResult & {
+  isStream?: boolean;
+  isPrintable?: boolean;
+  isResultObject?: boolean;
+  isVariableAssignment?: boolean;
+  assignmentNames?: string[];
+} {
   if (
     !pipeline.background &&
     !pipeline.negated &&
@@ -1871,6 +1899,8 @@ export function buildPipeline(
     isStream: assembled.isStream,
     isPrintable: assembled.isPrintable,
     isResultObject: assembled.isResultObject,
+    isVariableAssignment: assembled.isVariableAssignment,
+    assignmentNames: assembled.assignmentNames,
   };
 }
 
@@ -1924,6 +1954,8 @@ class PipelineAssembler {
   private isStream: boolean;
   private isLineStream: boolean;
   private isResultObject: boolean;
+  private isVariableAssignment: boolean;
+  private assignmentNames: string[];
   private captureOutput: boolean;
 
   constructor(initialPart: PipelinePart, captureOutput: boolean) {
@@ -1933,6 +1965,8 @@ class PipelineAssembler {
     this.isPromise = (initialPart.isResultObject ?? false) && initialPart.isAsync;
     this.isLineStream = false;
     this.isResultObject = initialPart.isResultObject ?? false;
+    this.isVariableAssignment = initialPart.isVariableAssignment ?? false;
+    this.assignmentNames = initialPart.assignmentNames ?? [];
     this.captureOutput = captureOutput;
   }
 
@@ -1942,6 +1976,8 @@ class PipelineAssembler {
       isStream: this.isStream,
       isPrintable: this.isPrintable,
       isResultObject: this.isResultObject,
+      isVariableAssignment: this.isVariableAssignment,
+      assignmentNames: this.assignmentNames,
     };
   }
 
@@ -2042,24 +2078,31 @@ class PipelineAssembler {
       return;
     }
 
-    const leftValue = this.isPromise ? `await ${this.code}` : this.code;
+    const leftSetup = this.currentCaptureSetup();
+    const rightValue = part.isVariableAssignment
+      ? assignmentResultExpression(part.code, part.assignmentNames)
+      : part.code;
     const condition = op === "&&" ? "__code === 0" : "__code !== 0";
 
     this.code =
-      `(async () => { const __left: any = await __captureCmd(${leftValue}); const __code = __left.code ?? 0; if (${condition}) { const __right: any = await __captureCmd(${part.code}); const __rightCode = __right.code ?? 0; return { code: __rightCode, stdout: (__left.stdout ?? "") + (__right.stdout ?? ""), stderr: (__left.stderr ?? "") + (__right.stderr ?? ""), success: __rightCode === 0, pipeStatus: __right.pipeStatus }; } return { code: __code, stdout: __left.stdout ?? "", stderr: __left.stderr ?? "", success: __code === 0, pipeStatus: __left.pipeStatus }; })()`;
+      `(async () => { ${leftSetup} const __code = __left.code ?? 0; if (${condition}) { const __right: any = await __captureCmd(${rightValue}); const __rightCode = __right.code ?? 0; return { code: __rightCode, stdout: (__left.stdout ?? "") + (__right.stdout ?? ""), stderr: (__left.stderr ?? "") + (__right.stderr ?? ""), success: __rightCode === 0, pipeStatus: __right.pipeStatus }; } return { code: __code, stdout: __left.stdout ?? "", stderr: __left.stderr ?? "", success: __code === 0, pipeStatus: __left.pipeStatus }; })()`;
     this.isPromise = true;
     this.isPrintable = true;
     this.isStream = false;
     this.isLineStream = false;
     this.isResultObject = true;
+    this.isVariableAssignment = false;
+    this.assignmentNames = [];
   }
 
   private handleLogicalStreamOp(
     op: "&&" | "||",
     part: PipelinePart,
   ): void {
-    const leftValue = this.isPromise ? `await ${this.code}` : this.code;
-    const leftSetup = this.isPrintable
+    const leftValue = this.currentCaptureExpression();
+    const leftSetup = this.isVariableAssignment
+      ? `${this.code}; ${assignmentSyncCode(this.assignmentNames)}const __code = 0;`
+      : this.isPrintable
       ? `const __code = await __printCmd(${leftValue});`
       : `const __left: any = await __captureCmd(${leftValue}); if (__left.stdout) await Deno.stdout.write(new TextEncoder().encode(__left.stdout)); if (__left.stderr) await Deno.stderr.write(new TextEncoder().encode(__left.stderr)); const __code = __left.code ?? 0;`;
     const condition = op === "&&" ? "__code === 0" : "__code !== 0";
@@ -2071,6 +2114,8 @@ class PipelineAssembler {
     this.isStream = true;
     this.isLineStream = false;
     this.isResultObject = false;
+    this.isVariableAssignment = false;
+    this.assignmentNames = [];
   }
 
   /**
@@ -2142,6 +2187,8 @@ class PipelineAssembler {
     this.isStream = isStream;
     this.isLineStream = isLineStream;
     this.isResultObject = false;
+    this.isVariableAssignment = false;
+    this.assignmentNames = [];
   }
 
   /**
@@ -2160,6 +2207,22 @@ class PipelineAssembler {
     this.isPromise = true;
     this.updateStreamState(false, false);
   }
+
+  private currentCaptureExpression(): string {
+    if (this.isVariableAssignment) {
+      return assignmentResultExpression(this.code, this.assignmentNames);
+    }
+    return this.isPromise ? `await ${this.code}` : this.code;
+  }
+
+  private currentCaptureSetup(): string {
+    if (this.isVariableAssignment) {
+      return `${this.code}; ${
+        assignmentSyncCode(this.assignmentNames)
+      }const __left: any = { code: 0, stdout: "", stderr: "", success: true };`;
+    }
+    return `const __left: any = await __captureCmd(${this.currentCaptureExpression()});`;
+  }
 }
 
 /**
@@ -2170,9 +2233,23 @@ function assemblePipeline(
   operators: (string | null)[],
   analysis: PipelineAnalysis,
   captureOutput = false,
-): { code: string; isStream: boolean; isPrintable: boolean; isResultObject: boolean } {
+): {
+  code: string;
+  isStream: boolean;
+  isPrintable: boolean;
+  isResultObject: boolean;
+  isVariableAssignment: boolean;
+  assignmentNames: string[];
+} {
   if (parts.length === 0) {
-    return { code: "", isStream: false, isPrintable: false, isResultObject: false };
+    return {
+      code: "",
+      isStream: false,
+      isPrintable: false,
+      isResultObject: false,
+      isVariableAssignment: false,
+      assignmentNames: [],
+    };
   }
 
   const assembler = new PipelineAssembler(parts[0]!, captureOutput);
@@ -2254,6 +2331,8 @@ function flattenPipeline(
         isTransform: result.isTransform ?? false,
         isStreamProducer: result.isStream ?? false,
         isAsync: result.async,
+        isVariableAssignment: result.isVariableAssignment ?? false,
+        assignmentNames: result.assignmentNames,
       });
     } else if (left.type === "Pipeline") {
       // SSH-472: Only build as complete expression if it's a | pipe chain within ||/&&
@@ -2312,6 +2391,8 @@ function flattenPipeline(
         isTransform: result.isTransform ?? false,
         isStreamProducer: result.isStream ?? false,
         isAsync: result.async,
+        isVariableAssignment: result.isVariableAssignment ?? false,
+        assignmentNames: result.assignmentNames,
       });
     } else if (cmd.type === "Pipeline") {
       // SSH-472: Only build as complete expression if it's a | pipe chain within ||/&&
@@ -2518,10 +2599,22 @@ function isLogicalControlTarget(stmt: AST.Statement | undefined): stmt is AST.St
 }
 
 function buildPrintableStatusLines(
-  result: ExpressionResult & { isStream?: boolean; isPrintable?: boolean },
+  result: ExpressionResult & {
+    isStream?: boolean;
+    isPrintable?: boolean;
+    isVariableAssignment?: boolean;
+    assignmentNames?: string[];
+  },
   statusVar: string,
   indent: string,
 ): string[] {
+  if (result.isVariableAssignment) {
+    return [
+      `${indent}${result.code};`,
+      `${indent}${assignmentSyncCode(result.assignmentNames)}const ${statusVar} = 0;`,
+    ];
+  }
+
   if (result.isStream || result.isPrintable) {
     const expr = result.isStream && result.async ? `await ${result.code}` : result.code;
     return [`${indent}const ${statusVar} = await __printCmd(${expr});`];
@@ -2582,6 +2675,60 @@ function visitLogicalControlPipeline(
   return { lines };
 }
 
+function visitNestedLogicalControlPipeline(
+  pipeline: AST.Pipeline,
+  ctx: VisitorContext,
+): StatementResult | null {
+  if (
+    pipeline.background ||
+    pipeline.operator !== "||" ||
+    pipeline.commands.length !== 2
+  ) {
+    return null;
+  }
+
+  const left = pipeline.commands[0];
+  const fallback = pipeline.commands[1];
+  if (
+    !left ||
+    left.type !== "Pipeline" ||
+    left.operator !== "&&" ||
+    left.commands.length < 2 ||
+    !fallback
+  ) {
+    return null;
+  }
+
+  const control = left.commands[left.commands.length - 1];
+  if (!isLogicalControlTarget(control)) return null;
+
+  const leftPrefix: AST.Pipeline = {
+    type: "Pipeline",
+    commands: left.commands.slice(0, -1),
+    operator: left.operator,
+    background: false,
+    negated: left.negated,
+  };
+  const leftResult = buildPipeline(leftPrefix, ctx);
+  const indent = ctx.getIndent();
+  const statusVar = ctx.getTempVar("__code");
+  const lines = buildPrintableStatusLines(leftResult, statusVar, indent);
+
+  lines.push(`${indent}if (${statusVar} === 0) {`);
+  ctx.indent();
+  const controlResult = ctx.visitStatement(control);
+  lines.push(...controlResult.lines);
+  ctx.dedent();
+  lines.push(`${indent}} else {`);
+  ctx.indent();
+  const fallbackResult = ctx.visitStatement(fallback);
+  lines.push(...fallbackResult.lines);
+  ctx.dedent();
+  lines.push(`${indent}}`);
+
+  return { lines };
+}
+
 /**
  * Visit a pipeline statement
  */
@@ -2601,6 +2748,9 @@ export function visitPipeline(
     }
     return ctx.visitStatement(cmd);
   }
+
+  const nestedLogicalControl = visitNestedLogicalControlPipeline(pipeline, ctx);
+  if (nestedLogicalControl) return nestedLogicalControl;
 
   const logicalControl = visitLogicalControlPipeline(pipeline, ctx);
   if (logicalControl) return logicalControl;
