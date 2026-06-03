@@ -429,7 +429,7 @@ export class Command implements PromiseLike<CommandResult> {
    */
   async text(): Promise<string> {
     const result = await this.exec();
-    return result.stdout;
+    return result.output ?? result.stdout;
   }
 
   /**
