@@ -465,6 +465,7 @@ type CommandStrategy =
 type CommandExpressionResult = ExpressionResult & {
   isUserFunction?: boolean;
   isTransform?: boolean;
+  requiresRawInput?: boolean;
   isStream?: boolean;
   isVariableAssignment?: boolean;
   assignmentNames?: string[];
@@ -809,6 +810,7 @@ function executeCommandStrategy(
           async: false,
           isTransform: fluentResult.isTransform,
           isStream: fluentResult.isStream,
+          requiresRawInput: fluentResult.requiresRawInput,
         };
       }
       // Fallback to standard if fluent returns null
@@ -987,6 +989,8 @@ interface FluentCommandResult {
   isTransform: boolean;
   /** True if this produces a stream (like $.cat), false if it's a Command */
   isStream: boolean;
+  /** True when a transform consumes raw chunks instead of line items (like $.wc) */
+  requiresRawInput?: boolean;
 }
 
 /**
@@ -997,6 +1001,8 @@ interface SimpleFluentConfig {
   parseArgs: (args: string[]) => { options?: string; files: string[] };
   /** Build the transform code (e.g., "$.head(10)") */
   buildTransform: (options?: string) => string;
+  /** Transform consumes raw chunks instead of line items */
+  requiresRawInput?: boolean;
 }
 
 /**
@@ -1052,6 +1058,7 @@ const SIMPLE_FLUENT_COMMANDS: Record<string, SimpleFluentConfig> = {
       return { options: options.length > 0 ? options.join(", ") : undefined, files };
     },
     buildTransform: (opts) => opts ? `$.wc({ ${opts} })` : "$.wc()",
+    requiresRawInput: true,
   },
 };
 
@@ -1070,13 +1077,21 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
   if (files.length > 0) {
     const file = `"${escapeForQuotes(files[0] ?? "")}"`;
     return {
-      code: `$.cat(${file}).lines().pipe(${transformCode})`,
+      code: config.requiresRawInput
+        ? `$.cat(${file}).pipe(${transformCode})`
+        : `$.cat(${file}).lines().pipe(${transformCode})`,
       isTransform: false,
       isStream: true,
+      requiresRawInput: config.requiresRawInput,
     };
   }
 
-  return { code: transformCode, isTransform: true, isStream: false };
+  return {
+    code: transformCode,
+    isTransform: true,
+    isStream: false,
+    requiresRawInput: config.requiresRawInput,
+  };
 }
 
 function hasGlobPattern(path: string): boolean {
@@ -1364,6 +1379,8 @@ interface PipelinePart {
   isPrintable: boolean;
   /** Whether this part is a transform function (like $.head, $.grep) vs a command/stream */
   isTransform: boolean;
+  /** Whether this transform consumes raw chunks instead of line items */
+  requiresRawInput?: boolean;
   /** Whether this part produces a stream (like $.cat) vs a Command */
   isStreamProducer: boolean;
   /** Whether this part needs await (true for $.cmd(), false for fluent commands) - SSH-424 */
@@ -1698,6 +1715,10 @@ function buildDownstreamWithStdin(
 
 function resultObjectToLineStream(expr: string): string {
   return `$.fromArray(((result: any) => String(result?.output ?? result?.stdout ?? "").split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1))(${expr}))`;
+}
+
+function resultObjectToRawStream(expr: string): string {
+  return `$.fromArray([String(((result: any) => result?.output ?? result?.stdout ?? "")(${expr}))])`;
 }
 
 function assignmentResultExpression(code: string, assignmentNames: string[] = []): string {
@@ -2122,6 +2143,11 @@ class PipelineAssembler {
    * Handle pipe to transform (like $.head, $.grep)
    */
   private handleTransformPipe(part: PipelinePart): void {
+    if (part.requiresRawInput) {
+      this.handleRawTransformPipe(part);
+      return;
+    }
+
     if (this.isLineStream) {
       // SSH-408: Already a line stream, just pipe to the transform
       this.code = `${this.code}.pipe(${part.code})`;
@@ -2138,6 +2164,22 @@ class PipelineAssembler {
       this.code = `${this.code}.stdout().lines().pipe(${part.code})`;
       this.isLineStream = true;
     }
+  }
+
+  /**
+   * Handle pipe to transforms that consume raw chunks (like $.wc).
+   */
+  private handleRawTransformPipe(part: PipelinePart): void {
+    if (this.isLineStream) {
+      this.code = `${this.code}.map((line) => String(line) + "\\n").pipe(${part.code})`;
+    } else if (this.isStream) {
+      this.code = `${this.code}.pipe(${part.code})`;
+    } else if (this.isResultObject) {
+      this.code = `${resultObjectToRawStream(this.code)}.pipe(${part.code})`;
+    } else {
+      this.code = `${this.code}.stdout().pipe(${part.code})`;
+    }
+    this.isLineStream = false;
   }
 
   /**
@@ -2329,6 +2371,7 @@ function flattenPipeline(
         code: result.code,
         isPrintable,
         isTransform: result.isTransform ?? false,
+        requiresRawInput: result.requiresRawInput,
         isStreamProducer: result.isStream ?? false,
         isAsync: result.async,
         isVariableAssignment: result.isVariableAssignment ?? false,
@@ -2389,6 +2432,7 @@ function flattenPipeline(
         code: result.code,
         isPrintable,
         isTransform: result.isTransform ?? false,
+        requiresRawInput: result.requiresRawInput,
         isStreamProducer: result.isStream ?? false,
         isAsync: result.async,
         isVariableAssignment: result.isVariableAssignment ?? false,
