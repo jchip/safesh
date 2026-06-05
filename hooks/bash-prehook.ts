@@ -450,6 +450,125 @@ interface ExtractCommandsOptions {
   skipBuiltins?: boolean;
 }
 
+interface CommandExtractionState {
+  vars: Map<string, string>;
+}
+
+function cloneExtractionState(state: CommandExtractionState): CommandExtractionState {
+  return { vars: new Map(state.vars) };
+}
+
+function isAssignmentOnlyCommand(stmt: AST.Command): boolean {
+  return stmt.name.type === "Word" && stmt.name.value === "" && stmt.assignments.length > 0;
+}
+
+function expandStaticLiteral(value: string, quoted: boolean, firstPart: boolean): string {
+  if (!quoted && firstPart && (value === "~" || value.startsWith("~/"))) {
+    return `${Deno.env.get("HOME") || "~"}${value.slice(1)}`;
+  }
+  return value;
+}
+
+function resolveStaticParameter(
+  expansion: AST.ParameterExpansion,
+  state: CommandExtractionState,
+): string | undefined {
+  if (expansion.modifier || expansion.subscript !== undefined || expansion.indirection) {
+    return undefined;
+  }
+
+  const name = expansion.parameter;
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    return undefined;
+  }
+
+  return state.vars.get(name) ?? Deno.env.get(name);
+}
+
+function resolveStaticWord(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+  state: CommandExtractionState,
+): string | undefined {
+  if (word.type === "CommandSubstitution") {
+    return undefined;
+  }
+
+  if (word.type === "ParameterExpansion") {
+    return resolveStaticParameter(word, state);
+  }
+
+  if (word.singleQuoted) {
+    return word.value;
+  }
+
+  if (word.parts.length === 0) {
+    return expandStaticLiteral(word.value, word.quoted, true);
+  }
+
+  let value = "";
+  for (let i = 0; i < word.parts.length; i++) {
+    const part = word.parts[i]!;
+    if (part.type === "LiteralPart") {
+      value += expandStaticLiteral(part.value, word.quoted, i === 0);
+    } else if (part.type === "ParameterExpansion") {
+      const expanded = resolveStaticParameter(part, state);
+      if (expanded === undefined) return undefined;
+      value += expanded;
+    } else {
+      return undefined;
+    }
+  }
+  return value;
+}
+
+function recordStaticAssignment(
+  assignment: AST.VariableAssignment,
+  state: CommandExtractionState,
+): void {
+  if (
+    assignment.value.type !== "Word" &&
+    assignment.value.type !== "ParameterExpansion" &&
+    assignment.value.type !== "CommandSubstitution"
+  ) {
+    state.vars.delete(assignment.name);
+    return;
+  }
+
+  const value = resolveStaticWord(assignment.value, state);
+  if (value === undefined) {
+    state.vars.delete(assignment.name);
+    return;
+  }
+  state.vars.set(assignment.name, value);
+}
+
+function extractCommandName(
+  stmt: AST.Command,
+  state: CommandExtractionState,
+): string {
+  return resolveStaticWord(stmt.name, state) ?? (stmt.name.type === "Word" ? stmt.name.value : "");
+}
+
+function extractCommandsFromStatements(
+  statements: AST.Statement[],
+  commands: Set<string>,
+  options: ExtractCommandsOptions,
+  state: CommandExtractionState,
+): void {
+  for (const stmt of statements) {
+    extractCommandsFromStatement(stmt, commands, options, state);
+  }
+}
+
+function extractCommandsFromScopedStatements(
+  statements: AST.Statement[],
+  commands: Set<string>,
+  options: ExtractCommandsOptions,
+  state: CommandExtractionState,
+): void {
+  extractCommandsFromStatements(statements, commands, options, cloneExtractionState(state));
+}
+
 /**
  * Extract command names from a statement recursively.
  *
@@ -461,39 +580,51 @@ function extractCommandsFromStatement(
   stmt: AST.Statement,
   commands: Set<string>,
   options: ExtractCommandsOptions = {},
+  state: CommandExtractionState = { vars: new Map() },
 ): void {
   const { skipBuiltins = false } = options;
 
   switch (stmt.type) {
     case "Command": {
-      if (stmt.name.type === "Word") {
-        const cmdName = stmt.name.value;
-        if (cmdName && (!skipBuiltins || !BUILTIN_COMMANDS.has(cmdName))) {
-          commands.add(cmdName);
+      if (isAssignmentOnlyCommand(stmt)) {
+        for (const assignment of stmt.assignments) {
+          recordStaticAssignment(assignment, state);
         }
+        break;
+      }
+
+      const cmdName = extractCommandName(stmt, state);
+      if (cmdName && (!skipBuiltins || !BUILTIN_COMMANDS.has(cmdName))) {
+        commands.add(cmdName);
       }
       break;
     }
     case "Pipeline": {
-      for (const cmd of stmt.commands) {
-        extractCommandsFromStatement(cmd, commands, options);
+      if (stmt.operator === null && stmt.commands.length === 1) {
+        extractCommandsFromStatement(stmt.commands[0]!, commands, options, state);
+        break;
+      }
+
+      for (const command of stmt.commands) {
+        extractCommandsFromStatement(command, commands, options, cloneExtractionState(state));
       }
       break;
     }
     case "IfStatement": {
       if (stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand") {
-        extractCommandsFromStatement(stmt.test, commands, options);
+        extractCommandsFromStatement(stmt.test, commands, options, cloneExtractionState(state));
       }
-      for (const s of stmt.consequent) {
-        extractCommandsFromStatement(s, commands, options);
-      }
+      extractCommandsFromScopedStatements(stmt.consequent, commands, options, state);
       if (stmt.alternate) {
         if (Array.isArray(stmt.alternate)) {
-          for (const s of stmt.alternate) {
-            extractCommandsFromStatement(s, commands, options);
-          }
+          extractCommandsFromScopedStatements(stmt.alternate, commands, options, state);
         } else {
-          extractCommandsFromStatement(stmt.alternate, commands, options);
+          extractCommandsFromStatement(
+            stmt.alternate,
+            commands,
+            options,
+            cloneExtractionState(state),
+          );
         }
       }
       break;
@@ -504,38 +635,37 @@ function extractCommandsFromStatement(
       if (
         "test" in stmt && stmt.test.type !== "TestCommand" && stmt.test.type !== "ArithmeticCommand"
       ) {
-        extractCommandsFromStatement(stmt.test as AST.Statement, commands, options);
+        extractCommandsFromStatement(
+          stmt.test as AST.Statement,
+          commands,
+          options,
+          cloneExtractionState(state),
+        );
       }
-      for (const s of stmt.body) {
-        extractCommandsFromStatement(s, commands, options);
-      }
+      extractCommandsFromScopedStatements(stmt.body, commands, options, state);
       break;
     }
     case "CStyleForStatement": {
-      for (const s of stmt.body) {
-        extractCommandsFromStatement(s, commands, options);
-      }
+      extractCommandsFromScopedStatements(stmt.body, commands, options, state);
       break;
     }
     case "CaseStatement": {
       for (const clause of stmt.cases) {
-        for (const s of clause.body) {
-          extractCommandsFromStatement(s, commands, options);
-        }
+        extractCommandsFromScopedStatements(clause.body, commands, options, state);
       }
       break;
     }
     case "FunctionDeclaration": {
-      for (const s of stmt.body) {
-        extractCommandsFromStatement(s, commands, options);
-      }
+      extractCommandsFromScopedStatements(stmt.body, commands, options, state);
       break;
     }
     case "Subshell":
     case "BraceGroup": {
-      for (const s of stmt.body) {
-        extractCommandsFromStatement(s, commands, options);
-      }
+      extractCommandsFromScopedStatements(stmt.body, commands, options, state);
+      break;
+    }
+    case "VariableAssignment": {
+      recordStaticAssignment(stmt, state);
       break;
     }
   }
@@ -546,9 +676,8 @@ function extractCommandsFromStatement(
  */
 function extractCommands(ast: AST.Program): Set<string> {
   const commands = new Set<string>();
-  for (const stmt of ast.body) {
-    extractCommandsFromStatement(stmt, commands, { skipBuiltins: true });
-  }
+  const state: CommandExtractionState = { vars: new Map() };
+  extractCommandsFromStatements(ast.body, commands, { skipBuiltins: true }, state);
   return commands;
 }
 
