@@ -69,8 +69,8 @@ describe("preamble", () => {
     });
   });
 
-  describe("__printCmd null handling (bug fix commit 4833c4c)", () => {
-    it("includes null check before accessing result properties", () => {
+  describe("shared shell value coercion helpers", () => {
+    it("imports shared runtime coercions", () => {
       const config: PreambleConfig = {
         projectDir: "/test/project",
         allowedCommands: [],
@@ -78,15 +78,24 @@ describe("preamble", () => {
       };
       const { preamble } = buildPreamble(undefined, config);
 
-      // Should have null check before accessing result properties
       assertEquals(
-        preamble.includes("if (!result) return __setPipeStatus(undefined, 1)"),
+        preamble.includes("printShellValue as __printShellValue"),
         true,
-        "Should check for null result",
+        "Should import printShellValue",
+      );
+      assertEquals(
+        preamble.includes("captureShellValue as __captureShellValue"),
+        true,
+        "Should import captureShellValue",
+      );
+      assertEquals(
+        preamble.includes("commandSubstitutionText as __commandSubstitutionText"),
+        true,
+        "Should import commandSubstitutionText",
       );
     });
 
-    it("includes fallback for result.code", () => {
+    it("keeps generated helper names as thin wrappers", () => {
       const config: PreambleConfig = {
         projectDir: "/test/project",
         allowedCommands: [],
@@ -94,93 +103,18 @@ describe("preamble", () => {
       };
       const { preamble } = buildPreamble(undefined, config);
 
-      // Should use nullish coalescing: result.code ?? 1
-      assertEquals(preamble.includes("result.code ?? 1"), true, "Should have fallback for undefined code");
-    });
-
-    it("contains correct null handling logic", () => {
-      const config: PreambleConfig = {
-        projectDir: "/test/project",
-        allowedCommands: [],
-        cwd: "/test/project",
-      };
-      const { preamble } = buildPreamble(undefined, config);
-
-      // The preamble should contain both the null check and the fallback
-      // This ensures __printCmd handles null/undefined results gracefully
+      assertEquals(preamble.includes("async function __printCmd"), true);
       assertEquals(
-        preamble.includes("if (!result) return __setPipeStatus(undefined, 1)"),
+        preamble.includes("return await __printShellValue(cmd, __setPipeStatus);"),
         true,
-        "Should check for null/undefined",
       );
-      assertEquals(preamble.includes("result.code ?? 1"), true, "Should have fallback for missing code");
-
-      // Should have logic to handle stdout and stderr without crashing
-      assertEquals(preamble.includes("if (result.stdout)"), true, "Should check stdout before using");
-      assertEquals(preamble.includes("if (result.stderr)"), true, "Should check stderr before using");
-    });
-
-    it("contains output writing logic", () => {
-      const config: PreambleConfig = {
-        projectDir: "/test/project",
-        allowedCommands: [],
-        cwd: "/test/project",
-      };
-      const { preamble } = buildPreamble(undefined, config);
-
-      // Should write stdout and stderr when present
-      assertEquals(preamble.includes("Deno.stdout.write"), true, "Should write to stdout");
-      assertEquals(preamble.includes("Deno.stderr.write"), true, "Should write to stderr");
-    });
-
-    it("returns appropriate exit codes", () => {
-      const config: PreambleConfig = {
-        projectDir: "/test/project",
-        allowedCommands: [],
-        cwd: "/test/project",
-      };
-      const { preamble } = buildPreamble(undefined, config);
-
-      // Should return 1 for null and use actual code when present
+      assertEquals(preamble.includes("async function __captureCmd"), true);
       assertEquals(
-        preamble.includes("return __setPipeStatus(undefined, 1)"),
+        preamble.includes("return await __captureShellValue(cmd, __setPipeStatus);"),
         true,
-        "Should return 1 for null",
       );
-      assertEquals(
-        preamble.includes("return __setPipeStatus(result.pipeStatus, result.code ?? 1)"),
-        true,
-        "Should return actual code or 1",
-      );
-    });
-
-    it("handles mergeStreams output via result.output", () => {
-      const config: PreambleConfig = {
-        projectDir: "/test/project",
-        allowedCommands: [],
-        cwd: "/test/project",
-      };
-      const { preamble } = buildPreamble(undefined, config);
-
-      // When mergeStreams is true, command result has .output instead of .stdout/.stderr
-      // __printCmd should check result.output first and print it to stdout
-      assertEquals(preamble.includes("if (result.output)"), true, "Should check for merged output");
-    });
-
-    it("uses streaming when cmd has .stream() method", () => {
-      const config: PreambleConfig = {
-        projectDir: "/test/project",
-        allowedCommands: [],
-        cwd: "/test/project",
-      };
-      const { preamble } = buildPreamble(undefined, config);
-
-      // __printCmd should use cmd.stream() for real-time output when available
-      assertEquals(preamble.includes("typeof cmd.stream === 'function'"), true, "Should check for stream method");
-      assertEquals(preamble.includes("for await"), true, "Should iterate stream chunks");
-      assertEquals(preamble.includes("__chunk.type === 'stdout'"), true, "Should handle stdout chunks");
-      assertEquals(preamble.includes("__chunk.type === 'stderr'"), true, "Should handle stderr chunks");
-      assertEquals(preamble.includes("__chunk.type === 'exit'"), true, "Should handle exit chunks");
+      assertEquals(preamble.includes("async function __cmdSubText"), true);
+      assertEquals(preamble.includes("return await __commandSubstitutionText(__result);"), true);
     });
   });
 
