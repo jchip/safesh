@@ -986,13 +986,16 @@ function buildFluentCommand(
       let ignoreCase = false;
       let lineNumber = false;
       let recursive = false;
+      let optionsEnded = false;
 
       for (let i = 0; i < args.length; i++) {
         const arg = args[i];
 
-        if (arg?.startsWith("--")) {
+        if (!optionsEnded && arg === "--") {
+          optionsEnded = true;
+        } else if (!optionsEnded && arg?.startsWith("--")) {
           // Skip long options for now.
-        } else if (arg?.startsWith("-") && arg.length > 1) {
+        } else if (!optionsEnded && arg?.startsWith("-") && arg.length > 1) {
           for (const flag of arg.slice(1)) {
             if (capability.invertShortFlags.includes(flag)) {
               invert = true;
