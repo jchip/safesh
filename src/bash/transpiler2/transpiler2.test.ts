@@ -544,6 +544,20 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, ".pipe($.tail(2))");
   });
 
+  it("should treat grep -- as end of options for dash-prefixed patterns (SSH-85)", () => {
+    const output = transpileBash(
+      "grep -n -- '--real-apis\\|--ipa' scripts/dev/start-local-infra.js | head -20",
+    );
+
+    assertStringIncludes(output, '$.cat("scripts/dev/start-local-infra.js")');
+    assertStringIncludes(output, "/--real-apis|--ipa/");
+    assertStringIncludes(output, ".pipe($.head(20))");
+    assertEquals(
+      output.includes("$.grep(/scripts\\/dev\\/start-local-infra.js/).stdout()"),
+      false,
+    );
+  });
+
   it("should use toCmdLines when piping from stream to command", () => {
     const ast = parse("ls | head -5 | awk '{print $1}'");
     const output = transpile(ast);
