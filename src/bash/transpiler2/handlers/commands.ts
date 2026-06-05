@@ -10,6 +10,11 @@ import type * as AST from "../../ast.ts";
 import type { ExpressionResult, StatementResult, VisitorContext } from "../types.ts";
 import { isFluentCommand } from "../types.ts";
 import {
+  getGrepCommandCapability,
+  getSimpleTransformCapability,
+  type SimpleTransformCapability,
+} from "../command-capabilities.ts";
+import {
   collectFlagOptions,
   collectFlagOptionsAndFiles,
   escapeForQuotes,
@@ -993,96 +998,58 @@ interface FluentCommandResult {
   requiresRawInput?: boolean;
 }
 
-/**
- * Configuration for building a simple fluent transform command
- */
-interface SimpleFluentConfig {
-  /** Parse arguments into options and files */
-  parseArgs: (args: string[]) => { options?: string; files: string[] };
-  /** Build the transform code (e.g., "$.head(10)") */
-  buildTransform: (options?: string) => string;
-  /** Transform consumes raw chunks instead of line items */
-  requiresRawInput?: boolean;
+function hasShortFlag(args: string[], flags: readonly string[]): boolean {
+  return args.some((arg) =>
+    arg.startsWith("-") && !arg.startsWith("--") &&
+    flags.some((flag) => arg.slice(1).includes(flag))
+  );
 }
 
-/**
- * Registry of simple fluent commands that follow the pattern:
- * 1. Parse args into options and files
- * 2. If files present: $.cat(file).lines().pipe(transform)
- * 3. Otherwise: return transform
- */
-const SIMPLE_FLUENT_COMMANDS: Record<string, SimpleFluentConfig> = {
-  head: {
-    parseArgs: (args) => {
-      const { count, files } = parseCountArg(args);
-      return { options: count.toString(), files };
-    },
-    buildTransform: (count) => `$.head(${count})`,
-  },
-  tail: {
-    parseArgs: (args) => {
-      const { count, files } = parseCountArg(args);
-      return { options: count.toString(), files };
-    },
-    buildTransform: (count) => `$.tail(${count})`,
-  },
-  sort: {
-    parseArgs: (args) => {
-      const { options, files } = collectFlagOptionsAndFiles(args, {
-        "-n": "numeric: true",
-        "-r": "reverse: true",
-        "-u": "unique: true",
-      });
-      return { options: options.length > 0 ? options.join(", ") : undefined, files };
-    },
-    buildTransform: (opts) => opts ? `$.sort({ ${opts} })` : "$.sort()",
-  },
-  uniq: {
-    parseArgs: (args) => {
-      const { options, files } = collectFlagOptionsAndFiles(args, {
-        "-c": "count: true",
-        "-i": "ignoreCase: true",
-      });
-      return { options: options.length > 0 ? options.join(", ") : undefined, files };
-    },
-    buildTransform: (opts) => opts ? `$.uniq({ ${opts} })` : "$.uniq()",
-  },
-  wc: {
-    parseArgs: (args) => {
-      const { options, files } = collectFlagOptionsAndFiles(args, {
-        "-l": "lines: true",
-        "-w": "words: true",
-        "-c": "bytes: true",
-        "-m": "chars: true",
-      });
-      return { options: options.length > 0 ? options.join(", ") : undefined, files };
-    },
-    buildTransform: (opts) => opts ? `$.wc({ ${opts} })` : "$.wc()",
-    requiresRawInput: true,
-  },
-};
+function parseSimpleFluentArgs(
+  capability: SimpleTransformCapability,
+  args: string[],
+): { options?: string; files: string[] } {
+  if (capability.kind === "count-transform") {
+    const { count, files } = parseCountArg(args);
+    return { options: count.toString(), files };
+  }
+
+  const { options, files } = collectFlagOptionsAndFiles(args, capability.flagOptions);
+  return { options: options.length > 0 ? options.join(", ") : undefined, files };
+}
+
+function buildSimpleFluentTransform(
+  capability: SimpleTransformCapability,
+  options?: string,
+): string {
+  if (capability.kind === "count-transform") {
+    return `$.${capability.runtimeName}(${options})`;
+  }
+
+  return options ? `$.${capability.runtimeName}({ ${options} })` : `$.${capability.runtimeName}()`;
+}
 
 /**
  * Build a simple fluent command using the registry pattern
  */
 function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandResult {
-  const config = SIMPLE_FLUENT_COMMANDS[name];
-  if (!config) {
+  const capability = getSimpleTransformCapability(name);
+  if (!capability) {
     throw new Error(`Unknown simple fluent command: ${name}`);
   }
 
-  const { options, files } = config.parseArgs(args);
-  const transformCode = config.buildTransform(options);
+  const { options, files } = parseSimpleFluentArgs(capability, args);
+  const transformCode = buildSimpleFluentTransform(capability, options);
 
   if (files.length > 0) {
     const file = `"${escapeForQuotes(files[0] ?? "")}"`;
     return {
-      code: config.requiresRawInput
+      code: capability.requiresRawInput
         ? `$.cat(${file}).pipe(${transformCode})`
         : `$.cat(${file}).lines().pipe(${transformCode})`,
       isTransform: false,
       isStream: true,
-      requiresRawInput: config.requiresRawInput,
+      requiresRawInput: capability.requiresRawInput,
     };
   }
 
@@ -1090,7 +1057,7 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
     code: transformCode,
     isTransform: true,
     isStream: false,
-    requiresRawInput: config.requiresRawInput,
+    requiresRawInput: capability.requiresRawInput,
   };
 }
 
@@ -1132,6 +1099,7 @@ function buildFluentCommand(
     }
 
     case "grep": {
+      const capability = getGrepCommandCapability();
       // $.grep(pattern) as transform or $.grep(pattern, file)
       // Parse grep options
       let pattern: string | undefined;
@@ -1148,17 +1116,15 @@ function buildFluentCommand(
           // Skip long options for now.
         } else if (arg?.startsWith("-") && arg.length > 1) {
           for (const flag of arg.slice(1)) {
-            if (flag === "v") {
+            if (capability.invertShortFlags.includes(flag)) {
               invert = true;
-            } else if (flag === "i") {
+            } else if (capability.ignoreCaseShortFlags.includes(flag)) {
               ignoreCase = true;
-            } else if (flag === "n") {
+            } else if (capability.lineNumberShortFlags.includes(flag)) {
               lineNumber = true;
-            } else if (flag === "r" || flag === "R") {
+            } else if (capability.recursiveShortFlags.includes(flag)) {
               recursive = true;
-            } else if (flag === "c") {
-              return null;
-            } else if (flag === "A" || flag === "B" || flag === "C" || flag === "m") {
+            } else if ((capability.unsupportedShortFlags ?? []).includes(flag)) {
               // SSH-568: These flags take numeric arguments and aren't supported by fluent grep.
               // Fall back to $.cmd("grep", ...) for correctness.
               return null;
@@ -1221,7 +1187,9 @@ function buildFluentCommand(
     case "head":
     case "tail":
       // -c flag means byte count, incompatible with line-based $.head/$.tail transforms
-      if (args.includes("-c")) return null;
+      if (hasShortFlag(args, getSimpleTransformCapability(name)?.unsupportedShortFlags ?? [])) {
+        return null;
+      }
       return buildSimpleFluentCommand(name, args);
 
     case "sort":

@@ -6,6 +6,7 @@
 
 import type * as AST from "../ast.ts";
 import type { Diagnostic } from "./context.ts";
+import { FLUENT_COMMAND_NAMES } from "./command-capabilities.ts";
 
 // Re-export Diagnostic for convenience
 export type { Diagnostic };
@@ -50,21 +51,7 @@ export function resolveOptions(options?: TranspilerOptions): ResolvedOptions {
 // =============================================================================
 
 /** Commands that use fluent API style */
-export const FLUENT_COMMANDS = new Set([
-  "cat",
-  "grep",
-  "head",
-  "tail",
-  "sort",
-  "uniq",
-  "wc",
-  // Note: tr, cut, sed, awk, tee are NOT in this list because:
-  // - tr: doesn't exist in runtime
-  // - cut: exists only as $.text.cut(), not as $.cut()
-  // - sed, awk: fall back to $.cmd() (external commands)
-  // - tee: $.tee() is a transform that expects a callback, not a file path
-  //   The bash `tee` command writes to files and should use $.cmd("tee", ...)
-]);
+export const FLUENT_COMMANDS = FLUENT_COMMAND_NAMES;
 
 /** Check if a command should use fluent style */
 export function isFluentCommand(name: string): boolean {

@@ -28,6 +28,20 @@ export type {
   VisitorContext,
 } from "./types.ts";
 export { FLUENT_COMMANDS, isFluentCommand, resolveOptions } from "./types.ts";
+export {
+  FLUENT_COMMAND_CAPABILITIES,
+  FLUENT_COMMAND_NAMES,
+  getFluentCommandCapability,
+  getGrepCommandCapability,
+  getSimpleTransformCapability,
+} from "./command-capabilities.ts";
+export type {
+  CommandDataMode,
+  CommandOutputMode,
+  FluentCommandCapability,
+  GrepCommandCapability,
+  SimpleTransformCapability,
+} from "./command-capabilities.ts";
 export type { ASTVisitor } from "./visitor.ts";
 export { TranspilerContext } from "./context.ts";
 export { OutputEmitter } from "./emitter.ts";
