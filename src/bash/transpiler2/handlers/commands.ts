@@ -1216,27 +1216,104 @@ export function visitCommand(
 // Pipeline Handler
 // =============================================================================
 
-/**
- * Represents a part in a flattened pipeline with metadata
- */
+type ShellValueKind = "effect" | "command" | "result" | "raw-stream" | "line-stream" | "transform";
+type TransformInputMode = "line" | "raw";
+
+interface ShellValueDescriptor {
+  kind: ShellValueKind;
+  printable: boolean;
+  async: boolean;
+  transformInput?: TransformInputMode;
+  assignmentNames?: string[];
+}
+
 interface PipelinePart {
   code: string;
-  /** Whether this part produces command output that should be printed */
-  isPrintable: boolean;
-  /** Whether this part is a transform function (like $.head, $.grep) vs a command/stream */
-  isTransform: boolean;
-  /** Whether this transform consumes raw chunks instead of line items */
-  requiresRawInput?: boolean;
-  /** Whether this part produces a stream (like $.cat) vs a Command */
-  isStreamProducer: boolean;
-  /** Whether this part needs await (true for $.cmd(), false for fluent commands) - SSH-424 */
-  isAsync: boolean;
-  /** Whether this part resolves to a command result object rather than a Command */
-  isResultObject?: boolean;
-  /** Whether this part is an assignment-only command statement */
-  isVariableAssignment?: boolean;
-  /** Original assignment names, used to sync expression-wrapped assignments */
-  assignmentNames?: string[];
+  value: ShellValueDescriptor;
+}
+
+function commandValueDescriptor(result: CommandExpressionResult): ShellValueDescriptor {
+  if (result.isVariableAssignment) {
+    return {
+      kind: "effect",
+      printable: false,
+      async: result.async,
+      assignmentNames: result.assignmentNames,
+    };
+  }
+
+  if (result.isTransform) {
+    return {
+      kind: "transform",
+      printable: true,
+      async: result.async,
+      transformInput: result.requiresRawInput ? "raw" : "line",
+    };
+  }
+
+  if (result.isStream) {
+    return { kind: "raw-stream", printable: true, async: result.async };
+  }
+
+  return {
+    kind: "command",
+    printable: result.async,
+    async: result.async,
+  };
+}
+
+function nestedPipelineValueDescriptor(
+  result: ExpressionResult & {
+    isStream?: boolean;
+    isPrintable?: boolean;
+    isResultObject?: boolean;
+  },
+): ShellValueDescriptor {
+  return {
+    kind: result.isStream ? "raw-stream" : result.isResultObject ? "result" : "effect",
+    printable: result.isPrintable ?? (result.async || (result.isStream ?? false)),
+    async: result.async,
+  };
+}
+
+function statementValueDescriptor(capturesStdout: boolean): ShellValueDescriptor {
+  return {
+    kind: capturesStdout ? "result" : "effect",
+    printable: !capturesStdout,
+    async: true,
+  };
+}
+
+function partIsPrintable(part: PipelinePart): boolean {
+  return part.value.printable;
+}
+
+function partIsTransform(part: PipelinePart): boolean {
+  return part.value.kind === "transform";
+}
+
+function partRequiresRawInput(part: PipelinePart): boolean {
+  return part.value.kind === "transform" && part.value.transformInput === "raw";
+}
+
+function partIsStreamProducer(part: PipelinePart): boolean {
+  return part.value.kind === "raw-stream" || part.value.kind === "line-stream";
+}
+
+function partIsAsync(part: PipelinePart): boolean {
+  return part.value.async;
+}
+
+function partIsResultObject(part: PipelinePart): boolean {
+  return part.value.kind === "result";
+}
+
+function partIsVariableAssignment(part: PipelinePart): boolean {
+  return part.value.kind === "effect" && (part.value.assignmentNames?.length ?? 0) > 0;
+}
+
+function partAssignmentNames(part: PipelinePart): string[] {
+  return part.value.assignmentNames ?? [];
 }
 
 interface ReadLoopConsumer {
@@ -1536,7 +1613,7 @@ function buildDownstreamWithStdin(
     return `Promise.resolve({ code: 0, stdout: ${captureVar}.join("\\n"), stderr: "", success: true })`;
   }
 
-  if (parts[0]!.isTransform) {
+  if (partIsTransform(parts[0]!)) {
     // Downstream starts with a Transform (e.g. $.grep(), $.sort()) — use $.fromArray()
     // to feed the captured lines into the transform chain and collect results.
     let chain = `$.fromArray(${captureVar})`;
@@ -1757,7 +1834,7 @@ export function buildPipeline(
   // SSH-424: Preserve async=false for single fluent commands (even with background &)
   // If this is a single-command pipeline with no operators, preserve the original async value
   const isAsync = (parts.length === 1 && operators.length === 0)
-    ? parts[0]!.isAsync // Use the isAsync field we now track
+    ? partIsAsync(parts[0]!) // Use the isAsync field we now track
     : true; // Multi-command pipelines are always async
 
   return {
@@ -1827,13 +1904,13 @@ class PipelineAssembler {
 
   constructor(initialPart: PipelinePart, captureOutput: boolean) {
     this.code = initialPart.code;
-    this.isPrintable = initialPart.isPrintable;
-    this.isStream = initialPart.isStreamProducer;
-    this.isPromise = (initialPart.isResultObject ?? false) && initialPart.isAsync;
+    this.isPrintable = partIsPrintable(initialPart);
+    this.isStream = partIsStreamProducer(initialPart);
+    this.isPromise = partIsResultObject(initialPart) && partIsAsync(initialPart);
     this.isLineStream = false;
-    this.isResultObject = initialPart.isResultObject ?? false;
-    this.isVariableAssignment = initialPart.isVariableAssignment ?? false;
-    this.assignmentNames = initialPart.assignmentNames ?? [];
+    this.isResultObject = partIsResultObject(initialPart);
+    this.isVariableAssignment = partIsVariableAssignment(initialPart);
+    this.assignmentNames = partAssignmentNames(initialPart);
     this.captureOutput = captureOutput;
   }
 
@@ -1874,9 +1951,9 @@ class PipelineAssembler {
   appendPipe(part: PipelinePart): void {
     this.resolvePromiseIfNeeded();
 
-    if (part.isTransform) {
+    if (partIsTransform(part)) {
       this.handleTransformPipe(part);
-    } else if (part.isStreamProducer) {
+    } else if (partIsStreamProducer(part)) {
       this.handleStreamProducerPipe(part);
     } else {
       this.handleCommandPipe(part);
@@ -1884,7 +1961,7 @@ class PipelineAssembler {
 
     this.isPrintable = true;
     // SSH-409: isStream reflects whether result is actually a stream
-    this.isStream = part.isStreamProducer || part.isTransform;
+    this.isStream = partIsStreamProducer(part) || partIsTransform(part);
     this.isResultObject = false;
   }
 
@@ -1893,14 +1970,14 @@ class PipelineAssembler {
    * SSH-362: Handle non-printable parts correctly.
    */
   appendSequential(part: PipelinePart): void {
-    if (!this.isPrintable && !part.isPrintable) {
+    if (!this.isPrintable && !partIsPrintable(part)) {
       this.code = `${this.code}; ${part.code}`;
       this.isPromise = false;
       this.updateStreamState(false, false);
     } else if (this.isPrintable) {
       // Use __printCmd inside IIFE for printable last part to enable streaming output.
       // SSH-494: Don't wrap stream producers in __printCmd - the for-await loop handles iteration
-      const returnExpr = (part.isPrintable && !part.isStreamProducer)
+      const returnExpr = (partIsPrintable(part) && !partIsStreamProducer(part))
         ? `return await __printCmd(${part.code})`
         : `return ${part.code}`;
       this.wrapInAsyncIIFE(
@@ -1908,22 +1985,22 @@ class PipelineAssembler {
         returnExpr,
       );
       // SSH-474: Preserve stream status from the returning part
-      this.isStream = part.isStreamProducer;
+      this.isStream = partIsStreamProducer(part);
       this.isLineStream = false;
     } else {
       // Use __printCmd inside IIFE for printable last part to enable streaming output.
       // SSH-494: Don't wrap stream producers in __printCmd - the for-await loop handles iteration
-      const returnExpr = (part.isPrintable && !part.isStreamProducer)
+      const returnExpr = (partIsPrintable(part) && !partIsStreamProducer(part))
         ? `return await __printCmd(${part.code})`
         : `return ${part.code}`;
       this.wrapInAsyncIIFE(this.code, returnExpr);
       // SSH-474: Preserve stream status from the returning part
-      this.isStream = part.isStreamProducer;
+      this.isStream = partIsStreamProducer(part);
       this.isLineStream = false;
     }
 
     // isPrintable set to false inside branches when __printCmd moved inside IIFE
-    if (!part.isPrintable) this.isPrintable = false;
+    if (!partIsPrintable(part)) this.isPrintable = false;
   }
 
   // ----- Private Helper Methods -----
@@ -1940,14 +2017,14 @@ class PipelineAssembler {
     op: "&&" | "||",
     part: PipelinePart,
   ): void {
-    if (part.isStreamProducer && !this.captureOutput) {
+    if (partIsStreamProducer(part) && !this.captureOutput) {
       this.handleLogicalStreamOp(op, part);
       return;
     }
 
     const leftSetup = this.currentCaptureSetup();
-    const rightValue = part.isVariableAssignment
-      ? assignmentResultExpression(part.code, part.assignmentNames)
+    const rightValue = partIsVariableAssignment(part)
+      ? assignmentResultExpression(part.code, partAssignmentNames(part))
       : part.code;
     const condition = op === "&&" ? "__code === 0" : "__code !== 0";
 
@@ -1989,7 +2066,7 @@ class PipelineAssembler {
    * Handle pipe to transform (like $.head, $.grep)
    */
   private handleTransformPipe(part: PipelinePart): void {
-    if (part.requiresRawInput) {
+    if (partRequiresRawInput(part)) {
       this.handleRawTransformPipe(part);
       return;
     }
@@ -2208,34 +2285,17 @@ function flattenPipeline(
         inPipeline: hasPipeOperator,
         captureOutput: capturesCommandOutput,
       });
-      // SSH-361: Track whether the command produces output that should be printed
-      // SSH-424: For fluent commands, async=false but they still produce output
-      // isPrintable should be true for all commands except variable assignments
-      const isPrintable = result.async || (result.isStream ?? false) ||
-        (result.isTransform ?? false);
       parts.push({
         code: result.code,
-        isPrintable,
-        isTransform: result.isTransform ?? false,
-        requiresRawInput: result.requiresRawInput,
-        isStreamProducer: result.isStream ?? false,
-        isAsync: result.async,
-        isVariableAssignment: result.isVariableAssignment ?? false,
-        assignmentNames: result.assignmentNames,
+        value: commandValueDescriptor(result),
       });
     } else if (left.type === "Pipeline") {
       // SSH-472: Only build as complete expression if it's a | pipe chain within ||/&&
       if (shouldBuildAsExpression(left)) {
         const result = buildPipeline(left, ctx);
-        // Calculate isPrintable the same way as for commands
-        const isPrintable = result.isPrintable ?? (result.async || (result.isStream ?? false));
         parts.push({
           code: result.code,
-          isPrintable,
-          isTransform: false,
-          isStreamProducer: result.isStream ?? false,
-          isAsync: result.async,
-          isResultObject: result.isResultObject ?? false,
+          value: nestedPipelineValueDescriptor(result),
         });
       } else {
         // Flatten for &&/|| chains and single commands to preserve variable scope
@@ -2248,11 +2308,7 @@ function flattenPipeline(
         code: capturesStdout
           ? buildStatementAsCapturedExpression(left, ctx)
           : buildStatementAsExpression(left, ctx),
-        isPrintable: !capturesStdout,
-        isTransform: false,
-        isStreamProducer: false,
-        isAsync: true,
-        isResultObject: capturesStdout,
+        value: statementValueDescriptor(capturesStdout),
       });
     }
   }
@@ -2270,33 +2326,17 @@ function flattenPipeline(
         inPipeline: hasPipeOperator,
         captureOutput: capturesCommandOutput,
       });
-      // SSH-361: Track whether the command produces output that should be printed
-      // SSH-424: For fluent commands, async=false but they still produce output
-      const isPrintable = result.async || (result.isStream ?? false) ||
-        (result.isTransform ?? false);
       parts.push({
         code: result.code,
-        isPrintable,
-        isTransform: result.isTransform ?? false,
-        requiresRawInput: result.requiresRawInput,
-        isStreamProducer: result.isStream ?? false,
-        isAsync: result.async,
-        isVariableAssignment: result.isVariableAssignment ?? false,
-        assignmentNames: result.assignmentNames,
+        value: commandValueDescriptor(result),
       });
     } else if (cmd.type === "Pipeline") {
       // SSH-472: Only build as complete expression if it's a | pipe chain within ||/&&
       if (shouldBuildAsExpression(cmd)) {
         const result = buildPipeline(cmd, ctx);
-        // Calculate isPrintable the same way as for commands
-        const isPrintable = result.isPrintable ?? (result.async || (result.isStream ?? false));
         parts.push({
           code: result.code,
-          isPrintable,
-          isTransform: false,
-          isStreamProducer: result.isStream ?? false,
-          isAsync: result.async,
-          isResultObject: result.isResultObject ?? false,
+          value: nestedPipelineValueDescriptor(result),
         });
       } else {
         // Flatten for &&/|| chains and single commands to preserve variable scope
@@ -2309,11 +2349,7 @@ function flattenPipeline(
         code: capturesStdout
           ? buildStatementAsCapturedExpression(cmd, ctx)
           : buildStatementAsExpression(cmd, ctx),
-        isPrintable: !capturesStdout,
-        isTransform: false,
-        isStreamProducer: false,
-        isAsync: true,
-        isResultObject: capturesStdout,
+        value: statementValueDescriptor(capturesStdout),
       });
     }
   }

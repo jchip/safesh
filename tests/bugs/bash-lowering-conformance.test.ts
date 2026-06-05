@@ -148,6 +148,18 @@ pwd > pwd.txt`,
     },
   },
   {
+    name: "external command object pipes through external command",
+    source: "external command",
+    context: "pipeline middle command",
+    dataMode: "command object stream",
+    status: "success",
+    script: () => `printf " a\\n" | tr -d " " | wc -l`,
+    verify({ code, result }) {
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertEquals(result.stdout.trim(), "1");
+    },
+  },
+  {
     name: "grouped logical output pipes to head",
     source: "subshell/group",
     context: "pipeline producer",
