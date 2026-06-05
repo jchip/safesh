@@ -42,6 +42,8 @@ export type {
   GrepCommandCapability,
   SimpleTransformCapability,
 } from "./command-capabilities.ts";
+export { lowerShellBuiltin } from "./builtin-lowering.ts";
+export type { BuiltinLoweringOptions, BuiltinLoweringResult } from "./builtin-lowering.ts";
 export type { ASTVisitor } from "./visitor.ts";
 export { TranspilerContext } from "./context.ts";
 export { OutputEmitter } from "./emitter.ts";

@@ -14,6 +14,7 @@ import {
   getSimpleTransformCapability,
   type SimpleTransformCapability,
 } from "../command-capabilities.ts";
+import { lowerShellBuiltin } from "../builtin-lowering.ts";
 import {
   collectFlagOptions,
   collectFlagOptionsAndFiles,
@@ -120,114 +121,6 @@ const SPECIALIZED_COMMANDS = new Set([
 
 function handleUserFunction(name: string): string {
   return `${name}()`;
-}
-
-function buildOutputResultExpression(cmdExpr: string, formatsOutput = false): string {
-  const lines = [
-    `let __result: any;`,
-    `try { __result = await Promise.resolve(${cmdExpr}); } catch (__error) { __result = { stdout: "", stderr: __error instanceof Error ? __error.message : String(__error), code: 1 }; }`,
-    `const __code = typeof __result === "boolean" ? (__result ? 0 : 1) : (__result ? (__result.code ?? 0) : 1);`,
-    `let __stdout = Array.isArray(__result) ? __result.join("\\n") : ((typeof __result === "boolean" || __result == null) ? "" : (typeof __result.stdout === "string" ? __result.stdout : String(__result)));`,
-    `let __stderr = (typeof __result?.stderr === "string") ? __result.stderr : "";`,
-  ];
-
-  if (formatsOutput) {
-    lines.push(`if (__stdout) __stdout += "\\n";`);
-  }
-
-  lines.push(
-    `return { stdout: __stdout, stderr: __stderr, code: __code, success: __code === 0 };`,
-  );
-
-  return `(async () => { ${lines.join(" ")} })()`;
-}
-
-function handleShellBuiltin(
-  name: string,
-  args: string[],
-  builtin: { fn: string; type: string },
-  argExpansions?: boolean[],
-  hasRedirects = false,
-  captureOutput = false,
-): ExpressionResult & {
-  isShellBuiltin?: boolean;
-  isSilentShellBuiltin?: boolean;
-  formatsOutput?: boolean;
-} {
-  if (name === "exit") {
-    const code = args.length > 0
-      ? `Number(${formatArg(args[0] ?? "0", argExpansions?.[0])}) || 0`
-      : "0";
-    return {
-      code: `Deno.exit(${code})`,
-      async: false,
-      isShellBuiltin: true,
-      isSilentShellBuiltin: true,
-    };
-  }
-
-  const argsArray = args.length > 0
-    ? args.map((a, i) => formatArg(a, argExpansions?.[i])).join(", ")
-    : "";
-
-  if (builtin.type === "output") {
-    const outputExpr = `${builtin.fn}(${argsArray})`;
-    if (captureOutput) {
-      return {
-        code: outputExpr,
-        async: false,
-        isShellBuiltin: true,
-      };
-    }
-
-    if (hasRedirects) {
-      return {
-        code: outputExpr,
-        async: false,
-        isShellBuiltin: true,
-        formatsOutput: true,
-      };
-    }
-
-    // Output builtins should print their result
-    return {
-      code: buildOutputResultExpression(outputExpr, true),
-      async: true,
-      isShellBuiltin: true,
-    };
-  } else if (builtin.type === "prints") {
-    if ((hasRedirects || captureOutput) && name === "echo") {
-      return {
-        code: argsArray
-          ? `${builtin.fn}({ silent: true }, ${argsArray})`
-          : `${builtin.fn}({ silent: true })`,
-        async: false,
-        isShellBuiltin: true,
-      };
-    }
-
-    // Prints builtins already output, just execute
-    return {
-      code: `${builtin.fn}(${argsArray})`,
-      async: false,
-      isShellBuiltin: true,
-    };
-  } else if (builtin.type === "async") {
-    // Async builtins that need await
-    return {
-      code: `${builtin.fn}(${argsArray})`,
-      async: true,
-      isShellBuiltin: true,
-    };
-  } else {
-    // Silent builtins (cd, pushd, popd) suppress stdout but may return stderr.
-    return {
-      code: `${builtin.fn}(${argsArray})`,
-      async: false,
-      isShellBuiltin: true,
-      isSilentShellBuiltin: true,
-    };
-  }
 }
 
 function handleTmuxSendKeys(
@@ -752,29 +645,14 @@ function executeCommandStrategy(
     }
 
     case "shell-builtin": {
-      if (strategy.builtin.type === "prints") {
-        const captureVar = ctx.getStdoutCapture();
-        if (captureVar) {
-          const formattedArgs = strategy.args.map((a, i) =>
-            formatArg(a, strategy.argExpansions?.[i])
-          );
-          const captured = formattedArgs.length === 0
-            ? '""'
-            : formattedArgs.length === 1
-            ? formattedArgs[0]!
-            : `[${formattedArgs.join(", ")}].join(" ")`;
-          return { code: `${captureVar}.push(${captured})`, async: false };
-        }
-      }
-      const result = handleShellBuiltin(
-        strategy.name,
-        strategy.args,
-        strategy.builtin,
-        strategy.argExpansions,
-        strategy.hasRedirects,
-        options?.captureOutput ?? false,
-      );
-      return result;
+      return lowerShellBuiltin({
+        name: strategy.name,
+        builtin: strategy.builtin,
+        formattedArgs: strategy.args.map((arg, i) => formatArg(arg, strategy.argExpansions?.[i])),
+        hasRedirects: strategy.hasRedirects,
+        captureOutput: options?.captureOutput ?? false,
+        stdoutCaptureVar: ctx.getStdoutCapture(),
+      });
     }
 
     case "timeout": {
