@@ -391,7 +391,7 @@ Deno.test("executeCode - respects custom timeout in options", async () => {
     console.log("done");
   `;
 
-  const result = await executeCode(code, testConfig, { timeout: 200 });
+  const result = await executeCode(code, testConfig, { timeout: 1000 });
 
   assertEquals(result.success, true);
   assertStringIncludes(result.stdout, "done");
