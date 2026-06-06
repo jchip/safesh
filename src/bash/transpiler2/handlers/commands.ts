@@ -1140,7 +1140,7 @@ export function applyRedirection(
 
   switch (redirect.operator) {
     case "<":
-      return `${cmdExpr}.stdin(${target})`;
+      return `${cmdExpr}.stdin(await Deno.readTextFile(${target}))`;
     case ">":
       // SSH-308: Check fd field - if fd=2, redirect stderr instead of stdout
       if (redirect.fd === 2) {

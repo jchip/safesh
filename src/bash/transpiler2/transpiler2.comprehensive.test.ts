@@ -1444,7 +1444,7 @@ describe("Redirections - All Types", () => {
   it("should handle input redirection <", () => {
     const ast = parse("cat < input.txt");
     const output = transpile(ast);
-    assertStringIncludes(output, '.stdin("input.txt")');
+    assertStringIncludes(output, '.stdin(await Deno.readTextFile("input.txt"))');
   });
 
   it("should handle output redirection >", () => {

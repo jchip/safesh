@@ -1121,7 +1121,7 @@ describe("Transpiler2 - Redirections", () => {
     const ast = parse("cat < file.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '.stdin("file.txt")');
+    assertStringIncludes(output, '.stdin(await Deno.readTextFile("file.txt"))');
   });
 });
 
