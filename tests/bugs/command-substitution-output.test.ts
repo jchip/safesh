@@ -13,7 +13,7 @@ const config: SafeShellConfig = {
   permissions: {
     read: [Deno.cwd(), "/tmp"],
     write: ["/tmp"],
-    run: ["printf"],
+    run: ["printf", "sh"],
   },
   timeout: 5000,
 };
@@ -40,5 +40,16 @@ describe("Bug: command substitution output", () => {
 
     assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
     assertEquals(result.stdout.trim(), "tracked-files=2");
+  });
+
+  it("captures stdout from nested sh -c pipelines", async () => {
+    const code = transpileBash(
+      `jar=$(sh -c 'printf "validations-3.0.19-model.jar\\nignored.jar\\n" | grep -i "validations.*model"'); echo "jar=$jar"`,
+    );
+
+    const result = await executeCode(code, config, { cwd: Deno.cwd() });
+
+    assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+    assertEquals(result.stdout, "jar=validations-3.0.19-model.jar\n");
   });
 });
