@@ -136,7 +136,8 @@ describe("Command Handler - Edge Cases", () => {
     const ast = parse(":");
     const output = transpile(ast);
     // Colon is a noop command
-    assertStringIncludes(output, '$.cmd(":")');
+    assertEquals(output.includes('$.cmd(":")'), false);
+    assertStringIncludes(output, "success: true");
   });
 
   it("should handle true and false builtins", () => {
