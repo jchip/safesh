@@ -628,7 +628,7 @@ describe("Security - Redirection Safety", () => {
     const ast = parse('cat < /tmp/input.txt');
     const output = transpile(ast);
 
-    assertStringIncludes(output, '.stdin("/tmp/input.txt")');
+    assertStringIncludes(output, '.stdin(await Deno.readTextFile("/tmp/input.txt"))');
   });
 
   it("should prevent redirection to sensitive files", () => {
