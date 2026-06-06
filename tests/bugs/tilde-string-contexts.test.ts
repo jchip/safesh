@@ -24,7 +24,7 @@ describe("Bug: Tilde Expansion in String Contexts", () => {
 
     assertStringIncludes(
       code,
-      '.stdout(`${Deno.env.get("HOME") || "~"}/out.txt`)',
+      'const __target0 = `${Deno.env.get("HOME") || "~"}/out.txt`;',
     );
   });
 
