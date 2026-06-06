@@ -77,3 +77,18 @@ Deno.test("builtin lowering emits exit as a silent builtin", () => {
     isSilentShellBuiltin: true,
   });
 });
+
+Deno.test("builtin lowering emits colon as a successful no-op", () => {
+  const result = lowerShellBuiltin({
+    name: ":",
+    builtin: SHELL_BUILTINS[":"]!,
+    formattedArgs: [],
+  });
+
+  assertEquals(result, {
+    code: `{ code: 0, stdout: "", stderr: "", success: true }`,
+    async: false,
+    isShellBuiltin: true,
+    isSilentShellBuiltin: true,
+  });
+});

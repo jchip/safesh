@@ -71,6 +71,15 @@ export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLower
     };
   }
 
+  if (name === ":") {
+    return {
+      code: `{ code: 0, stdout: "", stderr: "", success: true }`,
+      async: false,
+      isShellBuiltin: true,
+      isSilentShellBuiltin: true,
+    };
+  }
+
   if (builtin.type === "prints" && stdoutCaptureVar) {
     return { code: `${stdoutCaptureVar}.push(${capturedPrintArg(formattedArgs)})`, async: false };
   }
