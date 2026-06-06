@@ -570,27 +570,43 @@ export function visitProcessSubstitution(
   ps: AST.ProcessSubstitution,
   ctx: VisitorContext,
 ): string {
-  // Collect inner statements
-  const innerLines: string[] = [];
+  // Collect capturable inner expressions.
+  const innerExprs: string[] = [];
 
   for (const stmt of ps.command) {
-    const result = ctx.visitStatement(stmt);
-    for (const line of result.lines) {
-      innerLines.push(line.trim());
+    if (stmt.type === "Command") {
+      const expr = ctx.buildCommand(stmt, { captureOutput: true });
+      innerExprs.push(expr.code);
+    } else if (
+      stmt.type === "Pipeline" &&
+      stmt.commands.length === 1 &&
+      stmt.commands[0]?.type === "Command" &&
+      !stmt.background
+    ) {
+      const expr = ctx.buildCommand(stmt.commands[0], { captureOutput: true });
+      innerExprs.push(expr.code);
+    } else if (stmt.type === "Pipeline") {
+      const expr = ctx.buildCommandExpression(stmt);
+      innerExprs.push(expr.code);
+    } else {
+      const result = ctx.visitStatement(stmt);
+      for (const line of result.lines) {
+        innerExprs.push(line.trim());
+      }
     }
   }
 
-  const innerCode = innerLines.join(" ").replace(/^await /, "").replace(/;$/, "");
+  const innerCode = innerExprs.join("; ").replace(/^await /, "").replace(/;$/, "");
 
   if (ps.operator === "<(") {
     // Input process substitution: command writes to temp file, return path
-    return `\${await (async () => { const __tmpFile = await Deno.makeTempFile(); const __cmd = ${innerCode}; await Deno.writeTextFile(__tmpFile, await __cmd.text()); return __tmpFile; })()}`;
+    return `\${await (async () => { const __tmpFile = await Deno.makeTempFile({ dir: $.tempdir() }); const __result = await __captureCmd(${innerCode}); await Deno.writeTextFile(__tmpFile, __result.stdout ?? ""); return __tmpFile; })()}`;
   } else {
     // Output process substitution >(cmd) - starts background process
     // Uses Deno.watchFs to reliably wait for the parent to write the file
     // instead of an arbitrary setTimeout which is a race condition
     return `\${await (async () => {
-      const __tmpFile = await Deno.makeTempFile();
+      const __tmpFile = await Deno.makeTempFile({ dir: $.tempdir() });
       // Background: watch for file modification, then read and pipe to command
       (async () => {
         const __watcher = Deno.watchFs(__tmpFile);
