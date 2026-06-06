@@ -191,4 +191,23 @@ echo done`,
       assertStringIncludes(result.stdout, "done");
     });
   });
+
+  it("should treat multiple -e operands as patterns in a command pipeline", async () => {
+    const config: SafeShellConfig = {
+      permissions: {
+        read: [Deno.cwd(), "/tmp"],
+        write: ["/tmp"],
+        run: ["printf", "grep"],
+      },
+      timeout: 5000,
+    };
+    const code = transpileBash(`printf "a.b\\naxb\\nx/y\\n" | grep -F -e "a.b" -e "x/y"`);
+
+    assertEquals(code.includes(".pipe($.cat("), false, code);
+
+    const result = await executeCode(code, config, { cwd: Deno.cwd() });
+
+    assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+    assertEquals(result.stdout, "a.b\nx/y\n");
+  });
 });
