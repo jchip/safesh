@@ -143,6 +143,43 @@ function expandBraces(s: string): string[] | null {
   return null;
 }
 
+function removeShellQuoteSyntax(value: string): string {
+  let result = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+
+  for (const char of value) {
+    if (escaped) {
+      result += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        result += char;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return escaped ? `${result}\\` : result;
+}
+
 // =============================================================================
 // Word Handler
 // =============================================================================
@@ -260,7 +297,7 @@ export function visitLiteralPart(
   }
 
   // No special expansion needed
-  return escapeForTemplate(value);
+  return escapeForTemplate(removeShellQuoteSyntax(value));
 }
 
 // =============================================================================
