@@ -327,6 +327,7 @@ type CommandStrategy =
     args: string[];
     builtin: BuiltinConfig;
     argExpansions: boolean[];
+    argTemplateEscapedLiterals: boolean[];
     hasRedirects: boolean;
   }
   | {
@@ -543,6 +544,7 @@ function selectCommandStrategy(
       args: analysis.args,
       builtin,
       argExpansions: analysis.argExpansions,
+      argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       hasRedirects: false,
     };
   }
@@ -558,6 +560,7 @@ function selectCommandStrategy(
       args: analysis.args,
       builtin,
       argExpansions: analysis.argExpansions,
+      argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       hasRedirects: true,
     };
   }
@@ -653,7 +656,13 @@ function executeCommandStrategy(
       return lowerShellBuiltin({
         name: strategy.name,
         builtin: strategy.builtin,
-        formattedArgs: strategy.args.map((arg, i) => formatArg(arg, strategy.argExpansions?.[i])),
+        formattedArgs: strategy.args.map((arg, i) =>
+          formatArg(
+            arg,
+            strategy.argExpansions?.[i],
+            strategy.argTemplateEscapedLiterals?.[i],
+          )
+        ),
         hasRedirects: strategy.hasRedirects,
         captureOutput: options?.captureOutput ?? false,
         stdoutCaptureVar: ctx.getStdoutCapture(),
