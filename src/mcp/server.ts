@@ -27,6 +27,7 @@ import { loadConfigWithArgs, mergeConfigs, saveToLocalJson, loadConfig, type Mcp
 import { createRegistry, type CommandRegistry } from "../external/registry.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { isPathWithin } from "../core/path-utils.ts";
+import { expandGitWorkspaceRoots } from "../core/project-root.ts";
 import type { SafeShellConfig, Shell } from "../core/types.ts";
 import {
   ERROR_COMMAND_NOT_ALLOWED,
@@ -206,9 +207,10 @@ function applyRootsToConfig(
   }
 
   // Parse all root URIs to paths
-  const rootPaths = roots
+  const parsedRootPaths = roots
     .map((r) => parseFileUri(r.uri))
     .filter((p): p is string => p !== null);
+  const rootPaths = expandGitWorkspaceRoots(parsedRootPaths);
 
   if (rootPaths.length === 0) {
     return { config, projectDir: undefined, rootPaths: [] };

@@ -9,7 +9,12 @@ import {
   isCommandWithinProjectDir,
   validatePath,
 } from "../src/core/permissions.ts";
-import { loadConfigWithArgs, mergeConfigs, type McpInitArgs } from "../src/core/config.ts";
+import {
+  loadConfigWithArgs,
+  loadSessionConfig,
+  mergeConfigs,
+  type McpInitArgs,
+} from "../src/core/config.ts";
 import { createRegistry } from "../src/external/registry.ts";
 import { validateCommand } from "../src/external/validator.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
@@ -248,6 +253,101 @@ Deno.test("loadConfigWithArgs - falls back to baseCwd when no args", async () =>
   const { effectiveCwd } = await loadConfigWithArgs("/default/cwd", undefined);
 
   assertEquals(effectiveCwd, "/default/cwd");
+});
+
+Deno.test("loadConfigWithArgs - adds git-aware roots for projectDir worktrees", async () => {
+  const testDir = `${REAL_TMP}/safesh-test-git-aware-args`;
+  const topWorktree = `${testDir}/workflow-engine`;
+  const linkedWorktree = `${testDir}/full-local`;
+
+  try {
+    await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
+    await Deno.mkdir(linkedWorktree, { recursive: true });
+    await Deno.writeTextFile(
+      `${linkedWorktree}/.git`,
+      `gitdir: ${topWorktree}/.git/worktrees/full-local\n`,
+    );
+
+    const { config, effectiveCwd } = await loadConfigWithArgs("/tmp", {
+      projectDir: linkedWorktree,
+    });
+
+    assertEquals(effectiveCwd, linkedWorktree);
+    assertEquals(config.workspaceRoots, [linkedWorktree, topWorktree]);
+  } finally {
+    try {
+      await Deno.remove(testDir, { recursive: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+});
+
+Deno.test("loadConfigWithArgs - omits nested projectDir when top worktree covers it", async () => {
+  const testDir = `${REAL_TMP}/safesh-test-git-aware-nested-args`;
+  const topWorktree = `${testDir}/workflow-engine`;
+  const nestedWorktree = `${topWorktree}/.worktrees/full-local`;
+
+  try {
+    await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
+    await Deno.mkdir(nestedWorktree, { recursive: true });
+    await Deno.writeTextFile(
+      `${nestedWorktree}/.git`,
+      "gitdir: ../../.git/worktrees/full-local\n",
+    );
+
+    const { config, effectiveCwd } = await loadConfigWithArgs("/tmp", {
+      projectDir: nestedWorktree,
+    });
+
+    assertEquals(effectiveCwd, nestedWorktree);
+    assertEquals(config.workspaceRoots, [topWorktree]);
+  } finally {
+    try {
+      await Deno.remove(testDir, { recursive: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+});
+
+Deno.test("loadSessionConfig - adds git-aware roots for linked worktrees", async () => {
+  const testDir = `${REAL_TMP}/safesh-test-git-aware-roots`;
+  const topWorktree = `${testDir}/workflow-engine`;
+  const linkedWorktree = `${testDir}/full-local`;
+  const cwd = `${linkedWorktree}/notes`;
+  const topFile = `${topWorktree}/notes/oauth-tenant-tech.md`;
+  const originalProjectEnv = Deno.env.get("CLAUDE_PROJECT_DIR");
+
+  try {
+    Deno.env.delete("CLAUDE_PROJECT_DIR");
+    await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
+    await Deno.mkdir(cwd, { recursive: true });
+    await Deno.mkdir(`${topWorktree}/notes`, { recursive: true });
+    await Deno.writeTextFile(topFile, "oauth notes\n");
+    await Deno.writeTextFile(
+      `${linkedWorktree}/.git`,
+      `gitdir: ${topWorktree}/.git/worktrees/full-local\n`,
+    );
+
+    const { config } = await loadSessionConfig(cwd);
+
+    assertEquals(config.projectDir, linkedWorktree);
+    assertEquals(config.workspaceRoots, [linkedWorktree, topWorktree]);
+    assertEquals(await validatePath(topFile, config, cwd, "read"), topFile);
+  } finally {
+    if (originalProjectEnv !== undefined) {
+      Deno.env.set("CLAUDE_PROJECT_DIR", originalProjectEnv);
+    } else {
+      Deno.env.delete("CLAUDE_PROJECT_DIR");
+    }
+
+    try {
+      await Deno.remove(testDir, { recursive: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
 });
 
 // ============================================================================
