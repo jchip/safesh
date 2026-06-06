@@ -5,9 +5,9 @@
  */
 
 export {
-  escapeForTemplate,
   escapeForQuotes,
   escapeForSingleQuotes,
+  escapeForTemplate,
   escapeRegex,
   globToRegex,
   sanitizeVarName,
@@ -16,7 +16,8 @@ export {
 } from "./escape.ts";
 
 export {
-  parseCountArg,
   collectFlagOptions,
   collectFlagOptionsAndFiles,
+  parseCountArg,
+  parseTailCountArg,
 } from "./command-args.ts";

@@ -17,7 +17,10 @@
  * parseCountArg(["-20", "file.txt"]) // => { count: 20, files: ["file.txt"] }
  * parseCountArg(["file.txt"]) // => { count: 10, files: ["file.txt"] }
  */
-export function parseCountArg(args: string[], defaultValue = 10): { count: number; files: string[] } {
+export function parseCountArg(
+  args: string[],
+  defaultValue = 10,
+): { count: number; files: string[] } {
   let count = defaultValue;
   const files: string[] = [];
 
@@ -39,6 +42,46 @@ export function parseCountArg(args: string[], defaultValue = 10): { count: numbe
     }
   }
   return { count, files };
+}
+
+function parseSignedCount(raw: string, defaultValue: number): number {
+  const countText = raw.startsWith("+") || raw.startsWith("-") ? raw.slice(1) : raw;
+  const parsed = parseInt(countText);
+  return Number.isNaN(parsed) ? defaultValue : parsed;
+}
+
+/**
+ * Parse the -n count argument from tail commands.
+ * Supports tail's +N form, which means output starting from line N.
+ */
+export function parseTailCountArg(
+  args: string[],
+  defaultValue = 10,
+): { count: number; files: string[]; fromStart: boolean } {
+  let count = defaultValue;
+  let fromStart = false;
+  const files: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "-n" && args[i + 1]) {
+      const rawCount = args[i + 1] ?? "";
+      fromStart = rawCount.startsWith("+");
+      count = parseSignedCount(rawCount, defaultValue);
+      i++;
+    } else if (arg?.startsWith("-n")) {
+      const rawCount = arg.slice(2);
+      fromStart = rawCount.startsWith("+");
+      count = parseSignedCount(rawCount, defaultValue);
+    } else if (arg?.startsWith("-") && /^-\d+$/.test(arg)) {
+      count = parseSignedCount(arg, defaultValue);
+      fromStart = false;
+    } else if (arg && !arg.startsWith("-")) {
+      files.push(arg);
+    }
+  }
+
+  return { count, files, fromStart };
 }
 
 /**

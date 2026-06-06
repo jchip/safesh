@@ -21,6 +21,7 @@ import {
   escapeForQuotes,
   escapeRegex,
   parseCountArg,
+  parseTailCountArg,
   sanitizeVarName,
   templateEscapedToLiteral,
   templateEscapedToRegexSource,
@@ -920,8 +921,19 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
     throw new Error(`Unknown simple fluent command: ${name}`);
   }
 
-  const { options, files } = parseSimpleFluentArgs(capability, args);
-  const transformCode = buildSimpleFluentTransform(capability, options);
+  let files: string[];
+  let transformCode: string;
+  if (capability.kind === "count-transform" && capability.runtimeName === "tail") {
+    const parsed = parseTailCountArg(args);
+    files = parsed.files;
+    transformCode = parsed.fromStart
+      ? `$.filter((_line, __index) => __index + 1 >= ${parsed.count})`
+      : buildSimpleFluentTransform(capability, parsed.count.toString());
+  } else {
+    const parsed = parseSimpleFluentArgs(capability, args);
+    files = parsed.files;
+    transformCode = buildSimpleFluentTransform(capability, parsed.options);
+  }
 
   if (files.length > 0) {
     const file = `"${escapeForQuotes(files[0] ?? "")}"`;
