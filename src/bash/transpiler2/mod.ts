@@ -191,7 +191,11 @@ export class BashTranspiler2 {
               async: true,
             };
           }
-          // For pipelines, check the first command
+          if (test.operator === "|") {
+            return handlers.buildPipeline(test, this);
+          }
+
+          // For single-command pipeline wrappers, check the wrapped command.
           const firstCmd = test.commands[0];
           if (firstCmd?.type === "TestCommand") {
             const expr = handlers.visitTestCondition(firstCmd.expression, this);
