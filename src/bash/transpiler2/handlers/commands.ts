@@ -89,6 +89,10 @@ function wordIsTemplateEscapedLiteral(
     (word.parts.length === 0 || word.parts.every((part) => part.type === "LiteralPart"));
 }
 
+function templateEscapedToFixedRegexSource(pattern: string): string {
+  return escapeRegex(templateEscapedToLiteral(pattern)).replace(/\//g, "\\/");
+}
+
 function formatRedirectionTarget(redirect: AST.Redirection, ctx: VisitorContext): string {
   if (typeof redirect.target === "number") {
     return redirect.target.toString();
@@ -981,8 +985,10 @@ function buildFluentCommand(
       // $.grep(pattern) as transform or $.grep(pattern, file)
       // Parse grep options
       let pattern: string | undefined;
+      const explicitPatterns: string[] = [];
       let files: string[] = [];
       let invert = false;
+      let fixedStrings = false;
       let ignoreCase = false;
       let lineNumber = false;
       let recursive = false;
@@ -993,12 +999,25 @@ function buildFluentCommand(
 
         if (!optionsEnded && arg === "--") {
           optionsEnded = true;
+        } else if (!optionsEnded && arg === "--fixed-strings") {
+          fixedStrings = true;
+        } else if (!optionsEnded && arg === "--regexp") {
+          explicitPatterns.push(args[++i] ?? "");
+        } else if (!optionsEnded && arg?.startsWith("--regexp=")) {
+          explicitPatterns.push(arg.slice("--regexp=".length));
         } else if (!optionsEnded && arg?.startsWith("--")) {
           // Skip long options for now.
         } else if (!optionsEnded && arg?.startsWith("-") && arg.length > 1) {
-          for (const flag of arg.slice(1)) {
+          for (let flagIndex = 1; flagIndex < arg.length; flagIndex++) {
+            const flag = arg[flagIndex]!;
             if (capability.invertShortFlags.includes(flag)) {
               invert = true;
+            } else if (flag === "F") {
+              fixedStrings = true;
+            } else if (flag === "e") {
+              const inlinePattern = arg.slice(flagIndex + 1);
+              explicitPatterns.push(inlinePattern.length > 0 ? inlinePattern : (args[++i] ?? ""));
+              break;
             } else if (capability.ignoreCaseShortFlags.includes(flag)) {
               ignoreCase = true;
             } else if (capability.lineNumberShortFlags.includes(flag)) {
@@ -1011,7 +1030,7 @@ function buildFluentCommand(
               return null;
             }
           }
-        } else if (pattern === undefined) {
+        } else if (pattern === undefined && explicitPatterns.length === 0) {
           pattern = arg ?? "";
         } else {
           files.push(arg ?? "");
@@ -1029,7 +1048,18 @@ function buildFluentCommand(
       // regex literal causes \\[ to open an unclosed character class.
       // templateEscapedToRegexSource() reverses the template escaping then applies
       // BRE→JS conversions so the result is safe inside /.../.
-      const regexSource = templateEscapedToRegexSource(pattern ?? "");
+      const patternSources = explicitPatterns.length > 0
+        ? explicitPatterns.map((p) =>
+          fixedStrings ? templateEscapedToFixedRegexSource(p) : templateEscapedToRegexSource(p)
+        )
+        : [
+          fixedStrings
+            ? templateEscapedToFixedRegexSource(pattern ?? "")
+            : templateEscapedToRegexSource(pattern ?? ""),
+        ];
+      const regexSource = patternSources.length === 1
+        ? patternSources[0]!
+        : patternSources.map((source) => `(?:${source})`).join("|");
       const flags = ignoreCase ? "i" : "";
       const regexPattern = regexSource === "" ? `/(?:)/${flags}` : `/${regexSource}/${flags}`;
 
