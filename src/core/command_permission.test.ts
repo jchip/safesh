@@ -162,6 +162,33 @@ Deno.test("SSH-23: checkCommandPermission auto-allows absolute project command",
   }
 });
 
+Deno.test("checkCommandPermission - workspaceRoots auto-allow command in non-primary root", async () => {
+  const tmpDir = await Deno.makeTempDir();
+  const rootA = `${tmpDir}/root-a`;
+  const rootB = `${tmpDir}/root-b`;
+  const scriptPath = `${rootB}/scripts/build.sh`;
+
+  await Deno.mkdir(`${rootB}/scripts`, { recursive: true });
+  await Deno.writeTextFile(scriptPath, "#!/bin/bash\necho hello");
+
+  try {
+    const config = makeConfig({
+      projectDir: rootA,
+      workspaceRoots: [rootA, rootB],
+      allowProjectCommands: true,
+    });
+
+    const result = await checkCommandPermission("scripts/build.sh", config, rootB);
+
+    assertEquals(result.allowed, true);
+    if (result.allowed) {
+      assertEquals(result.resolvedPath, scriptPath);
+    }
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+  }
+});
+
 Deno.test("checkCommandPermission - project command not allowed when disabled", async () => {
   // Create a temp directory structure
   const tmpDir = await Deno.makeTempDir();

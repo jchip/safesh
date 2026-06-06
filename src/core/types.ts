@@ -101,6 +101,14 @@ export interface SafeShellConfig {
   projectDir?: string;
 
   /**
+   * Additional top-level project/workspace roots.
+   * These roots receive the same automatic read/write permissions as projectDir
+   * unless blockProjectDirWrite is true. projectDir remains the primary config
+   * and session storage location for backwards compatibility.
+   */
+  workspaceRoots?: string[];
+
+  /**
    * Block write access to projectDir.
    * When true, projectDir only gets read permission, not write.
    * Default: false (write allowed).

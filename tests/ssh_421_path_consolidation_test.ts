@@ -167,6 +167,62 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "validatePath - workspaceRoots allow multiple top-level roots and reject outside paths",
+  async fn() {
+    const testDir = `${REAL_TMP}/safesh-test-ssh421-workspace-roots`;
+    const rootA = `${testDir}/root-a`;
+    const rootB = `${testDir}/root-b`;
+    const outside = `${testDir}/outside`;
+
+    try {
+      await Deno.mkdir(rootA, { recursive: true });
+      await Deno.mkdir(rootB, { recursive: true });
+      await Deno.mkdir(outside, { recursive: true });
+
+      const config: SafeShellConfig = {
+        projectDir: rootA,
+        workspaceRoots: [rootA, rootB],
+      };
+
+      const rootAPath = await validatePath(`${rootA}/read.txt`, config, rootA, "read");
+      assertEquals(rootAPath, `${rootA}/read.txt`);
+
+      const rootBPath = await validatePath(`${rootB}/write.txt`, config, rootA, "write");
+      assertEquals(rootBPath, `${rootB}/write.txt`);
+
+      await assertRejects(
+        () => validatePath(`${outside}/secret.txt`, config, rootA, "read"),
+        SafeShellError,
+        "outside allowed directories",
+      );
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "getEffectivePermissions - includes all workspaceRoots",
+  fn() {
+    const config: SafeShellConfig = {
+      projectDir: "/test/root-a",
+      workspaceRoots: ["/test/root-a", "/test/root-b"],
+    };
+
+    const perms = getEffectivePermissions(config, "/test/root-a");
+
+    assertEquals(perms.read?.includes("/test/root-a"), true);
+    assertEquals(perms.read?.includes("/test/root-b"), true);
+    assertEquals(perms.write?.includes("/test/root-a"), true);
+    assertEquals(perms.write?.includes("/test/root-b"), true);
+  },
+});
+
 // ============================================================================
 // Path Traversal Attack Tests
 // ============================================================================

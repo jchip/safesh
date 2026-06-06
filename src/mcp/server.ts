@@ -26,6 +26,7 @@ import { closeAllStatePersistence } from "../runtime/state-persistence.ts";
 import { loadConfigWithArgs, mergeConfigs, saveToLocalJson, loadConfig, type McpInitArgs } from "../core/config.ts";
 import { createRegistry, type CommandRegistry } from "../external/registry.ts";
 import { SafeShellError } from "../core/errors.ts";
+import { isPathWithin } from "../core/path-utils.ts";
 import type { SafeShellConfig, Shell } from "../core/types.ts";
 import {
   ERROR_COMMAND_NOT_ALLOWED,
@@ -199,9 +200,9 @@ function parseFileUri(uri: string): string | null {
 function applyRootsToConfig(
   config: SafeShellConfig,
   roots: McpRoot[],
-): { config: SafeShellConfig; projectDir: string | undefined } {
+): { config: SafeShellConfig; projectDir: string | undefined; rootPaths: string[] } {
   if (roots.length === 0) {
-    return { config, projectDir: undefined };
+    return { config, projectDir: undefined, rootPaths: [] };
   }
 
   // Parse all root URIs to paths
@@ -210,7 +211,7 @@ function applyRootsToConfig(
     .filter((p): p is string => p !== null);
 
   if (rootPaths.length === 0) {
-    return { config, projectDir: undefined };
+    return { config, projectDir: undefined, rootPaths: [] };
   }
 
   // First root is projectDir (primary project)
@@ -219,6 +220,7 @@ function applyRootsToConfig(
   // Add all roots to read/write permissions
   const overrides: SafeShellConfig = {
     projectDir,
+    workspaceRoots: rootPaths,
     permissions: {
       read: rootPaths,
       write: rootPaths,
@@ -228,7 +230,16 @@ function applyRootsToConfig(
   return {
     config: mergeConfigs(config, overrides),
     projectDir,
+    rootPaths,
   };
+}
+
+function chooseCwdForRoots(
+  currentCwd: string,
+  rootPaths: string[],
+  fallbackRoot: string,
+): string {
+  return rootPaths.some((root) => isPathWithin(currentCwd, root)) ? currentCwd : fallbackRoot;
 }
 
 // Tool schemas
@@ -738,15 +749,18 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         }
 
         // First, check if we have a projectDir from roots
-        const { config: tempConfig, projectDir } = applyRootsToConfig(
+        const { config: tempConfig, projectDir, rootPaths } = applyRootsToConfig(
           configHolder.config,
           result.roots,
         );
 
         // If we have a projectDir, reload config from there to pick up saved permissions
         if (projectDir) {
-          configHolder.cwd = projectDir;
+          configHolder.cwd = chooseCwdForRoots(configHolder.cwd, rootPaths, projectDir);
           console.error(`  projectDir set to: ${projectDir}`);
+          console.error(`  workspaceRoots set to: ${rootPaths.join(", ")}`);
+          console.error(`  cwd set to: ${configHolder.cwd}`);
+          shellManager.setDefaultCwd(configHolder.cwd);
 
           // Reload config from projectDir to pick up any saved permissions
           const reloadedConfig = await loadConfig(projectDir);

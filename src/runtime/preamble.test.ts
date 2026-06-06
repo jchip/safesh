@@ -164,6 +164,25 @@ describe("preamble", () => {
       }
     });
 
+    it("includes workspaceRoots in preamble config", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const rootA = `${tmpDir}/root-a`;
+      const rootB = `${tmpDir}/root-b`;
+
+      try {
+        const config: SafeShellConfig = {
+          projectDir: rootA,
+          workspaceRoots: [rootA, rootB],
+          permissions: { run: [] },
+        };
+        const result = extractPreambleConfig(config, rootB);
+
+        assertEquals(result.workspaceRoots, [rootA, rootB]);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
     it("defaults allowProjectCommands to true when CLAUDE_SESSION_ID is set", async () => {
       const tmpDir = await Deno.makeTempDir();
       const original = Deno.env.get("CLAUDE_SESSION_ID");

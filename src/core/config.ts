@@ -401,7 +401,8 @@ function mergeImportPolicy(
  * | Field                 | Strategy          | Notes                                              |
  * |-----------------------|-------------------|---------------------------------------------------|
  * | `workspace`           | override          | Later value replaces earlier                       |
- * | `projectDir`          | override          | Later value replaces earlier (auto full r/w access)|
+ * | `projectDir`          | override          | Later value replaces earlier (primary config root) |
+ * | `workspaceRoots`      | union             | Combined top-level roots for sandbox access         |
  * | `blockProjectDirWrite`| override          | Later value replaces earlier                       |
  * | `allowProjectCommands`| override          | Later value replaces earlier                       |
  * | `permissions.read`    | union             | Arrays combined, deduplicated                      |
@@ -464,6 +465,7 @@ export function mergeConfigs(
     imports: mergeImportPolicy(base.imports ?? {}, override.imports ?? {}),
     tasks: { ...base.tasks, ...override.tasks },
     denoFlags: unionArrays(base.denoFlags, override.denoFlags),
+    workspaceRoots: unionArrays(base.workspaceRoots, override.workspaceRoots),
   };
 
   return merged;
@@ -833,6 +835,14 @@ export async function loadConfig(
     config.projectDir = resolveWorkspace(config.projectDir);
   }
 
+  // Resolve additional top-level roots if provided
+  if (config.workspaceRoots) {
+    config.workspaceRoots = unionArrays(
+      undefined,
+      config.workspaceRoots.map((root) => resolveWorkspace(root)),
+    );
+  }
+
   // Validate config by default
   if (!skipValidation) {
     const validation = validateConfig(config);
@@ -931,6 +941,7 @@ export async function loadConfigWithArgs(
 
     if (mcpArgs.projectDir) {
       overrides.projectDir = resolveWorkspace(mcpArgs.projectDir);
+      overrides.workspaceRoots = [overrides.projectDir];
     }
 
     if (mcpArgs.allowProjectCommands !== undefined) {
@@ -1148,9 +1159,9 @@ function validateShellSettings(config: SafeShellConfig): ConfigValidation {
   const blocked = imports.blocked ?? [];
 
   // Project directory warning
-  if (!config.projectDir) {
+  if (!config.projectDir && (config.workspaceRoots?.length ?? 0) === 0) {
     result.warnings.push(
-      "projectDir: not set - file permissions will be limited to /tmp and explicit paths",
+      "projectDir/workspaceRoots: not set - file permissions will be limited to /tmp and explicit paths",
     );
   }
 

@@ -7,7 +7,13 @@
 
 import { resolve } from "@std/path";
 import type { ExternalCommandConfig, SafeShellConfig } from "../core/types.ts";
-import { expandPath, isPathAllowed, isWithinWorkspace } from "../core/permissions.ts";
+import {
+  expandPath,
+  getWorkspaceRoots,
+  isPathAllowed,
+  isWithinWorkspace,
+  isWithinWorkspaceRoots,
+} from "../core/permissions.ts";
 import { pathViolation, symlinkViolation } from "../core/errors.ts";
 import { getRealPathAsync } from "../core/utils.ts";
 
@@ -187,6 +193,7 @@ export async function validatePathArgs(
   const allowedPaths = [
     ...(perms.read ?? []),
     ...(perms.write ?? []),
+    ...getWorkspaceRoots(config),
   ];
 
   if (allowedPaths.length === 0 && !config.workspace) {
@@ -217,6 +224,10 @@ export async function validatePathArgs(
 
     // If workspace is configured and path is within workspace, allow it
     if (workspace && isWithinWorkspace(realPath, workspace)) {
+      continue;
+    }
+
+    if (isWithinWorkspaceRoots(realPath, config)) {
       continue;
     }
 
