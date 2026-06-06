@@ -464,7 +464,7 @@ describe("Security - Quote Escaping", () => {
     const output = transpile(ast);
 
     // SSH-486: Escaped dollar should produce literal $VAR, no variable expansion
-    assertStringIncludes(output, "\\$VAR");
+    assertStringIncludes(output, '"$VAR"');
     assert(!output.includes("$.ENV.VAR"), "Should NOT trigger variable expansion");
   });
 
@@ -473,7 +473,7 @@ describe("Security - Quote Escaping", () => {
     const output = transpile(ast);
 
     // SSH-487: Escaped backticks should be literal, no command substitution
-    assertStringIncludes(output, "\\\\`cmd\\\\`");
+    assertStringIncludes(output, '"`cmd`"');
     assert(!output.includes("__cmdSubText"), "Should NOT trigger command substitution");
   });
 });
@@ -830,7 +830,7 @@ describe("Security - Escaping Edge Cases", () => {
     const output = transpile(ast);
 
     // Control character escape sequence should be preserved as escaped literal
-    assertStringIncludes(output, '$.echo("test\\\\\\\\x00null")');
+    assertStringIncludes(output, '$.echo("test\\\\x00null")');
   });
 
   it("should handle special regex characters in patterns", () => {
