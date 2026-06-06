@@ -41,4 +41,25 @@ describe("Bug: process substitution", () => {
       await Deno.remove(testDir, { recursive: true });
     }
   });
+
+  it("captures pipeline output inside input process substitution", async () => {
+    const config: SafeShellConfig = {
+      permissions: {
+        read: [Deno.cwd(), "/tmp"],
+        write: ["/tmp"],
+        run: ["comm", "printf"],
+      },
+      timeout: 5000,
+    };
+    const code = transpileBash(
+      `comm -23 <(printf "bravo\\nalpha\\ncharlie\\n" | sort) <(printf "bravo\\n" | sort)`,
+    );
+
+    assertEquals(code.includes(".text()"), false, code);
+
+    const result = await executeCode(code, config, { cwd: Deno.cwd() });
+
+    assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+    assertEquals(result.stdout, "alpha\ncharlie\n");
+  });
 });

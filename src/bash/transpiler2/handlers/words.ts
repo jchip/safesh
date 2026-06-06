@@ -55,6 +55,38 @@ function shellVarDefinedExpression(param: string, jsParam: string): string {
   } !== undefined)`;
 }
 
+function buildCapturableInnerCode(
+  statements: AST.Statement[],
+  ctx: VisitorContext,
+): string {
+  const innerExprs: string[] = [];
+
+  for (const stmt of statements) {
+    if (stmt.type === "Command") {
+      const expr = ctx.buildCommand(stmt, { captureOutput: true });
+      innerExprs.push(expr.code);
+    } else if (
+      stmt.type === "Pipeline" &&
+      stmt.commands.length === 1 &&
+      stmt.commands[0]?.type === "Command" &&
+      !stmt.background
+    ) {
+      const expr = ctx.buildCommand(stmt.commands[0], { captureOutput: true });
+      innerExprs.push(expr.code);
+    } else if (stmt.type === "Pipeline") {
+      const expr = ctx.buildCommandExpression(stmt);
+      innerExprs.push(expr.code);
+    } else {
+      const result = ctx.visitStatement(stmt);
+      for (const line of result.lines) {
+        innerExprs.push(line.trim());
+      }
+    }
+  }
+
+  return innerExprs.join("; ").replace(/^await /, "").replace(/;$/, "");
+}
+
 /**
  * Detect and expand brace patterns like {a,b,c} or {1..10}
  * Returns array of expanded strings or null if not a brace pattern
@@ -508,38 +540,7 @@ export function visitCommandSubstitution(
   cs: AST.CommandSubstitution,
   ctx: VisitorContext,
 ): string {
-  // For command substitution, we need the raw command expression (not wrapped in __printCmd)
-  // Build the inner command expression directly
-  const innerExprs: string[] = [];
-
-  for (const stmt of cs.command) {
-    // For simple commands/pipelines, get the expression directly
-    // For other statements, fall back to visitStatement
-    if (stmt.type === "Command") {
-      const expr = ctx.buildCommand(stmt, { captureOutput: true });
-      innerExprs.push(expr.code);
-    } else if (
-      stmt.type === "Pipeline" &&
-      stmt.commands.length === 1 &&
-      stmt.commands[0]?.type === "Command" &&
-      !stmt.background
-    ) {
-      const expr = ctx.buildCommand(stmt.commands[0], { captureOutput: true });
-      innerExprs.push(expr.code);
-    } else if (stmt.type === "Pipeline") {
-      const expr = ctx.buildCommandExpression(stmt);
-      innerExprs.push(expr.code);
-    } else {
-      // For complex statements (if, for, etc.), use visitStatement
-      const result = ctx.visitStatement(stmt);
-      for (const line of result.lines) {
-        innerExprs.push(line.trim());
-      }
-    }
-  }
-
-  // Build inline command substitution that captures stdout
-  const innerCode = innerExprs.join("; ").replace(/^await /, "").replace(/;$/, "");
+  const innerCode = buildCapturableInnerCode(cs.command, ctx);
 
   // Use __cmdSubText helper (defined in preamble) to extract text from result
   return `\${await __cmdSubText(${innerCode})}`;
@@ -570,33 +571,7 @@ export function visitProcessSubstitution(
   ps: AST.ProcessSubstitution,
   ctx: VisitorContext,
 ): string {
-  // Collect capturable inner expressions.
-  const innerExprs: string[] = [];
-
-  for (const stmt of ps.command) {
-    if (stmt.type === "Command") {
-      const expr = ctx.buildCommand(stmt, { captureOutput: true });
-      innerExprs.push(expr.code);
-    } else if (
-      stmt.type === "Pipeline" &&
-      stmt.commands.length === 1 &&
-      stmt.commands[0]?.type === "Command" &&
-      !stmt.background
-    ) {
-      const expr = ctx.buildCommand(stmt.commands[0], { captureOutput: true });
-      innerExprs.push(expr.code);
-    } else if (stmt.type === "Pipeline") {
-      const expr = ctx.buildCommandExpression(stmt);
-      innerExprs.push(expr.code);
-    } else {
-      const result = ctx.visitStatement(stmt);
-      for (const line of result.lines) {
-        innerExprs.push(line.trim());
-      }
-    }
-  }
-
-  const innerCode = innerExprs.join("; ").replace(/^await /, "").replace(/;$/, "");
+  const innerCode = buildCapturableInnerCode(ps.command, ctx);
 
   if (ps.operator === "<(") {
     // Input process substitution: command writes to temp file, return path
