@@ -7,11 +7,12 @@
  * @module
  */
 
-import { basename, resolve, join } from "@std/path";
+import { basename, join, resolve } from "@std/path";
 import type { SafeShellConfig } from "./types.ts";
 import { ERROR_COMMAND_NOT_ALLOWED, ERROR_COMMAND_NOT_FOUND } from "./constants.ts";
 import { isPathWithin } from "./path-utils.ts";
 import { getSessionAllowedCommands } from "./session.ts";
+import { getWorkspaceRoots } from "./permissions.ts";
 
 /**
  * Result of permission check - allowed with resolved path
@@ -136,7 +137,7 @@ export async function checkCommandPermission(
     }
   }
 
-  const projectDir = config.projectDir;
+  const workspaceRoots = getWorkspaceRoots(config);
   // Default allowProjectCommands to true when running under Claude Code session
   const allowProjectCommands = config.allowProjectCommands ??
     (Deno.env.get("CLAUDE_SESSION_ID") !== undefined ? true : false);
@@ -160,9 +161,7 @@ export async function checkCommandPermission(
   // basename in allowed? → Yes → ALLOWED
   if (isCommandAllowed(cmdBasename, allowedCommands)) {
     // Resolve the path for the result
-    const resolvedPath = command.startsWith("/")
-      ? command
-      : resolve(cwd, command);
+    const resolvedPath = command.startsWith("/") ? command : resolve(cwd, command);
     return { allowed: true, resolvedPath };
   }
 
@@ -171,7 +170,7 @@ export async function checkCommandPermission(
     if (isCommandAllowed(command, allowedCommands)) {
       return { allowed: true, resolvedPath: command };
     }
-    if (allowProjectCommands && projectDir && isPathWithin(command, projectDir)) {
+    if (allowProjectCommands && workspaceRoots.some((root) => isPathWithin(command, root))) {
       if (await commandExists(command)) {
         return { allowed: true, resolvedPath: command };
       }
@@ -184,8 +183,8 @@ export async function checkCommandPermission(
   // Found in CWD?
   const cwdPath = resolve(cwd, command);
   if (await commandExists(cwdPath)) {
-    // If allowProjectCommands is enabled and resolved path is under projectDir, auto-allow
-    if (allowProjectCommands && projectDir && isPathWithin(cwdPath, projectDir)) {
+    // If allowProjectCommands is enabled and resolved path is under a configured root, auto-allow
+    if (allowProjectCommands && workspaceRoots.some((root) => isPathWithin(cwdPath, root))) {
       return { allowed: true, resolvedPath: cwdPath };
     }
     // Yes → allowed_check(resolved)
@@ -195,9 +194,9 @@ export async function checkCommandPermission(
     return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command: cwdPath };
   }
 
-  // Found in projectDir?
-  if (projectDir) {
-    const projectPath = join(projectDir, command);
+  // Found in configured roots?
+  for (const root of workspaceRoots) {
+    const projectPath = join(root, command);
     if (await commandExists(projectPath)) {
       // config allows project cmds? → Yes → ALLOWED
       if (allowProjectCommands) {

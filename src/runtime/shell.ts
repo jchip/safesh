@@ -59,6 +59,13 @@ export class ShellManager {
   }
 
   /**
+   * Update the default CWD used for newly created shells.
+   */
+  setDefaultCwd(cwd: string): void {
+    this.defaultCwd = cwd;
+  }
+
+  /**
    * Initialize from persisted state
    * Call this after construction to restore shells from disk
    */

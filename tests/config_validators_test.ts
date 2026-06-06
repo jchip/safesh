@@ -231,11 +231,24 @@ Deno.test("validateImportPolicy - errors on conflicting patterns", () => {
 Deno.test("validateShellSettings - warns on missing projectDir", () => {
   const config = createMinimalConfig({
     projectDir: undefined,
+    workspaceRoots: undefined,
   });
   const result = validateConfig(config);
   assertEquals(
-    result.warnings.some((w) => w.includes("projectDir: not set")),
+    result.warnings.some((w) => w.includes("projectDir/workspaceRoots: not set")),
     true,
+  );
+});
+
+Deno.test("validateShellSettings - accepts workspaceRoots without projectDir warning", () => {
+  const config = createMinimalConfig({
+    projectDir: undefined,
+    workspaceRoots: ["/home/user/project-a", "/home/user/project-b"],
+  });
+  const result = validateConfig(config);
+  assertEquals(
+    result.warnings.some((w) => w.includes("projectDir/workspaceRoots: not set")),
+    false,
   );
 });
 
@@ -246,7 +259,7 @@ Deno.test("validateShellSettings - accepts valid projectDir", () => {
   const result = validateConfig(config);
   // Should not warn about missing projectDir
   assertEquals(
-    result.warnings.some((w) => w.includes("projectDir: not set")),
+    result.warnings.some((w) => w.includes("projectDir/workspaceRoots: not set")),
     false,
   );
 });

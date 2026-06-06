@@ -27,6 +27,7 @@ import { readPendingCommand, writePendingCommand, type PendingCommand } from "..
  */
 interface PreambleConfig {
   projectDir?: string;
+  workspaceRoots?: string[];
   allowProjectCommands?: boolean;
   allowedCommands: string[];
   sessionAllowedCommands?: string[];
@@ -59,6 +60,15 @@ async function checkCommandExists(path: string): Promise<boolean> {
  */
 function isInAllowedList(command: string, allowedCommands: string[]): boolean {
   return allowedCommands.includes(command);
+}
+
+function getWorkspaceRoots(config: PreambleConfig): string[] {
+  return [
+    ...new Set([
+      ...(config.projectDir ? [config.projectDir] : []),
+      ...(config.workspaceRoots ?? []),
+    ]),
+  ];
 }
 
 /**
@@ -113,7 +123,8 @@ async function checkPermission(
   const allowedCommands = config.sessionAllowedCommands
     ? [...config.allowedCommands, ...config.sessionAllowedCommands]
     : config.allowedCommands;
-  const { projectDir, allowProjectCommands, cwd } = config;
+  const { allowProjectCommands, cwd } = config;
+  const workspaceRoots = getWorkspaceRoots(config);
 
   // Validate command is actually a string
   if (typeof command !== "string") {
@@ -147,11 +158,12 @@ async function checkPermission(
     if (isInAllowedList(command, allowedCommands)) {
       return { allowed: true, resolvedPath: command };
     }
-    if (allowProjectCommands && projectDir) {
-      const absoluteProjectDir = projectDir.startsWith("/")
-        ? projectDir
-        : resolvePath(cwd, projectDir);
-      if (isPathWithin(command, absoluteProjectDir)) {
+    if (allowProjectCommands) {
+      const matchingRoot = workspaceRoots.find((root) => {
+        const absoluteRoot = root.startsWith("/") ? root : resolvePath(cwd, root);
+        return isPathWithin(command, absoluteRoot);
+      });
+      if (matchingRoot) {
         if (await checkCommandExists(command)) {
           return { allowed: true, resolvedPath: command };
         }
@@ -164,12 +176,14 @@ async function checkPermission(
   // Relative path - check CWD first
   const cwdPath = resolvePath(cwd, command);
   if (await checkCommandExists(cwdPath)) {
-    // Check if allowProjectCommands is enabled and path is within project
-    if (allowProjectCommands && projectDir) {
+    // Check if allowProjectCommands is enabled and path is within any configured root
+    if (allowProjectCommands) {
       // cwdPath is already absolute (resolved from cwd)
-      // Check if it's within the project directory
-      const absoluteProjectDir = projectDir.startsWith("/") ? projectDir : resolvePath(cwd, projectDir);
-      if (isPathWithin(cwdPath, absoluteProjectDir)) {
+      const matchingRoot = workspaceRoots.find((root) => {
+        const absoluteRoot = root.startsWith("/") ? root : resolvePath(cwd, root);
+        return isPathWithin(cwdPath, absoluteRoot);
+      });
+      if (matchingRoot) {
         return { allowed: true, resolvedPath: cwdPath };
       }
     }
@@ -179,9 +193,9 @@ async function checkPermission(
     return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command: cwdPath };
   }
 
-  // Check projectDir
-  if (projectDir) {
-    const projectPath = resolvePath(projectDir, command);
+  // Check configured roots
+  for (const root of workspaceRoots) {
+    const projectPath = resolvePath(root, command);
     if (await checkCommandExists(projectPath)) {
       // config allows project cmds? → ALLOWED
       if (allowProjectCommands) {

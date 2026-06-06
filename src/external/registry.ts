@@ -6,7 +6,7 @@
  */
 
 import type { ExternalCommandConfig, SafeShellConfig } from "../core/types.ts";
-import { isCommandWithinProjectDir } from "../core/permissions.ts";
+import { isCommandWithinWorkspaceRoots } from "../core/permissions.ts";
 
 /**
  * Default configurations for common commands
@@ -60,12 +60,12 @@ export const DEFAULT_COMMAND_CONFIGS: Record<string, ExternalCommandConfig> = {
  */
 export class CommandRegistry {
   private commands: Map<string, ExternalCommandConfig> = new Map();
-  private projectDir?: string;
+  private config?: SafeShellConfig;
   private allowProjectCommands?: boolean;
   private cwd?: string;
 
   constructor(config?: SafeShellConfig, cwd?: string) {
-    this.projectDir = config?.projectDir;
+    this.config = config;
     this.allowProjectCommands = config?.allowProjectCommands;
     this.cwd = cwd;
 
@@ -101,9 +101,9 @@ export class CommandRegistry {
       return registered;
     }
 
-    // If allowProjectCommands is true, auto-allow commands within projectDir
-    if (this.allowProjectCommands && this.projectDir) {
-      if (isCommandWithinProjectDir(command, this.projectDir, this.cwd)) {
+    // If allowProjectCommands is true, auto-allow commands within configured roots
+    if (this.allowProjectCommands && this.config) {
+      if (isCommandWithinWorkspaceRoots(command, this.config, this.cwd)) {
         // Return a permissive config for project commands
         return {
           allow: true,

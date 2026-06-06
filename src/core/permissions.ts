@@ -48,6 +48,29 @@ export function isWithinProjectDir(path: string, projectDir: string, cwd?: strin
 }
 
 /**
+ * Get all configured top-level roots, preserving projectDir as the primary root.
+ */
+export function getWorkspaceRoots(config: SafeShellConfig): string[] {
+  return [
+    ...new Set([
+      ...(config.projectDir ? [config.projectDir] : []),
+      ...(config.workspaceRoots ?? []),
+    ]),
+  ];
+}
+
+/**
+ * Check if a path is within any configured top-level root.
+ */
+export function isWithinWorkspaceRoots(
+  path: string,
+  config: SafeShellConfig,
+  cwd?: string,
+): boolean {
+  return getWorkspaceRoots(config).some((root) => isWithinProjectDir(path, root, cwd));
+}
+
+/**
  * Check if a command path is allowed under projectDir
  * Used when allowProjectCommands is true
  */
@@ -62,6 +85,21 @@ export function isCommandWithinProjectDir(
   }
 
   return isWithinProjectDir(commandPath, projectDir, cwd);
+}
+
+/**
+ * Check if a command path is allowed under any configured top-level root.
+ */
+export function isCommandWithinWorkspaceRoots(
+  commandPath: string,
+  config: SafeShellConfig,
+  cwd?: string,
+): boolean {
+  if (!commandPath.includes("/") && !commandPath.includes("\\")) {
+    return false;
+  }
+
+  return isWithinWorkspaceRoots(commandPath, config, cwd);
 }
 
 /**
@@ -131,12 +169,14 @@ export async function validatePath(
   // Resolve symlinks to get real path
   const realPath = await getRealPathAsync(absolutePath);
 
-  // projectDir gets full read access, and write access unless blockProjectDirWrite is true
-  if (config.projectDir) {
-    if (isWithinProjectDir(realPath, config.projectDir)) {
+  const workspaceRoots = getWorkspaceRoots(config);
+
+  // Top-level roots get full read access, and write access unless blockProjectDirWrite is true
+  if (workspaceRoots.length > 0) {
+    if (isWithinWorkspaceRoots(realPath, config)) {
       // For write operations, check if writes are blocked
       if (operation === "write" && config.blockProjectDirWrite) {
-        // Fall through to normal permission checking (projectDir not in write list)
+        // Fall through to normal permission checking (roots not in write list)
       } else {
         return realPath;
       }
@@ -149,7 +189,7 @@ export async function validatePath(
     ? (effectivePerms.write ?? [])
     : (effectivePerms.read ?? []);
 
-  if (allowedPaths.length === 0 && !config.projectDir) {
+  if (allowedPaths.length === 0 && workspaceRoots.length === 0) {
     throw pathViolation(requestedPath, [], absolutePath);
   }
 
@@ -207,17 +247,18 @@ export function getEffectivePermissions(
   }
   const defaultWrite = ["/tmp"];
 
-  // projectDir gets full read access, and write access unless blockProjectDirWrite is true
+  // Top-level roots get full read access, and write access unless blockProjectDirWrite is true
   // When blockProjectDirWrite is true, add projectDir to denyWrite to ensure it's blocked
   // even if a parent directory (like /tmp) is in the write list
   const denyWrite = [...(perms.denyWrite ?? [])];
-  if (config.projectDir) {
-    defaultRead.push(config.projectDir);
+  const workspaceRoots = getWorkspaceRoots(config);
+  if (workspaceRoots.length > 0) {
+    defaultRead.push(...workspaceRoots);
     if (!config.blockProjectDirWrite) {
-      defaultWrite.push(config.projectDir);
+      defaultWrite.push(...workspaceRoots);
     } else {
       // Add to denyWrite to block writes at Deno sandbox level
-      denyWrite.push(config.projectDir);
+      denyWrite.push(...workspaceRoots);
     }
   }
 

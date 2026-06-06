@@ -30,6 +30,7 @@ function getRuntimePath(): string {
  */
 export interface PreambleConfig {
   projectDir?: string;
+  workspaceRoots?: string[];
   allowProjectCommands?: boolean;
   allowedCommands: string[]; // Merged from permissions.run + external keys
   sessionAllowedCommands?: string[]; // Session-allowed commands (from session file)
@@ -82,6 +83,7 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
 
   return {
     projectDir: config.projectDir,
+    workspaceRoots: config.workspaceRoots,
     allowProjectCommands,
     allowedCommands: Array.from(allowedCommands),
     sessionAllowedCommands: sessionAllowedCommands.length > 0 ? sessionAllowedCommands : undefined,
