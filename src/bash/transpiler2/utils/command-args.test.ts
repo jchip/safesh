@@ -5,9 +5,10 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import {
-  parseCountArg,
   collectFlagOptions,
   collectFlagOptionsAndFiles,
+  parseCountArg,
+  parseTailCountArg,
 } from "./command-args.ts";
 
 describe("parseCountArg", () => {
@@ -54,6 +55,23 @@ describe("parseCountArg", () => {
   it("should handle invalid count as default", () => {
     const result = parseCountArg(["-n", "invalid", "file.txt"]);
     assertEquals(result, { count: 10, files: ["file.txt"] });
+  });
+});
+
+describe("parseTailCountArg", () => {
+  it("should parse +N with -n as from-start", () => {
+    const result = parseTailCountArg(["-n", "+3", "file.txt"]);
+    assertEquals(result, { count: 3, files: ["file.txt"], fromStart: true });
+  });
+
+  it("should parse inline -n+N as from-start", () => {
+    const result = parseTailCountArg(["-n+2", "file.txt"]);
+    assertEquals(result, { count: 2, files: ["file.txt"], fromStart: true });
+  });
+
+  it("should keep normal tail count semantics without plus", () => {
+    const result = parseTailCountArg(["-n", "4", "file.txt"]);
+    assertEquals(result, { count: 4, files: ["file.txt"], fromStart: false });
   });
 });
 
