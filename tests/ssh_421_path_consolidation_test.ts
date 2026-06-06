@@ -6,7 +6,11 @@
  */
 
 import { assertEquals, assertRejects } from "@std/assert";
-import { validatePath, getEffectivePermissions } from "../src/core/permissions.ts";
+import {
+  getEffectivePermissions,
+  getWorkspaceRoots,
+  validatePath,
+} from "../src/core/permissions.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import { read, write } from "../src/stdlib/fs.ts";
@@ -220,6 +224,18 @@ Deno.test({
     assertEquals(perms.read?.includes("/test/root-b"), true);
     assertEquals(perms.write?.includes("/test/root-a"), true);
     assertEquals(perms.write?.includes("/test/root-b"), true);
+  },
+});
+
+Deno.test({
+  name: "getWorkspaceRoots - omits nested root covered by top worktree root",
+  fn() {
+    const config: SafeShellConfig = {
+      projectDir: "/test/repo/.worktrees/full-local",
+      workspaceRoots: ["/test/repo"],
+    };
+
+    assertEquals(getWorkspaceRoots(config), ["/test/repo"]);
   },
 });
 

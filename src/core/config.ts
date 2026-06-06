@@ -22,7 +22,11 @@ import type {
 import { configError } from "./errors.ts";
 import { resolveWorkspace } from "./permissions.ts";
 import { DEFAULT_TIMEOUT_MS } from "./defaults.ts";
-import { findProjectRoot } from "./project-root.ts";
+import {
+  expandGitWorkspaceRoots,
+  findGitWorkspaceRoots,
+  findProjectRoot,
+} from "./project-root.ts";
 import { mergeSessionPermissions } from "./session.ts";
 import { ensureDir, readJsonFile, writeJsonFile } from "./io-utils.ts";
 
@@ -901,13 +905,20 @@ export async function loadSessionConfig(
   options: LoadSessionConfigOptions = {},
 ): Promise<{ config: SafeShellConfig; projectDir: string }> {
   const projectDir = options.projectDir ?? findProjectRoot(cwd);
+  const mergeOptions = options.mergeOptions ?? {};
+  const workspaceRoots = expandGitWorkspaceRoots([
+    ...findGitWorkspaceRoots(cwd),
+    ...(mergeOptions.workspaceRoots ?? []),
+  ]);
   const baseConfig = await loadConfig(cwd, {
     logWarnings: options.logWarnings ?? false,
   });
   let config = mergeConfigs(baseConfig, {
     projectDir,
-    ...options.mergeOptions,
+    ...mergeOptions,
+    workspaceRoots,
   });
+  config.workspaceRoots = expandGitWorkspaceRoots(config.workspaceRoots ?? []);
   mergeSessionPermissions(config, projectDir);
   return { config, projectDir };
 }
@@ -959,6 +970,14 @@ export async function loadConfigWithArgs(
     effectiveCwd = resolveWorkspace(mcpArgs.cwd);
   } else if (mcpArgs?.projectDir) {
     effectiveCwd = resolveWorkspace(mcpArgs.projectDir);
+  }
+
+  const gitWorkspaceRoots = findGitWorkspaceRoots(effectiveCwd);
+  if (gitWorkspaceRoots.length > 0) {
+    config.workspaceRoots = expandGitWorkspaceRoots([
+      ...(config.workspaceRoots ?? []),
+      ...gitWorkspaceRoots,
+    ]);
   }
 
   return { config, effectiveCwd };

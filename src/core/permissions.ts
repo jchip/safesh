@@ -9,6 +9,7 @@ import type { PermissionsConfig, SafeShellConfig } from "./types.ts";
 import { pathViolation, symlinkViolation } from "./errors.ts";
 import { getRealPathAsync } from "./utils.ts";
 import { isPathWithin } from "./path-utils.ts";
+import { normalizeWorkspaceRoots } from "./project-root.ts";
 
 /**
  * Resolve workspace path - expand ~ and convert to absolute path
@@ -51,12 +52,10 @@ export function isWithinProjectDir(path: string, projectDir: string, cwd?: strin
  * Get all configured top-level roots, preserving projectDir as the primary root.
  */
 export function getWorkspaceRoots(config: SafeShellConfig): string[] {
-  return [
-    ...new Set([
-      ...(config.projectDir ? [config.projectDir] : []),
-      ...(config.workspaceRoots ?? []),
-    ]),
-  ];
+  return normalizeWorkspaceRoots([
+    ...(config.projectDir ? [config.projectDir] : []),
+    ...(config.workspaceRoots ?? []),
+  ]);
 }
 
 /**

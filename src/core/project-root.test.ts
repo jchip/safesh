@@ -6,7 +6,7 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 import { afterEach, beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
-import { findProjectRoot, PROJECT_MARKERS } from "./project-root.ts";
+import { findGitWorkspaceRoots, findProjectRoot, PROJECT_MARKERS } from "./project-root.ts";
 
 describe("project-root", () => {
   let tempDir: string;
@@ -202,6 +202,40 @@ describe("project-root", () => {
     const result = findProjectRoot(subdir, { createConfig: false });
 
     assertEquals(result, projectDir);
+  });
+
+  it("finds both linked worktree and top worktree roots", () => {
+    const topWorktree = `${tempDir}/repo`;
+    const linkedWorktree = `${tempDir}/linked-feature`;
+    const subdir = `${linkedWorktree}/src`;
+
+    Deno.mkdirSync(`${topWorktree}/.git/worktrees/linked-feature`, { recursive: true });
+    Deno.mkdirSync(subdir, { recursive: true });
+    Deno.writeTextFileSync(
+      `${linkedWorktree}/.git`,
+      `gitdir: ${topWorktree}/.git/worktrees/linked-feature\n`,
+    );
+
+    const roots = findGitWorkspaceRoots(subdir);
+
+    assertEquals(roots, [linkedWorktree, topWorktree]);
+  });
+
+  it("omits nested worktree root when top worktree contains it", () => {
+    const topWorktree = `${tempDir}/repo`;
+    const nestedWorktree = `${topWorktree}/.worktrees/full-local`;
+    const subdir = `${nestedWorktree}/notes`;
+
+    Deno.mkdirSync(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
+    Deno.mkdirSync(subdir, { recursive: true });
+    Deno.writeTextFileSync(
+      `${nestedWorktree}/.git`,
+      "gitdir: ../../.git/worktrees/full-local\n",
+    );
+
+    const roots = findGitWorkspaceRoots(subdir);
+
+    assertEquals(roots, [topWorktree]);
   });
 
   it("respects stopAtHome=false option", () => {

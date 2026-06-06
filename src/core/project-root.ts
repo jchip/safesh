@@ -5,7 +5,7 @@
  * Eliminates ~60 lines of duplication between bash-prehook.ts and desh.ts.
  */
 
-import { resolve } from "@std/path";
+import { dirname, resolve } from "@std/path";
 import { ensureDirSync } from "./io-utils.ts";
 
 /**
@@ -36,26 +36,96 @@ export interface FindProjectRootOptions {
 
 function getConventionalWorktreeParent(dir: string, gitFile: string): string | undefined {
   try {
-    const stat = Deno.statSync(gitFile);
-    if (!stat.isFile) return undefined;
+    const gitDir = readGitDirPath(dir, gitFile);
+    if (!gitDir) return undefined;
 
-    const content = Deno.readTextFileSync(gitFile).trim();
-    const match = /^gitdir:\s*(.+)$/.exec(content);
-    const rawGitDir = match?.[1]?.trim();
-    if (!rawGitDir) return undefined;
-
-    const gitDir = rawGitDir.startsWith("/") ? rawGitDir : resolve(dir, rawGitDir);
-    const worktreeMarker = "/.git/worktrees/";
-    const markerIndex = gitDir.lastIndexOf(worktreeMarker);
-    if (markerIndex === -1) return undefined;
-
-    const parentProject = gitDir.slice(0, markerIndex);
-    if (dir.startsWith(`${parentProject}/.worktrees/`)) {
+    const parentProject = getTopWorktreeFromGitDir(gitDir);
+    if (parentProject && dir.startsWith(`${parentProject}/.worktrees/`)) {
       return parentProject;
     }
   } catch {
     return undefined;
   }
+}
+
+function parentDir(dir: string): string | undefined {
+  const parent = dirname(dir);
+  return parent === dir ? undefined : parent;
+}
+
+function isWithinRoot(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+function readGitDirPath(worktreeRoot: string, gitMarker: string): string | undefined {
+  const stat = Deno.statSync(gitMarker);
+  if (stat.isDirectory) return gitMarker;
+  if (!stat.isFile) return undefined;
+
+  const content = Deno.readTextFileSync(gitMarker).trim();
+  const match = /^gitdir:\s*(.+)$/.exec(content);
+  const rawGitDir = match?.[1]?.trim();
+  if (!rawGitDir) return undefined;
+
+  return rawGitDir.startsWith("/") ? rawGitDir : resolve(worktreeRoot, rawGitDir);
+}
+
+function getTopWorktreeFromGitDir(gitDir: string): string | undefined {
+  const worktreeMarker = "/.git/worktrees/";
+  const markerIndex = gitDir.lastIndexOf(worktreeMarker);
+  return markerIndex === -1 ? undefined : gitDir.slice(0, markerIndex);
+}
+
+function findGitWorktreeMetadata(
+  cwd: string,
+): { worktreeRoot: string; topWorktreeRoot?: string } | undefined {
+  let dir = resolve(cwd);
+
+  while (true) {
+    const gitMarker = `${dir}/.git`;
+    try {
+      const gitDir = readGitDirPath(dir, gitMarker);
+      if (gitDir) {
+        return {
+          worktreeRoot: dir,
+          topWorktreeRoot: getTopWorktreeFromGitDir(gitDir),
+        };
+      }
+    } catch {
+      // No .git marker here, continue upward.
+    }
+
+    const parent = parentDir(dir);
+    if (!parent) return undefined;
+    dir = parent;
+  }
+}
+
+export function normalizeWorkspaceRoots(roots: string[]): string[] {
+  const uniqueRoots = [...new Set(roots.map((root) => resolve(root)))];
+  return uniqueRoots.filter((root, index) =>
+    !uniqueRoots.some((other, otherIndex) =>
+      index !== otherIndex && isWithinRoot(root, other)
+    )
+  );
+}
+
+export function findGitWorkspaceRoots(cwd: string): string[] {
+  const metadata = findGitWorktreeMetadata(cwd);
+  if (!metadata) return [];
+
+  return normalizeWorkspaceRoots([
+    metadata.worktreeRoot,
+    ...(metadata.topWorktreeRoot ? [metadata.topWorktreeRoot] : []),
+  ]);
+}
+
+export function expandGitWorkspaceRoots(roots: string[]): string[] {
+  const expanded: string[] = [];
+  for (const root of roots) {
+    expanded.push(root, ...findGitWorkspaceRoots(root));
+  }
+  return normalizeWorkspaceRoots(expanded);
 }
 
 /**
