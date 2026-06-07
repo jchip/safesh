@@ -140,10 +140,10 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
     });
 
     it("should select specialized strategy for tmux", () => {
-      const script = "tmux list-sessions";
+      const script = "tmux new-session -d -s safesh-test";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.tmux(\"list-sessions\")");
+      assertStringIncludes(output, '$.tmux("new-session", "-d", "-s", "safesh-test")');
     });
 
     it("should select standard strategy for unknown command", () => {
