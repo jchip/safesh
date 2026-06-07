@@ -23,6 +23,9 @@ export const DEFAULT_COMMAND_CONFIGS: Record<string, ExternalCommandConfig> = {
     denyFlags: ["--privileged", "--cap-add", "--security-opt"],
     pathArgs: { autoDetect: true, validateSandbox: true },
   },
+  tmux: {
+    allow: true,
+  },
   fyn: {
     allow: true,
     pathArgs: { autoDetect: true, validateSandbox: true },

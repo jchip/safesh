@@ -3,12 +3,10 @@
  */
 
 import { assertEquals } from "@std/assert";
-import {
-  DEFAULT_CONFIG,
-  validateConfig,
-} from "../src/core/config.ts";
+import { DEFAULT_CONFIG, validateConfig } from "../src/core/config.ts";
 import { checkCommandPermission } from "../src/core/command_permission.ts";
 import { createRegistry } from "../src/external/registry.ts";
+import { validateCommand } from "../src/external/validator.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 
 // ============================================================================
@@ -64,6 +62,23 @@ Deno.test("SSH-70: DEFAULT_CONFIG allows swift", async () => {
     assertEquals(result.resolvedPath, "swift");
   }
   assertEquals(registry.isWhitelisted("swift"), true);
+});
+
+Deno.test("SSH-101: DEFAULT_CONFIG allows tmux helper commands", async () => {
+  const result = await checkCommandPermission("tmux", DEFAULT_CONFIG, Deno.cwd());
+  const registry = createRegistry(DEFAULT_CONFIG);
+  const validation = validateCommand(
+    "tmux",
+    ["new-session", "-d", "-s", "safesh-test"],
+    registry,
+  );
+
+  assertEquals(result.allowed, true);
+  if (result.allowed) {
+    assertEquals(result.resolvedPath, "tmux");
+  }
+  assertEquals(registry.isWhitelisted("tmux"), true);
+  assertEquals(validation.valid, true);
 });
 
 Deno.test("DEFAULT_CONFIG - passes validation with no errors", () => {

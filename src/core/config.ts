@@ -87,6 +87,7 @@ const SAFE_COMMANDS = [
   // Process & System Info
   // ============================================================================
   "ps", "pgrep", "pkill", "lsof", "fuser",
+  "tmux",
   "top", "htop", "uptime", "w", "who", "users", "last", "lastlog",
   "uname", "hostname", "hostnamectl", "arch", "nproc", "lscpu", "lsmem",
   "free", "vmstat", "iostat", "mpstat", "sar",

@@ -104,6 +104,12 @@ Deno.test("DEFAULT_COMMAND_CONFIGS - has docker with restricted subcommands", ()
   assertEquals(dockerConfig?.denyFlags?.includes("--privileged"), true);
 });
 
+Deno.test("DEFAULT_COMMAND_CONFIGS - has tmux for helper commands", () => {
+  const tmuxConfig = DEFAULT_COMMAND_CONFIGS["tmux"];
+
+  assertEquals(tmuxConfig?.allow, true);
+});
+
 Deno.test("DEFAULT_COMMAND_CONFIGS - has deno with restricted subcommands", () => {
   const denoConfig = DEFAULT_COMMAND_CONFIGS["deno"];
 
