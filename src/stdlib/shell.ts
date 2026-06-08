@@ -97,11 +97,12 @@ function createTransformMethod<Args extends any[]>(
  */
 export class FluentShell {
   private _stream: Stream<string>;
+  private _emptyExitCode?: number;
 
   /**
    * Create a FluentShell from a file path, File object, or existing stream
    */
-  constructor(source: string | File | Stream<string>) {
+  constructor(source: string | File | Stream<string>, emptyExitCode?: number) {
     if (typeof source === "string") {
       this._stream = catStream(source);
     } else if (isFile(source)) {
@@ -119,6 +120,7 @@ export class FluentShell {
     } else {
       this._stream = source;
     }
+    this._emptyExitCode = emptyExitCode;
   }
 
   // ============== Core Extensibility Method ==============
@@ -165,7 +167,15 @@ export class FluentShell {
   pipe(
     transform: (stream: AsyncIterable<string>) => AsyncIterable<string>,
   ): FluentShell {
-    return new FluentShell(this._stream.pipe(transform));
+    return new FluentShell(this._stream.pipe(transform), transforms.getEmptyExitCode(transform));
+  }
+
+  withEmptyExitCode(code: number): FluentShell {
+    return new FluentShell(this._stream, code);
+  }
+
+  getEmptyExitCode(): number | undefined {
+    return this._emptyExitCode;
   }
 
   // ============== Transform Methods (Convenience Wrappers) ==============
