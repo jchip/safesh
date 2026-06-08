@@ -11,6 +11,25 @@ import { ENV_SHELL_ID, ENV_SCRIPT_ID } from "./constants.ts";
 // Path Utilities
 // ============================================================================
 
+const CONFIG_SYMBOL = Symbol.for("safesh.config");
+
+interface InjectedPathConfig {
+  workspace?: string;
+  projectDir?: string;
+  workspaceRoots?: string[];
+  blockProjectDirWrite?: boolean;
+  includeHomeInDefaultRead?: boolean;
+  permissions?: SafeShellConfig["permissions"];
+}
+
+function getInjectedPathConfig(): InjectedPathConfig | undefined {
+  const shell = (globalThis as { $?: { [key: symbol]: unknown } }).$;
+  const config = shell?.[CONFIG_SYMBOL];
+  if (!config || typeof config !== "object") return undefined;
+
+  return config as InjectedPathConfig;
+}
+
 /**
  * Get real path, handling symlinks and non-existent paths
  *
@@ -70,6 +89,18 @@ export async function getRealPathAsync(path: string): Promise<string> {
  * and /tmp. Resolves /tmp to its real path for symlink handling.
  */
 export function getDefaultConfig(cwd: string): SafeShellConfig {
+  const injected = getInjectedPathConfig();
+  if (injected) {
+    return {
+      workspace: injected.workspace,
+      projectDir: injected.projectDir,
+      workspaceRoots: injected.workspaceRoots,
+      blockProjectDirWrite: injected.blockProjectDirWrite,
+      includeHomeInDefaultRead: injected.includeHomeInDefaultRead,
+      permissions: injected.permissions,
+    };
+  }
+
   const tmpPath = getRealPath("/tmp");
   const realCwd = getRealPath(cwd);
 
@@ -88,9 +119,15 @@ export function getDefaultConfig(cwd: string): SafeShellConfig {
  * Resolves symlinks to real paths.
  */
 export function getDefaultAllowedPaths(cwd: string): string[] {
-  const tmpPath = getRealPath("/tmp");
-  const realCwd = getRealPath(cwd);
-  return [realCwd, tmpPath];
+  const config = getDefaultConfig(cwd);
+  return [
+    ...new Set([
+      ...(config.permissions?.read ?? []),
+      ...(config.permissions?.write ?? []),
+      ...(config.projectDir ? [config.projectDir] : []),
+      ...(config.workspaceRoots ?? []),
+    ]),
+  ];
 }
 
 /**

@@ -29,8 +29,11 @@ function getRuntimePath(): string {
  * Config subset needed for permission checking in init()
  */
 export interface PreambleConfig {
+  workspace?: string;
   projectDir?: string;
   workspaceRoots?: string[];
+  blockProjectDirWrite?: boolean;
+  includeHomeInDefaultRead?: boolean;
   allowProjectCommands?: boolean;
   allowedCommands: string[]; // Merged from permissions.run + external keys
   sessionAllowedCommands?: string[]; // Session-allowed commands (from session file)
@@ -82,8 +85,11 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
     (Deno.env.get("CLAUDE_SESSION_ID") !== undefined ? true : false);
 
   return {
+    workspace: config.workspace,
     projectDir: config.projectDir,
     workspaceRoots: config.workspaceRoots,
+    blockProjectDirWrite: config.blockProjectDirWrite,
+    includeHomeInDefaultRead: config.includeHomeInDefaultRead,
     allowProjectCommands,
     allowedCommands: Array.from(allowedCommands),
     sessionAllowedCommands: sessionAllowedCommands.length > 0 ? sessionAllowedCommands : undefined,
