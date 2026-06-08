@@ -1091,14 +1091,15 @@ function buildFluentCommand(
           const predicate = invert ? `!${regexPattern}.test(line)` : `${regexPattern}.test(line)`;
           const result = `${fileStream}.map((line, i) => ({ line, number: i + 1 }))` +
             `.filter(({ line }) => ${predicate})` +
-            ".map(({ line, number }) => `${number}:${line}`)";
+            ".map(({ line, number }) => `${number}:${line}`).withEmptyExitCode(1)";
           return { code: result, isTransform: false, isStream: true };
         }
         if (invert) {
           // SSH-503: grep -v with file - skip .grep() since it filters FOR the pattern,
           // then .filter(x => !x.match) on the result would produce nothing.
           // Instead, read lines and filter out matches directly.
-          const result = `${fileStream}.filter(line => !${regexPattern}.test(line))`;
+          const result =
+            `${fileStream}.filter(line => !${regexPattern}.test(line)).withEmptyExitCode(1)`;
           return { code: result, isTransform: false, isStream: true };
         }
         const result = `${fileStream}.grep(${regexPattern})`;

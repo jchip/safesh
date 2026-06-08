@@ -36,6 +36,16 @@ interface StreamChunkLike {
 
 type UnknownRecord = Record<PropertyKey, unknown>;
 
+function emptyExitCode(value: unknown): number | undefined {
+  const record = asRecord(value);
+  const getter = record?.getEmptyExitCode;
+  if (typeof getter === "function") {
+    const code = getter.call(value);
+    return typeof code === "number" ? code : undefined;
+  }
+  return undefined;
+}
+
 function noopSetPipeStatus(_status: unknown, code: number): number {
   return code;
 }
@@ -125,8 +135,10 @@ async function captureAsyncIterable(
   setPipeStatus: SetPipeStatus = noopSetPipeStatus,
 ): Promise<ShellResult> {
   let stdout = "";
+  let itemCount = 0;
   try {
     for await (const line of iterable) {
+      itemCount++;
       stdout += String(line) + "\n";
     }
   } catch (error) {
@@ -136,8 +148,9 @@ async function captureAsyncIterable(
     return { code: 1, stdout, stderr, success: false };
   }
 
-  setPipeStatus(undefined, 0);
-  return { code: 0, stdout, stderr: "", success: true };
+  const code = itemCount === 0 ? emptyExitCode(iterable) ?? 0 : 0;
+  setPipeStatus(undefined, code);
+  return { code, stdout, stderr: "", success: code === 0 };
 }
 
 export async function captureShellValue(
@@ -209,8 +222,10 @@ export async function printShellValue(
   }
 
   async function printAsyncIterable(iterable: AsyncIterable<unknown>) {
+    let itemCount = 0;
     try {
       for await (const line of iterable) {
+        itemCount++;
         await write(output.stdout, String(line) + "\n");
       }
     } catch (error) {
@@ -219,7 +234,7 @@ export async function printShellValue(
       return setPipeStatus(undefined, 1);
     }
 
-    return setPipeStatus(undefined, 0);
+    return setPipeStatus(undefined, itemCount === 0 ? emptyExitCode(iterable) ?? 0 : 0);
   }
 
   if (isStreamCommand(value)) return await printStreamCommand(value);

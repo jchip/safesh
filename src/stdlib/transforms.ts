@@ -10,6 +10,24 @@
 
 import type { Transform } from "./stream.ts";
 
+const EMPTY_EXIT_CODE_SYMBOL = Symbol.for("safesh.emptyExitCode");
+
+export function getEmptyExitCode(value: unknown): number | undefined {
+  if (typeof value !== "function" && (typeof value !== "object" || value === null)) {
+    return undefined;
+  }
+  const code = (value as Record<symbol, unknown>)[EMPTY_EXIT_CODE_SYMBOL];
+  return typeof code === "number" ? code : undefined;
+}
+
+function withEmptyExitCode<T, U>(
+  transform: Transform<T, U>,
+  code: number,
+): Transform<T, U> {
+  (transform as unknown as Record<symbol, unknown>)[EMPTY_EXIT_CODE_SYMBOL] = code;
+  return transform;
+}
+
 /**
  * Filter items in a stream based on a predicate
  *
@@ -219,7 +237,7 @@ export function lines(): Transform<string, string> {
  */
 export function grep(pattern: RegExp | string): Transform<string, string> {
   const regex = typeof pattern === "string" ? new RegExp(pattern) : pattern;
-  return filter((line) => regex.test(line));
+  return withEmptyExitCode(filter((line) => regex.test(line)), 1);
 }
 
 /**

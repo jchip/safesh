@@ -9,7 +9,7 @@
 
 import type { Stream, Transform } from "./stream.ts";
 import * as transforms from "./transforms.ts";
-import { type CommandFn, CMD_NAME_SYMBOL } from "./command-init.ts";
+import { CMD_NAME_SYMBOL, type CommandFn } from "./command-init.ts";
 import { toCmdLines } from "./command-transforms.ts";
 import { Command, type CommandOptions } from "./command.ts";
 
@@ -38,12 +38,14 @@ import { Command, type CommandOptions } from "./command.ts";
  */
 export class FluentStream<T> implements AsyncIterable<T> {
   protected _stream: Stream<T>;
+  private _emptyExitCode?: number;
 
   /**
    * Create a FluentStream from an existing stream
    */
-  constructor(stream: Stream<T>) {
+  constructor(stream: Stream<T>, emptyExitCode?: number) {
     this._stream = stream;
+    this._emptyExitCode = emptyExitCode;
   }
 
   /**
@@ -164,9 +166,7 @@ export class FluentStream<T> implements AsyncIterable<T> {
    * ```
    */
   grep(this: FluentStream<string>, pattern: RegExp | string): FluentStream<string> {
-    return new FluentStream(
-      this._stream.pipe(transforms.grep(pattern))
-    );
+    return this.pipe(transforms.grep(pattern));
   }
 
   /**
@@ -183,7 +183,7 @@ export class FluentStream<T> implements AsyncIterable<T> {
    */
   lines(this: FluentStream<string>): FluentStream<string> {
     return new FluentStream(
-      this._stream.pipe(transforms.lines())
+      this._stream.pipe(transforms.lines()),
     );
   }
 
@@ -219,17 +219,30 @@ export class FluentStream<T> implements AsyncIterable<T> {
     // SSH-557: Check if it's a Command object (from transpiler-generated $.cmd(...))
     if (transformOrCmd instanceof Command) {
       return new FluentStream(
-        (this._stream as unknown as Stream<string>).pipe(toCmdLines(transformOrCmd))
+        (this._stream as unknown as Stream<string>).pipe(toCmdLines(transformOrCmd)),
       );
     }
     // Check if it's a CommandFn by looking for the symbol
     if (typeof transformOrCmd === "function" && CMD_NAME_SYMBOL in transformOrCmd) {
       return new FluentStream(
-        (this._stream as unknown as Stream<string>).pipe(toCmdLines(transformOrCmd as CommandFn, args, options))
+        (this._stream as unknown as Stream<string>).pipe(
+          toCmdLines(transformOrCmd as CommandFn, args, options),
+        ),
       );
     }
     // Otherwise treat as transform
-    return new FluentStream(this._stream.pipe(transformOrCmd as Transform<T, U>));
+    return new FluentStream(
+      this._stream.pipe(transformOrCmd as Transform<T, U>),
+      transforms.getEmptyExitCode(transformOrCmd),
+    );
+  }
+
+  withEmptyExitCode(code: number): FluentStream<T> {
+    return new FluentStream(this._stream, code);
+  }
+
+  getEmptyExitCode(): number | undefined {
+    return this._emptyExitCode;
   }
 
   /**

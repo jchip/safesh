@@ -102,6 +102,40 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
     });
   });
 
+  it("should return non-zero for no-match grep file result in logical chains", async () => {
+    await withFixture(async (testDir, config) => {
+      const code = transpileBash(
+        `grep -n "jdbc:postgresql://" start-local-infra.js && echo "STILL PRESENT" || echo "gone"`,
+      );
+
+      const result = await executeCode(code, config, { cwd: testDir });
+
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertEquals(result.stdout, "gone\n");
+      assertEquals(result.stderr, "");
+    });
+  });
+
+  it("should return non-zero for no-match grep transform at end of a pipeline", async () => {
+    const config: SafeShellConfig = {
+      permissions: {
+        read: [Deno.cwd(), "/tmp"],
+        write: ["/tmp"],
+        run: ["printf"],
+      },
+      timeout: 5000,
+    };
+    const code = transpileBash(
+      `printf "alpha\\nbeta\\n" | grep "jdbc:postgresql://" && echo "STILL PRESENT" || echo "gone"`,
+    );
+
+    const result = await executeCode(code, config, { cwd: Deno.cwd() });
+
+    assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+    assertEquals(result.stdout, "gone\n");
+    assertEquals(result.stderr, "");
+  });
+
   it("should treat basic grep literal parentheses as literals", async () => {
     await withFixture(async (testDir, config) => {
       await Deno.writeTextFile(
