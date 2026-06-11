@@ -5,6 +5,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import {
   expandPath,
+  getEffectivePermissions,
   isPathAllowed,
   validatePath,
 } from "../src/core/permissions.ts";
@@ -43,6 +44,16 @@ Deno.test("expandPath - handles multiple variables", () => {
   const home = Deno.env.get("HOME") ?? "";
   const result = expandPath("${HOME}/projects/${CWD}/file", "/myproj");
   assertEquals(result, `${home}/projects//myproj/file`);
+});
+
+Deno.test("getEffectivePermissions - workspaceDir allows read and write", () => {
+  const config: SafeShellConfig = {
+    workspaceDir: "/workspace",
+  };
+  const permissions = getEffectivePermissions(config, "/project");
+
+  assertEquals(permissions.read?.includes("/workspace"), true);
+  assertEquals(permissions.write?.includes("/workspace"), true);
 });
 
 // ============================================================================
