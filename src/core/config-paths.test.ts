@@ -18,18 +18,32 @@ import {
   getProjectConfigJsonPath,
 } from "./config.ts";
 
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    Deno.env.delete(name);
+  } else {
+    Deno.env.set(name, value);
+  }
+}
+
 describe("Config Path Helpers", () => {
   describe("getGlobalConfigDir", () => {
     it("returns path in user's home directory", () => {
+      const xdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+      Deno.env.delete("XDG_CONFIG_HOME");
       const dir = getGlobalConfigDir();
+      restoreEnv("XDG_CONFIG_HOME", xdgConfigHome);
 
       // Should contain .config/safesh
       assertMatch(dir, /\.config\/safesh$/);
     });
 
     it("uses HOME environment variable", () => {
+      const xdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+      Deno.env.delete("XDG_CONFIG_HOME");
       const home = Deno.env.get("HOME");
       const dir = getGlobalConfigDir();
+      restoreEnv("XDG_CONFIG_HOME", xdgConfigHome);
 
       if (home) {
         assertEquals(dir, `${home}/.config/safesh`);
@@ -37,6 +51,15 @@ describe("Config Path Helpers", () => {
         // If HOME is not set, should return .config/safesh
         assertEquals(dir, ".config/safesh");
       }
+    });
+
+    it("uses XDG_CONFIG_HOME when set", () => {
+      const xdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+      Deno.env.set("XDG_CONFIG_HOME", "/tmp/safesh-xdg");
+      const dir = getGlobalConfigDir();
+      restoreEnv("XDG_CONFIG_HOME", xdgConfigHome);
+
+      assertEquals(dir, "/tmp/safesh-xdg/safesh");
     });
   });
 

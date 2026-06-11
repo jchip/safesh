@@ -406,6 +406,7 @@ function mergeImportPolicy(
  * | Field                 | Strategy          | Notes                                              |
  * |-----------------------|-------------------|---------------------------------------------------|
  * | `workspace`           | override          | Later value replaces earlier                       |
+ * | `workspaceDir`        | override          | Later value replaces earlier                       |
  * | `projectDir`          | override          | Later value replaces earlier (primary config root) |
  * | `workspaceRoots`      | union             | Combined top-level roots for sandbox access         |
  * | `blockProjectDirWrite`| override          | Later value replaces earlier                       |
@@ -558,6 +559,11 @@ async function loadConfigWithJsonOverride(
  * ```
  */
 export function getGlobalConfigDir(): string {
+  const xdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+  if (xdgConfigHome) {
+    return join(xdgConfigHome, "safesh");
+  }
+
   const home = Deno.env.get("HOME") ?? "";
   return join(home, ".config", "safesh");
 }
@@ -831,6 +837,11 @@ export async function loadConfig(
   }
 
   // Resolve workspace path if provided
+  if (config.workspaceDir) {
+    config.workspaceDir = resolveWorkspace(config.workspaceDir);
+    config.workspace ??= config.workspaceDir;
+  }
+
   if (config.workspace) {
     config.workspace = resolveWorkspace(config.workspace);
   }
@@ -1179,7 +1190,11 @@ function validateShellSettings(config: SafeShellConfig): ConfigValidation {
   const blocked = imports.blocked ?? [];
 
   // Project directory warning
-  if (!config.projectDir && (config.workspaceRoots?.length ?? 0) === 0) {
+  if (
+    !config.projectDir &&
+    !config.workspaceDir &&
+    (config.workspaceRoots?.length ?? 0) === 0
+  ) {
     result.warnings.push(
       "projectDir/workspaceRoots: not set - file permissions will be limited to /tmp and explicit paths",
     );

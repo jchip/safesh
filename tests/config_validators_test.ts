@@ -252,6 +252,18 @@ Deno.test("validateShellSettings - accepts workspaceRoots without projectDir war
   );
 });
 
+Deno.test("validateShellSettings - accepts workspaceDir without projectDir warning", () => {
+  const config = createMinimalConfig({
+    projectDir: undefined,
+    workspaceDir: "/home/user",
+  });
+  const result = validateConfig(config);
+  assertEquals(
+    result.warnings.some((w) => w.includes("projectDir/workspaceRoots: not set")),
+    false,
+  );
+});
+
 Deno.test("validateShellSettings - accepts valid projectDir", () => {
   const config = createMinimalConfig({
     projectDir: "/home/user/project",

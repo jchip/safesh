@@ -94,6 +94,12 @@ export interface SafeShellConfig {
   workspace?: string;
 
   /**
+   * Workspace directory that always receives read/write filesystem access.
+   * Loaded from config files and resolved at startup.
+   */
+  workspaceDir?: string;
+
+  /**
    * Project directory - base directory for the project.
    * Set via MCP args. Automatically gets full read/write permissions
    * (unless blockProjectDirWrite is true).

@@ -11,6 +11,7 @@ import {
   loadConfig,
   saveToLocalJson,
 } from "../src/core/config.ts";
+import { getEffectivePermissions } from "../src/core/permissions.ts";
 import type { SafeshLocalConfig } from "../src/core/types.ts";
 
 // ============================================================================
@@ -47,6 +48,14 @@ async function cleanupTestDir(testDir: string): Promise<void> {
     await Deno.remove(testDir, { recursive: true });
   } catch {
     // Ignore cleanup errors
+  }
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    Deno.env.delete(name);
+  } else {
+    Deno.env.set(name, value);
   }
 }
 
@@ -158,6 +167,35 @@ Deno.test("loadConfig - missing local config file does not error", async () => {
     assertExists(config.permissions);
   } finally {
     await cleanupTestDir(testDir);
+  }
+});
+
+Deno.test("loadConfig - loads XDG global config workspaceDir into read/write permissions", async () => {
+  const testDir = await createTestDir("xdg-workspace-dir");
+  const xdgConfigHome = await Deno.makeTempDir({ prefix: "safesh-xdg-config-" });
+  const workspaceDir = join(testDir, "workspace");
+  const previousXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+
+  try {
+    Deno.env.set("XDG_CONFIG_HOME", xdgConfigHome);
+    await Deno.mkdir(join(xdgConfigHome, "safesh"), { recursive: true });
+    await Deno.mkdir(workspaceDir, { recursive: true });
+    await Deno.writeTextFile(
+      join(xdgConfigHome, "safesh", "config.json"),
+      JSON.stringify({ workspaceDir }, null, 2),
+    );
+
+    const config = await loadConfig(testDir, { logWarnings: false });
+    const permissions = getEffectivePermissions(config, testDir);
+
+    assertEquals(config.workspaceDir, workspaceDir);
+    assertEquals(config.workspace, workspaceDir);
+    assertEquals(permissions.read?.includes(workspaceDir), true);
+    assertEquals(permissions.write?.includes(workspaceDir), true);
+  } finally {
+    restoreEnv("XDG_CONFIG_HOME", previousXdgConfigHome);
+    await cleanupTestDir(testDir);
+    await cleanupTestDir(xdgConfigHome);
   }
 });
 

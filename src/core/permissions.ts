@@ -11,6 +11,16 @@ import { getRealPathAsync } from "./utils.ts";
 import { isPathWithin } from "./path-utils.ts";
 import { normalizeWorkspaceRoots } from "./project-root.ts";
 
+function getWorkspaceVariable(config: SafeShellConfig): string | undefined {
+  if (config.workspace) {
+    return resolveWorkspace(config.workspace);
+  }
+  if (config.workspaceDir) {
+    return resolveWorkspace(config.workspaceDir);
+  }
+  return undefined;
+}
+
 /**
  * Resolve workspace path - expand ~ and convert to absolute path
  */
@@ -161,8 +171,10 @@ export async function validatePath(
   cwd: string,
   operation: "read" | "write" = "read",
 ): Promise<string> {
+  const workspace = getWorkspaceVariable(config);
+
   // Expand tilde and path variables before resolving
-  const expandedPath = expandPath(requestedPath, cwd, config.workspace);
+  const expandedPath = expandPath(requestedPath, cwd, workspace);
   const absolutePath = resolve(cwd, expandedPath);
 
   // Resolve symlinks to get real path
@@ -192,7 +204,6 @@ export async function validatePath(
     throw pathViolation(requestedPath, [], absolutePath);
   }
 
-  const workspace = config.workspace;
   const expandedAllowed = expandPaths(allowedPaths, cwd, workspace);
 
   // Check if real path is within allowed directories
@@ -245,6 +256,11 @@ export function getEffectivePermissions(
     defaultRead.push(home);
   }
   const defaultWrite = ["/tmp"];
+  const workspaceDir = config.workspaceDir ? resolveWorkspace(config.workspaceDir) : undefined;
+  if (workspaceDir) {
+    defaultRead.push(workspaceDir);
+    defaultWrite.push(workspaceDir);
+  }
 
   // Top-level roots get full read access, and write access unless blockProjectDirWrite is true
   // When blockProjectDirWrite is true, add projectDir to denyWrite to ensure it's blocked
