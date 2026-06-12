@@ -112,3 +112,76 @@ Deno.test("commandSubstitutionText collects fluent stream-like values", async ()
 
   assertEquals(text, "a\nb");
 });
+
+Deno.test("SSH-595: commandSubstitutionText propagates a stream command's exit status", async () => {
+  let recorded: number | undefined;
+  const text = await commandSubstitutionText(
+    {
+      async *streamChunks() {},
+      stream() {
+        return (async function* () {
+          yield { type: "stdout", data: "partial\n" };
+          yield { type: "exit", code: 1 };
+        })();
+      },
+    },
+    (_status, code) => {
+      recorded = code;
+      return code;
+    },
+  );
+
+  assertEquals(text, "partial");
+  assertEquals(recorded, 1);
+});
+
+Deno.test("SSH-595: commandSubstitutionText propagates getEmptyExitCode for empty fluent streams", async () => {
+  // fluent-lowered `grep nomatch` yields no items and reports bash's exit 1
+  // through getEmptyExitCode
+  let recorded: number | undefined;
+  const iterable = {
+    async *[Symbol.asyncIterator]() {},
+    getEmptyExitCode() {
+      return 1;
+    },
+  };
+
+  const text = await commandSubstitutionText(iterable, (_status, code) => {
+    recorded = code;
+    return code;
+  });
+
+  assertEquals(text, "");
+  assertEquals(recorded, 1);
+});
+
+Deno.test("SSH-595: commandSubstitutionText captures items from a fluent stream with status 0", async () => {
+  let recorded: number | undefined;
+  const iterable = {
+    async *[Symbol.asyncIterator]() {
+      yield "a";
+      yield "b";
+    },
+  };
+
+  const text = await commandSubstitutionText(iterable, (_status, code) => {
+    recorded = code;
+    return code;
+  });
+
+  assertEquals(text, "a\nb");
+  assertEquals(recorded, 0);
+});
+
+Deno.test("SSH-595: commandSubstitutionText maps booleans to bash-style status with empty text", async () => {
+  let recorded: number | undefined;
+  const record = (_status: unknown, code: number) => {
+    recorded = code;
+    return code;
+  };
+
+  assertEquals(await commandSubstitutionText(false, record), "");
+  assertEquals(recorded, 1);
+  assertEquals(await commandSubstitutionText(true, record), "");
+  assertEquals(recorded, 0);
+});
