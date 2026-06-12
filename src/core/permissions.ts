@@ -256,6 +256,25 @@ export function getEffectivePermissions(
     defaultRead.push(home);
   }
   const defaultWrite = ["/tmp"];
+  // SSH-586: the OS per-user temp dir is /tmp's moral equivalent but a
+  // different path (macOS: $TMPDIR -> /var/folders/<xx>/<hash>/T; Linux:
+  // sometimes /run/user/<uid>). Tools keep runtime state there, so treat it
+  // like /tmp. Also allow its canonical form — on macOS /var is a symlink to
+  // /private/var and the validator compares resolved paths.
+  const osTmp = Deno.env.get("TMPDIR")?.replace(/\/+$/, "");
+  if (osTmp && osTmp !== "/tmp" && osTmp !== "/private/tmp") {
+    defaultRead.push(osTmp);
+    defaultWrite.push(osTmp);
+    try {
+      const realTmp = Deno.realPathSync(osTmp);
+      if (realTmp !== osTmp) {
+        defaultRead.push(realTmp);
+        defaultWrite.push(realTmp);
+      }
+    } catch {
+      // TMPDIR may not exist; the literal entry alone is fine then
+    }
+  }
   const workspaceDir = config.workspaceDir ? resolveWorkspace(config.workspaceDir) : undefined;
   if (workspaceDir) {
     defaultRead.push(workspaceDir);
