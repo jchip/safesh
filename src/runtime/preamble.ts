@@ -108,6 +108,64 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
 }
 
 /**
+ * Emitted source of __recStatus, the SSH-581 last-status recorder.
+ *
+ * Exported separately (SSH-597) so the conformance harness embeds the same
+ * text instead of hand-maintaining a copy.
+ */
+export function recStatusLines(): string[] {
+  return [
+    `function __recStatus(__v?: any): any {`,
+    `  Deno.exitCode = typeof __v === "number" ? __v : (typeof __v?.code === "number" ? __v.code : 0);`,
+    `  return __v;`,
+    `}`,
+  ];
+}
+
+/**
+ * Status-recording runtime shared by buildPreamble and buildFilePreamble
+ * (SSH-597): PIPESTATUS plumbing, the SSH-581 Deno.exitCode recording, and
+ * the wrappers binding them to the shared shell-value coercions. The emitted
+ * code references __printShellValue/__captureShellValue/
+ * __commandSubstitutionText, which both preambles import.
+ */
+function statusRecordingLines(): string[] {
+  return [
+    "// Track PID of last background job for $!",
+    `let __LAST_BG_PID: number | undefined;`,
+    "// Track Bash-compatible pipeline status array for PIPESTATUS",
+    `let PIPESTATUS: number[] = [];`,
+    "",
+    "// Helper function to execute commands and print their output (streaming)",
+    `function __setPipeStatus(__status: unknown, __code: number): number {`,
+    `  const __pipeStatus = Array.isArray(__status) ? __status : [__code];`,
+    `  PIPESTATUS = __pipeStatus;`,
+    `  const __shell = (globalThis as any).$;`,
+    `  if (__shell?.VARS) __shell.VARS.PIPESTATUS = __pipeStatus;`,
+    `  return __code;`,
+    `}`,
+    "// SSH-581: record last command status via Deno.exitCode so the process",
+    "// reports it on natural exit like bash, without cutting the event loop short",
+    `function __setPipeStatusRec(__status: unknown, __code: number): number {`,
+    `  Deno.exitCode = __code;`,
+    `  return __setPipeStatus(__status, __code);`,
+    `}`,
+    ...recStatusLines(),
+    `async function __printCmd(cmd: any, __rec = true): Promise<number> {`,
+    `  return await __printShellValue(cmd, __rec ? __setPipeStatusRec : __setPipeStatus);`,
+    `}`,
+    `async function __captureCmd(cmd: any): Promise<any> {`,
+    `  return await __captureShellValue(cmd, __setPipeStatusRec);`,
+    `}`,
+    "",
+    "// Helper to extract text from command substitution result (SSH-360)",
+    `async function __cmdSubText(__result: unknown): Promise<string> {`,
+    `  return await __commandSubstitutionText(__result, __setPipeStatusRec);`,
+    `}`,
+  ];
+}
+
+/**
  * Build the preamble that gets prepended to user code
  *
  * The preamble injects:
@@ -208,44 +266,11 @@ export function buildPreamble(
     "// Sync shell ENV to Deno.env so child processes inherit them",
     `for (const [k, v] of Object.entries(${JSON.stringify(shellEnv)})) { Deno.env.set(k, v); }`,
     "",
-    "// Track PID of last background job for $!",
-    `let __LAST_BG_PID: number | undefined;`,
-    "// Track Bash-compatible pipeline status array for PIPESTATUS",
-    `let PIPESTATUS: number[] = [];`,
-    "",
-    "// Helper function to execute commands and print their output (streaming)",
-    `function __setPipeStatus(__status: unknown, __code: number): number {`,
-    `  const __pipeStatus = Array.isArray(__status) ? __status : [__code];`,
-    `  PIPESTATUS = __pipeStatus;`,
-    `  const __shell = (globalThis as any).$;`,
-    `  if (__shell?.VARS) __shell.VARS.PIPESTATUS = __pipeStatus;`,
-    `  return __code;`,
-    `}`,
-    "// SSH-581: record last command status via Deno.exitCode so the process",
-    "// reports it on natural exit like bash, without cutting the event loop short",
-    `function __setPipeStatusRec(__status: unknown, __code: number): number {`,
-    `  Deno.exitCode = __code;`,
-    `  return __setPipeStatus(__status, __code);`,
-    `}`,
-    `function __recStatus(__v?: any): any {`,
-    `  Deno.exitCode = typeof __v === "number" ? __v : (typeof __v?.code === "number" ? __v.code : 0);`,
-    `  return __v;`,
-    `}`,
-    `async function __printCmd(cmd: any, __rec = true): Promise<number> {`,
-    `  return await __printShellValue(cmd, __rec ? __setPipeStatusRec : __setPipeStatus);`,
-    `}`,
-    `async function __captureCmd(cmd: any): Promise<any> {`,
-    `  return await __captureShellValue(cmd, __setPipeStatusRec);`,
-    `}`,
+    ...statusRecordingLines(),
     "",
     "// Expose all environment variables as globals for $VAR syntax",
     `for (const [__k, __v] of Object.entries(Deno.env.toObject())) {`,
     `  (globalThis as any)[__k] = __v;`,
-    `}`,
-    "",
-    "// Helper to extract text from command substitution result (SSH-360)",
-    `async function __cmdSubText(__result: unknown): Promise<string> {`,
-    `  return await __commandSubstitutionText(__result, __setPipeStatusRec);`,
     `}`,
     "",
     "// Custom tempdir function that uses project config and shellId",
@@ -412,11 +437,6 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
     `  (globalThis as any)[__k] = __v;`,
     `}`,
     "",
-    "// Helper to extract text from command substitution result (SSH-360)",
-    `async function __cmdSubText(__result: unknown): Promise<string> {`,
-    `  return await __commandSubstitutionText(__result, __setPipeStatusRec);`,
-    `}`,
-    "",
     "// Custom tempdir function that uses project config and shellId",
     `function __tempdir(): string {`,
     `  const projectTemp = ${JSON.stringify(preambleConfig?.projectTemp ?? true)};`,
@@ -439,35 +459,7 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
     "// Sync shell ENV to Deno.env so child processes inherit them",
     `for (const [k, v] of Object.entries(${JSON.stringify(shellEnv)})) { Deno.env.set(k, v); }`,
     "",
-    "// Track PID of last background job for $!",
-    `let __LAST_BG_PID: number | undefined;`,
-    "// Track Bash-compatible pipeline status array for PIPESTATUS",
-    `let PIPESTATUS: number[] = [];`,
-    "",
-    "// Helper function to execute commands and print their output (streaming)",
-    `function __setPipeStatus(__status: unknown, __code: number): number {`,
-    `  const __pipeStatus = Array.isArray(__status) ? __status : [__code];`,
-    `  PIPESTATUS = __pipeStatus;`,
-    `  const __shell = (globalThis as any).$;`,
-    `  if (__shell?.VARS) __shell.VARS.PIPESTATUS = __pipeStatus;`,
-    `  return __code;`,
-    `}`,
-    "// SSH-581: record last command status via Deno.exitCode so the process",
-    "// reports it on natural exit like bash, without cutting the event loop short",
-    `function __setPipeStatusRec(__status: unknown, __code: number): number {`,
-    `  Deno.exitCode = __code;`,
-    `  return __setPipeStatus(__status, __code);`,
-    `}`,
-    `function __recStatus(__v?: any): any {`,
-    `  Deno.exitCode = typeof __v === "number" ? __v : (typeof __v?.code === "number" ? __v.code : 0);`,
-    `  return __v;`,
-    `}`,
-    `async function __printCmd(cmd: any, __rec = true): Promise<number> {`,
-    `  return await __printShellValue(cmd, __rec ? __setPipeStatusRec : __setPipeStatus);`,
-    `}`,
-    `async function __captureCmd(cmd: any): Promise<any> {`,
-    `  return await __captureShellValue(cmd, __setPipeStatusRec);`,
-    `}`,
+    ...statusRecordingLines(),
     "",
     "// Create $ namespace with all exports",
     `(globalThis as any).$ = {`,

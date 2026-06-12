@@ -1265,10 +1265,8 @@ export function visitCommand(
     return { lines: [`${indent}await ${result.code};`] };
   }
   if (result.isVariableAssignment) {
-    // bash: a plain assignment resets $? to 0; one containing $(...) takes the
-    // substitution's status, which __cmdSubText records (SSH-581)
     const lines = [`${indent}${result.code};`];
-    if (!result.code.includes("__cmdSubText(")) {
+    if (!command.assignments.some(assignmentRecordsStatus)) {
       lines.push(`${indent}__recStatus();`);
     }
     return { lines };
@@ -2814,6 +2812,7 @@ export function visitPipeline(
     // Find variable assignments that need hoisting
     const hoistedVars: string[] = [];
     const nonVarStatements: AST.Statement[] = [];
+    let hoistedRecordsStatus = false;
 
     for (const stmt of statements) {
       if (
@@ -2825,6 +2824,8 @@ export function visitPipeline(
         // Pure variable assignment - hoist it
         const result = buildCommand(stmt, ctx);
         hoistedVars.push(result.code);
+        hoistedRecordsStatus = hoistedRecordsStatus ||
+          stmt.assignments.some(assignmentRecordsStatus);
       } else {
         nonVarStatements.push(stmt);
       }
@@ -2842,7 +2843,7 @@ export function visitPipeline(
       // If there are no remaining statements, we're done
       if (nonVarStatements.length === 0) {
         // bash: assignments reset $? unless a $(...) inside set it (SSH-581)
-        if (!hoistedVars.some((code) => code.includes("__cmdSubText("))) {
+        if (!hoistedRecordsStatus) {
           lines.push(`${indent}__recStatus();`);
         }
         return { lines };
@@ -3087,6 +3088,34 @@ export function buildVariableAssignment(
 }
 
 /**
+ * bash: a plain assignment resets $? to 0; one whose value contains $(...)
+ * takes the substitution's status, which the emitted __cmdSubText records
+ * (SSH-581). Answered structurally on the AST (SSH-597) so a literal like
+ * x='__cmdSubText(' cannot be mistaken for a status-recording assignment.
+ */
+export function assignmentRecordsStatus(assign: AST.VariableAssignment): boolean {
+  return valueContainsCmdSub(assign.value);
+}
+
+function valueContainsCmdSub(
+  value: AST.VariableAssignment["value"] | AST.WordPart,
+): boolean {
+  switch (value.type) {
+    case "CommandSubstitution":
+      return true;
+    case "Word":
+      return value.parts.some((part) => valueContainsCmdSub(part));
+    case "ArrayLiteral":
+      return value.elements.some((elem) => valueContainsCmdSub(elem));
+    case "ParameterExpansion":
+      // ${x:-$(cmd)} — the modifier word can hide a substitution
+      return value.modifierArg ? valueContainsCmdSub(value.modifierArg) : false;
+    default:
+      return false;
+  }
+}
+
+/**
  * Visit a variable assignment as a statement
  */
 export function visitVariableAssignment(
@@ -3096,9 +3125,7 @@ export function visitVariableAssignment(
   const indent = ctx.getIndent();
   const code = buildVariableAssignment(stmt, ctx);
   const lines = [`${indent}${code};`];
-  // bash: a plain assignment resets $? to 0; one containing $(...) takes the
-  // substitution's status, which __cmdSubText records (SSH-581)
-  if (!code.includes("__cmdSubText(")) {
+  if (!assignmentRecordsStatus(stmt)) {
     lines.push(`${indent}__recStatus();`);
   }
   return { lines };

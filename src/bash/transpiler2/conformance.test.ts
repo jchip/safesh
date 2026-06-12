@@ -9,6 +9,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it, beforeAll } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
 import { transpile } from "./mod.ts";
+import { recStatusLines } from "../../runtime/preamble.ts";
 import { echo, cd, pwd, pushd, popd, dirs, test as shellTest, which, chmod, ln, rm, cp, mv, mkdir, touch, ls } from "../../stdlib/shelljs/mod.ts";
 
 // =============================================================================
@@ -100,11 +101,9 @@ async function __test(...args: string[]): Promise<{ code: number; stdout: string
   return { code: result ? 0 : 1, stdout: "", stderr: "", success: result };
 }
 
-// Record last command status as the process exit code (matches preamble, SSH-581)
-function __recStatus(__v?: any): any {
-  Deno.exitCode = typeof __v === "number" ? __v : (typeof __v?.code === "number" ? __v.code : 0);
-  return __v;
-}
+// Record last command status as the process exit code (SSH-581) — embedded
+// from the preamble's source of truth (SSH-597)
+${recStatusLines().join("\n")}
 
 // Helper function to execute commands and print their output (matches preamble)
 async function __printCmd(cmd: any, __rec = true): Promise<number> {
