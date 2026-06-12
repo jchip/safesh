@@ -27,7 +27,7 @@ import {
   PATH_VIOLATION_MESSAGES,
   SAFESH_PATH_REGEX,
   SYMLINK_REAL_PATH_REGEX,
-  WRITE_ACCESS_MESSAGE,
+  WRITE_OPERATION_MESSAGES,
 } from "./error-patterns.ts";
 
 /**
@@ -132,7 +132,7 @@ export function extractPathFromError(
 export function extractOperationFromError(
   errorMessage: string,
 ): "read" | "write" {
-  if (errorMessage.includes(WRITE_ACCESS_MESSAGE)) {
+  if (WRITE_OPERATION_MESSAGES.some((m) => errorMessage.includes(m))) {
     return "write";
   }
   // PATH_VIOLATION and SYMLINK_VIOLATION from SafeShell don't distinguish
@@ -379,7 +379,9 @@ ${msgChecks}
       }
     }
 
-    const operation = errorMessage.includes("${WRITE_ACCESS_MESSAGE}") ? "write" : "read";
+    const operation = (${
+    WRITE_OPERATION_MESSAGES.map((m) => `errorMessage.includes("${m}")`).join(" || ")
+  }) ? "write" : "read";
     const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
     const pendingFile = \`${getPendingDir()}/pending-path-\${pendingId}.json\`;
     const pending = {
