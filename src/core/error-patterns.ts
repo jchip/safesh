@@ -10,12 +10,19 @@
  */
 
 /** Error codes indicating path violations */
-export const PATH_VIOLATION_CODES = ["PATH_VIOLATION", "SYMLINK_VIOLATION", "NotCapable"] as const;
+export const PATH_VIOLATION_CODES = [
+  "PATH_VIOLATION",
+  "PATH_DENIED",
+  "SYMLINK_VIOLATION",
+  "NotCapable",
+] as const;
 
 /** Error messages indicating path violations */
 export const PATH_VIOLATION_MESSAGES = [
   "is outside allowed directories",
   "outside allowed directories",
+  "is in the deny-read list",
+  "is in the deny-write list",
   "Requires read access to",
   "Requires write access to",
 ] as const;
@@ -31,6 +38,12 @@ export const SYMLINK_REAL_PATH_REGEX = /points to '([^']+)'/;
 
 /** Message indicating write operation */
 export const WRITE_ACCESS_MESSAGE = "Requires write access to";
+
+/** Messages indicating the failed operation was a write (SSH-593) */
+export const WRITE_OPERATION_MESSAGES = [
+  WRITE_ACCESS_MESSAGE,
+  "deny-write list",
+] as const;
 
 /** Command failure message patterns (not path violations) */
 export const COMMAND_FAILURE_MESSAGES = [

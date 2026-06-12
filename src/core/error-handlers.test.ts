@@ -79,6 +79,33 @@ describe("error-handlers", () => {
       assertEquals(result.path, "/home/user/.bashrc");
     });
 
+    it("identifies SafeShell PATH_DENIED with write operation (SSH-593)", () => {
+      const error = {
+        code: "PATH_DENIED",
+        message: "Path '/project/secrets/key.pem' is in the deny-write list",
+      };
+
+      const result = detectPathViolation(error);
+
+      assertEquals(result.isPathViolation, true);
+      assertEquals(result.path, "/project/secrets/key.pem");
+      assertEquals(result.operation, "write");
+      assertEquals(result.errorCode, "PATH_DENIED");
+    });
+
+    it("identifies PATH_DENIED by message content, including the resolves-to form (SSH-593)", () => {
+      const error = {
+        message:
+          "Path '/tmp/link' resolves to '/project/secrets' which is in the deny-read list",
+      };
+
+      const result = detectPathViolation(error);
+
+      assertEquals(result.isPathViolation, true);
+      assertEquals(result.path, "/tmp/link");
+      assertEquals(result.operation, "read");
+    });
+
     it("returns false for non-path-violation errors", () => {
       const error = {
         message: "TypeError: undefined is not a function",
@@ -278,6 +305,16 @@ describe("error-handlers", () => {
       assertMatch(code, /PATH_VIOLATION/);
       assertMatch(code, /SYMLINK_VIOLATION/);
       assertMatch(code, /NotCapable/);
+    });
+
+    it("detects PATH_DENIED and the deny-write operation (SSH-593)", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+      }, false);
+
+      assertMatch(code, /PATH_DENIED/);
+      assertMatch(code, /deny-write list/);
+      assertMatch(code, /deny-read list/);
     });
 
     it("includes path extraction logic", () => {
