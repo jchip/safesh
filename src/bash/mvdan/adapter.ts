@@ -381,7 +381,7 @@ function convertAssign(assign: any): AST.VariableAssignment | undefined {
       name,
       value: {
         type: "ArrayLiteral",
-        elements: (assign.Array.Elems ?? []).map((e: any) => convertWord(e.Value)),
+        elements: (assign.Array.Elems ?? []).map((e: any) => convertArrayElem(e)),
       } satisfies AST.ArrayLiteral,
     };
   }
@@ -391,6 +391,24 @@ function convertAssign(assign: any): AST.VariableAssignment | undefined {
     name,
     value: assign.Value ? convertWord(assign.Value) : literalWord(""),
   };
+}
+
+/**
+ * ArrayElem → Word. A `[index]=value` subscript is an arithmetic context the
+ * legacy ArrayLiteral shape cannot carry, and like every other arithmetic
+ * position in this adapter it can hide command substitutions. An index
+ * containing a substitution becomes an opaque element the analyzer rejects;
+ * a substitution-free index is safe to drop (array values are never
+ * statically resolved).
+ */
+function convertArrayElem(elem: any): AST.Word {
+  if (
+    elem.Index !== null && elem.Index !== undefined &&
+    containsSubstitution(elem.Index)
+  ) {
+    return opaqueWord("substitution in array element subscript");
+  }
+  return convertWord(elem.Value);
 }
 
 function convertIfClause(ifc: any, redirs: any[]): AST.IfStatement {

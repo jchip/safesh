@@ -137,6 +137,22 @@ describe("mvdan adapter analysis contract", () => {
       assertEquals(result.eligible, false);
     });
 
+    it("rejects command substitution inside array element subscripts", () => {
+      const result = analyzeMvdan("arr=([$(touch x)]=v)");
+      assertEquals(result.eligible, false);
+      assertEquals(result.commands.has("touch"), false, "must not claim enumeration");
+    });
+
+    it("rejects command substitution inside associative array element subscripts", () => {
+      const result = analyzeMvdan("declare -A arr=([key$(somecmd)]=v)");
+      assertEquals(result.eligible, false);
+    });
+
+    it("keeps substitution-free array element subscripts eligible", () => {
+      const result = analyzeMvdan("arr=([0]=a [1]=b)\necho ok");
+      assertEquals(result.eligible, true);
+    });
+
     it("rejects pattern-replacement expansions (pattern can hide $(...))", () => {
       const result = analyzeMvdan("echo ${x/$(somecmd)/y}");
       assertEquals(result.eligible, false);
