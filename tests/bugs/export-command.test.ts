@@ -157,11 +157,13 @@ describe("Bug: export VAR=value", () => {
       .replace(/"use strict";/, "")
       .replace(/\(async \(\) => \{/, "")
       .replace(/\}\)\(\);/, "");
-    const fn = new Function("$", "Deno", bodyCode + "; return PATH;");
+    // __recStatus: SSH-581 status-recording stub
+    const fn = new Function("$", "Deno", "__recStatus", bodyCode + "; return PATH;");
     const mockEnv: Record<string, string> = { PATH: "/usr/bin", HOME: "/Users/test" };
     const result = fn(
       { ENV: mockEnv, VARS: {} },
       { env: { set: (k: string, v: string) => { mockEnv[k] = v; }, get: (k: string) => mockEnv[k] } },
+      () => {},
     );
     assertStringIncludes(result, "/usr/bin");
     assertStringIncludes(result, "platform-tools");
@@ -178,10 +180,12 @@ describe("Bug: export VAR=value", () => {
       .replace(/"use strict";/, "")
       .replace(/\(async \(\) => \{/, "")
       .replace(/\}\)\(\);/, "");
-    const fn = new Function("$", "Deno", bodyCode + "; return PATH;");
+    // __recStatus: SSH-581 status-recording stub
+    const fn = new Function("$", "Deno", "__recStatus", bodyCode + "; return PATH;");
     const result = fn(
       { ENV: { PATH: "/usr/bin" }, VARS: {} },
       { env: { set: () => {}, get: () => undefined } },
+      () => {},
     );
     assertStringIncludes(result, "/usr/bin");
     assertStringIncludes(result, "/usr/local/bin");

@@ -63,6 +63,9 @@ export function visitIfStatement(
   const testVar = ctx.getTempVar();
   const testExpr = ctx.buildTestExpression(stmt.test);
   lines.push(`${indent}const ${testVar} = await ${testExpr.code};`);
+  // bash: an if whose condition fails with no else exits 0 — clear any status
+  // the condition recorded; an executed branch records its own (SSH-581)
+  lines.push(`${indent}__recStatus();`);
   lines.push(`${indent}if (${testVar}.code === 0) {`);
 
   // Consequent block
@@ -182,6 +185,8 @@ export function visitForStatement(
     itemsExpr = `[${items.join(", ")}]`;
   }
 
+  // bash: a for-loop that runs zero iterations exits 0 (SSH-581)
+  lines.push(`${indent}__recStatus();`);
   lines.push(`${indent}for (const ${stmt.variable} of ${itemsExpr}) {`);
 
   // Push a new scope for loop body (loop variable is scoped by JS `const`)
@@ -213,6 +218,8 @@ export function visitCStyleForStatement(
   const test = stmt.test ? ctx.visitArithmetic(stmt.test) : "true";
   const update = stmt.update ? ctx.visitArithmetic(stmt.update) : "";
 
+  // bash: a loop that runs zero iterations exits 0 (SSH-581)
+  lines.push(`${indent}__recStatus();`);
   lines.push(`${indent}for (${init}; ${test}; ${update}) {`);
 
   // Body
@@ -261,6 +268,9 @@ function visitLoop(
   const lines: string[] = [];
   const indent = ctx.getIndent();
 
+  // bash: a loop that runs zero iterations exits 0; afterwards the last body
+  // statement's recorded status stands (SSH-581)
+  lines.push(`${indent}__recStatus();`);
   lines.push(`${indent}while (true) {`);
   ctx.indent();
 
@@ -297,6 +307,8 @@ export function visitCaseStatement(
 
   const wordVar = ctx.getTempVar();
   lines.push(`${indent}const ${wordVar} = ${formatWordLiteral(stmt.word, ctx)};`);
+  // bash: a case with no matching clause exits 0 (SSH-581)
+  lines.push(`${indent}__recStatus();`);
 
   let first = true;
 
@@ -360,6 +372,8 @@ export function visitFunctionDeclaration(
   ctx.popScope();
 
   lines.push(`${indent}}`);
+  // bash: declaring a function sets $? to 0 (SSH-581)
+  lines.push(`${indent}__recStatus();`);
   return { lines };
 }
 
@@ -421,7 +435,8 @@ export function visitTestCommand(
 ): StatementResult {
   const indent = ctx.getIndent();
   const condition = ctx.visitTestCondition(stmt.expression);
-  return { lines: [`${indent}if (${condition}) { /* test passed */ }`] };
+  // bash: a standalone [[ ]] sets $? from the test result (SSH-581)
+  return { lines: [`${indent}__recStatus((${condition}) ? 0 : 1);`] };
 }
 
 // =============================================================================
@@ -434,7 +449,8 @@ export function visitArithmeticCommand(
 ): StatementResult {
   const indent = ctx.getIndent();
   const expr = ctx.visitArithmetic(stmt.expression);
-  return { lines: [`${indent}${expr};`] };
+  // bash: (( expr )) exits 0 when the expression is nonzero, 1 otherwise (SSH-581)
+  return { lines: [`${indent}__recStatus((${expr}) ? 0 : 1);`] };
 }
 
 // =============================================================================
@@ -447,7 +463,8 @@ export function visitReturnStatement(
 ): StatementResult {
   const indent = ctx.getIndent();
   const value = stmt.value !== undefined ? ctx.visitArithmetic(stmt.value) : "0";
-  return { lines: [`${indent}return ${value};`] };
+  // bash: `return N` sets the function's exit status (SSH-581)
+  return { lines: [`${indent}return __recStatus(${value});`] };
 }
 
 export function visitBreakStatement(

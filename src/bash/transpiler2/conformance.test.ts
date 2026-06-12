@@ -100,8 +100,14 @@ async function __test(...args: string[]): Promise<{ code: number; stdout: string
   return { code: result ? 0 : 1, stdout: "", stderr: "", success: result };
 }
 
+// Record last command status as the process exit code (matches preamble, SSH-581)
+function __recStatus(__v?: any): any {
+  Deno.exitCode = typeof __v === "number" ? __v : (typeof __v?.code === "number" ? __v.code : 0);
+  return __v;
+}
+
 // Helper function to execute commands and print their output (matches preamble)
-async function __printCmd(cmd: any): Promise<number> {
+async function __printCmd(cmd: any, __rec = true): Promise<number> {
   const __enc = new TextEncoder();
   if (cmd && typeof cmd.stream === 'function') {
     let __code = 1;
@@ -114,11 +120,12 @@ async function __printCmd(cmd: any): Promise<number> {
         __code = __chunk.code ?? 1;
       }
     }
+    if (__rec) __recStatus(__code);
     return __code;
   }
   const result = await cmd;
-  if (typeof result === 'boolean') return result ? 0 : 1;
-  if (!result) return 1;
+  if (typeof result === 'boolean') return __rec ? __recStatus(result ? 0 : 1) : (result ? 0 : 1);
+  if (!result) { if (__rec) __recStatus(1); return 1; }
   if (result.output) {
     await Deno.stdout.write(__enc.encode(result.output));
   } else {
@@ -129,12 +136,31 @@ async function __printCmd(cmd: any): Promise<number> {
       await Deno.stderr.write(__enc.encode(result.stderr));
     }
   }
+  if (__rec) __recStatus(result.code ?? 1);
   return result.code ?? 1;
+}
+
+// Capture a command result without printing (matches preamble)
+async function __captureCmd(cmd: any): Promise<any> {
+  const result = await cmd;
+  if (typeof result === 'boolean') {
+    const code = result ? 0 : 1;
+    __recStatus(code);
+    return { code, stdout: '', stderr: '', success: code === 0 };
+  }
+  if (!result) {
+    __recStatus(1);
+    return { code: 1, stdout: '', stderr: '', success: false };
+  }
+  const code = result.code ?? 0;
+  __recStatus(code);
+  return { code, stdout: result.stdout ?? '', stderr: result.stderr ?? '', success: code === 0, pipeStatus: result.pipeStatus };
 }
 
 // Helper for command substitution text extraction
 async function __cmdSubText(cmd: any): Promise<string> {
   const result = await cmd;
+  __recStatus(result?.code ?? 0);
   // Strip trailing newlines like bash does for command substitution
   return (result.stdout || '').replace(/\\n+$/, '');
 }
@@ -719,6 +745,70 @@ describe("Conformance - Complex Scripts", () => {
     `;
     const { bashResult, tsResult } = await compareExecution(script);
     assertEquals(tsResult.stdout, bashResult.stdout);
+  });
+});
+
+// =============================================================================
+// Exit Status Conformance Tests (SSH-581)
+// =============================================================================
+
+describe("Conformance - Exit Status (SSH-581)", () => {
+  async function assertExitCodeMatches(script: string) {
+    const { bashResult, tsResult } = await compareExecution(script, {
+      compareStdout: false,
+      compareExitCode: true,
+    });
+    assertEquals(tsResult.code, bashResult.code);
+  }
+
+  it("should exit nonzero when the last command fails", async () => {
+    await assertExitCodeMatches("echo hi && false");
+  });
+
+  it("should exit zero when a builtin succeeds after a failure", async () => {
+    await assertExitCodeMatches('false\necho after');
+  });
+
+  it("should reset status on a plain assignment", async () => {
+    await assertExitCodeMatches('false\nVAR=x');
+  });
+
+  it("should propagate a command substitution's status to its assignment", async () => {
+    await assertExitCodeMatches("v=$(false)");
+  });
+
+  it("should exit with the code given to exit", async () => {
+    await assertExitCodeMatches("exit 3");
+  });
+
+  it("should exit zero when an if takes no branch after a failure", async () => {
+    await assertExitCodeMatches('false\nif [ -n "" ]; then echo x; fi');
+  });
+
+  it("should exit zero after a for loop with no iterations", async () => {
+    await assertExitCodeMatches("false\nfor i in; do echo $i; done");
+  });
+
+  it("should exit with a function's return value", async () => {
+    await assertExitCodeMatches("f() { return 3; }\nf");
+  });
+
+  it("should exit nonzero for a failing standalone [[ ]] test", async () => {
+    await assertExitCodeMatches('[[ -n "" ]]');
+  });
+
+  it("should expand $? to the last command's status", async () => {
+    const script = "false\necho $?";
+    const { bashResult, tsResult } = await compareExecution(script, {
+      compareExitCode: true,
+    });
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "1");
+    assertEquals(tsResult.code, bashResult.code);
+  });
+
+  it("should recover $? after a chain with fallback", async () => {
+    await assertExitCodeMatches("true && false || true");
   });
 });
 

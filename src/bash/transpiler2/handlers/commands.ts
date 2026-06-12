@@ -1254,7 +1254,7 @@ export function visitCommand(
     const resultVar = ctx.getTempVar("__cmd");
     return {
       lines: [
-        `${indent}const ${resultVar} = ${result.code};`,
+        `${indent}const ${resultVar} = __recStatus(${result.code});`,
         `${indent}if (${resultVar}?.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr + (${resultVar}.stderr.endsWith("\\n") ? "" : "\\n")));`,
       ],
     };
@@ -1264,7 +1264,16 @@ export function visitCommand(
   } else if (result.async) {
     return { lines: [`${indent}await ${result.code};`] };
   }
-  return { lines: [`${indent}${result.code};`] };
+  if (result.isVariableAssignment) {
+    // bash: a plain assignment resets $? to 0; one containing $(...) takes the
+    // substitution's status, which __cmdSubText records (SSH-581)
+    const lines = [`${indent}${result.code};`];
+    if (!result.code.includes("__cmdSubText(")) {
+      lines.push(`${indent}__recStatus();`);
+    }
+    return { lines };
+  }
+  return { lines: [`${indent}__recStatus(${result.code});`] };
 }
 
 // =============================================================================
@@ -2644,6 +2653,8 @@ function visitLogicalControlPipeline(
   const indent = ctx.getIndent();
   const statusVar = ctx.getTempVar("__code");
   const lines = buildPrintableStatusLines(left, statusVar, indent);
+  // If the control target doesn't run, the chain's status is the left side's (SSH-581)
+  lines.push(`${indent}__recStatus(${statusVar});`);
   const condition = pipeline.operator === "&&" ? `${statusVar} === 0` : `${statusVar} !== 0`;
 
   lines.push(`${indent}if (${condition}) {`);
@@ -2773,6 +2784,10 @@ export function visitPipeline(
 
       // If there are no remaining statements, we're done
       if (nonVarStatements.length === 0) {
+        // bash: assignments reset $? unless a $(...) inside set it (SSH-581)
+        if (!hoistedVars.some((code) => code.includes("__cmdSubText("))) {
+          lines.push(`${indent}__recStatus();`);
+        }
         return { lines };
       }
 
@@ -2788,7 +2803,7 @@ export function visitPipeline(
         for (const stmt of nonVarStatements) {
           if (stmt.type === "Command") {
             const result = buildCommand(stmt, ctx);
-            lines.push(`${indent}${result.code};`);
+            lines.push(`${indent}__recStatus(${result.code});`);
           }
         }
         return { lines };
@@ -2804,7 +2819,7 @@ export function visitPipeline(
           if (isPrintable) {
             lines.push(`${indent}await __printCmd(${result.code});`);
           } else {
-            lines.push(`${indent}${result.code};`);
+            lines.push(`${indent}__recStatus(${result.code});`);
           }
         } else {
           const stmtResult = ctx.visitStatement(stmt);
@@ -2858,10 +2873,13 @@ export function visitPipeline(
         `${indent}    __LAST_BG_PID = __child.pid;`,
         `${indent}  } else {`,
         printBackgroundResult
-          ? `${indent}    await __printCmd(await Promise.resolve(__bgCmd));`
+          // __rec=false: a background job finishing later must not overwrite
+          // the foreground exit status (bash launches with $?=0) (SSH-581)
+          ? `${indent}    await __printCmd(await Promise.resolve(__bgCmd), false);`
           : `${indent}    await Promise.resolve(__bgCmd);`,
         `${indent}  }`,
         `${indent}})(); // background`,
+        `${indent}__recStatus();`,
       ],
     };
   }
@@ -2909,10 +2927,13 @@ export function visitPipeline(
   }
 
   // SSH-372: Don't wrap non-printable results (like shell builtins) in __printCmd
-  // But still await async results (IIFEs that handle their own printing)
+  // But still await async results (IIFEs that handle their own printing and
+  // record status through __printCmd/__captureCmd internally)
   if (!result.isPrintable) {
-    const prefix = result.async ? "await " : "";
-    return { lines: [`${indent}${prefix}${result.code};`] };
+    if (result.async) {
+      return { lines: [`${indent}await ${result.code};`] };
+    }
+    return { lines: [`${indent}__recStatus(${result.code});`] };
   }
 
   // Wrap pipeline execution with __printCmd to print output
@@ -3016,5 +3037,12 @@ export function visitVariableAssignment(
   ctx: VisitorContext,
 ): StatementResult {
   const indent = ctx.getIndent();
-  return { lines: [`${indent}${buildVariableAssignment(stmt, ctx)};`] };
+  const code = buildVariableAssignment(stmt, ctx);
+  const lines = [`${indent}${code};`];
+  // bash: a plain assignment resets $? to 0; one containing $(...) takes the
+  // substitution's status, which __cmdSubText records (SSH-581)
+  if (!code.includes("__cmdSubText(")) {
+    lines.push(`${indent}__recStatus();`);
+  }
+  return { lines };
 }

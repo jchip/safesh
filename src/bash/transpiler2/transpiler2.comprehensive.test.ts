@@ -1984,7 +1984,8 @@ describe("BashTranspiler2 Class Extended", () => {
     const output = transpiler.transpile(ast);
 
     // SSH-372: Check tab indentation (echo is prints type, no await)
-    assertStringIncludes(output, "\t$.echo");
+    // SSH-581: statement-level builtins record status via __recStatus
+    assertStringIncludes(output, "\t__recStatus($.echo");
   });
 
   it("should handle different import paths", () => {
