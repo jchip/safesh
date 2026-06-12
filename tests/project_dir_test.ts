@@ -971,3 +971,119 @@ Deno.test({
     }
   },
 });
+
+// ============================================================================
+// SSH-592: explicit write allows win over injected blockProjectDirWrite deny
+// ============================================================================
+
+import { assertRejects } from "@std/assert";
+
+Deno.test("SSH-592: root with explicit write allow inside is kept out of injected denyWrite", () => {
+  const config: SafeShellConfig = {
+    projectDir: "/project",
+    blockProjectDirWrite: true,
+    permissions: { write: ["/project/build"] },
+  };
+
+  const perms = getEffectivePermissions(config, "/project");
+
+  // root must not clobber the explicit allow at the Deno flag level
+  assertEquals(perms.denyWrite?.includes("/project"), false);
+  assertEquals(perms.write?.includes("/project/build"), true);
+  // root itself still never enters the write list
+  assertEquals(perms.write?.includes("/project"), false);
+});
+
+Deno.test("SSH-592: root without explicit write allows stays in injected denyWrite", () => {
+  const config: SafeShellConfig = {
+    projectDir: "/project",
+    blockProjectDirWrite: true,
+    permissions: { write: ["/elsewhere"] },
+  };
+
+  const perms = getEffectivePermissions(config, "/project");
+
+  assertEquals(perms.denyWrite?.includes("/project"), true);
+});
+
+Deno.test({
+  name: "SSH-592: validatePath allows explicitly configured write subdir under blockProjectDirWrite",
+  async fn() {
+    const testDir = `${REAL_TMP}/safesh-test-ssh592`;
+
+    try {
+      await Deno.mkdir(`${testDir}/build`, { recursive: true });
+
+      const config: SafeShellConfig = {
+        projectDir: testDir,
+        blockProjectDirWrite: true,
+        permissions: { write: [`${testDir}/build`] },
+      };
+
+      // Explicitly allowed subdir punches through the injected deny
+      const allowed = await validatePath(
+        `${testDir}/build/out.txt`,
+        config,
+        testDir,
+        "write",
+      );
+      assertEquals(allowed, `${testDir}/build/out.txt`);
+
+      // The rest of the project stays blocked, even though the project sits
+      // under /tmp which is in the default write list
+      await assertRejects(
+        () => validatePath(`${testDir}/src.txt`, config, testDir, "write"),
+        Error,
+        "deny-write",
+      );
+
+      // Reads are unaffected
+      const readPath = await validatePath(`${testDir}/src.txt`, config, testDir, "read");
+      assertEquals(readPath, `${testDir}/src.txt`);
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "SSH-592: user denyWrite still wins over an explicit write allow",
+  async fn() {
+    const testDir = `${REAL_TMP}/safesh-test-ssh592-deny`;
+
+    try {
+      await Deno.mkdir(`${testDir}/build`, { recursive: true });
+
+      const config: SafeShellConfig = {
+        projectDir: testDir,
+        blockProjectDirWrite: true,
+        permissions: {
+          write: [`${testDir}/build`],
+          denyWrite: [`${testDir}/build/secrets`],
+        },
+      };
+
+      await assertRejects(
+        () =>
+          validatePath(
+            `${testDir}/build/secrets/key.pem`,
+            config,
+            testDir,
+            "write",
+          ),
+        Error,
+        "deny-write",
+      );
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  },
+});
