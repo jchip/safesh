@@ -128,7 +128,9 @@ test -d ${testDir}/missing > missing.txt && echo should-not-print`,
 
       const result = await executeCode(code, config, { cwd: testDir });
 
-      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      // SSH-581: the last chain's `test -d missing` fails, so like bash the
+      // script exits 1; the point here is the && short-circuit still works
+      assertEquals(result.code, 1, `stderr: ${result.stderr}\ncode:\n${code}`);
       assertEquals(result.stdout.trim(), "ok");
       assertEquals(await Deno.readTextFile(`${testDir}/test.txt`), "");
       assertEquals(await Deno.readTextFile(`${testDir}/missing.txt`), "");

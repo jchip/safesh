@@ -147,7 +147,9 @@ await __printCmd($.cmd("ls", "-la", "/tmp/safesh-ssh19-missing-*").stderr("/dev/
     },
   );
 
-  assertEquals(result.success, true);
+  // SSH-581: the failing ls now propagates its exit status like bash;
+  // the point of this test is that its stderr stays suppressed
+  assertEquals(result.success, false);
   assertEquals(result.stderr, "");
 });
 

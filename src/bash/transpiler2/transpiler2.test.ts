@@ -1259,7 +1259,8 @@ describe("BashTranspiler2 Class", () => {
     const output = transpiler.transpile(ast);
 
     // SSH-372: Check 4-space indentation inside async IIFE (echo is prints type, no await)
-    assertStringIncludes(output, "    $.echo");
+    // SSH-581: statement-level builtins record status via __recStatus
+    assertStringIncludes(output, "    __recStatus($.echo");
   });
 
   it("should be reusable for multiple transpilations", () => {

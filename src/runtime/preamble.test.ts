@@ -105,16 +105,24 @@ describe("preamble", () => {
 
       assertEquals(preamble.includes("async function __printCmd"), true);
       assertEquals(
-        preamble.includes("return await __printShellValue(cmd, __setPipeStatus);"),
+        preamble.includes(
+          "return await __printShellValue(cmd, __rec ? __setPipeStatusRec : __setPipeStatus);",
+        ),
         true,
       );
       assertEquals(preamble.includes("async function __captureCmd"), true);
       assertEquals(
-        preamble.includes("return await __captureShellValue(cmd, __setPipeStatus);"),
+        preamble.includes("return await __captureShellValue(cmd, __setPipeStatusRec);"),
         true,
       );
       assertEquals(preamble.includes("async function __cmdSubText"), true);
-      assertEquals(preamble.includes("return await __commandSubstitutionText(__result);"), true);
+      assertEquals(
+        preamble.includes("return await __commandSubstitutionText(__result, __setPipeStatusRec);"),
+        true,
+      );
+      // SSH-581: status recording helpers
+      assertEquals(preamble.includes("function __setPipeStatusRec"), true);
+      assertEquals(preamble.includes("function __recStatus"), true);
     });
   });
 

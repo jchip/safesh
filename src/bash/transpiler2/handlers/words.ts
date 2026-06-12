@@ -327,9 +327,8 @@ export function visitParameterExpansion(
     return `\${__LAST_BG_PID || ""}`;
   }
   if (param === "?") {
-    // $? - Exit status of last command
-    // SafeShell uses exceptions instead of exit codes
-    return "0"; // Default to success
+    // $? - exit status of the last command, recorded as Deno.exitCode (SSH-581)
+    return `\${Deno.exitCode}`;
   }
   if (param === "$") {
     // $$ - Current shell PID

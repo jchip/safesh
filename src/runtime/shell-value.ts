@@ -264,23 +264,40 @@ export async function printShellValue(
   return setPipeStatus(record?.pipeStatus, resultCode(record, 1));
 }
 
-export async function commandSubstitutionText(value: unknown): Promise<string> {
+export async function commandSubstitutionText(
+  value: unknown,
+  setPipeStatus: SetPipeStatus = noopSetPipeStatus,
+): Promise<string> {
   const resolved = await Promise.resolve(value);
 
-  if (resolved === undefined || resolved === null) return "";
-  if (Array.isArray(resolved)) return resolved.join("\n").replace(/\n+$/, "");
+  if (resolved === undefined || resolved === null) {
+    setPipeStatus(undefined, 0);
+    return "";
+  }
+  if (Array.isArray(resolved)) {
+    setPipeStatus(undefined, 0);
+    return resolved.join("\n").replace(/\n+$/, "");
+  }
   if (hasFunction(resolved, "text")) {
-    return String(await resolved.text()).replace(/\n+$/, "");
+    const text = String(await resolved.text()).replace(/\n+$/, "");
+    setPipeStatus(undefined, 0);
+    return text;
   }
   if (hasFunction(resolved, "collect")) {
     const collected = await resolved.collect();
+    setPipeStatus(undefined, 0);
     return Array.isArray(collected)
       ? collected.join("\n").replace(/\n+$/, "")
       : String(collected).replace(/\n+$/, "");
   }
-  if (typeof resolved === "string") return resolved.replace(/\n+$/, "");
+  if (typeof resolved === "string") {
+    setPipeStatus(undefined, 0);
+    return resolved.replace(/\n+$/, "");
+  }
 
   const record = asRecord(resolved);
+  // Bash propagates $(cmd)'s exit status to $? (and to an enclosing assignment)
+  setPipeStatus(asPipeStatus(record?.pipeStatus), resultCode(record, 0));
   if (typeof record?.output === "string") return record.output.replace(/\n+$/, "");
   if (typeof record?.stdout === "string") return record.stdout.replace(/\n+$/, "");
 
