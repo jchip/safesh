@@ -826,9 +826,13 @@ async function isPassthroughPermitted(
   return true;
 }
 
-async function globHasMatch(pattern: string, cwd: string): Promise<boolean> {
+export async function globHasMatch(pattern: string, cwd: string): Promise<boolean> {
   try {
-    for await (const _entry of expandGlob(pattern, { root: cwd })) {
+    // SSH-590: bash leaves globstar off by default, so `**` matches a single
+    // path segment (like `*`). @std/fs defaults globstar on (zsh-like), which
+    // would let the analyzer approve a recursive file set bash never produces;
+    // disable it to keep the match check faithful to native bash.
+    for await (const _entry of expandGlob(pattern, { root: cwd, globstar: false })) {
       return true;
     }
     return false;
