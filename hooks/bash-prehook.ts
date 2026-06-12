@@ -36,6 +36,7 @@ import {
   getScriptFilePath,
   getScriptsDir,
   getSessionFilePath,
+  getStateTrailerPath,
   getTempRoot,
 } from "../src/core/temp.ts";
 import type { PendingCommand, SafeShellConfig } from "../src/core/types.ts";
@@ -1091,7 +1092,23 @@ async function outputRewriteToDeshFile(
     debug(`Created new script: ${prefix}-${hash}.ts`);
   }
 
-  outputHookResponse(`${DESH_CMD} -q -f ${tempFile}`, options);
+  // SSH-580: state trailer. The desh run writes its cd/export/var deltas to
+  // a trailer snippet; sourcing it afterwards applies them to the Bash
+  // tool's persistent shell — the same state owner passthrough commands use.
+  // Skipped for background runs (no shell waits to apply state). The [ -O ]
+  // ownership check guards against another user pre-creating the file.
+  if (options?.runInBackground) {
+    outputHookResponse(`${DESH_CMD} -q -f ${tempFile}`, options);
+    return;
+  }
+
+  const trailerPath = getStateTrailerPath(generateTempId());
+  const command = `${DESH_CMD} -q -f ${tempFile} --state-trailer '${trailerPath}'; ` +
+    `__safesh_rc=$?; ` +
+    `[ -f '${trailerPath}' ] && [ -O '${trailerPath}' ] && . '${trailerPath}'; ` +
+    `rm -f '${trailerPath}' 2>/dev/null; ` +
+    `(exit $__safesh_rc)`;
+  outputHookResponse(command, options);
 }
 
 /**
