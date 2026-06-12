@@ -181,19 +181,37 @@ export async function validatePath(
   const realPath = await getRealPathAsync(absolutePath);
 
   const effectivePerms = getEffectivePermissions(config, cwd);
+  const userPerms = config.permissions ?? {};
 
-  // SSH-588: deny lists win over every allow source, including workspace
-  // roots and the temp-dir defaults. Deno's --deny-* flags only protect
-  // subprocesses; this check is the only gate for in-process callers and the
-  // prehook's passthrough decision.
-  const denyPaths = operation === "write"
-    ? (effectivePerms.denyWrite ?? [])
-    : (effectivePerms.denyRead ?? []);
-  if (denyPaths.length > 0 && isPathAllowed(realPath, denyPaths, cwd, workspace)) {
+  // SSH-588: user-written deny lists win over every allow source, including
+  // workspace roots and the temp-dir defaults. Deno's --deny-* flags only
+  // protect subprocesses; this check is the only gate for in-process callers
+  // and the prehook's passthrough decision.
+  const userDeny = operation === "write"
+    ? (userPerms.denyWrite ?? [])
+    : (userPerms.denyRead ?? []);
+  if (userDeny.length > 0 && isPathAllowed(realPath, userDeny, cwd, workspace)) {
     throw pathDenied(requestedPath, realPath, operation);
   }
 
   const workspaceRoots = getWorkspaceRoots(config);
+
+  // SSH-592: blockProjectDirWrite injects the workspace roots as a deny, but
+  // explicitly configured write paths punch through it; everything else in a
+  // root is denied here, before a parent dir (like /tmp) in the default
+  // write list could allow it.
+  if (operation === "write" && config.blockProjectDirWrite) {
+    const explicitWrite = userPerms.write ?? [];
+    if (
+      explicitWrite.length > 0 &&
+      isPathAllowed(realPath, explicitWrite, cwd, workspace)
+    ) {
+      return realPath;
+    }
+    if (workspaceRoots.length > 0 && isWithinWorkspaceRoots(realPath, config)) {
+      throw pathDenied(requestedPath, realPath, operation);
+    }
+  }
 
   // Top-level roots get full read access, and write access unless blockProjectDirWrite is true
   if (workspaceRoots.length > 0) {
@@ -324,8 +342,21 @@ export function getEffectivePermissions(
     if (!config.blockProjectDirWrite) {
       defaultWrite.push(...workspaceRoots);
     } else {
-      // Add to denyWrite to block writes at Deno sandbox level
-      denyWrite.push(...workspaceRoots);
+      // Add to denyWrite to block writes at Deno sandbox level.
+      // SSH-592: Deno deny flags beat allow flags regardless of specificity,
+      // so a root containing an explicitly configured write path stays out
+      // of the injected deny — that root never enters the write list, so
+      // writes outside the explicit allows are still rejected by validatePath.
+      const explicitWrite = expandPaths(
+        perms.write ?? [],
+        cwd,
+        getWorkspaceVariable(config),
+      );
+      denyWrite.push(
+        ...workspaceRoots.filter((root) =>
+          !explicitWrite.some((p) => isPathWithin(resolve(cwd, p), resolve(root)))
+        ),
+      );
     }
   }
 
