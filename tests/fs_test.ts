@@ -301,8 +301,27 @@ describe("fs", () => {
   });
 
   describe("sandbox validation", () => {
+    // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+    const outsideDir = `${Deno.env.get("HOME")}/.safesh-test-fs-outside`;
+
+    beforeEach(async () => {
+      await Deno.mkdir(outsideDir, { recursive: true });
+    });
+
+    afterEach(async () => {
+      try {
+        await Deno.remove(outsideDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    });
+
     it("validates read operations against sandbox", async () => {
+      await Deno.writeTextFile(`${outsideDir}/test.txt`, "outside data");
+
       const config: SafeShellConfig = {
+        // HOME is default-readable, so exclude it to keep the fixture outside the sandbox
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [`${REAL_TMP}/allowed-only`],
           write: [],
@@ -310,13 +329,14 @@ describe("fs", () => {
       };
 
       await assertRejects(
-        async () => await fs.read(`${testDir}/test.txt`, { config }),
+        async () => await fs.read(`${outsideDir}/test.txt`, { config }),
         SafeShellError,
         "outside allowed directories",
       );
     });
 
     it("validates write operations against sandbox", async () => {
+      // HOME is default-readable but NOT default-writable, so writes there must be rejected
       const config: SafeShellConfig = {
         permissions: {
           read: [testDir],
@@ -325,7 +345,7 @@ describe("fs", () => {
       };
 
       await assertRejects(
-        async () => await fs.write(`${testDir}/new.txt`, "content", { config }),
+        async () => await fs.write(`${outsideDir}/new.txt`, "content", { config }),
         SafeShellError,
         "outside allowed directories",
       );

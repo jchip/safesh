@@ -122,14 +122,17 @@ Deno.test({
 Deno.test({
   name: "validatePath - rejects paths outside projectDir",
   async fn() {
+    // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+    // (with includeHomeInDefaultRead: false so HOME is not default-readable either)
     const projectDir = `${REAL_TMP}/safesh-project-test`;
-    const outsidePath = `${REAL_TMP}/other/file.ts`;
+    const outsidePath = `${Deno.env.get("HOME")}/.safesh-test-projdir-outside/file.ts`;
 
     try {
       await Deno.mkdir(projectDir, { recursive: true });
 
       const config: SafeShellConfig = {
         projectDir,
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [],
           write: [],
