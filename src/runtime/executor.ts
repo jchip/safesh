@@ -25,6 +25,7 @@ import {
   buildErrorHandler,
   buildFilePostamble,
   buildFilePreamble,
+  buildStateTrailerHook,
   buildPreamble,
   extractPreambleConfig,
   extractShellState,
@@ -938,8 +939,11 @@ async function prepareFileExecution(
   const filePreamble = buildFilePreamble(shell, preambleConfig);
   const filePostamble = buildFilePostamble(!!shell);
 
-  // Wrap file code with preamble and postamble
-  const wrappedCode = filePreamble + rewriteDollarApiReferences(fileCode) + filePostamble;
+  // Wrap file code with preamble and postamble. The state-trailer hook
+  // (SSH-580) sits right after the preamble so $ exists; it is a no-op
+  // unless SAFESH_STATE_TRAILER is set in the subprocess env.
+  const wrappedCode = filePreamble + buildStateTrailerHook() +
+    rewriteDollarApiReferences(fileCode) + filePostamble;
 
   // Write wrapped code to temp file
   await ensureDir(TEMP_SCRIPT_DIR);
@@ -1027,6 +1031,11 @@ export async function executeFilePassthrough(
   const { args } = await prepareFileExecution(filePath, config, cwd);
 
   const env = buildEnv(config);
+  if (options.stateTrailer) {
+    // buildEnv applies the config allowlist; the trailer path must reach
+    // the subprocess for the preamble hook to activate (SSH-580)
+    env.SAFESH_STATE_TRAILER = options.stateTrailer;
+  }
 
   if (backgroundSafe) {
     // Backgrounded desh runs must not hand the controlling TTY to the wrapped

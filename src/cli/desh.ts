@@ -600,6 +600,8 @@ OPTIONS:
   -c, --code <code>      Execute inline TypeScript code
                          If no argument, reads from stdin (for heredoc)
   -f, --file <path>      Execute TypeScript file
+  --state-trailer <path> With -f: write a POSIX snippet of the script's
+                         cd/export deltas to <path> on exit (SSH-580)
   -i, --import <path>    Import and execute module
   -p, --project <dir>    Project directory (default: $CLAUDE_PROJECT_DIR or cwd)
   -s, --stream           Stream output in real-time (default for TTY)
@@ -646,7 +648,7 @@ async function main() {
   }
 
   const args = parseArgs(Deno.args, {
-    string: ["code", "file", "import", "config", "project"],
+    string: ["code", "file", "import", "config", "project", "state-trailer"],
     boolean: ["verbose", "help", "version", "api-doc", "stream", "quiet"],
     alias: {
       c: "code",
@@ -786,7 +788,8 @@ async function main() {
     await executeInlineCode(code, config, verbose, stream);
   } else if (hasFile) {
     const filePath = args.file as string;
-    await executeFileCode(filePath, config, verbose, backgroundRewrite);
+    const stateTrailer = args["state-trailer"] as string | undefined;
+    await executeFileCode(filePath, config, verbose, backgroundRewrite, stateTrailer);
   } else if (hasImport) {
     const importPath = args.import as string;
     await executeImportCode(importPath, config, verbose, stream);
@@ -848,11 +851,12 @@ async function executeFileCode(
   config: Awaited<ReturnType<typeof loadConfig>>,
   verbose: boolean,
   backgroundSafe: boolean,
+  stateTrailer?: string,
 ): Promise<void> {
   if (verbose) console.error(`Executing file: ${filePath}`);
 
   try {
-    const result = await executeFilePassthrough(filePath, config, { backgroundSafe });
+    const result = await executeFilePassthrough(filePath, config, { backgroundSafe, stateTrailer });
     Deno.exit(result);
   } catch (error) {
     if (error instanceof SafeShellError) {

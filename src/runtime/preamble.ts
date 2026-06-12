@@ -513,6 +513,56 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
 }
 
 /**
+ * Build the state-trailer hook for file execution (SSH-580).
+ *
+ * When SAFESH_STATE_TRAILER is set, registers an unload listener (so it runs
+ * even through Deno.exit) that writes a POSIX snippet of the script's shell
+ * state deltas — cwd change, env exports, var assignments — to the trailer
+ * path. The bash-prehook rewrites the desh command so the calling shell
+ * sources this snippet afterwards, giving transpiled runs the same state
+ * persistence passthrough commands get from the Bash tool's shell.
+ */
+export function buildStateTrailerHook(): string {
+  return `
+// SafeShell state trailer (SSH-580)
+const __SSH_TRAILER = Deno.env.get("SAFESH_STATE_TRAILER");
+if (__SSH_TRAILER) {
+  const __ssh_quote = (s: unknown) => "'" + String(s).replaceAll("'", "'\\\\''") + "'";
+  const __ssh_name = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  const __ssh_skip = (k: string) => k.startsWith("SAFESH_") || !__ssh_name.test(k);
+  const __ssh_cwd0 = Deno.cwd();
+  // Deno.env captures every export path ($.ENV proxy writes and $.setEnv)
+  const __ssh_env0: Record<string, string> = Deno.env.toObject();
+  const __ssh_vars0: Record<string, unknown> = { ...(globalThis as any).$.VARS };
+  globalThis.addEventListener("unload", () => {
+    try {
+      const lines: string[] = [];
+      const cwd1 = Deno.cwd();
+      if (cwd1 !== __ssh_cwd0) lines.push("cd " + __ssh_quote(cwd1));
+      const env1: Record<string, string> = Deno.env.toObject();
+      for (const [k, v] of Object.entries(env1)) {
+        if (__ssh_env0[k] !== v && !__ssh_skip(k)) {
+          lines.push("export " + k + "=" + __ssh_quote(v));
+        }
+      }
+      const vars1: Record<string, unknown> = { ...(globalThis as any).$.VARS };
+      for (const [k, v] of Object.entries(vars1)) {
+        if (__ssh_vars0[k] !== v && __ssh_name.test(k) && typeof v !== "object") {
+          lines.push(k + "=" + __ssh_quote(v));
+        }
+      }
+      if (lines.length > 0) {
+        Deno.writeTextFileSync(__SSH_TRAILER, lines.join("\\n") + "\\n", { mode: 0o600 });
+      }
+    } catch {
+      // State persistence must never break the run itself
+    }
+  });
+}
+`;
+}
+
+/**
  * Build postamble for file execution that outputs shell state
  * @param hasShell - Whether to output shell state
  */

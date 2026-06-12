@@ -44,6 +44,29 @@ export function getPendingDir(): string {
 }
 
 /**
+ * Get the state-trailer directory path (SSH-580).
+ * Kept 0700: trailer files are sourced by the user's shell, so the
+ * directory must not be writable by other users.
+ */
+export function getTrailersDir(): string {
+  const dir = `${SAFESH_TMP_ROOT}/trailers`;
+  ensureDirSync(dir);
+  try {
+    Deno.chmodSync(dir, 0o700);
+  } catch {
+    // Best effort; sourcing additionally checks file ownership with [ -O ]
+  }
+  return dir;
+}
+
+/**
+ * Generate a state trailer file path (SSH-580)
+ */
+export function getStateTrailerPath(id: string): string {
+  return `${getTrailersDir()}/trailer-${id}.sh`;
+}
+
+/**
  * Generate a unique error log file path
  */
 export function getErrorLogPath(): string {

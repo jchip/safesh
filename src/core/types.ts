@@ -340,6 +340,12 @@ export interface ExecOptions {
   cwd?: string;
   /** Avoid inheriting the controlling TTY when the parent command runs in background */
   backgroundSafe?: boolean;
+  /**
+   * Path for the shell state trailer (SSH-580). When set, the executed
+   * script writes a POSIX snippet of its cwd/env/var deltas here on exit so
+   * the calling shell can apply them.
+   */
+  stateTrailer?: string;
 }
 
 export interface ExecResult {
