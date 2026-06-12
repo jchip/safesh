@@ -245,6 +245,46 @@ export async function validatePaths(
 }
 
 /**
+ * Compute the temp-dir entries for the default read/write lists.
+ *
+ * SSH-586: temp dirs are allowed under both their literal and canonical
+ * forms — on macOS /tmp and /var are symlinks into /private, and the
+ * symlink validator compares resolved paths. The OS per-user temp dir
+ * (macOS: $TMPDIR -> /var/folders/<xx>/<hash>/T; Linux: sometimes
+ * /run/user/<uid>) is /tmp's moral equivalent, so treat it like /tmp.
+ *
+ * Exported for tests; runtime callers use the module-scope snapshot below.
+ */
+export function computeTempDirDefaults(tmpdir: string | undefined): string[] {
+  const dirs: string[] = [];
+  const push = (dir: string) => {
+    dirs.push(dir);
+    try {
+      const real = Deno.realPathSync(dir);
+      if (real !== dir) {
+        dirs.push(real);
+      }
+    } catch {
+      // dir may not exist; the literal entry alone is fine then
+    }
+  };
+  push("/tmp");
+  const osTmp = tmpdir?.replace(/\/+$/, "");
+  if (osTmp && osTmp !== "/tmp" && osTmp !== "/private/tmp") {
+    push(osTmp);
+  }
+  return dirs;
+}
+
+// SSH-591: snapshotted once at startup — $TMPDIR is attacker-influenced
+// (exports persist across commands since SSH-580), so later env mutation
+// must not widen the sandbox, and the per-validation hot path must not
+// repeat realpath syscalls.
+const TEMP_DIR_DEFAULTS: readonly string[] = computeTempDirDefaults(
+  Deno.env.get("TMPDIR"),
+);
+
+/**
  * Get effective permissions by merging defaults with config
  *
  * IMPORTANT: Write permissions are based on projectDir, not cwd.
@@ -258,40 +298,16 @@ export function getEffectivePermissions(
 ): PermissionsConfig {
   const perms = config.permissions ?? {};
 
-  // Default read includes cwd, /tmp, and optionally home directory (read is less dangerous)
-  // Default write is ONLY /tmp - projectDir must be explicitly enabled
+  // Default read includes cwd, temp dirs, and optionally home directory
+  // (read is less dangerous). Default write is ONLY the temp dirs -
+  // projectDir must be explicitly enabled.
   const home = Deno.env.get("HOME");
-  const defaultRead = [cwd, "/tmp"];
+  const defaultRead = [cwd, ...TEMP_DIR_DEFAULTS];
   // Include HOME in default read paths unless explicitly disabled (default: true)
   if (home && config.includeHomeInDefaultRead !== false) {
     defaultRead.push(home);
   }
-  const defaultWrite = ["/tmp"];
-  // SSH-586: temp dirs are allowed under both their literal and canonical
-  // forms — on macOS /tmp and /var are symlinks into /private, and the
-  // symlink validator compares resolved paths.
-  const pushTempDir = (dir: string) => {
-    defaultRead.push(dir);
-    defaultWrite.push(dir);
-    try {
-      const real = Deno.realPathSync(dir);
-      if (real !== dir) {
-        defaultRead.push(real);
-        defaultWrite.push(real);
-      }
-    } catch {
-      // dir may not exist; the literal entry alone is fine then
-    }
-  };
-  pushTempDir("/tmp");
-  // SSH-586: the OS per-user temp dir is /tmp's moral equivalent but a
-  // different path (macOS: $TMPDIR -> /var/folders/<xx>/<hash>/T; Linux:
-  // sometimes /run/user/<uid>). Tools keep runtime state there, so treat it
-  // like /tmp.
-  const osTmp = Deno.env.get("TMPDIR")?.replace(/\/+$/, "");
-  if (osTmp && osTmp !== "/tmp" && osTmp !== "/private/tmp") {
-    pushTempDir(osTmp);
-  }
+  const defaultWrite = [...TEMP_DIR_DEFAULTS];
   const workspaceDir = config.workspaceDir ? resolveWorkspace(config.workspaceDir) : undefined;
   if (workspaceDir) {
     defaultRead.push(workspaceDir);
