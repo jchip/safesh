@@ -16,7 +16,7 @@ function safeString(v: any): string {
  * between the runtime functions and the generated inline error handler code.
  */
 
-import { getTempRoot } from "./temp.ts";
+import { getPendingDir, getPendingPathFilePath, getTempRoot } from "./temp.ts";
 import { getErrorLogPath } from "./temp.ts";
 import type { PendingPathRequest } from "./pending.ts";
 import { writeJsonFileSync } from "./io-utils.ts";
@@ -197,7 +197,7 @@ export function handlePathViolationAndExit(
 
   // Create pending path request
   const pendingId = `${Date.now()}-${Deno.pid}`;
-  const pendingFile = `${getTempRoot()}/pending-path-${pendingId}.json`;
+  const pendingFile = getPendingPathFilePath(pendingId);
   const pending: PendingPathRequest = {
     id: pendingId,
     path: violation.path,
@@ -381,7 +381,7 @@ ${msgChecks}
 
     const operation = errorMessage.includes("${WRITE_ACCESS_MESSAGE}") ? "write" : "read";
     const pendingId = \`\${Date.now()}-\${Deno.pid}\`;
-    const pendingFile = \`${getTempRoot()}/pending-path-\${pendingId}.json\`;
+    const pendingFile = \`${getPendingDir()}/pending-path-\${pendingId}.json\`;
     const pending = {
       id: pendingId,
       path: path,
@@ -396,7 +396,7 @@ ${msgChecks}
     };
 
     try {
-      try { Deno.mkdirSync(\`${getTempRoot()}\`, { recursive: true }); } catch {}
+      try { Deno.mkdirSync(\`${getPendingDir()}\`, { recursive: true }); } catch {}
       Deno.writeTextFileSync(pendingFile, JSON.stringify(pending, null, 2));
     } catch (e) {
       console.error("Warning: Could not write pending path file:", e);

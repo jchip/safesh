@@ -6,6 +6,7 @@
 
 import { assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
+import { getPendingPathFilePath } from "./temp.ts";
 import {
   createErrorHandler,
   detectPathViolation,
@@ -299,6 +300,19 @@ describe("error-handlers", () => {
       assertMatch(code, /Allow for session/);
       assertMatch(code, /Always allow/);
       assertMatch(code, /desh retry-path/);
+    });
+
+    it("writes pending-path files where retry-path reads them (SSH-569)", () => {
+      const code = generateInlineErrorHandler({
+        prefix: "Test Error",
+      }, false);
+
+      // The inline handler must write to the same directory that
+      // readPendingPath/getPendingPathFilePath resolves, or every
+      // `desh retry-path` fails with "Pending path request not found".
+      const expectedDir = getPendingPathFilePath("X").replace("/pending-path-X.json", "");
+      assertEquals(code.includes(`${expectedDir}/pending-path-`), true);
+      assertEquals(code.includes(`Deno.mkdirSync(\`${expectedDir}\``), true);
     });
 
     it("includes command when includeCommand is true", () => {
