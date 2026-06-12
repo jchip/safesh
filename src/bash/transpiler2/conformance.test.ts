@@ -812,6 +812,57 @@ describe("Conformance - Exit Status (SSH-581)", () => {
   });
 });
 
+// =============================================================================
+// Pipeline Negation Conformance Tests (SSH-594)
+// =============================================================================
+
+describe("Conformance - Pipeline Negation (SSH-594)", () => {
+  async function assertExitCodeMatches(script: string) {
+    const { bashResult, tsResult } = await compareExecution(script, {
+      compareStdout: false,
+      compareExitCode: true,
+    });
+    assertEquals(tsResult.code, bashResult.code);
+  }
+
+  async function assertStdoutAndExitCodeMatch(script: string, expectedStdout: string) {
+    const { bashResult, tsResult } = await compareExecution(script, {
+      compareExitCode: true,
+    });
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, expectedStdout);
+    assertEquals(tsResult.code, bashResult.code);
+  }
+
+  it("should exit zero for a negated failing command", async () => {
+    await assertExitCodeMatches("! false");
+  });
+
+  it("should exit nonzero for a negated succeeding command", async () => {
+    await assertExitCodeMatches("! true");
+  });
+
+  it("should expand $? to 0 after ! false", async () => {
+    await assertStdoutAndExitCodeMatch("! false\necho $?", "0");
+  });
+
+  it("should expand $? to 1 after ! true", async () => {
+    await assertStdoutAndExitCodeMatch("! true\necho $?", "1");
+  });
+
+  it("should negate a builtin's status", async () => {
+    await assertStdoutAndExitCodeMatch("! echo hi\necho $?", "hi\n1");
+  });
+
+  it("should negate a test builtin's status", async () => {
+    await assertStdoutAndExitCodeMatch("! test -f /nonexistent/path\necho $?", "0");
+  });
+
+  it("should run the right side of && after a negated failure", async () => {
+    await assertStdoutAndExitCodeMatch("! false && echo yes", "yes");
+  });
+});
+
 describe("Conformance - Indirect Variable Reference (SSH-330)", () => {
   it("should handle simple indirect reference ${!ref}", async () => {
     const script = `

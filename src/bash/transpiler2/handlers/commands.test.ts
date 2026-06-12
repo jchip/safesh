@@ -472,3 +472,51 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
     });
   });
 });
+
+describe("Pipeline negation (SSH-594)", () => {
+  const STATUS_FLIP = "__recStatus(Deno.exitCode === 0 ? 1 : 0);";
+
+  it("should flip the recorded status for a negated subprocess command", () => {
+    const output = transpile(parse("! false"));
+    assertStringIncludes(output, '__printCmd($.cmd("false"))');
+    assertStringIncludes(output, STATUS_FLIP);
+  });
+
+  it("should flip the recorded status for a negated builtin", () => {
+    const output = transpile(parse("! echo hi"));
+    assertStringIncludes(output, '$.echo("hi")');
+    assertStringIncludes(output, STATUS_FLIP);
+  });
+
+  it("should flip the recorded status for a negated fluent command", () => {
+    const output = transpile(parse("! grep nomatch file.txt"));
+    assertStringIncludes(output, '$.cat("file.txt").lines().grep(/nomatch/)');
+    assertStringIncludes(output, STATUS_FLIP);
+  });
+
+  it("should flip the recorded status for a negated brace group", () => {
+    const output = transpile(parse("! { false; }"));
+    assertStringIncludes(output, '$.cmd("false")');
+    assertStringIncludes(output, STATUS_FLIP);
+  });
+
+  it("should not flip the status for non-negated commands", () => {
+    const output = transpile(parse("false"));
+    assertEquals(output.includes(STATUS_FLIP), false);
+  });
+
+  it("should not emit .negate() for negated pipe chains (no runtime support)", () => {
+    const output = transpile(parse("! true | grep x"));
+    assertEquals(output.includes(".negate()"), false);
+    assertStringIncludes(output, "__captureCmd");
+    assertStringIncludes(output, "__code === 0 ? 1 : 0");
+  });
+
+  it("should negate only the first operand of a && chain", () => {
+    const output = transpile(parse("! false && echo yes"));
+    assertEquals(output.includes(".negate()"), false);
+    // The flip wrapper applies to `false`, not the whole chain
+    assertStringIncludes(output, '__captureCmd($.cmd("false"))');
+    assertStringIncludes(output, "__code === 0 ? 1 : 0");
+  });
+});
