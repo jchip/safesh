@@ -37,7 +37,9 @@ describe("passthrough-analyzer", () => {
     });
 
     it("accepts control flow with analyzable bodies", () => {
-      const result = analyze("for f in $(ls); do wc -l $f; done");
+      // "$f" stays quoted: unquoted loop variables word-split under bash
+      // but not zsh, so they force fallback (SSH-579)
+      const result = analyze('for f in $(ls); do wc -l "$f"; done');
       assertEquals(result.eligible, true, result.reasons.join("; "));
       assert(result.commands.has("ls"));
       assert(result.commands.has("wc"));
@@ -90,6 +92,52 @@ describe("passthrough-analyzer", () => {
 
       const nested = analyze("echo $(dd if=/dev/zero of=x)", { blockedCommands: blocked });
       assertEquals(nested.eligible, false, "dangerous command inside cmdsub must be caught");
+    });
+  });
+
+  describe("zsh hazards (SSH-579)", () => {
+    it("rejects unquoted words starting with = (zsh =-expansion)", () => {
+      const result = analyze("echo ===");
+      assertEquals(result.eligible, false);
+      assert(result.reasons.some((r) => r.includes("=-expansion")));
+    });
+
+    it("accepts quoted = words", () => {
+      const result = analyze("echo '==='");
+      assertEquals(result.eligible, true, result.reasons.join("; "));
+    });
+
+    it("collects glob patterns for match verification", () => {
+      const result = analyze("wc -l src/*.ts tests/*.ts");
+      assertEquals(result.eligible, true, result.reasons.join("; "));
+      assertEquals(result.globs.sort(), ["src/*.ts", "tests/*.ts"]);
+    });
+
+    it("rejects unquoted expansions that would word-split", () => {
+      const result = analyze('FLAGS="-l -a"\nls $FLAGS');
+      assertEquals(result.eligible, false);
+      assert(result.reasons.some((r) => r.includes("word-split")));
+    });
+
+    it("accepts unquoted expansions with safe static values", () => {
+      const result = analyze("DIR=src\nls $DIR");
+      assertEquals(result.eligible, true, result.reasons.join("; "));
+    });
+
+    it("accepts quoted expansions regardless of value", () => {
+      const result = analyze('FLAGS="-l -a"\nls "$FLAGS"');
+      assertEquals(result.eligible, true, result.reasons.join("; "));
+    });
+
+    it("rejects unresolvable unquoted expansions in arguments", () => {
+      const result = analyze("ls $TOTALLY_UNSET_VAR_XYZ");
+      assertEquals(result.eligible, false);
+      assert(result.reasons.some((r) => r.includes("not statically resolvable")));
+    });
+
+    it("rejects unquoted loop variables in command arguments", () => {
+      const result = analyze("for f in $(ls); do wc -l $f; done");
+      assertEquals(result.eligible, false);
     });
   });
 

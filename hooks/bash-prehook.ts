@@ -51,6 +51,7 @@ import {
   type PassthroughAnalysis,
 } from "../src/hooks/passthrough-analyzer.ts";
 import { validatePath } from "../src/core/permissions.ts";
+import { expandGlob } from "@std/fs";
 
 // =============================================================================
 // Configuration
@@ -812,7 +813,27 @@ async function isPassthroughPermitted(
     }
   }
 
+  // SSH-579: a non-matching glob is passed through literally by bash but
+  // aborts the whole command under zsh — only pass through globs that match.
+  for (const pattern of analysis.globs) {
+    if (!(await globHasMatch(pattern, cwd))) {
+      debug(`Passthrough denied, glob has no match: ${pattern}`);
+      return false;
+    }
+  }
+
   return true;
+}
+
+async function globHasMatch(pattern: string, cwd: string): Promise<boolean> {
+  try {
+    for await (const _entry of expandGlob(pattern, { root: cwd })) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /**

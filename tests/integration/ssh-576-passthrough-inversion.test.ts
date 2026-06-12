@@ -184,6 +184,34 @@ describe("SSH-576 passthrough inversion", () => {
     });
   });
 
+  it("passes through matching globs but falls back on non-matching ones (SSH-579)", async () => {
+    await withTestDir("ssh579-globs", async (projectDir) => {
+      await setupProject(projectDir);
+
+      const matching = await runBashPrehook("wc -l *.txt", projectDir);
+      assertPassthrough(matching, "matching glob");
+
+      const nonMatching = await runBashPrehook("wc -l *.nomatch-ext", projectDir);
+      assertRewriteToDesh(nonMatching, "non-matching glob");
+    });
+  });
+
+  it("falls back on zsh =-expansion hazards (SSH-579)", async () => {
+    await withTestDir("ssh579-equals", async (projectDir) => {
+      await setupProject(projectDir);
+      const result = await runBashPrehook("echo ===", projectDir);
+      assertRewriteToDesh(result, "=-expansion hazard");
+    });
+  });
+
+  it("falls back on word-splitting expansions (SSH-579)", async () => {
+    await withTestDir("ssh579-split", async (projectDir) => {
+      await setupProject(projectDir);
+      const result = await runBashPrehook('FLAGS="-l -a"\nls $FLAGS', projectDir);
+      assertRewriteToDesh(result, "word-splitting expansion");
+    });
+  });
+
   it("honors passthroughAnalyzable: false", async () => {
     await withTestDir("ssh576-config-off", async (projectDir) => {
       await setupProject(projectDir);
