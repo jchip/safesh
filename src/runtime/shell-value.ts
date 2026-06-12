@@ -268,10 +268,30 @@ export async function commandSubstitutionText(
   value: unknown,
   setPipeStatus: SetPipeStatus = noopSetPipeStatus,
 ): Promise<string> {
+  // SSH-595: command-ish shapes go through captureShellValue so the real
+  // exit status reaches $? — bash gives $(cmd) the command's status, and a
+  // fluent-lowered pipeline (grep/sort/wc as transforms) reports a nonzero
+  // status only via its exit chunk / getEmptyExitCode.
+  if (isStreamCommand(value) || isAsyncIterable(value)) {
+    const result = await captureShellValue(value, setPipeStatus);
+    return result.stdout.replace(/\n+$/, "");
+  }
+
   const resolved = await Promise.resolve(value);
+
+  if (isStreamCommand(resolved) || isAsyncIterable(resolved)) {
+    const result = await captureShellValue(resolved, setPipeStatus);
+    return result.stdout.replace(/\n+$/, "");
+  }
 
   if (resolved === undefined || resolved === null) {
     setPipeStatus(undefined, 0);
+    return "";
+  }
+  if (typeof resolved === "boolean") {
+    // A builtin realized as a bare boolean: bash-wise it printed nothing and
+    // its status is the truth value
+    setPipeStatus(undefined, resolved ? 0 : 1);
     return "";
   }
   if (Array.isArray(resolved)) {
@@ -279,6 +299,7 @@ export async function commandSubstitutionText(
     return resolved.join("\n").replace(/\n+$/, "");
   }
   if (hasFunction(resolved, "text")) {
+    // No status channel on a bare text() carrier
     const text = String(await resolved.text()).replace(/\n+$/, "");
     setPipeStatus(undefined, 0);
     return text;
