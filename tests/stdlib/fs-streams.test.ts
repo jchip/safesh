@@ -59,19 +59,32 @@ describe("fs-streams (SSH-194)", () => {
     });
 
     it("respects sandbox permissions", async () => {
-      await Deno.writeTextFile(`${testDir}/restricted.txt`, "content");
+      // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+      // (with includeHomeInDefaultRead: false so HOME is not default-readable either)
+      const outsideDir = `${Deno.env.get("HOME")}/.safesh-test-fs-streams-outside`;
+      await Deno.mkdir(outsideDir, { recursive: true });
+      await Deno.writeTextFile(`${outsideDir}/restricted.txt`, "content");
 
       const config: SafeShellConfig = {
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [`${REAL_TMP}/other-dir`],
           write: [],
         },
       };
 
-      await assertRejects(
-        async () => await cat(`${testDir}/restricted.txt`, { config }).collect(),
-        SafeShellError,
-      );
+      try {
+        await assertRejects(
+          async () => await cat(`${outsideDir}/restricted.txt`, { config }).collect(),
+          SafeShellError,
+        );
+      } finally {
+        try {
+          await Deno.remove(outsideDir, { recursive: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
     });
   });
 
@@ -250,6 +263,9 @@ describe("fs-streams (SSH-194)", () => {
     });
 
     it("validates write permissions", async () => {
+      // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+      // (HOME is default-readable but NOT default-writable, so writes there must be rejected)
+      const outsideDest = `${Deno.env.get("HOME")}/.safesh-test-fs-streams-dest`;
       const config: SafeShellConfig = {
         permissions: {
           read: [testDir],
@@ -257,15 +273,23 @@ describe("fs-streams (SSH-194)", () => {
         },
       };
 
-      await assertRejects(
-        async () => {
-          await glob("*.txt", { cwd: `${testDir}/src` })
-            .getStream()
-            .pipe(dest(`${testDir}/dist`, { config }))
-            .forEach(() => {});
-        },
-        SafeShellError,
-      );
+      try {
+        await assertRejects(
+          async () => {
+            await glob("*.txt", { cwd: `${testDir}/src` })
+              .getStream()
+              .pipe(dest(outsideDest, { config }))
+              .forEach(() => {});
+          },
+          SafeShellError,
+        );
+      } finally {
+        try {
+          await Deno.remove(outsideDest, { recursive: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
     });
 
     it("transforms file contents before writing", async () => {

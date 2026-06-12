@@ -6,7 +6,7 @@
 
 import { resolve, isAbsolute } from "@std/path";
 import type { PermissionsConfig, SafeShellConfig } from "./types.ts";
-import { pathViolation, symlinkViolation } from "./errors.ts";
+import { pathDenied, pathViolation, symlinkViolation } from "./errors.ts";
 import { getRealPathAsync } from "./utils.ts";
 import { isPathWithin } from "./path-utils.ts";
 import { normalizeWorkspaceRoots } from "./project-root.ts";
@@ -180,6 +180,19 @@ export async function validatePath(
   // Resolve symlinks to get real path
   const realPath = await getRealPathAsync(absolutePath);
 
+  const effectivePerms = getEffectivePermissions(config, cwd);
+
+  // SSH-588: deny lists win over every allow source, including workspace
+  // roots and the temp-dir defaults. Deno's --deny-* flags only protect
+  // subprocesses; this check is the only gate for in-process callers and the
+  // prehook's passthrough decision.
+  const denyPaths = operation === "write"
+    ? (effectivePerms.denyWrite ?? [])
+    : (effectivePerms.denyRead ?? []);
+  if (denyPaths.length > 0 && isPathAllowed(realPath, denyPaths, cwd, workspace)) {
+    throw pathDenied(requestedPath, realPath, operation);
+  }
+
   const workspaceRoots = getWorkspaceRoots(config);
 
   // Top-level roots get full read access, and write access unless blockProjectDirWrite is true
@@ -195,7 +208,6 @@ export async function validatePath(
   }
 
   // Get allowed paths for this operation (using effective permissions with defaults)
-  const effectivePerms = getEffectivePermissions(config, cwd);
   const allowedPaths = operation === "write"
     ? (effectivePerms.write ?? [])
     : (effectivePerms.read ?? []);
@@ -207,7 +219,6 @@ export async function validatePath(
   const expandedAllowed = expandPaths(allowedPaths, cwd, workspace);
 
   // Check if real path is within allowed directories
-  // Note: deny paths are enforced by Deno's --deny-read/--deny-write flags
   if (!isPathAllowed(realPath, allowedPaths, cwd, workspace)) {
     if (realPath !== absolutePath) {
       // Symlink resolved to a different location

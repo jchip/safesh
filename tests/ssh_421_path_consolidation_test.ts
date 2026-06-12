@@ -23,20 +23,24 @@ import { REAL_TMP } from "./helpers.ts";
 Deno.test({
   name: "validatePath - always resolves symlinks even without explicit permissions",
   async fn() {
+    // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+    // (with includeHomeInDefaultRead: false so HOME is not default-readable either)
     const testDir = `${REAL_TMP}/safesh-test-ssh421-symlink`;
     const allowedDir = `${testDir}/allowed`;
-    const outsideFile = `${testDir}/outside/secret.txt`;
+    const outsideDir = `${Deno.env.get("HOME")}/.safesh-test-ssh421-symlink-outside`;
+    const outsideFile = `${outsideDir}/secret.txt`;
     const symlinkPath = `${allowedDir}/link.txt`;
 
     try {
       await Deno.mkdir(`${testDir}/allowed`, { recursive: true });
-      await Deno.mkdir(`${testDir}/outside`, { recursive: true });
+      await Deno.mkdir(outsideDir, { recursive: true });
       await Deno.writeTextFile(outsideFile, "secret data");
       await Deno.symlink(outsideFile, symlinkPath);
 
       // Config with NO explicit permissions - should still catch symlink attack
       const config: SafeShellConfig = {
         projectDir: allowedDir,
+        includeHomeInDefaultRead: false,
       };
 
       // Should reject because symlink points outside projectDir
@@ -48,6 +52,11 @@ Deno.test({
     } finally {
       try {
         await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+      try {
+        await Deno.remove(outsideDir, { recursive: true });
       } catch {
         // Ignore cleanup errors
       }
@@ -126,11 +135,11 @@ Deno.test({
       const readPath = await validatePath(`${testDir}/read.txt`, config, testDir, "read");
       assertEquals(readPath, `${testDir}/read.txt`);
 
-      // Write should fail
+      // Write should fail (SSH-588: deny lists win over allows in validatePath)
       await assertRejects(
         () => validatePath(`${testDir}/write.txt`, config, testDir, "write"),
         SafeShellError,
-        "outside allowed directories",
+        "deny-write",
       );
     } finally {
       try {
@@ -174,10 +183,12 @@ Deno.test({
 Deno.test({
   name: "validatePath - workspaceRoots allow multiple top-level roots and reject outside paths",
   async fn() {
+    // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+    // (with includeHomeInDefaultRead: false so HOME is not default-readable either)
     const testDir = `${REAL_TMP}/safesh-test-ssh421-workspace-roots`;
     const rootA = `${testDir}/root-a`;
     const rootB = `${testDir}/root-b`;
-    const outside = `${testDir}/outside`;
+    const outside = `${Deno.env.get("HOME")}/.safesh-test-ssh421-workspace-outside`;
 
     try {
       await Deno.mkdir(rootA, { recursive: true });
@@ -187,6 +198,7 @@ Deno.test({
       const config: SafeShellConfig = {
         projectDir: rootA,
         workspaceRoots: [rootA, rootB],
+        includeHomeInDefaultRead: false,
       };
 
       const rootAPath = await validatePath(`${rootA}/read.txt`, config, rootA, "read");
@@ -203,6 +215,11 @@ Deno.test({
     } finally {
       try {
         await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+      try {
+        await Deno.remove(outside, { recursive: true });
       } catch {
         // Ignore cleanup errors
       }
@@ -246,12 +263,15 @@ Deno.test({
 Deno.test({
   name: "validatePath - blocks path traversal with multiple ../",
   async fn() {
-    const testDir = `${REAL_TMP}/safesh-test-ssh421-traversal`;
+    // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+    // (with includeHomeInDefaultRead: false the traversal escape target under HOME stays denied)
+    const testDir = `${Deno.env.get("HOME")}/.safesh-test-ssh421-traversal`;
 
     try {
       await Deno.mkdir(`${testDir}/allowed/deep/nested`, { recursive: true });
 
       const config: SafeShellConfig = {
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [`${testDir}/allowed`],
         },
@@ -281,12 +301,15 @@ Deno.test({
 Deno.test({
   name: "validatePath - blocks path traversal with mixed / and ..",
   async fn() {
-    const testDir = `${REAL_TMP}/safesh-test-ssh421-mixed`;
+    // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+    // (with includeHomeInDefaultRead: false the traversal escape target under HOME stays denied)
+    const testDir = `${Deno.env.get("HOME")}/.safesh-test-ssh421-mixed`;
 
     try {
       await Deno.mkdir(`${testDir}/allowed`, { recursive: true });
 
       const config: SafeShellConfig = {
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [`${testDir}/allowed`],
         },
@@ -320,15 +343,18 @@ Deno.test({
 Deno.test({
   name: "validatePath - detects symlink chains pointing outside sandbox",
   async fn() {
+    // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+    // (with includeHomeInDefaultRead: false so HOME is not default-readable either)
     const testDir = `${REAL_TMP}/safesh-test-ssh421-chain`;
     const allowedDir = `${testDir}/allowed`;
-    const outsideFile = `${testDir}/outside/secret.txt`;
+    const outsideDir = `${Deno.env.get("HOME")}/.safesh-test-ssh421-chain-outside`;
+    const outsideFile = `${outsideDir}/secret.txt`;
     const link1 = `${allowedDir}/link1.txt`;
     const link2 = `${allowedDir}/link2.txt`;
 
     try {
       await Deno.mkdir(`${testDir}/allowed`, { recursive: true });
-      await Deno.mkdir(`${testDir}/outside`, { recursive: true });
+      await Deno.mkdir(outsideDir, { recursive: true });
       await Deno.writeTextFile(outsideFile, "secret data");
 
       // Create chain: link2 -> link1 -> outsideFile
@@ -336,6 +362,7 @@ Deno.test({
       await Deno.symlink(link1, link2);
 
       const config: SafeShellConfig = {
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [allowedDir],
         },
@@ -350,6 +377,11 @@ Deno.test({
     } finally {
       try {
         await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+      try {
+        await Deno.remove(outsideDir, { recursive: true });
       } catch {
         // Ignore cleanup errors
       }

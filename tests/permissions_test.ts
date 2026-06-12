@@ -107,18 +107,22 @@ Deno.test({
   name: "validatePath - rejects symlink pointing outside sandbox",
   async fn() {
     // Setup: create a symlink in allowed dir pointing to disallowed location
+    // SSH-586: /tmp + $TMPDIR (and canonical forms) are default-allowed; outside-fixture lives under HOME
+    // (with includeHomeInDefaultRead: false so HOME is not default-readable either)
     const testDir = "/tmp/safesh-test-symlink";
     const allowedDir = `${testDir}/allowed`;
-    const outsideFile = `${testDir}/outside/secret.txt`;
+    const outsideDir = `${Deno.env.get("HOME")}/.safesh-test-symlink-outside`;
+    const outsideFile = `${outsideDir}/secret.txt`;
     const symlinkPath = `${allowedDir}/link.txt`;
 
     try {
       await Deno.mkdir(`${testDir}/allowed`, { recursive: true });
-      await Deno.mkdir(`${testDir}/outside`, { recursive: true });
+      await Deno.mkdir(outsideDir, { recursive: true });
       await Deno.writeTextFile(outsideFile, "secret data");
       await Deno.symlink(outsideFile, symlinkPath);
 
       const config: SafeShellConfig = {
+        includeHomeInDefaultRead: false,
         permissions: {
           read: [allowedDir],
         },
@@ -133,6 +137,11 @@ Deno.test({
       // Cleanup
       try {
         await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+      try {
+        await Deno.remove(outsideDir, { recursive: true });
       } catch {
         // Ignore cleanup errors
       }

@@ -17,6 +17,7 @@ export type ErrorCode =
   | "SUBCOMMAND_NOT_ALLOWED"
   | "FLAG_NOT_ALLOWED"
   | "PATH_VIOLATION"
+  | "PATH_DENIED"
   | "SYMLINK_VIOLATION"
   | "TIMEOUT"
   | "EXECUTION_ERROR"
@@ -140,6 +141,22 @@ export function pathViolation(
     msg,
     { path, realPath, allowed },
     `Allowed directories: ${allowed.join(", ")}`,
+  );
+}
+
+export function pathDenied(
+  path: string,
+  realPath: string,
+  operation: "read" | "write",
+): SafeShellError {
+  const msg = realPath !== path
+    ? `Path '${path}' resolves to '${realPath}' which is in the deny-${operation} list`
+    : `Path '${path}' is in the deny-${operation} list`;
+  return new SafeShellError(
+    "PATH_DENIED",
+    msg,
+    { path, realPath },
+    "Denied paths take precedence over allowed directories",
   );
 }
 
