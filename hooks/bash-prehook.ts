@@ -1516,7 +1516,20 @@ ${tsCode}
     // substitutions), and redirect/cd targets pass workspace path checks,
     // hand the original command to native bash instead of transpiling.
     if (config.passthroughAnalyzable !== false && disallowed.length === 0) {
-      const analysis = analyzeForPassthrough(ast, {
+      // SSH-585: optional mvdan/sh front-end for the analysis only; the
+      // legacy AST keeps driving detection and transpilation. On any mvdan
+      // failure the legacy AST is the fallback.
+      let analysisAst = ast;
+      if (config.parserFrontend === "mvdan") {
+        try {
+          const { parseWithMvdan } = await import("../src/bash/mvdan/adapter.ts");
+          analysisAst = parseWithMvdan(parsed.command);
+          debug("Passthrough analysis using mvdan front-end (SSH-585)");
+        } catch (mvdanError) {
+          debug(`mvdan front-end failed, using legacy AST: ${mvdanError}`);
+        }
+      }
+      const analysis = analyzeForPassthrough(analysisAst, {
         blockedCommands: DANGEROUS_COMMANDS,
       });
       if (analysis.eligible) {
