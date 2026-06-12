@@ -955,12 +955,31 @@ const PASSTHROUGH_COMMANDS = [
 ];
 
 /**
+ * Strip leading NAME=value assignment words so the command word itself decides
+ * passthrough (SSH-570): `TMPDIR=/tmp desh retry-path ...` must be recognized
+ * as desh — otherwise the retry command for a blocked command is itself
+ * blocked and the permission prompt recurses. Detection only; the original
+ * command line is what passes through to bash.
+ */
+const ASSIGNMENT_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*\+?=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"]+)*\s+/;
+
+export function stripLeadingAssignments(command: string): string {
+  let rest = command;
+  while (true) {
+    const next = rest.replace(ASSIGNMENT_PREFIX, "");
+    if (next === rest) return rest;
+    rest = next;
+  }
+}
+
+/**
  * Check if command should pass through to native bash
  */
-function shouldPassthrough(command: string): boolean {
+export function shouldPassthrough(command: string): boolean {
   const trimmed = command.trim();
+  const withoutAssignments = stripLeadingAssignments(trimmed);
   for (const pattern of PASSTHROUGH_COMMANDS) {
-    if (pattern.test(trimmed)) {
+    if (pattern.test(trimmed) || pattern.test(withoutAssignments)) {
       debug(`Passthrough command detected: ${trimmed}`);
       return true;
     }
