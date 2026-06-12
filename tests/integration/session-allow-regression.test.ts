@@ -190,7 +190,12 @@ describe("SSH-378 session-allow regression", { sanitizeResources: false, sanitiz
 
     assertEquals(output.code, 0, `stdout=${stdout} stderr=${stderr}`);
     assert(!stdout.includes("[SAFESH] BLOCKED"), `should not block: ${stdout}`);
-    assert(stdout.includes('permissionDecision":"allow'), `should allow/rewrite: ${stdout}`);
+    // SSH-576: an allowed command may pass through to native bash (empty
+    // hook output) instead of being rewritten to desh.
+    assert(
+      stdout === "" || stdout.includes('permissionDecision":"allow'),
+      `should allow (passthrough or rewrite): ${stdout}`,
+    );
   });
 
   it("choice 3 command allow is visible from canonical repo and worktree roots", async () => {

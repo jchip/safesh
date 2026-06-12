@@ -145,6 +145,16 @@ export interface SafeShellConfig {
   alwaysTranspile?: boolean;
 
   /**
+   * Allow statically-analyzable commands to pass through to native bash
+   * even when alwaysTranspile is set (SSH-576). A command passes through
+   * only when every command it can execute is statically enumerable AND
+   * allowed, and its redirect/cd targets pass workspace path checks.
+   * Set to false to force the transpile pipeline for everything.
+   * Default: true.
+   */
+  passthroughAnalyzable?: boolean;
+
+  /**
    * Project temp directory configuration for $.tempdir().
    * - true (default): Use projectDir/.temp/<shellId>
    * - false: Use system /tmp/<shellId>

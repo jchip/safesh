@@ -90,9 +90,10 @@ describe("SSH-83 bash-prehook variable command expansion", () => {
         !result.stdout.includes("[SAFESH] BLOCKED: $TOOL"),
         `should not block unresolved $TOOL: ${result.stdout}`,
       );
+      // SSH-576: allowed analyzable commands pass through (empty output)
       assert(
-        result.stdout.includes('permissionDecision":"allow'),
-        `should allow/rewrite: ${result.stdout}`,
+        result.stdout === "" || result.stdout.includes('permissionDecision":"allow'),
+        `should allow (passthrough or rewrite): ${result.stdout}`,
       );
     });
   });
@@ -115,9 +116,10 @@ describe("SSH-83 bash-prehook variable command expansion", () => {
         !result.stdout.includes("[SAFESH] BLOCKED: $TOOL"),
         `should not block unresolved $TOOL: ${result.stdout}`,
       );
+      // SSH-576: allowed analyzable commands pass through (empty output)
       assert(
-        result.stdout.includes('permissionDecision":"allow'),
-        `should allow/rewrite: ${result.stdout}`,
+        result.stdout === "" || result.stdout.includes('permissionDecision":"allow'),
+        `should allow (passthrough or rewrite): ${result.stdout}`,
       );
     });
   });

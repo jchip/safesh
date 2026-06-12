@@ -46,6 +46,11 @@ import { getSessionAllowedCommands } from "../src/core/session.ts";
 import { generateInlineErrorHandler, logExecutionError } from "../src/core/error-handlers.ts";
 import { readStdinFully } from "../src/core/io-utils.ts";
 import { detectHybridCommand, detectTypeScript, SAFESH_SIGNATURE } from "../src/hooks/detection.ts";
+import {
+  analyzeForPassthrough,
+  type PassthroughAnalysis,
+} from "../src/hooks/passthrough-analyzer.ts";
+import { validatePath } from "../src/core/permissions.ts";
 
 // =============================================================================
 // Configuration
@@ -771,6 +776,46 @@ async function getDisallowedCommands(
 }
 
 /**
+ * SSH-576: Final permission gate for passthrough inversion.
+ *
+ * The analyzer's command set is sound (covers command substitutions and
+ * other nesting the legacy extractor misses), so any names it found beyond
+ * the already-checked set get the same permission check, and every static
+ * redirect/cd target must pass the canonical workspace path validation the
+ * runtime would have applied.
+ */
+async function isPassthroughPermitted(
+  analysis: PassthroughAnalysis,
+  alreadyChecked: Set<string>,
+  config: SafeShellConfig,
+  cwd: string,
+): Promise<boolean> {
+  const extra = new Set(
+    [...analysis.commands].filter(
+      (cmd) => !BUILTIN_COMMANDS.has(cmd) && !alreadyChecked.has(cmd),
+    ),
+  );
+  if (extra.size > 0) {
+    const extraDisallowed = await getDisallowedCommands(extra, config, cwd);
+    if (extraDisallowed.length > 0) {
+      debug(`Passthrough denied, nested commands disallowed: ${extraDisallowed.join(", ")}`);
+      return false;
+    }
+  }
+
+  for (const target of analysis.redirects) {
+    try {
+      await validatePath(target.path, config, cwd, target.operation);
+    } catch {
+      debug(`Passthrough denied, path outside roots: ${target.path} (${target.operation})`);
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * Generic Hook Input format (Claude Code / Gemini CLI)
  * Supports both snake_case (Claude) and camelCase (Gemini potential)
  */
@@ -1427,6 +1472,25 @@ ${tsCode}
 
     // Check which commands are not allowed
     const disallowed = await getDisallowedCommands(commands, config, cwd);
+
+    // SSH-576: Passthrough inversion. If every command the script can run is
+    // statically enumerable and allowed (including inside command
+    // substitutions), and redirect/cd targets pass workspace path checks,
+    // hand the original command to native bash instead of transpiling.
+    if (config.passthroughAnalyzable !== false && disallowed.length === 0) {
+      const analysis = analyzeForPassthrough(ast, {
+        blockedCommands: DANGEROUS_COMMANDS,
+      });
+      if (analysis.eligible) {
+        if (await isPassthroughPermitted(analysis, commands, config, cwd)) {
+          debug("Analyzable command fully allowed - passthrough to native bash (SSH-576)");
+          outputPassthrough();
+          Deno.exit(0);
+        }
+      } else {
+        debug(`Passthrough ineligible: ${analysis.reasons.join("; ")}`);
+      }
+    }
 
     // Transpile AST to TypeScript (needed for both ask and allow)
     tsCode = transpile(ast, {
