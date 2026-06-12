@@ -36,6 +36,7 @@ This directory contains design documents, implementation notes, and guides for S
 | File | Description |
 |------|-------------|
 | `command-permission-design.md` | Command permission system |
+| `passthrough-permission-surface.md` | What passthrough validates; arg-path relaxation is intentional (SSH-598) |
 | `SSH-119-workspace-config-design.md` | Workspace configuration |
 | `XRUN_ARCHITECTURE_ANALYSIS.md` | xrun task runner analysis |
 
