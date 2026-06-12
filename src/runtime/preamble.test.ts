@@ -277,3 +277,25 @@ describe("preamble", () => {
     });
   });
 });
+
+import { buildFilePreamble } from "./preamble.ts";
+
+describe("status-recording runtime (SSH-597)", () => {
+  it("embeds the shared block exactly once in both preambles", () => {
+    const config: PreambleConfig = {
+      projectDir: "/test/project",
+      allowedCommands: [],
+      cwd: "/test/project",
+    };
+    const { preamble } = buildPreamble(undefined, config);
+    const filePreamble = buildFilePreamble(undefined, config);
+
+    for (const text of [preamble, filePreamble]) {
+      assertEquals(text.split("function __setPipeStatusRec").length - 1, 1);
+      assertEquals(text.split("function __recStatus").length - 1, 1);
+      assertEquals(text.split("async function __cmdSubText").length - 1, 1);
+      assertEquals(text.split("async function __printCmd").length - 1, 1);
+      assertEquals(text.split("async function __captureCmd").length - 1, 1);
+    }
+  });
+});

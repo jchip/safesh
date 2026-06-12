@@ -520,3 +520,26 @@ describe("Pipeline negation (SSH-594)", () => {
     assertStringIncludes(output, "__code === 0 ? 1 : 0");
   });
 });
+
+describe("assignment status reset detection (SSH-597)", () => {
+  it("resets $? after a plain assignment", () => {
+    const output = transpile(parse("FOO=bar"));
+    assertStringIncludes(output, "__recStatus();");
+  });
+
+  it("does not reset $? when the value is a command substitution", () => {
+    const output = transpile(parse("FOO=$(date)"));
+    assertEquals(output.includes("__recStatus();"), false);
+  });
+
+  it("is not fooled by a literal containing __cmdSubText(", () => {
+    // the old string-sniff on emitted code skipped the reset here
+    const output = transpile(parse("FOO='__cmdSubText('"));
+    assertStringIncludes(output, "__recStatus();");
+  });
+
+  it("detects substitutions hidden in expansion defaults", () => {
+    const output = transpile(parse('FOO="${BAR:-$(date)}"'));
+    assertEquals(output.includes("__recStatus();"), false);
+  });
+});
