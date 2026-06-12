@@ -1713,6 +1713,19 @@ function assignmentResultExpression(code: string, assignmentNames: string[] = []
   return `(async () => { ${code}; ${sync}return { code: 0, stdout: "", stderr: "", success: true }; })()`;
 }
 
+/**
+ * Wrap a shell-value expression so its exit status is negated (bash `!` prefix).
+ * Captures the value via __captureCmd (preserving stdout/stderr in the result
+ * object) and flips the exit code. pipeStatus keeps the un-negated statuses,
+ * matching bash where `!` does not alter PIPESTATUS (SSH-594).
+ */
+function negateShellValueExpression(expr: string): string {
+  return `(async () => { const __r: any = await __captureCmd(${expr}); ` +
+    `const __code = __r.code ?? 0; ` +
+    `return { code: __code === 0 ? 1 : 0, stdout: __r.stdout ?? "", stderr: __r.stderr ?? "", ` +
+    `success: __code !== 0, pipeStatus: __r.pipeStatus ?? [__code] }; })()`;
+}
+
 function assignmentSyncCode(assignmentNames: string[] = []): string {
   const syncVars = assignmentNames
     .map((name) => `$.VARS[${JSON.stringify(name)}] = ${sanitizeVarName(name)}`)
@@ -1864,13 +1877,39 @@ export function buildPipeline(
     const cmd = pipeline.commands[0];
     if (!cmd) return { code: "", async: false };
 
-    if (cmd.type === "Command") {
-      return buildCommand(cmd, ctx);
-    } else if (cmd.type === "Pipeline") {
-      return buildPipeline(cmd, ctx);
+    // SSH-594: the parser copies a leading `!` onto wrapper nodes, so a negated
+    // nested pipeline already applies it itself — only negate it once here.
+    const negated = pipeline.negated && !(cmd.type === "Pipeline" && cmd.negated);
+
+    if (!negated) {
+      if (cmd.type === "Command") {
+        return buildCommand(cmd, ctx);
+      } else if (cmd.type === "Pipeline") {
+        return buildPipeline(cmd, ctx);
+      }
+      // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
+      return { code: buildStatementAsExpression(cmd, ctx), async: true };
     }
-    // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-    return { code: buildStatementAsExpression(cmd, ctx), async: true };
+
+    // SSH-594: `! cmd` in expression position — capture the result and flip
+    // its exit status (same __captureCmd mechanism the &&/|| assembler uses).
+    let inner: string;
+    if (cmd.type === "Command") {
+      const result = buildCommand(cmd, ctx, { captureOutput: true });
+      inner = result.isVariableAssignment
+        ? assignmentResultExpression(result.code, result.assignmentNames)
+        : result.code;
+    } else if (cmd.type === "Pipeline") {
+      inner = buildPipeline(cmd, ctx).code;
+    } else {
+      inner = buildStatementAsExpression(cmd, ctx);
+    }
+    return {
+      code: negateShellValueExpression(inner),
+      async: true,
+      isPrintable: true,
+      isResultObject: true,
+    };
   }
 
   // Build pipeline chain by flattening nested pipelines
@@ -1890,23 +1929,26 @@ export function buildPipeline(
   const assembled = assemblePipeline(parts, operators, analysis, ctx.getStdoutCapture() !== null);
 
   // Handle negation (! operator)
-  let result = assembled.code;
-  if (pipeline.negated) {
-    result = `${result}.negate()`;
-  }
+  // SSH-594: there is no runtime `.negate()` — capture the pipeline result and
+  // flip its exit status. For `&&`/`||` chains the parser copies the first
+  // operand's `!` onto the chain node and the operand applies it itself
+  // (see flattenPipeline), so skip the duplicated flag here.
+  const applyNegation = pipeline.negated &&
+    pipeline.operator !== "&&" && pipeline.operator !== "||";
+  const result = applyNegation ? negateShellValueExpression(assembled.code) : assembled.code;
 
   // SSH-424: Preserve async=false for single fluent commands (even with background &)
   // If this is a single-command pipeline with no operators, preserve the original async value
-  const isAsync = (parts.length === 1 && operators.length === 0)
-    ? partIsAsync(parts[0]!) // Use the isAsync field we now track
-    : true; // Multi-command pipelines are always async
+  const isAsync = applyNegation || !(parts.length === 1 && operators.length === 0)
+    ? true // Multi-command pipelines and negation wrappers are always async
+    : partIsAsync(parts[0]!); // Use the isAsync field we now track
 
   return {
     code: result,
     async: isAsync,
-    isStream: assembled.isStream,
-    isPrintable: assembled.isPrintable,
-    isResultObject: assembled.isResultObject,
+    isStream: applyNegation ? false : assembled.isStream,
+    isPrintable: applyNegation ? true : assembled.isPrintable,
+    isResultObject: applyNegation ? true : assembled.isResultObject,
     isVariableAssignment: assembled.isVariableAssignment,
     assignmentNames: assembled.assignmentNames,
   };
@@ -2337,6 +2379,9 @@ function flattenPipeline(
   // Helper to check if a nested pipeline should be built as a complete expression
   // Only | pipe chains should be complete expressions within ||/&& operators
   const shouldBuildAsExpression = (nested: AST.Pipeline): boolean => {
+    // SSH-594: negated operands must be built whole so the `!` status flip
+    // applies; flattening them would drop the negated flag.
+    if (nested.negated) return true;
     // If current operator is || or &&, and nested pipeline is a | pipe chain, build as expression
     return (pipeline.operator === "||" || pipeline.operator === "&&") && nested.operator === "|";
   };
@@ -2735,10 +2780,22 @@ export function visitPipeline(
     const cmd = pipeline.commands[0];
     if (!cmd) return { lines: [] };
 
-    if (cmd.type === "Command") {
-      return visitCommand(cmd, ctx);
-    }
-    return ctx.visitStatement(cmd);
+    // SSH-594: the parser copies a leading `!` onto wrapper nodes, so a negated
+    // nested pipeline already applies it itself — only negate it once here.
+    const negated = pipeline.negated && !(cmd.type === "Pipeline" && cmd.negated);
+
+    const result = cmd.type === "Command" ? visitCommand(cmd, ctx) : ctx.visitStatement(cmd);
+    if (!negated) return result;
+
+    // SSH-594: `! cmd` — run the command normally (it records its real status
+    // via __printCmd/__recStatus), then record the flipped status like bash
+    // pipeline negation. PIPESTATUS keeps the un-negated statuses.
+    return {
+      lines: [
+        ...result.lines,
+        `${indent}__recStatus(Deno.exitCode === 0 ? 1 : 0);`,
+      ],
+    };
   }
 
   const nestedLogicalControl = visitNestedLogicalControlPipeline(pipeline, ctx);
