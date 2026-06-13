@@ -1245,3 +1245,43 @@ Deno.test({
     );
   },
 });
+
+// ============================================================================
+// SSH-611: per-call env overlay must not clobber syncShellState results
+// ============================================================================
+
+Deno.test("SSH-611: removeEnvOverlay keeps script-written env changes", async () => {
+  const { applyEnvOverlay, removeEnvOverlay } = await import("../src/mcp/server.ts");
+
+  const shell = { env: { KEEP: "old", OVERLAID: "pre" } as Record<string, string> };
+  const overlay = { OVERLAID: "tmp", FRESH: "tmp2" };
+
+  const shadow = applyEnvOverlay(shell, overlay);
+  assertEquals(shell.env.OVERLAID, "tmp");
+  assertEquals(shell.env.FRESH, "tmp2");
+
+  // Simulate what syncShellState does after the script ran:
+  // script exported NEW=x, changed OVERLAID, and unset KEEP
+  shell.env = { ...shell.env, NEW: "x", OVERLAID: "script" };
+  delete shell.env.KEEP;
+
+  removeEnvOverlay(shell, overlay, shadow);
+
+  assertEquals(shell.env.NEW, "x"); // script export survives
+  assertEquals(shell.env.OVERLAID, "script"); // script change beats revert
+  assertEquals("KEEP" in shell.env, false); // script unset survives
+  assertEquals("FRESH" in shell.env, false); // untouched overlay key removed
+});
+
+Deno.test("SSH-611: removeEnvOverlay reverts untouched overlay keys to pre-call values", async () => {
+  const { applyEnvOverlay, removeEnvOverlay } = await import("../src/mcp/server.ts");
+
+  const shell = { env: { OVERLAID: "pre" } as Record<string, string> };
+  const overlay = { OVERLAID: "tmp" };
+
+  const shadow = applyEnvOverlay(shell, overlay);
+  // script did not touch OVERLAID
+  removeEnvOverlay(shell, overlay, shadow);
+
+  assertEquals(shell.env.OVERLAID, "pre");
+});
