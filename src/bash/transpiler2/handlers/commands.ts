@@ -1135,6 +1135,14 @@ function buildFluentCommand(
         return { code: result, isTransform: false, isStream: true };
       }
 
+      // SSH-615: the no-file (pipe) form has no running line counter, so it can't
+      // faithfully number lines the way the file-operand form does above. Fall
+      // back to real grep so `-n` (and `-vn`) number by piped-stdin position,
+      // matching bash, instead of silently dropping `-n`.
+      if (lineNumber) {
+        return null;
+      }
+
       // grep as a transform
       if (invert) {
         return {
