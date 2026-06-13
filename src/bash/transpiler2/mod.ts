@@ -229,6 +229,18 @@ export class BashTranspiler2 {
           } else if (firstCmd?.type === "Pipeline") {
             // Handle nested Pipeline (common when single commands are wrapped)
             return this.buildTestExpression(firstCmd);
+          } else if (firstCmd?.type === "Subshell") {
+            // SSH-620: `if (cmd); then` / `while (cmd); do` — subshell condition.
+            return {
+              code: handlers.buildSubshellTestExpression(firstCmd as AST.Subshell, this),
+              async: true,
+            };
+          } else if (firstCmd?.type === "BraceGroup") {
+            // SSH-620: `if { cmd; }; then` — brace-group condition.
+            return {
+              code: handlers.buildBraceGroupTestExpression(firstCmd as AST.BraceGroup, this),
+              async: true,
+            };
           }
         } else if (test.type === "Command") {
           return handlers.buildCommand(test, this);

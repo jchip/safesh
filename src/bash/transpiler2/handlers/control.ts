@@ -444,6 +444,62 @@ export function visitBraceGroup(
   return { lines };
 }
 
+/**
+ * SSH-620: build a subshell `( ... )` used as a control-flow condition into an
+ * expression that yields `{ code }` — its exit status. The body records each
+ * command's status into Deno.exitCode (SSH-581); `exit N` throws the SSH-584
+ * sentinel, converted here to N. (A statement subshell, by contrast, only runs
+ * the body.) Backs if/while/until conditions via buildTestExpression.
+ */
+export function buildSubshellTestExpression(
+  stmt: AST.Subshell,
+  ctx: VisitorContext,
+): string {
+  const bodyLines: string[] = [];
+  ctx.enterSubshell();
+  for (const s of stmt.body) {
+    const result = ctx.visitStatement(s);
+    bodyLines.push(...result.lines.map((line) => line.trim()).filter((line) => line.length > 0));
+  }
+  ctx.exitSubshell();
+  // SSH-620: capture the body's exit status as the test result, but restore the
+  // prior Deno.exitCode so evaluating the condition has no side effect on $?
+  // (matching a `[ ]` test) — the if/while handler then sets $? from the result.
+  const saved = ctx.getTempVar();
+  return `{ code: await (async () => { const ${saved} = Deno.exitCode; try {\n` +
+    `${bodyLines.join("\n")}\n` +
+    `return Deno.exitCode;\n` +
+    `} catch (__e) {\n` +
+    `if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) ` +
+    `return (__e as { __sshSubshellExit: number }).__sshSubshellExit;\n` +
+    `throw __e;\n` +
+    `} finally { Deno.exitCode = ${saved}; } })(), stdout: '', stderr: '' }`;
+}
+
+/**
+ * SSH-620: build a brace group `{ ...; }` used as a control-flow condition into
+ * an expression that yields `{ code }`. A brace group shares the current scope
+ * and `exit` propagates (no subshell isolation), so it just runs the body and
+ * reports the resulting status.
+ */
+export function buildBraceGroupTestExpression(
+  stmt: AST.BraceGroup,
+  ctx: VisitorContext,
+): string {
+  const bodyLines: string[] = [];
+  for (const s of stmt.body) {
+    const result = ctx.visitStatement(s);
+    bodyLines.push(...result.lines.map((line) => line.trim()).filter((line) => line.length > 0));
+  }
+  // SSH-620: same status-capture-and-restore as the subshell form (no `exit`
+  // sentinel — a brace group is not isolated, so `exit` propagates).
+  const saved = ctx.getTempVar();
+  return `{ code: await (async () => { const ${saved} = Deno.exitCode; try {\n` +
+    `${bodyLines.join("\n")}\n` +
+    `return Deno.exitCode;\n` +
+    `} finally { Deno.exitCode = ${saved}; } })(), stdout: '', stderr: '' }`;
+}
+
 // =============================================================================
 // Test Command Handler
 // =============================================================================

@@ -26,6 +26,8 @@ export {
   visitFunctionDeclaration,
   visitSubshell,
   visitBraceGroup,
+  buildSubshellTestExpression,
+  buildBraceGroupTestExpression,
   visitTestCommand,
   visitArithmeticCommand,
   visitReturnStatement,
