@@ -1473,8 +1473,8 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    // SSH-372: Now uses $.test builtin
-    assertStringIncludes(output, '$.test("-f", "file")');
+    // SSH-621: `test` now uses $.cmd's native evaluator (not shelljs $.test)
+    assertStringIncludes(output, '$.cmd("test", "-f", "file")');
     // SSH-356: Uses async IIFE with __printCmd to ensure output is printed
     assertStringIncludes(output, "__printCmd");
   });
@@ -1485,8 +1485,8 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "if (");
-    // SSH-372: Now uses $.test builtin
-    assertStringIncludes(output, '$.test("-f", "file")');
+    // SSH-621: `test` now uses $.cmd's native evaluator (not shelljs $.test)
+    assertStringIncludes(output, '$.cmd("test", "-f", "file")');
   });
 
   it("should handle standalone TestCommand statement", () => {

@@ -63,12 +63,14 @@ describe("SSH-372 - Shell Builtins", () => {
     assertStringIncludes(output, "__printCmd");
   });
 
-  it("should use $.test for test command", () => {
+  it("should use $.cmd for the test command (SSH-621)", () => {
     const ast = parse("test -f file.txt");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '$.test("-f", "file.txt")');
-    assertEquals(output.includes('$.cmd("test"'), false, "Should not use $.cmd for test");
+    // SSH-621: `test` routes to $.cmd's native test/`[` evaluator, not shelljs
+    // $.test (which only does file tests and returns a boolean).
+    assertStringIncludes(output, '$.cmd("test", "-f", "file.txt")');
+    assertEquals(output.includes("$.test("), false, "Should not use shelljs $.test");
   });
 
   it("should use $.which for which command", () => {
@@ -261,11 +263,11 @@ describe("SSH-372 - Shell Builtins", () => {
     });
 
     it("should await async type builtins", () => {
-      const ast = parse("test -f file.txt");
+      const ast = parse("which node");
       const output = transpile(ast);
 
-      // test is async and returns a result
-      assertStringIncludes(output, '$.test');
+      // which is async and returns a result
+      assertStringIncludes(output, '$.which');
     });
 
     it("should not await silent type builtins", () => {
