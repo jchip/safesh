@@ -391,10 +391,24 @@ export function visitSubshell(
   lines.push(`${indent}await (async () => {`);
 
   ctx.indent();
+  const bodyIndent = ctx.getIndent();
+  // SSH-584: `exit N` in the body throws a sentinel; convert it here to the
+  // subshell's status so only the subshell terminates (bash parity)
+  lines.push(`${bodyIndent}try {`);
+  ctx.enterSubshell();
+  ctx.indent();
   for (const s of stmt.body) {
     const result = ctx.visitStatement(s);
     lines.push(...result.lines);
   }
+  ctx.dedent();
+  ctx.exitSubshell();
+  lines.push(`${bodyIndent}} catch (__e) {`);
+  lines.push(
+    `${bodyIndent}  if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) { __recStatus((__e as { __sshSubshellExit: number }).__sshSubshellExit); return; }`,
+  );
+  lines.push(`${bodyIndent}  throw __e;`);
+  lines.push(`${bodyIndent}}`);
   ctx.dedent();
 
   lines.push(`${indent}})();`);

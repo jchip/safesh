@@ -8,6 +8,8 @@ export interface BuiltinLoweringOptions {
   hasRedirects?: boolean;
   captureOutput?: boolean;
   stdoutCaptureVar?: string | null;
+  /** SSH-584: exit inside a subshell leaves the subshell, not the process */
+  inSubshell?: boolean;
 }
 
 export type BuiltinLoweringResult = ExpressionResult & {
@@ -59,12 +61,19 @@ export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLower
     hasRedirects = false,
     captureOutput = false,
     stdoutCaptureVar,
+    inSubshell = false,
   } = options;
 
   if (name === "exit") {
     const code = formattedArgs.length > 0 ? `Number(${formattedArgs[0] ?? "0"}) || 0` : "0";
+    // SSH-584: inside a subshell, exit must only leave the subshell — throw a
+    // sentinel that visitSubshell's boundary catch converts to the subshell's
+    // status; bash continues the parent script with $? set.
+    const exitExpr = inSubshell
+      ? `(() => { throw { __sshSubshellExit: ${code} }; })()`
+      : `Deno.exit(${code})`;
     return {
-      code: `Deno.exit(${code})`,
+      code: exitExpr,
       async: false,
       isShellBuiltin: true,
       isSilentShellBuiltin: true,

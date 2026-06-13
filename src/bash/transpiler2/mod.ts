@@ -111,6 +111,8 @@ export class BashTranspiler2 {
     _emitter: OutputEmitter,
   ): VisitorContext {
     const self = this;
+    // SSH-584: depth of subshell scopes currently being emitted
+    let subshellDepth = 0;
 
     return {
       getIndent: () => ctx.getIndent(),
@@ -128,6 +130,13 @@ export class BashTranspiler2 {
       getDiagnostics: () => ctx.getDiagnostics(),
       getStdoutCapture: () => ctx.getStdoutCapture(),
       setStdoutCapture: (varName) => ctx.setStdoutCapture(varName),
+      isInSubshell: () => subshellDepth > 0,
+      enterSubshell: () => {
+        subshellDepth++;
+      },
+      exitSubshell: () => {
+        subshellDepth--;
+      },
 
       visitStatement(stmt: AST.Statement): StatementResult {
         return self.visitStatement(stmt, this);

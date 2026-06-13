@@ -900,6 +900,45 @@ describe("Conformance - Pipeline Negation (SSH-594)", () => {
   });
 });
 
+describe("Conformance - exit inside subshell (SSH-584)", () => {
+  it("exits only the subshell, parent continues with $?", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      "( exit 3 )\necho after $?",
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "after 3");
+  });
+
+  it("runs subshell body before the exit and skips the rest", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      '( echo in; exit 5; echo never )\necho $?',
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "in\n5");
+  });
+
+  it("nested subshell exit only leaves the inner shell", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      '( ( exit 3 ); echo inner $? )\necho outer $?',
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "inner 3\nouter 0");
+  });
+
+  it("top-level exit still terminates the script", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      "echo first\nexit 7\necho never",
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.code, bashResult.code);
+    assertEquals(tsResult.code, 7);
+  });
+});
+
 describe("Conformance - unset builtin (SSH-612)", () => {
   it("unsets a shell variable", async () => {
     const { bashResult, tsResult } = await compareExecution(
