@@ -110,7 +110,7 @@ describe("collectFlagOptionsAndFiles", () => {
   it("should separate flags and files", () => {
     const flagMap = { "-l": "lines: true" };
     const result = collectFlagOptionsAndFiles(["-l", "file.txt"], flagMap);
-    assertEquals(result, { options: ["lines: true"], files: ["file.txt"] });
+    assertEquals(result, { options: ["lines: true"], files: ["file.txt"], unknownFlags: [] });
   });
 
   it("should handle multiple flags and files", () => {
@@ -119,37 +119,65 @@ describe("collectFlagOptionsAndFiles", () => {
     assertEquals(result, {
       options: ["lines: true", "words: true"],
       files: ["file1.txt", "file2.txt"],
+      unknownFlags: [],
     });
   });
 
-  it("should ignore unmapped flags", () => {
+  it("should report unmapped flags so the caller can fall back (SSH-616)", () => {
     const flagMap = { "-l": "lines: true" };
     const result = collectFlagOptionsAndFiles(["-l", "-v", "file.txt"], flagMap);
-    assertEquals(result, { options: ["lines: true"], files: ["file.txt"] });
+    assertEquals(result, {
+      options: ["lines: true"],
+      files: ["file.txt"],
+      unknownFlags: ["-v"],
+    });
+  });
+
+  it("should report value-bearing and partially-known short flags as unknown (SSH-616)", () => {
+    const flagMap = { "-n": "numeric: true", "-r": "reverse: true" };
+    // `sort -k2` and the partially-known combo `sort -rk2` must force a fallback.
+    assertEquals(collectFlagOptionsAndFiles(["-k2", "data.txt"], flagMap), {
+      options: [],
+      files: ["data.txt"],
+      unknownFlags: ["-k2"],
+    });
+    assertEquals(collectFlagOptionsAndFiles(["-rk2"], flagMap), {
+      options: [],
+      files: [],
+      unknownFlags: ["-rk2"],
+    });
   });
 
   it("should handle only flags", () => {
     const flagMap = { "-l": "lines: true", "-w": "words: true" };
     const result = collectFlagOptionsAndFiles(["-l", "-w"], flagMap);
-    assertEquals(result, { options: ["lines: true", "words: true"], files: [] });
+    assertEquals(result, {
+      options: ["lines: true", "words: true"],
+      files: [],
+      unknownFlags: [],
+    });
   });
 
   it("should handle only files", () => {
     const flagMap = { "-l": "lines: true" };
     const result = collectFlagOptionsAndFiles(["file1.txt", "file2.txt"], flagMap);
-    assertEquals(result, { options: [], files: ["file1.txt", "file2.txt"] });
+    assertEquals(result, { options: [], files: ["file1.txt", "file2.txt"], unknownFlags: [] });
   });
 
   it("should handle no arguments", () => {
     const flagMap = { "-l": "lines: true" };
     const result = collectFlagOptionsAndFiles([], flagMap);
-    assertEquals(result, { options: [], files: [] });
+    assertEquals(result, { options: [], files: [], unknownFlags: [] });
   });
 
-  it("should not include flag-like filenames starting with dash", () => {
+  it("should treat dash-prefixed non-flags as unknown flags, never filenames", () => {
     const flagMap = { "-l": "lines: true" };
     const result = collectFlagOptionsAndFiles(["-l", "-unknownflag", "file.txt"], flagMap);
-    // -unknownflag starts with dash but is not in flagMap, so it's treated as unknown flag and ignored
-    assertEquals(result, { options: ["lines: true"], files: ["file.txt"] });
+    // -unknownflag is not in flagMap, so it's reported for fallback (never a file).
+    assertEquals(result, {
+      options: ["lines: true"],
+      files: ["file.txt"],
+      unknownFlags: ["-unknownflag"],
+    });
   });
 });

@@ -112,18 +112,21 @@ export function collectFlagOptions(args: string[], flagMap: Record<string, strin
  *
  * @param args - Command arguments
  * @param flagMap - Map of flag to option string (e.g., { "-l": "lines: true" })
- * @returns Object with options array and files array
+ * @returns Object with options array, files array, and any unknownFlags — flags
+ *   absent from flagMap that signal the caller to fall back to the real tool
+ *   rather than emit a fluent transform with the flag silently dropped.
  *
  * @example
  * collectFlagOptionsAndFiles(["-l", "file.txt"], { "-l": "lines: true" })
- * // => { options: ["lines: true"], files: ["file.txt"] }
+ * // => { options: ["lines: true"], files: ["file.txt"], unknownFlags: [] }
  */
 export function collectFlagOptionsAndFiles(
   args: string[],
   flagMap: Record<string, string>,
-): { options: string[]; files: string[] } {
+): { options: string[]; files: string[]; unknownFlags: string[] } {
   const options: string[] = [];
   const files: string[] = [];
+  const unknownFlags: string[] = [];
   for (const arg of args) {
     if (!arg) continue;
     if (flagMap[arg]) {
@@ -139,7 +142,13 @@ export function collectFlagOptionsAndFiles(
       }
     } else if (!arg.startsWith("-")) {
       files.push(arg);
+    } else {
+      // SSH-616: a flag (or partially-known combo) we can't map to a fluent
+      // option — e.g. `sort -k2`, `uniq -f1`, `sort -rk2`. Record it so the
+      // caller falls back to the real tool instead of dropping it and emitting
+      // a fluent transform with the wrong semantics.
+      unknownFlags.push(arg);
     }
   }
-  return { options, files };
+  return { options, files, unknownFlags };
 }
