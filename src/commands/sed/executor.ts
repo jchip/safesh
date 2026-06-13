@@ -20,7 +20,7 @@ const DEFAULT_MAX_ITERATIONS = 10000;
 export function createInitialState(
   totalLines: number,
   filename?: string,
-  rangeStates?: Map<string, import("./types.js").RangeState>,
+  rangeStates?: Map<string, import("./types.ts").RangeState>,
 ): SedState {
   return {
     patternSpace: "",
@@ -97,7 +97,7 @@ function isInRange(
   lineNum: number,
   totalLines: number,
   line: string,
-  rangeStates?: Map<string, import("./types.js").RangeState>,
+  rangeStates?: Map<string, import("./types.ts").RangeState>,
 ): boolean {
   if (!range || (range.start === undefined && range.end === undefined)) {
     return true; // No address means match all lines
@@ -183,8 +183,8 @@ function breToEre(pattern: string): string {
 
   while (i < pattern.length) {
     if (pattern[i] === "\\") {
-      if (i + 1 < pattern.length) {
-        const next = pattern[i + 1];
+      const next = pattern[i + 1];
+      if (next !== undefined) {
         // BRE escaped chars that become special in ERE
         if (next === "+" || next === "?" || next === "|") {
           result += next; // Remove backslash to make it special
@@ -201,8 +201,8 @@ function breToEre(pattern: string): string {
           i += 2;
           continue;
         }
-        // Keep other escaped chars as-is
-        result += pattern[i] + next;
+        // Keep other escaped chars as-is (pattern[i] is "\\" in this branch)
+        result += `\\${next}`;
         i += 2;
         continue;
       }
@@ -237,7 +237,7 @@ function breToEre(pattern: string): string {
 function escapeForList(input: string): string {
   let result = "";
   for (let i = 0; i < input.length; i++) {
-    const ch = input[i];
+    const ch = input[i]!;
     const code = ch.charCodeAt(0);
 
     if (ch === "\\") {
@@ -276,8 +276,8 @@ function processReplacement(
 
   while (i < replacement.length) {
     if (replacement[i] === "\\") {
-      if (i + 1 < replacement.length) {
-        const next = replacement[i + 1];
+      const next = replacement[i + 1];
+      if (next !== undefined) {
         if (next === "&") {
           result += "&";
           i += 2;
@@ -643,7 +643,7 @@ export function executeCommands(
   // Build label index for branching
   const labelIndex = new Map<string, number>();
   for (let i = 0; i < commands.length; i++) {
-    const cmd = commands[i];
+    const cmd = commands[i]!;
     if (cmd.type === "label") {
       labelIndex.set(cmd.name, i);
     }
@@ -666,7 +666,7 @@ export function executeCommands(
     if (state.deleted || state.quit || state.quitSilent || state.restartCycle)
       break;
 
-    const cmd = commands[i];
+    const cmd = commands[i]!;
 
     // Handle N command specially - it needs to append next line inline
     if (cmd.type === "nextAppend") {

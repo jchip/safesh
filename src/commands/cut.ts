@@ -93,7 +93,7 @@ function extractByRanges(
   for (let i = 0; i < items.length; i++) {
     const isSelected = selected.has(i);
     if (complement ? !isSelected : isSelected) {
-      result.push(items[i]);
+      result.push(items[i]!);
     }
   }
 
