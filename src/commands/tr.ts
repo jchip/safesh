@@ -79,7 +79,7 @@ function expandSet(set: string): string {
 
     // Handle escape sequences
     if (set[i] === "\\" && i + 1 < set.length) {
-      const next = set[i + 1];
+      const next = set[i + 1]!;
       if (next === "n") {
         result += "\n";
         i += 2;
@@ -108,7 +108,7 @@ function expandSet(set: string): string {
         // Octal escape \NNN
         let octal = "";
         let j = i + 1;
-        while (j < set.length && j < i + 4 && /[0-7]/.test(set[j])) {
+        while (j < set.length && j < i + 4 && /[0-7]/.test(set[j]!)) {
           octal += set[j];
           j++;
         }
@@ -233,8 +233,8 @@ function processText(text: string, options: TrOptions): string {
       const translationMap = new Map<string, string>();
       for (let i = 0; i < set1.length; i++) {
         // If set2 is shorter, pad with last character of set2
-        const targetChar = i < set2.length ? set2[i] : set2[set2.length - 1];
-        translationMap.set(set1[i], targetChar);
+        const targetChar = i < set2.length ? set2[i]! : set2[set2.length - 1]!;
+        translationMap.set(set1[i]!, targetChar);
       }
 
       for (const char of text) {
