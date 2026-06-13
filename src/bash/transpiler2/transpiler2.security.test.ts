@@ -768,8 +768,11 @@ describe("Security - Complex Injection Scenarios", () => {
     const ast = parse(': test');
     const output = transpile(ast);
 
-    // Null command should be transpiled safely as $.cmd(":", "test")
-    assertStringIncludes(output, '$.cmd(":", "test")');
+    // SSH-578: `:` lowers to an inline no-op result — safer than the legacy
+    // $.cmd(":", "test") shape, which spawned a subprocess. Nothing from the
+    // argument may be executed as a command.
+    assertEquals(output.includes("$.cmd("), false);
+    assertStringIncludes(output, "code: 0");
   });
 });
 

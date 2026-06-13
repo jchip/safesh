@@ -461,7 +461,8 @@ describe("Git Hooks", () => {
         }
       `);
       assertStringIncludes(code, '"npm", "test"');
-      assertStringIncludes(code, '"exit"');
+      // exit N lowers to Deno.exit (SSH-578: was the legacy $.cmd("exit") shape)
+      assertStringIncludes(code, "Deno.exit");
     });
   });
 
@@ -643,7 +644,8 @@ describe("Common Utility Patterns", () => {
         [ -f required_file ] || error "File not found"
       `);
       assertStringIncludes(code, "function error");
-      assertStringIncludes(code, '"exit"');
+      // exit N lowers to Deno.exit (SSH-578: was the legacy $.cmd("exit") shape)
+      assertStringIncludes(code, "Deno.exit");
     });
   });
 
