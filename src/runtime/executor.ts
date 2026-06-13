@@ -251,14 +251,29 @@ function processJobEvents(shell: Shell, script: Script, events: JobEvent[]): voi
 
 /**
  * Sync extracted shell state back to shell object
+ *
+ * SSH-599: env arrives as deltas — `env` holds vars set/changed during the
+ * script and `envUnset` lists vars removed — so merge and delete rather than
+ * replace. This lets `unset FOO` round-trip across commands instead of the
+ * stale value silently surviving in shell.env.
  */
 function syncShellState(
   shell: Shell | undefined,
-  state: { cwd?: string; env?: Record<string, string>; vars?: Record<string, unknown> },
+  state: {
+    cwd?: string;
+    env?: Record<string, string>;
+    envUnset?: string[];
+    vars?: Record<string, unknown>;
+  },
 ): void {
   if (!shell) return;
   if (state.cwd) shell.cwd = state.cwd;
-  if (state.env) shell.env = state.env;
+  if (state.env) shell.env = { ...shell.env, ...state.env };
+  if (state.envUnset) {
+    for (const key of state.envUnset) {
+      delete shell.env[key];
+    }
+  }
   if (state.vars) shell.vars = state.vars;
 }
 
