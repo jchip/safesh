@@ -562,3 +562,16 @@ describe("env-prefix assignment values (SSH-587)", () => {
     assertStringIncludes(output, 'NODE_ENV: "production"');
   });
 });
+
+describe("stream-form pipelines record exit status (SSH-582)", () => {
+  it("routes statement-level stream pipelines through __printCmd", () => {
+    const output = transpile(parse("ls | grep foo"));
+    assertStringIncludes(output, "await __printCmd(");
+    assertEquals(output.includes("for await (const __line"), false);
+  });
+
+  it("routes stream pipelines inside && chains through __printCmd", () => {
+    const output = transpile(parse("true && ls | grep foo"));
+    assertEquals(output.includes("for await (const __line of await (async"), false);
+  });
+});

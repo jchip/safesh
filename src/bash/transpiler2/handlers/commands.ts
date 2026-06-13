@@ -2160,8 +2160,11 @@ class PipelineAssembler {
       : `const __left: any = await __captureCmd(${leftValue}); if (__left.stdout) await Deno.stdout.write(new TextEncoder().encode(__left.stdout)); if (__left.stderr) await Deno.stderr.write(new TextEncoder().encode(__left.stderr)); const __code = __left.code ?? 0;`;
     const condition = op === "&&" ? "__code === 0" : "__code !== 0";
 
+    // SSH-582: the skipped branch yields an empty stream that REPORTS the
+    // deciding code via getEmptyExitCode, so the consuming __printCmd records
+    // it instead of clobbering the status with 0
     this.code =
-      `(async () => { ${leftSetup} if (${condition}) { return ${part.code}; } __setPipeStatus(undefined, __code); return $.empty(); })()`;
+      `(async () => { ${leftSetup} if (${condition}) { return ${part.code}; } __setPipeStatus(undefined, __code); return Object.assign($.empty(), { getEmptyExitCode: () => __code }); })()`;
     this.isPromise = true;
     this.isPrintable = false;
     this.isStream = true;
@@ -2909,9 +2912,10 @@ export function visitPipeline(
 
       const result = buildPipeline(syntheticPipeline, ctx);
       if (result.isStream) {
-        // SSH-476: If the result is async (wrapped in IIFE), await it first before iterating
-        const streamExpr = result.async ? `await ${result.code}` : result.code;
-        lines.push(`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`);
+        // SSH-582: __printCmd's stream handling prints each line AND records
+        // the exit status (exit chunks / getEmptyExitCode) — a bare for-await
+        // loop loses PIPESTATUS and $?
+        lines.push(`${indent}await __printCmd(${result.code});`);
       } else if (!result.isPrintable) {
         const prefix = result.async ? "await " : "";
         lines.push(`${indent}${prefix}${result.code};`);
@@ -2981,11 +2985,11 @@ export function visitPipeline(
 
   // SSH-364: Handle stream vs command output differently
   if (result.isStream) {
-    // For streams (from .trans()), iterate and print each line
-    // SSH-476: If the result is async (wrapped in IIFE), await it first before iterating
-    const streamExpr = result.async ? `await ${result.code}` : result.code;
+    // SSH-582: __printCmd's stream handling prints each line AND records the
+    // exit status (exit chunks / getEmptyExitCode) — the previous bare
+    // for-await loop lost PIPESTATUS and $?
     return {
-      lines: [`${indent}for await (const __line of ${streamExpr}) { console.log(__line); }`],
+      lines: [`${indent}await __printCmd(${result.code});`],
     };
   }
 
