@@ -543,3 +543,22 @@ describe("assignment status reset detection (SSH-597)", () => {
     assertEquals(output.includes("__recStatus();"), false);
   });
 });
+
+describe("env-prefix assignment values (SSH-587)", () => {
+  it("emits expansion-bearing env values as template literals", () => {
+    const output = transpile(parse('PROJ=/some/path\nBASH_PREHOOK_CWD="$PROJ" git status'));
+    assertStringIncludes(output, "BASH_PREHOOK_CWD: `");
+    // the old emission leaked the template SOURCE as a quoted string
+    assertEquals(output.includes('BASH_PREHOOK_CWD: "${'), false);
+  });
+
+  it("emits command-substitution env values as template literals", () => {
+    const output = transpile(parse('REV=$(git rev-parse HEAD) FOO="$REV" env'));
+    assertStringIncludes(output, "FOO: `");
+  });
+
+  it("keeps literal env values plainly quoted", () => {
+    const output = transpile(parse("NODE_ENV=production node app.js"));
+    assertStringIncludes(output, 'NODE_ENV: "production"');
+  });
+});

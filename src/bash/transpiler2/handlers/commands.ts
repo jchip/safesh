@@ -268,9 +268,14 @@ function handleStandardCommand(
   if (hasAssignments) {
     const envEntries = assignments
       .map((a) => {
-        const value = ctx.visitWord(a.value as AST.Word);
-        const escapedValue = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-        return `${a.name}: "${escapedValue}"`;
+        const word = a.value as AST.Word;
+        const value = ctx.visitWord(word);
+        // SSH-587: format like an argument — an expansion-bearing value must
+        // stay a template literal; unconditional re-quoting leaked the
+        // template SOURCE text into the child's environment
+        return `${a.name}: ${
+          formatArg(value, wordHasExpansion(word), wordIsTemplateEscapedLiteral(word))
+        }`;
       })
       .join(", ");
     const argsArray = args
