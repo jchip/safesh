@@ -379,3 +379,101 @@ describe("state marker env deltas (SSH-599)", () => {
   });
 });
 
+import { buildStateTrailerHook } from "./preamble.ts";
+
+describe("state trailer VARS filter (SSH-600)", () => {
+  it("emits only clean scalars and stays bash-parseable", async () => {
+    const tmpDir = await Deno.makeTempDir();
+    const trailerPath = `${tmpDir}/trailer.sh`;
+    const scriptPath = `${tmpDir}/script.ts`;
+
+    try {
+      // VARS pre-seeded so a later `= undefined` registers as a change
+      await Deno.writeTextFile(
+        scriptPath,
+        [
+          `(globalThis as any).$ = { VARS: { SSH600_UNDEF: "was-set" } as Record<string, unknown> };`,
+          buildStateTrailerHook(),
+          `const __vars = (globalThis as any).$.VARS;`,
+          `__vars.SSH600_GOOD = "clean value";`,
+          `__vars.SSH600_NUM = 42;`,
+          `__vars.SSH600_FLAG = true;`,
+          `__vars.SSH600_FN = () => "garbage";`,
+          `__vars.SSH600_UNDEF = undefined;`,
+        ].join("\n"),
+      );
+
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "--allow-env", "--allow-read", "--allow-write", scriptPath],
+        env: { SAFESH_STATE_TRAILER: trailerPath },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        output.code,
+        0,
+        `hook script failed: ${new TextDecoder().decode(output.stderr)}`,
+      );
+
+      const trailer = await Deno.readTextFile(trailerPath);
+
+      // Clean scalars survive
+      assertEquals(trailer.includes("SSH600_GOOD='clean value'"), true, trailer);
+      assertEquals(trailer.includes("SSH600_NUM='42'"), true, trailer);
+      assertEquals(trailer.includes("SSH600_FLAG='true'"), true, trailer);
+      // Functions and undefined must not produce garbage assignments
+      assertEquals(trailer.includes("SSH600_FN"), false, trailer);
+      assertEquals(trailer.includes("SSH600_UNDEF"), false, trailer);
+
+      // Parser side: the calling shell must be able to source the trailer
+      const sourced = await new Deno.Command("/bin/bash", {
+        args: ["-c", `set -e; . '${trailerPath}'; echo "$SSH600_GOOD|$SSH600_NUM|$SSH600_FLAG"`],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(sourced.code, 0, new TextDecoder().decode(sourced.stderr));
+      assertEquals(new TextDecoder().decode(sourced.stdout).trim(), "clean value|42|true");
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  });
+
+  it("skips writing the trailer when only garbage values changed", async () => {
+    const tmpDir = await Deno.makeTempDir();
+    const trailerPath = `${tmpDir}/trailer.sh`;
+    const scriptPath = `${tmpDir}/script.ts`;
+
+    try {
+      await Deno.writeTextFile(
+        scriptPath,
+        [
+          `(globalThis as any).$ = { VARS: {} as Record<string, unknown> };`,
+          buildStateTrailerHook(),
+          `(globalThis as any).$.VARS.SSH600_FN = () => "garbage";`,
+        ].join("\n"),
+      );
+
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "--allow-env", "--allow-read", "--allow-write", scriptPath],
+        env: { SAFESH_STATE_TRAILER: trailerPath },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        output.code,
+        0,
+        `hook script failed: ${new TextDecoder().decode(output.stderr)}`,
+      );
+
+      let exists = true;
+      try {
+        await Deno.stat(trailerPath);
+      } catch {
+        exists = false;
+      }
+      assertEquals(exists, false, "no trailer should be written for garbage-only changes");
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  });
+});

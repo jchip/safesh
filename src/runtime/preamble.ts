@@ -577,6 +577,12 @@ if (__SSH_TRAILER) {
   const __ssh_quote = (s: unknown) => "'" + String(s).replaceAll("'", "'\\\\''") + "'";
   const __ssh_name = /^[A-Za-z_][A-Za-z0-9_]*$/;
   const __ssh_skip = (k: string) => k.startsWith("SAFESH_") || !__ssh_name.test(k);
+  // SSH-600: the trailer is sourced as POSIX assignments, so only values whose
+  // String() form is a clean scalar may be emitted. Functions, undefined and
+  // symbols stringify to garbage (source text, "undefined", "Symbol(...)").
+  const __ssh_scalar = (v: unknown) =>
+    typeof v === "string" || typeof v === "number" || typeof v === "boolean" ||
+    typeof v === "bigint";
   const __ssh_cwd0 = Deno.cwd();
   // Deno.env captures every export path ($.ENV proxy writes and $.setEnv)
   const __ssh_env0: Record<string, string> = Deno.env.toObject();
@@ -594,7 +600,7 @@ if (__SSH_TRAILER) {
       }
       const vars1: Record<string, unknown> = { ...(globalThis as any).$.VARS };
       for (const [k, v] of Object.entries(vars1)) {
-        if (__ssh_vars0[k] !== v && __ssh_name.test(k) && typeof v !== "object") {
+        if (__ssh_vars0[k] !== v && __ssh_name.test(k) && __ssh_scalar(v)) {
           lines.push(k + "=" + __ssh_quote(v));
         }
       }
