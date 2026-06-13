@@ -124,6 +124,16 @@ export interface VisitorContext {
   /** Set stdout capture variable name; null to disable */
   setStdoutCapture(varName: string | null): void;
 
+  /** True while emitting inside a subshell body — `exit` must only leave the
+   * subshell, not the process (SSH-584) */
+  isInSubshell(): boolean;
+
+  /** Mark subshell scope entry (SSH-584) */
+  enterSubshell(): void;
+
+  /** Mark subshell scope exit (SSH-584) */
+  exitSubshell(): void;
+
   /** Add a diagnostic message */
   addDiagnostic(diagnostic: Diagnostic): void;
 

@@ -671,6 +671,7 @@ function executeCommandStrategy(
         hasRedirects: strategy.hasRedirects,
         captureOutput: options?.captureOutput ?? false,
         stdoutCaptureVar: ctx.getStdoutCapture(),
+        inSubshell: ctx.isInSubshell(),
       });
     }
 
