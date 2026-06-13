@@ -48,6 +48,8 @@ Deno.test({
     assertStringIncludes(result, ".stdout().lines()");
     assertStringIncludes(result, ".pipe($.sort())");
     assertStringIncludes(result, ".pipe($.uniq(");
+    // SSH-571: combined short flags expand instead of being silently dropped
+    assertStringIncludes(result, ".pipe($.sort({ reverse: true, numeric: true }))");
     // Should NOT have .lines().lines()
     assertEquals(result.includes(".lines().lines()"), false, "Should not have duplicate .lines() calls");
     // Should NOT have .lines().pipe() after the first one
