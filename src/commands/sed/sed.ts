@@ -75,7 +75,7 @@ async function processContent(
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const state: SedState = {
       ...createInitialState(totalLines, undefined, rangeStates),
-      patternSpace: lines[lineIndex],
+      patternSpace: lines[lineIndex]!,
       holdSpace: holdSpace,
       lineNumber: lineIndex + 1,
       totalLines,
