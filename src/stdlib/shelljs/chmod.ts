@@ -10,6 +10,7 @@ import { parseOptions, expand, PERMS } from "./common.ts";
 import * as fs from "../fs.ts";
 import type { SandboxOptions } from "../fs.ts";
 import { validatePath } from "../../core/permissions.ts";
+import { SafeShellError } from "../../core/errors.ts";
 import { getDefaultConfig } from "../../core/utils.ts";
 
 /**
@@ -98,6 +99,9 @@ export async function chmod(
         output.push(`mode of '${file}' retained as ${formatMode(oldMode)}`);
       }
     } catch (e) {
+      // SSH-607: sandbox rejections must propagate to the error handler
+      // (PATH BLOCKED prompt / desh retry-path), like fs.* and redirects do
+      if (e instanceof SafeShellError) throw e;
       if (e instanceof Deno.errors.NotFound) {
         errors.push(`chmod: cannot access '${file}': No such file or directory`);
       } else if (e instanceof Deno.errors.PermissionDenied) {

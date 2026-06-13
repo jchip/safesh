@@ -9,6 +9,7 @@
 import { ShellString } from "./types.ts";
 import { flattenArgs, expandTilde } from "./common.ts";
 import { validatePath } from "../../core/permissions.ts";
+import { SafeShellError } from "../../core/errors.ts";
 import { getDefaultConfig } from "../../core/utils.ts";
 
 /**
@@ -56,6 +57,9 @@ export async function rmdir(
       // Try to remove - will fail if not empty
       await Deno.remove(expandedPath, { recursive: false });
     } catch (error) {
+      // SSH-607: sandbox rejections must propagate to the error handler
+      // (PATH BLOCKED prompt / desh retry-path), like fs.* and redirects do
+      if (error instanceof SafeShellError) throw error;
       if (error instanceof Deno.errors.NotFound) {
         errors.push(`rmdir: ${path}: No such file or directory`);
       } else if (error instanceof Deno.errors.PermissionDenied) {

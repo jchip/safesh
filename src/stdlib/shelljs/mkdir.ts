@@ -10,6 +10,7 @@ import { ShellString } from "./types.ts";
 import { parseOptions, flattenArgs, expandTilde } from "./common.ts";
 import type { OptionsMap } from "./types.ts";
 import { validatePath } from "../../core/permissions.ts";
+import { SafeShellError } from "../../core/errors.ts";
 import { getDefaultConfig } from "../../core/utils.ts";
 
 /** Options for mkdir command */
@@ -94,6 +95,9 @@ export async function mkdir(
       const validatedPath = await validatePath(expandedPath, config, cwd, "write");
       await Deno.mkdir(validatedPath, { recursive: options.parents });
     } catch (error) {
+      // SSH-607: sandbox rejections must propagate to the error handler
+      // (PATH BLOCKED prompt / desh retry-path), like fs.* and redirects do
+      if (error instanceof SafeShellError) throw error;
       if (error instanceof Deno.errors.AlreadyExists) {
         if (!options.parents) {
           errors.push(`mkdir: ${path}: File exists`);
