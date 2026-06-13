@@ -89,7 +89,8 @@ function parseHumanSize(s: string): number {
     const num = parseFloat(trimmed);
     return Number.isNaN(num) ? 0 : num;
   }
-  const num = parseFloat(match[1]);
+  // Group 1 is non-optional in the regex, so it is always present on a match
+  const num = parseFloat(match[1]!);
   const suffix = (match[2] || "").toLowerCase();
   const multiplier = SIZE_SUFFIXES[suffix] || 1;
   return num * multiplier;

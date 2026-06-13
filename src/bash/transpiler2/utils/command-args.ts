@@ -125,9 +125,19 @@ export function collectFlagOptionsAndFiles(
   const options: string[] = [];
   const files: string[] = [];
   for (const arg of args) {
-    if (arg && flagMap[arg]) {
+    if (!arg) continue;
+    if (flagMap[arg]) {
       options.push(flagMap[arg]);
-    } else if (arg && !arg.startsWith("-")) {
+    } else if (
+      arg.length > 2 && arg[0] === "-" && arg[1] !== "-" &&
+      [...arg.slice(1)].every((ch) => flagMap[`-${ch}`])
+    ) {
+      // SSH-571: combined short flags (`sort -rn` === `sort -r -n`)
+      for (const ch of arg.slice(1)) {
+        const opt = flagMap[`-${ch}`]!;
+        if (!options.includes(opt)) options.push(opt);
+      }
+    } else if (!arg.startsWith("-")) {
       files.push(arg);
     }
   }
