@@ -900,6 +900,35 @@ describe("Conformance - Pipeline Negation (SSH-594)", () => {
   });
 });
 
+describe("Conformance - unset builtin (SSH-612)", () => {
+  it("unsets a shell variable", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      'FOO=bar\nunset FOO\necho "x${FOO}x"',
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "xx");
+  });
+
+  it("unsets multiple names and reports status 0 for missing ones", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      "A=1\nB=2\nunset A B NOSUCH\necho $? ${A}-${B}",
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "0 -");
+  });
+
+  it("unsets an exported variable", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      'export FOO=bar\nunset FOO\necho "x${FOO}x"',
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "xx");
+  });
+});
+
 describe("Conformance - $? and $VAR in Arithmetic (SSH-583)", () => {
   it("expands $? inside $(( ))", async () => {
     const { bashResult, tsResult } = await compareExecution(
