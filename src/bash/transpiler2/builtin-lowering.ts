@@ -71,6 +71,44 @@ export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLower
     };
   }
 
+  if (name === "unset") {
+    // SSH-612: unset is a shell builtin — spawning it as a command fails.
+    // Clear the local JS binding when one exists, the $.ENV proxy target,
+    // $.VARS, and Deno.env (the SSH-599 state marker then reports the unset
+    // to the parent shell). -v is the default; -f (function unset) cannot be
+    // expressed in emitted JS and fails loudly.
+    if (formattedArgs.includes(`"-f"`)) {
+      return {
+        code:
+          `{ code: 1, stdout: "", stderr: "unset: -f: functions cannot be unset in transpiled mode", success: false }`,
+        async: false,
+        isShellBuiltin: true,
+        isSilentShellBuiltin: true,
+      };
+    }
+    const clears = formattedArgs
+      .filter((a) => a !== `"-v"`)
+      .map((a) => {
+        const literal = a.match(/^"([A-Za-z_][A-Za-z0-9_]*)"$/);
+        if (literal) {
+          const n = literal[1]!;
+          return `(typeof ${n} !== "undefined" ? (${n} = undefined) : undefined), ` +
+            `delete ($.ENV ?? {}).${n}, delete $.VARS?.${n}, Deno.env.delete("${n}")`;
+        }
+        // Dynamic name: runtime stores only (a local JS binding cannot be
+        // cleared through a computed name)
+        return `((__n) => { delete ($.ENV ?? {})[__n]; if ($.VARS) delete $.VARS[__n]; Deno.env.delete(String(__n)); })(${a})`;
+      });
+    return {
+      code: clears.length > 0
+        ? `(${clears.join(", ")}, { code: 0, stdout: "", stderr: "", success: true })`
+        : `{ code: 0, stdout: "", stderr: "", success: true }`,
+      async: false,
+      isShellBuiltin: true,
+      isSilentShellBuiltin: true,
+    };
+  }
+
   if (name === ":") {
     // SSH-609: `:` is a no-op but bash still expands its arguments, so a
     // `${VAR:=default}` argument must perform its assignment. Evaluate the

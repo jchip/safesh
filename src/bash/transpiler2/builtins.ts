@@ -21,6 +21,8 @@ export interface BuiltinConfig {
 export const SHELL_BUILTINS: Record<string, BuiltinConfig> = {
   // Lowered specially because ":" is a shell no-op, not a callable SafeShell API.
   ":": { fn: "", type: "silent" },
+  // Lowered specially (SSH-612): unset clears bindings, it is not an executable.
+  unset: { fn: "", type: "silent" },
   cd: { fn: "$.cd", type: "silent" },
   pushd: { fn: "$.pushd", type: "silent" },
   popd: { fn: "$.popd", type: "silent" },
