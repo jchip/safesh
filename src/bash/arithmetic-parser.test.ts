@@ -780,3 +780,26 @@ describe("Arithmetic Parser - Comprehensive Coverage", () => {
     });
   });
 });
+
+describe("Bare parameter references (SSH-583)", () => {
+  it("should parse $? as a variable reference", () => {
+    const expr = parseArithmetic("$?");
+    assertEquals(expr.type, "VariableReference");
+    assertEquals((expr as AST.VariableReference).name, "?");
+  });
+
+  it("should parse $? in a binary expression", () => {
+    const expr = parseArithmetic("$? + 1");
+    assertEquals(expr.type, "BinaryArithmeticExpression");
+    const bin = expr as AST.BinaryArithmeticExpression;
+    assertEquals(bin.left.type, "VariableReference");
+    assertEquals((bin.left as AST.VariableReference).name, "?");
+  });
+
+  it("should parse $NAME like the bare identifier", () => {
+    const expr = parseArithmetic("$X + 2");
+    assertEquals(expr.type, "BinaryArithmeticExpression");
+    const bin = expr as AST.BinaryArithmeticExpression;
+    assertEquals((bin.left as AST.VariableReference).name, "X");
+  });
+});
