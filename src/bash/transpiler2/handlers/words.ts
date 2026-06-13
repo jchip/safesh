@@ -48,6 +48,118 @@ function shellVarValueExpression(param: string, jsParam: string): string {
   } ?? ""))`;
 }
 
+/**
+ * SSH-624: Translate a bash glob pattern (as used by ${v#pat}, ${v##pat},
+ * ${v%pat}, ${v%%pat} and the pattern side of ${v/pat/repl}, ${v//pat/repl})
+ * into a JS regex source. Unlike escapeRegex (which makes EVERYTHING literal,
+ * turning the glob `*` into `\*`), this keeps glob metacharacters meaningful:
+ *   - `*`  -> `.*`  (greedy for longest-match ##/%%) or `.*?` (non-greedy for #/%)
+ *   - `?`  -> `.`
+ *   - `[...]` -> regex char class; `[!...]` -> `[^...]`
+ *   - genuine regex metachars that are NOT glob metachars are escaped
+ *     (`.` `(` `)` `+` `{` `}` `|` `^` `$` `\`)
+ * Plain characters (letters, spaces, `-`, etc.) pass through verbatim so that
+ * non-glob literal patterns transpile to the same regex as before. Embedded
+ * `${...}` template-interpolation sequences (produced when the pattern itself
+ * contains a variable expansion) are copied through untouched.
+ */
+function globToParamRegex(pattern: string, greedyStar: boolean): string {
+  const star = greedyStar ? ".*" : ".*?";
+  let out = "";
+  let i = 0;
+  while (i < pattern.length) {
+    const ch = pattern[i];
+
+    // Preserve embedded ${...} template interpolation verbatim — it is runtime
+    // JS (a nested variable expansion), not part of the glob to translate.
+    if (ch === "$" && pattern[i + 1] === "{") {
+      let depth = 0;
+      const start = i;
+      while (i < pattern.length) {
+        if (pattern[i] === "{") depth++;
+        else if (pattern[i] === "}") {
+          depth--;
+          if (depth === 0) {
+            i++;
+            break;
+          }
+        }
+        i++;
+      }
+      out += pattern.slice(start, i);
+      continue;
+    }
+
+    switch (ch) {
+      case "*":
+        out += star;
+        i++;
+        break;
+      case "?":
+        out += ".";
+        i++;
+        break;
+      case "[": {
+        // Bracket expression -> regex char class. `[!...]` negates as `[^...]`.
+        const start = i;
+        i++;
+        let neg = false;
+        if (pattern[i] === "!" || pattern[i] === "^") {
+          neg = true;
+          i++;
+        }
+        // A `]` immediately after the (optional) negation is a literal member.
+        if (pattern[i] === "]") i++;
+        while (i < pattern.length && pattern[i] !== "]") i++;
+        if (i >= pattern.length) {
+          // Unterminated `[` — treat the bracket as a literal character.
+          out += "\\[";
+          i = start + 1;
+        } else {
+          const body = pattern.slice(start + 1 + (neg ? 1 : 0), i);
+          out += "[" + (neg ? "^" : "") + body + "]";
+          i++; // consume the closing `]`
+        }
+        break;
+      }
+      case "\\": {
+        // Backslash escapes the next glob char; emit it as a literal, adding a
+        // regex escape when that char needs one inside a /.../ literal (regex
+        // metacharacter or the `/` delimiter).
+        i++;
+        const next = pattern[i];
+        if (next !== undefined) {
+          out += /[.*+?^${}()|[\]\\/]/.test(next) ? "\\" + next : next;
+          i++;
+        } else {
+          out += "\\\\";
+        }
+        break;
+      }
+      // Regex metacharacters that are NOT glob metacharacters -> escape. `/` is
+      // also escaped because the regex is emitted as a /.../ literal and a bare
+      // slash would terminate it early.
+      case ".":
+      case "(":
+      case ")":
+      case "+":
+      case "{":
+      case "}":
+      case "|":
+      case "^":
+      case "$":
+      case "/":
+        out += "\\" + ch;
+        i++;
+        break;
+      default:
+        out += ch;
+        i++;
+    }
+  }
+  return out;
+}
+
 function shellVarDefinedExpression(param: string, jsParam: string): string {
   const prop = shellVarProperty(param);
   return `(typeof ${jsParam} !== "undefined" || $.ENV${prop} !== undefined || $.VARS${
@@ -476,64 +588,87 @@ export function visitParameterExpansion(
 
     case ":?":
     case "?":
-      // ${VAR:?error} - error if unset
-      return `\${${jsParam} ?? (() => { throw new Error("${escapeForQuotes(modifierArg)}"); })()}`;
+      // ${VAR:?error} - error when unset OR empty (bash :? semantics). SSH-625:
+      // consult ENV/VARS via the guarded accessor instead of referencing the
+      // bare (possibly-undeclared) binding, which throws ReferenceError under
+      // the preamble's "use strict".
+      return `\${${varExpr} === "" ? (() => { throw new Error("${
+        escapeForQuotes(modifierArg)
+      }"); })() : ${varExpr}}`;
 
     case ":+":
     case "+":
-      // ${VAR:+alternate} - use alternate if set
-      return `\${${jsParam} ? "${escapeForQuotes(modifierArg)}" : ""}`;
+      // ${VAR:+alternate} - use alternate if set. SSH-625: guard the reference
+      // through varExpr so an unset variable yields "" instead of throwing a
+      // ReferenceError for the undeclared binding.
+      return `\${${varExpr} ? "${escapeForQuotes(modifierArg)}" : ""}`;
 
     case "#":
-      // ${VAR#pattern} - remove shortest prefix
-      return `\${${jsParam}.replace(/^${escapeRegex(modifierArg)}/, "")}`;
+      // ${VAR#pattern} - remove shortest matching prefix. SSH-624: translate the
+      // bash glob to a regex (a glob `*` becomes the non-greedy `.*?` so the
+      // shortest prefix is stripped); SSH-625: read via the guarded accessor.
+      return `\${${varExpr}.replace(/^${globToParamRegex(modifierArg, false)}/, "")}`;
 
     case "##":
-      // ${VAR##pattern} - remove longest prefix (greedy .* to match as much as possible)
-      return `\${${jsParam}.replace(/^${escapeRegex(modifierArg)}.*/, "")}`;
+      // ${VAR##pattern} - remove longest matching prefix. SSH-624: a glob `*`
+      // becomes the greedy `.*` so the longest prefix is stripped. (No blanket
+      // trailing `.*` is appended — that over-matched literal patterns, e.g.
+      // ${v##prefix} would have wiped the whole string.)
+      return `\${${varExpr}.replace(/^${globToParamRegex(modifierArg, true)}/, "")}`;
 
     case "%":
-      // ${VAR%pattern} - remove shortest suffix
-      return `\${${jsParam}.replace(/${escapeRegex(modifierArg)}$/, "")}`;
+      // ${VAR%pattern} - remove shortest matching suffix. SSH-624: the pattern
+      // is anchored at end via a leading greedy capture `(.*)` so the SHORTEST
+      // (right-most) suffix is removed; String.replace alone is left-most, which
+      // would over-strip (e.g. ${f%.*} on a.tar.gz must yield a.tar, not a).
+      return `\${${varExpr}.replace(/(.*)${globToParamRegex(modifierArg, false)}$/, "$1")}`;
 
     case "%%":
-      // ${VAR%%pattern} - remove longest suffix
-      return `\${${jsParam}.replace(/.*?${escapeRegex(modifierArg)}$/, "")}`;
+      // ${VAR%%pattern} - remove longest matching suffix. SSH-624: a leading
+      // non-greedy capture `(.*?)` makes the LONGEST suffix match (the kept
+      // prefix is as short as possible).
+      return `\${${varExpr}.replace(/(.*?)${globToParamRegex(modifierArg, true)}$/, "$1")}`;
 
     case "^":
-      // ${VAR^} - uppercase first char
-      return `\${${jsParam}.charAt(0).toUpperCase() + ${jsParam}.slice(1)}`;
+      // ${VAR^} - uppercase first char. SSH-625: guarded accessor so an unset
+      // variable yields "" rather than a ReferenceError on the bare binding.
+      return `\${(${varExpr}).charAt(0).toUpperCase() + (${varExpr}).slice(1)}`;
 
     case "^^":
       // ${VAR^^} - uppercase all
-      return `\${${jsParam}.toUpperCase()}`;
+      return `\${(${varExpr}).toUpperCase()}`;
 
     case ",":
       // ${VAR,} - lowercase first char
-      return `\${${jsParam}.charAt(0).toLowerCase() + ${jsParam}.slice(1)}`;
+      return `\${(${varExpr}).charAt(0).toLowerCase() + (${varExpr}).slice(1)}`;
 
     case ",,":
       // ${VAR,,} - lowercase all
-      return `\${${jsParam}.toLowerCase()}`;
+      return `\${(${varExpr}).toLowerCase()}`;
 
     case "/": {
-      // ${VAR/pattern/replacement} - replace first
-      // Find first unescaped / to split pattern from replacement
+      // ${VAR/pattern/replacement} - replace first match. SSH-624: the pattern
+      // is a glob, so translate it to a regex (bash matches greedily here, e.g.
+      // ${s/l*/L} on "hello" yields "heL"); SSH-625: read via guarded accessor.
+      // Find first unescaped / to split pattern from replacement.
       const idx = findFirstUnescapedSlash(modifierArg);
       const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${jsParam}.replace("${escapeForQuotes(pattern)}", "${
+      return `\${${varExpr}.replace(/${globToParamRegex(pattern, true)}/, "${
         escapeForQuotes(replacement)
       }")}`;
     }
 
     case "//": {
-      // ${VAR//pattern/replacement} - replace all
-      // Find first unescaped / to split pattern from replacement
+      // ${VAR//pattern/replacement} - replace all matches (global regex).
+      // SSH-624: glob pattern -> regex; SSH-625: guarded accessor.
+      // Find first unescaped / to split pattern from replacement.
       const idx = findFirstUnescapedSlash(modifierArg);
       const pat = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const rep = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${jsParam}.replaceAll("${escapeForQuotes(pat)}", "${escapeForQuotes(rep)}")}`;
+      return `\${${varExpr}.replace(/${globToParamRegex(pat, true)}/g, "${
+        escapeForQuotes(rep)
+      }")}`;
     }
 
     case "substring": {

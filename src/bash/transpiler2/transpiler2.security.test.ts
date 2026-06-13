@@ -307,7 +307,8 @@ describe("Security - Parameter Expansion Safety", () => {
     const ast = parse('echo "${VAR//pattern/replacement}"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, ".replaceAll(");
+    // SSH-624: // now lowers to a global (/g) regex replace of the glob pattern.
+    assertStringIncludes(output, ".replace(/pattern/g, ");
   });
 
   it("should prevent code injection through expansion modifiers", () => {

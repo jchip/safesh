@@ -297,107 +297,111 @@ describe("Parameter Expansion - Default Values", () => {
 });
 
 describe("Parameter Expansion - Pattern Removal", () => {
+  // SSH-624: pattern is translated as a glob (so literal patterns stay anchored
+  // without a spurious trailing .*), and suffix forms use a leading capture +
+  // $1 so the correct shortest/longest right-most match is removed.
   it("should remove shortest prefix with #", () => {
-    const script = 'var="hello world"; echo "${var#hello }"';
+    const script = 's="hello world"; echo "${s#hello }"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, 'var.replace(/^hello /, "")');
+    assertStringIncludes(result, '.replace(/^hello /, "")');
   });
 
   it("should remove longest prefix with ##", () => {
-    const script = 'var="hello world"; echo "${var##hello }"';
+    const script = 's="hello world"; echo "${s##hello }"';
     const ast = parse(script);
     const result = transpile(ast);
-    // SSH-501: ## uses greedy .* (not .*?) for longest prefix removal
-    assertStringIncludes(result, 'var.replace(/^hello .*/, "")');
+    // SSH-624: literal pattern stays anchored only (no blanket trailing .*)
+    assertStringIncludes(result, '.replace(/^hello /, "")');
   });
 
   it("should remove shortest suffix with %", () => {
-    const script = 'var="hello world"; echo "${var% world}"';
+    const script = 's="hello world"; echo "${s% world}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, 'var.replace(/ world$/, "")');
+    assertStringIncludes(result, '.replace(/(.*) world$/, "$1")');
   });
 
   it("should remove longest suffix with %%", () => {
-    const script = 'var="hello world"; echo "${var%% world}"';
+    const script = 's="hello world"; echo "${s%% world}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, 'var.replace(/.*? world$/, "")');
+    assertStringIncludes(result, '.replace(/(.*?) world$/, "$1")');
   });
 });
 
 describe("Parameter Expansion - Case Modification", () => {
+  // SSH-625: case-modification forms now read through the guarded accessor
+  // (ENV/VARS aware) so an unset variable yields "" rather than a ReferenceError.
   it("should uppercase first char with ^", () => {
-    const script = 'var="hello"; echo "${var^}"';
+    const script = 's="hello"; echo "${s^}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.charAt(0).toUpperCase()");
-    assertStringIncludes(result, "var.slice(1)");
+    assertStringIncludes(result, ".charAt(0).toUpperCase()");
+    assertStringIncludes(result, ".slice(1)");
   });
 
   it("should uppercase all with ^^", () => {
-    const script = 'var="hello"; echo "${var^^}"';
+    const script = 's="hello"; echo "${s^^}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.toUpperCase()");
+    assertStringIncludes(result, ".toUpperCase()");
   });
 
   it("should lowercase first char with ,", () => {
-    const script = 'var="HELLO"; echo "${var,}"';
+    const script = 's="HELLO"; echo "${s,}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.charAt(0).toLowerCase()");
-    assertStringIncludes(result, "var.slice(1)");
+    assertStringIncludes(result, ".charAt(0).toLowerCase()");
+    assertStringIncludes(result, ".slice(1)");
   });
 
   it("should lowercase all with ,,", () => {
-    const script = 'var="HELLO"; echo "${var,,}"';
+    const script = 's="HELLO"; echo "${s,,}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.toLowerCase()");
+    assertStringIncludes(result, ".toLowerCase()");
   });
 });
 
 describe("Parameter Expansion - Pattern Replacement", () => {
+  // SSH-624: the pattern side of / and // is translated as a glob to a regex;
+  // / emits a single-match regex replace, // emits a global (/g) replace.
   it("should replace first occurrence with /", () => {
-    const script = 'var="hello hello"; echo "${var/hello/hi}"';
+    const script = 's="hello hello"; echo "${s/hello/hi}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replace");
-    assertStringIncludes(result, "hello");
+    assertStringIncludes(result, ".replace(/hello/, ");
     assertStringIncludes(result, "hi");
   });
 
   it("should replace all occurrences with //", () => {
-    const script = 'var="hello hello"; echo "${var//hello/hi}"';
+    const script = 's="hello hello"; echo "${s//hello/hi}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replaceAll");
-    assertStringIncludes(result, "hello");
+    assertStringIncludes(result, ".replace(/hello/g, ");
     assertStringIncludes(result, "hi");
   });
 
   it("should handle replacement with no replacement string", () => {
-    const script = 'var="hello world"; echo "${var/world}"';
+    const script = 's="hello world"; echo "${s/world}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replace");
-    assertStringIncludes(result, "world");
+    assertStringIncludes(result, ".replace(/world/, ");
   });
 
   it("should handle replaceAll with no replacement string", () => {
-    const script = 'var="hello world world"; echo "${var//world}"';
+    const script = 's="hello world world"; echo "${s//world}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replaceAll");
+    assertStringIncludes(result, ".replace(/world/g, ");
   });
 
   it("should replace at start with /#", () => {
     const script = 'var="hello world"; echo "${var/#hello/hi}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replace(/^");
+    assertStringIncludes(result, ".replace(/^");
     assertStringIncludes(result, "hi");
   });
 
@@ -405,16 +409,19 @@ describe("Parameter Expansion - Pattern Replacement", () => {
     const script = 'var="hello world"; echo "${var/%world/earth}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replace(/");
+    assertStringIncludes(result, ".replace(/");
     assertStringIncludes(result, "$");
     assertStringIncludes(result, "earth");
   });
 
   it("should handle escaped slash in pattern", () => {
-    const script = 'var="path/to/file"; echo "${var/\\//-}"';
+    const script = 's="path/to/file"; echo "${s/\\//-}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replace");
+    // A `.replace` is emitted. (Splitting an escaped `\/` inside the pattern
+    // from the replacement is a separate pre-existing limitation of
+    // findFirstUnescapedSlash, out of scope for SSH-624/SSH-625.)
+    assertStringIncludes(result, ".replace(");
   });
 });
 
@@ -531,7 +538,8 @@ describe("Word Expansion - Mixed Scenarios", () => {
     const script = 'echo "${file%.txt}.md"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "file.replace");
+    // SSH-624/SSH-625: % now uses a capture-group regex via the guarded accessor.
+    assertStringIncludes(result, '.replace(/(.*)\\.txt$/, "$1")');
     assertStringIncludes(result, ".md");
   });
 
@@ -546,25 +554,25 @@ describe("Word Expansion - Mixed Scenarios", () => {
 
 describe("Helper Functions - findFirstUnescapedSlash", () => {
   it("should handle string with escaped slash", () => {
-    const script = 'var="test"; echo "${var/a\\/b/c}"';
+    const script = 's="test"; echo "${s/a\\/b/c}"';
     const ast = parse(script);
     const result = transpile(ast);
-    // The transpiler should handle escaped slashes
-    assertStringIncludes(result, "var.replace");
+    // A `.replace` is emitted (see escaped-slash limitation note above).
+    assertStringIncludes(result, ".replace(");
   });
 
   it("should handle string with no slashes", () => {
-    const script = 'var="test"; echo "${var/abc}"';
+    const script = 's="test"; echo "${s/abc}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replace");
+    assertStringIncludes(result, ".replace(/abc/, ");
   });
 
   it("should find unescaped slash in replacement pattern", () => {
-    const script = 'var="a/b"; echo "${var/\\//\\\\}"';
+    const script = 's="a/b"; echo "${s/\\//\\\\}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "var.replace");
+    assertStringIncludes(result, ".replace(");
   });
 });
 
