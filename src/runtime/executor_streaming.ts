@@ -29,9 +29,13 @@ async function* streamProcess(
   const decoder = new TextDecoder();
   const startTime = Date.now();
 
+  // Declared outside try so the catch block can release them on error
+  let stdoutReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let stderrReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
   try {
-    const stdoutReader = process.stdout.getReader();
-    const stderrReader = process.stderr.getReader();
+    stdoutReader = process.stdout.getReader();
+    stderrReader = process.stderr.getReader();
 
     let stdoutDone = false;
     let stderrDone = false;
@@ -94,8 +98,8 @@ async function* streamProcess(
     yield { type: "exit", code: status.code };
   } catch (error) {
     // Release readers before cleanup so streams can be canceled
-    try { stdoutReader.cancel(); } catch { /* already closed */ }
-    try { stderrReader.cancel(); } catch { /* already closed */ }
+    try { stdoutReader?.cancel(); } catch { /* already closed */ }
+    try { stderrReader?.cancel(); } catch { /* already closed */ }
     await cleanupProcess(process);
     throw error;
   }
