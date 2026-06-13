@@ -299,3 +299,83 @@ describe("status-recording runtime (SSH-597)", () => {
     }
   });
 });
+
+import {
+  buildErrorHandler,
+  buildFilePostamble,
+  extractShellState,
+  SHELL_STATE_MARKER,
+} from "./preamble.ts";
+
+describe("state marker env deltas (SSH-599)", () => {
+  const config: PreambleConfig = {
+    projectDir: "/test/project",
+    allowedCommands: [],
+    cwd: "/test/project",
+  };
+
+  it("embeds the env-delta capture exactly once in both preambles", () => {
+    const { preamble } = buildPreamble(undefined, config);
+    const filePreamble = buildFilePreamble(undefined, config);
+
+    for (const text of [preamble, filePreamble]) {
+      assertEquals(text.split("const __SSH_ENV0").length - 1, 1);
+      assertEquals(text.split("function __sshShellState").length - 1, 1);
+    }
+  });
+
+  it("emits the marker through the delta helper in postamble and error handler", () => {
+    const postamble = buildFilePostamble(true);
+    assertEquals(postamble.includes(`"${SHELL_STATE_MARKER}" + __sshShellState()`), true);
+
+    const errorHandler = buildErrorHandler("/tmp/script.ts", 10, true);
+    assertEquals(errorHandler.includes(`"${SHELL_STATE_MARKER}" + __sshShellState()`), true);
+
+    // No marker without a shell
+    assertEquals(buildFilePostamble(false), "");
+    assertEquals(buildErrorHandler("/tmp/script.ts", 10, false).includes(SHELL_STATE_MARKER), false);
+  });
+
+  describe("extractShellState", () => {
+    it("parses set and unset env deltas and strips the marker line", () => {
+      const state = { CWD: "/work", ENV: { FOO: "x" }, UNSET_ENV: ["BAR"], VARS: { n: 1 } };
+      const output = `hello\n${SHELL_STATE_MARKER}${JSON.stringify(state)}\nworld`;
+
+      const result = extractShellState(output);
+
+      assertEquals(result.cleanOutput, "hello\nworld");
+      assertEquals(result.cwd, "/work");
+      assertEquals(result.env, { FOO: "x" });
+      assertEquals(result.envUnset, ["BAR"]);
+      assertEquals(result.vars, { n: 1 });
+    });
+
+    it("tolerates a marker without UNSET_ENV", () => {
+      const output = `${SHELL_STATE_MARKER}${JSON.stringify({ CWD: "/w", ENV: {}, VARS: {} })}`;
+
+      const result = extractShellState(output);
+
+      assertEquals(result.cwd, "/w");
+      assertEquals(result.envUnset, undefined);
+    });
+
+    it("returns output unchanged when no marker is present", () => {
+      const result = extractShellState("plain output\nno marker");
+
+      assertEquals(result.cleanOutput, "plain output\nno marker");
+      assertEquals(result.cwd, undefined);
+      assertEquals(result.env, undefined);
+      assertEquals(result.envUnset, undefined);
+    });
+
+    it("returns output unchanged when the marker JSON is invalid", () => {
+      const output = `${SHELL_STATE_MARKER}{not json`;
+
+      const result = extractShellState(output);
+
+      assertEquals(result.cleanOutput, output);
+      assertEquals(result.env, undefined);
+    });
+  });
+});
+

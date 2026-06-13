@@ -548,6 +548,71 @@ describe("executor", () => {
     });
   });
 
+  describe("executeCode - shell env round-trip (SSH-599)", () => {
+    it("round-trips env unset across commands", async () => {
+      const config: SafeShellConfig = {
+        permissions: {
+          read: ["/tmp"],
+          write: ["/tmp"],
+        },
+      };
+      const shell = createTestShell(config);
+
+      // Command 1: export FOO=x (transpiled export lowers to Deno.env.set)
+      const r1 = await executeCode('Deno.env.set("SSH599_FOO", "x")', config, {}, shell);
+      assertEquals(r1.success, true);
+      assertEquals(shell.env.SSH599_FOO, "x");
+
+      // Command 2: unset FOO (runtime form: $.deleteEnv only touches Deno.env)
+      const r2 = await executeCode('$.deleteEnv("SSH599_FOO")', config, {}, shell);
+      assertEquals(r2.success, true);
+      assertEquals("SSH599_FOO" in shell.env, false, "unset must round-trip into shell.env");
+
+      // Command 3: FOO must be absent in the next command's environment
+      const r3 = await executeCode(
+        'console.log(String(Deno.env.get("SSH599_FOO")))',
+        config,
+        {},
+        shell,
+      );
+      assertEquals(r3.success, true);
+      assertEquals(r3.stdout.trim(), "undefined", "unset var must not leak into later commands");
+    });
+
+    it("round-trips unset of a $.ENV proxy delete", async () => {
+      const config: SafeShellConfig = {
+        permissions: {
+          read: ["/tmp"],
+          write: ["/tmp"],
+        },
+      };
+      const shell = createTestShell(config);
+      shell.env.SSH599_PROXY = "pre-existing";
+
+      const result = await executeCode('delete $.ENV.SSH599_PROXY', config, {}, shell);
+
+      assertEquals(result.success, true);
+      assertEquals("SSH599_PROXY" in shell.env, false);
+    });
+
+    it("merges env sets without dropping untouched shell env entries", async () => {
+      const config: SafeShellConfig = {
+        permissions: {
+          read: ["/tmp"],
+          write: ["/tmp"],
+        },
+      };
+      const shell = createTestShell(config);
+      shell.env.SSH599_KEEP = "keep-me";
+
+      const result = await executeCode('$.setEnv("SSH599_NEW", "added")', config, {}, shell);
+
+      assertEquals(result.success, true);
+      assertEquals(shell.env.SSH599_KEEP, "keep-me");
+      assertEquals(shell.env.SSH599_NEW, "added");
+    });
+  });
+
   describe("executeCode - Integration", () => {
     it("executes simple code successfully", async () => {
       const config: SafeShellConfig = {

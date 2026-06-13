@@ -166,6 +166,37 @@ function statusRecordingLines(): string[] {
 }
 
 /**
+ * Emitted state-marker capture shared by buildPreamble and buildFilePreamble
+ * (SSH-599). Snapshots Deno.env right after the shell ENV sync so the marker
+ * can report env *deltas* — sets AND unsets — instead of the $.ENV proxy
+ * target (which misses direct Deno.env.set/delete, the path transpiled
+ * `export`/`unset` take). Mirrors the baseline-diff model of the SSH-580
+ * passthrough trailer (buildStateTrailerHook) so both paths agree.
+ *
+ * Must be emitted AFTER the "Sync shell ENV to Deno.env" loop so persisted
+ * shell.env entries are part of the baseline (their later deletion then
+ * surfaces in UNSET_ENV).
+ */
+function stateCaptureLines(): string[] {
+  return [
+    "// SSH-599: baseline env snapshot for the state marker's set/unset deltas",
+    `const __SSH_ENV0: Record<string, string> = Deno.env.toObject();`,
+    `function __sshShellState(): string {`,
+    `  const __env1: Record<string, string> = Deno.env.toObject();`,
+    `  const __set: Record<string, string> = {};`,
+    `  const __unset: string[] = [];`,
+    `  for (const [__k, __v] of Object.entries(__env1)) {`,
+    `    if (__SSH_ENV0[__k] !== __v && !__k.startsWith("SAFESH_")) __set[__k] = __v;`,
+    `  }`,
+    `  for (const __k of Object.keys(__SSH_ENV0)) {`,
+    `    if (!(__k in __env1) && !__k.startsWith("SAFESH_")) __unset.push(__k);`,
+    `  }`,
+    `  return JSON.stringify({ CWD: Deno.cwd(), ENV: __set, UNSET_ENV: __unset, VARS: (globalThis as any).$.VARS });`,
+    `}`,
+  ];
+}
+
+/**
  * Build the preamble that gets prepended to user code
  *
  * The preamble injects:
@@ -265,6 +296,8 @@ export function buildPreamble(
   preambleLines.push(
     "// Sync shell ENV to Deno.env so child processes inherit them",
     `for (const [k, v] of Object.entries(${JSON.stringify(shellEnv)})) { Deno.env.set(k, v); }`,
+    "",
+    ...stateCaptureLines(),
     "",
     ...statusRecordingLines(),
     "",
@@ -459,6 +492,8 @@ export function buildFilePreamble(shell?: Shell, preambleConfig?: PreambleConfig
     "// Sync shell ENV to Deno.env so child processes inherit them",
     `for (const [k, v] of Object.entries(${JSON.stringify(shellEnv)})) { Deno.env.set(k, v); }`,
     "",
+    ...stateCaptureLines(),
+    "",
     ...statusRecordingLines(),
     "",
     "// Create $ namespace with all exports",
@@ -580,7 +615,7 @@ if (__SSH_TRAILER) {
  */
 export function buildFilePostamble(hasShell: boolean): string {
   if (!hasShell) return "";
-  return `\n\n// SafeShell auto-generated postamble - output shell state\nconsole.log("${SHELL_STATE_MARKER}" + JSON.stringify({ CWD: Deno.cwd(), ENV: $.ENV, VARS: $.VARS }));\n`;
+  return `\n\n// SafeShell auto-generated postamble - output shell state\nconsole.log("${SHELL_STATE_MARKER}" + __sshShellState());\n`;
 }
 
 /**
@@ -597,7 +632,7 @@ export function buildErrorHandler(
   vfsEnabled = false,
 ): string {
   const shellOutput = hasShell
-    ? `console.log("${SHELL_STATE_MARKER}" + JSON.stringify({ CWD: Deno.cwd(), ENV: $.ENV, VARS: $.VARS }));`
+    ? `console.log("${SHELL_STATE_MARKER}" + __sshShellState());`
     : "";
 
   const vfsCleanup = vfsEnabled
@@ -654,11 +689,18 @@ export function buildErrorHandler(
 
 /**
  * Extract shell state from output and return cleaned output
+ *
+ * SSH-599: `env` is a set-delta (vars added or changed during the script) and
+ * `envUnset` lists vars removed during the script, both relative to the
+ * script's starting environment. Consumers must merge `env` into the shell's
+ * env and delete `envUnset` keys — not replace wholesale — so unsets
+ * round-trip. `vars` remains a full snapshot.
  */
 export function extractShellState(output: string): {
   cleanOutput: string;
   cwd?: string;
   env?: Record<string, string>;
+  envUnset?: string[];
   vars?: Record<string, unknown>;
 } {
   const outputLines = output.split("\n");
@@ -679,9 +721,16 @@ export function extractShellState(output: string): {
     const state = JSON.parse(jsonStr) as {
       CWD?: string;
       ENV?: Record<string, string>;
+      UNSET_ENV?: string[];
       VARS?: Record<string, unknown>;
     };
-    return { cleanOutput, cwd: state.CWD, env: state.ENV, vars: state.VARS };
+    return {
+      cleanOutput,
+      cwd: state.CWD,
+      env: state.ENV,
+      envUnset: state.UNSET_ENV,
+      vars: state.VARS,
+    };
   } catch {
     return { cleanOutput: output };
   }
