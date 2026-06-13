@@ -530,8 +530,8 @@ describe("Transpiler2 - Pipelines", () => {
 
     // Should convert command stdout to lines, then pipe to transform
     assertStringIncludes(output, ".stdout().lines().pipe($.head(5))");
-    // Should iterate the stream for output
-    assertStringIncludes(output, "for await");
+    // SSH-582: stream output goes through __printCmd so exit status records
+    assertStringIncludes(output, "await __printCmd(");
   });
 
   it("should chain transforms correctly in pipelines (SSH-364)", () => {
@@ -627,19 +627,19 @@ describe("Transpiler2 - Pipelines", () => {
     const ast = parse("sleep 20 && wc -l file.txt && tail -20 file.txt");
     const output = transpile(ast);
 
-    // The stream commands (wc, tail with file args) should use for-await iteration
-    // NOT be wrapped in __printCmd which expects CommandResult
-    assertStringIncludes(output, "for await");
+    // SSH-582: the outer consumption goes through __printCmd, which handles
+    // stream shapes (printAsyncIterable) and records the exit status
+    assertStringIncludes(output, "await __printCmd(");
     assertStringIncludes(output, "$.cat");
     assertStringIncludes(output, "$.wc");
     assertStringIncludes(output, "$.tail");
 
-    // Should NOT have invalid patterns like __printCmd returning a stream
-    // The final output should iterate the stream, not pass it to __printCmd
+    // The IIFE must still RETURN the stream raw — wrapping the return in
+    // __printCmd would consume it and yield a number (SSH-494)
     assertEquals(
-      output.includes("await __printCmd((async ()"),
+      output.includes("return await __printCmd"),
       false,
-      "Should not wrap stream-returning IIFE in __printCmd",
+      "IIFE should not wrap stream return in __printCmd",
     );
   });
 
@@ -648,14 +648,11 @@ describe("Transpiler2 - Pipelines", () => {
     const ast = parse("cd dir && echo test 2>&1 | grep test");
     const output = transpile(ast);
 
-    // Should use for await to iterate the stream result
-    assertStringIncludes(output, "for await");
+    // SSH-582: the stream result is consumed by __printCmd (records status);
+    // printShellValue resolves the async IIFE's promise itself
+    assertStringIncludes(output, "await __printCmd((async");
     assertStringIncludes(output, "$.cd");
     assertStringIncludes(output, "$.grep");
-
-    // SSH-476: When the stream comes from an async IIFE, we need to await it first
-    // Pattern: for await (const __line of await (async () => { ... })())
-    assertStringIncludes(output, "for await (const __line of await");
 
     // SSH-494: The IIFE must NOT wrap the stream return in __printCmd,
     // because __printCmd consumes the stream and returns a number (exit code),
@@ -682,8 +679,8 @@ describe("Transpiler2 - Pipelines", () => {
       const ast = parse(cmd);
       const output = transpile(ast);
 
-      // Should iterate stream with for-await
-      assertStringIncludes(output, "for await", `${cmd}: should use for-await to iterate stream`);
+      // SSH-582: outer consumption records status via __printCmd
+      assertStringIncludes(output, "await __printCmd(", `${cmd}: stream should be consumed via __printCmd`);
 
       // The IIFE should return the stream directly, NOT wrapped in __printCmd
       assertEquals(
