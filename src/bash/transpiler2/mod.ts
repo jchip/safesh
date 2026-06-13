@@ -177,6 +177,9 @@ export class BashTranspiler2 {
         }
         if (test.type === "Pipeline") {
           // Handle && and || chains (e.g., [ $x -gt 0 ] && [ $x -lt 10 ])
+          // The chain-level `negated` flag mirrors the LEADING operand's flag
+          // (parser convention, see SSH-594 notes in handlers/commands.ts) and
+          // the operand applies it itself, so it is intentionally ignored here.
           if (test.commands.length > 1 && (test.operator === "&&" || test.operator === "||")) {
             const jsOp = test.operator === "&&" ? "&&" : "||";
             const parts: string[] = [];
@@ -198,11 +201,20 @@ export class BashTranspiler2 {
           // For single-command pipeline wrappers, check the wrapped command.
           const firstCmd = test.commands[0];
           if (firstCmd?.type === "TestCommand") {
+            // SSH-603: `! [[ ... ]]` — flip the condition inline
             const expr = handlers.visitTestCondition(firstCmd.expression, this);
-            return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: true };
+            const ternary = test.negated ? "? 1 : 0" : "? 0 : 1";
+            return { code: `{ code: (${expr}) ${ternary}, stdout: '', stderr: '' }`, async: true };
           } else if (firstCmd?.type === "ArithmeticCommand") {
+            // SSH-603: `! (( ... ))` — flip the condition inline
             const expr = this.visitArithmetic(firstCmd.expression);
-            return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: false };
+            const ternary = test.negated ? "? 1 : 0" : "? 0 : 1";
+            return { code: `{ code: (${expr}) ${ternary}, stdout: '', stderr: '' }`, async: false };
+          } else if (test.negated) {
+            // SSH-603: `if ! cmd` / `while ! cmd` — unwrapping to buildCommand
+            // would drop the negation; buildPipeline applies the exit-status
+            // flip (SSH-594) and dedupes a doubled flag on nested pipelines.
+            return handlers.buildPipeline(test, this);
           } else if (firstCmd?.type === "Command") {
             return handlers.buildCommand(firstCmd, this);
           } else if (firstCmd?.type === "Pipeline") {
