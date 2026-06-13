@@ -530,3 +530,82 @@ Deno.test("grep() - fixed strings escapes regex special chars", async () => {
   assertEquals(results[0]!.line, "cost is $100");
   assertEquals(results[1]!.line, "$100 total");
 });
+
+// =============================================================================
+// SSH-573: grep -n must number every line, including blank lines
+// =============================================================================
+//
+// Bug: `grep -n foo file` numbered matches 1,3,4 for a file where real grep
+// reports 1,6,7 — blank lines were dropped before the line counter ran.
+// Root cause: the stdlib lines() transform (used by the bash lowering ahead
+// of grep) filtered out empty lines, so any counter on its output skipped
+// blanks and drifted further with file position.
+// Reference (real grep on "alpha foo\n\nbeta\n\n\ngamma foo\ndelta foo\n"):
+//   1:alpha foo
+//   6:gamma foo
+//   7:delta foo
+
+import { lines as splitLines } from "../stdlib/transforms.ts";
+import { createStream } from "../stdlib/stream.ts";
+import { FluentStream } from "../stdlib/fluent-stream.ts";
+
+/** File content with interior blank lines (lines 2, 4, 5 are blank). */
+const BLANK_LINE_CONTENT = "alpha foo\n\nbeta\n\n\ngamma foo\ndelta foo\n";
+
+Deno.test("SSH-573: grep core numbers blank lines like real grep", async () => {
+  // Feed grep the lines exactly as the file has them (blanks included)
+  const inputLines = ["alpha foo", "", "beta", "", "", "gamma foo", "delta foo"];
+  const results = await collect(
+    grep("foo", arrayToAsyncIterable(inputLines), { lineNumbers: true }),
+  );
+
+  assertEquals(
+    results.map((m) => `${m.lineNumber}:${m.line}`),
+    ["1:alpha foo", "6:gamma foo", "7:delta foo"],
+  );
+});
+
+Deno.test("SSH-573: lines() + grep pipeline matches real grep -n output", async () => {
+  // Mirrors the bash lowering: cat(file) yields one raw chunk, lines() splits
+  // it, grep numbers the result. Before the fix lines() dropped blanks and
+  // produced 1,3,4.
+  const chunkStream = createStream(arrayToAsyncIterable([BLANK_LINE_CONTENT]));
+  const results = await collect(
+    grep("foo", chunkStream.pipe(splitLines()), { lineNumbers: true }),
+  );
+
+  assertEquals(
+    results.map((m) => formatGrepMatch(m, { showLineNumbers: true })),
+    ["1:alpha foo", "6:gamma foo", "7:delta foo"],
+  );
+});
+
+Deno.test("SSH-573: index-based numbering over lines() matches real grep -n", async () => {
+  // Mirrors the transpiled file-operand form of `grep -n pat file`:
+  //   $.cat(file).lines().map((line, i) => ({line, number: i+1})).filter(...)
+  const numbered = await new FluentStream(
+    createStream(arrayToAsyncIterable([BLANK_LINE_CONTENT])).pipe(splitLines()),
+  )
+    .map((line, i) => ({ line, number: i + 1 }))
+    .filter(({ line }) => /foo/.test(line))
+    .map(({ line, number }) => `${number}:${line}`)
+    .collect();
+
+  assertEquals(numbered, ["1:alpha foo", "6:gamma foo", "7:delta foo"]);
+});
+
+Deno.test("SSH-573: grep -vn includes blank lines with correct numbers", async () => {
+  // Real grep -vn foo: 2:, 3:beta, 4:, 5:
+  const chunkStream = createStream(arrayToAsyncIterable([BLANK_LINE_CONTENT]));
+  const results = await collect(
+    grep("foo", chunkStream.pipe(splitLines()), {
+      lineNumbers: true,
+      invertMatch: true,
+    }),
+  );
+
+  assertEquals(
+    results.map((m) => `${m.lineNumber}:${m.line}`),
+    ["2:", "3:beta", "4:", "5:"],
+  );
+});

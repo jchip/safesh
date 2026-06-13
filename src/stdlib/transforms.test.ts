@@ -204,11 +204,34 @@ Deno.test("lines() - splits text on newlines", async () => {
   assertEquals(result, ["line1", "line2", "line3"]);
 });
 
-Deno.test("lines() - filters out empty lines", async () => {
+Deno.test("lines() - preserves interior blank lines, drops trailing-newline artifact (SSH-573)", async () => {
   const stream = fromArray(["line1\n\nline2\n"]);
   const lineStream = stream.pipe(lines());
   const result = await lineStream.collect();
-  assertEquals(result, ["line1", "line2"]);
+  // Real coreutils see 3 lines here: "line1", "", "line2".
+  // The final "" from the trailing newline is a split artifact, not a line.
+  assertEquals(result, ["line1", "", "line2"]);
+});
+
+Deno.test("lines() - consecutive blank lines are all preserved (SSH-573)", async () => {
+  const stream = fromArray(["a\n\n\nb\n"]);
+  const lineStream = stream.pipe(lines());
+  const result = await lineStream.collect();
+  assertEquals(result, ["a", "", "", "b"]);
+});
+
+Deno.test("lines() - newline-only chunk yields one blank line (SSH-573)", async () => {
+  const stream = fromArray(["\n"]);
+  const lineStream = stream.pipe(lines());
+  const result = await lineStream.collect();
+  assertEquals(result, [""]);
+});
+
+Deno.test("lines() - empty chunk yields nothing (SSH-573)", async () => {
+  const stream = fromArray([""]);
+  const lineStream = stream.pipe(lines());
+  const result = await lineStream.collect();
+  assertEquals(result, []);
 });
 
 Deno.test("lines() - handles multiple text chunks", async () => {

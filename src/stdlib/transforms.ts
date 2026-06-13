@@ -178,8 +178,11 @@ export function take<T>(n: number): Transform<T, T> {
 /**
  * Split text chunks into individual lines
  *
- * Each text chunk is split on newline characters, yielding each
- * non-empty line. Useful for processing text files or command output.
+ * Each text chunk is split on newline characters. Interior blank lines are
+ * preserved to match coreutils semantics (SSH-573: `grep -n` line numbers
+ * must count blank lines exactly like real grep). Only the empty segment
+ * produced by a chunk's trailing newline is dropped, so `"a\n\nb\n"` yields
+ * `["a", "", "b"]` — the same lines real text tools see.
  *
  * @returns Transform that splits text into lines
  *
@@ -200,9 +203,14 @@ export function take<T>(n: number): Transform<T, T> {
 export function lines(): Transform<string, string> {
   return async function* (stream) {
     for await (const text of stream) {
+      if (text === "") continue;
       const parts = text.split("\n");
-      for (const line of parts) {
-        if (line) yield line;
+      // A trailing newline produces one empty segment at the end; that is a
+      // split artifact, not a line. All other (interior) empties are real
+      // blank lines and must be preserved (SSH-573).
+      const end = parts[parts.length - 1] === "" ? parts.length - 1 : parts.length;
+      for (let i = 0; i < end; i++) {
+        yield parts[i]!;
       }
     }
   };
