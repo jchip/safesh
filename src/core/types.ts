@@ -155,13 +155,12 @@ export interface SafeShellConfig {
   passthroughAnalyzable?: boolean;
 
   /**
-   * Parser front-end for the passthrough permission analysis (SSH-585).
-   * - "legacy" (default): the hand-rolled SafeShell parser
-   * - "mvdan": mvdan/sh via the adapter in src/bash/mvdan/ — battle-tested
-   *   grammar; falls back to the legacy front-end if its parse fails.
-   * Transpilation always uses the legacy parser regardless of this setting.
+   * Route supported commands to native .ts implementations instead of
+   * spawning the real binary; falls back to the real binary when the command
+   * or its flags are unsupported.
+   * Default: false.
    */
-  parserFrontend?: "legacy" | "mvdan";
+  nativeCommands?: boolean;
 
   /**
    * Project temp directory configuration for $.tempdir().
