@@ -539,7 +539,8 @@ describe("Complex Parameter Expansions", () => {
   it("should handle expansion with pattern and replacement", () => {
     const code = transpileBash('echo "${PATH//:/;}"');
     assertStringIncludes(code, "PATH");
-    assertStringIncludes(code, ".replaceAll");
+    // SSH-624: // lowers to a global (/g) regex replace of the glob pattern.
+    assertStringIncludes(code, ".replace(/:/g, ");
   });
 
   it("should handle multiple modifiers", () => {

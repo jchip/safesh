@@ -238,53 +238,49 @@ describe("SSH-500: Output Process Substitution Race Condition Fix", () => {
   });
 });
 
-describe("SSH-501: ## Pattern Removal Greedy Fix", () => {
-  it("should use greedy .* for ## (longest prefix removal)", () => {
-    const code = transpileBash('echo "${var##prefix}"');
-    // ## should use greedy .* to match longest prefix
-    assertStringIncludes(code, 'var.replace(/^prefix.*/, "")');
+describe("SSH-501/SSH-624: ## %% pattern removal greediness", () => {
+  // SSH-624: previously the longest-match forms appended a blanket `.*`/`.*?`
+  // (e.g. ## -> /^prefix.*/), which over-matched literal patterns
+  // (${v##prefix} on "prefixfoo" would wipe the whole string). The longest vs
+  // shortest distinction now lives in how a glob `*` is translated (greedy `.*`
+  // for ##/%% vs non-greedy `.*?` for #/%); a literal pattern stays anchored
+  // only. Suffix forms keep a leading capture and substitute $1 so the
+  // shortest/longest *right-most* match is removed correctly.
+  it("should anchor longest prefix removal with ## (no trailing .*)", () => {
+    const code = transpileBash('echo "${f##prefix}"');
+    assertStringIncludes(code, '.replace(/^prefix/, "")');
+    assertEquals(code.includes("/^prefix.*/"), false, "## must not append a blanket .*");
   });
 
-  it("should use non-greedy .*? for %% (longest suffix removal)", () => {
-    const code = transpileBash('echo "${var%%suffix}"');
-    // %% should use non-greedy .*? to match from earliest point
-    assertStringIncludes(code, 'var.replace(/.*?suffix$/, "")');
+  it("should keep the longest suffix capture for %%", () => {
+    const code = transpileBash('echo "${f%%suffix}"');
+    assertStringIncludes(code, '.replace(/(.*?)suffix$/, "$1")');
   });
 
-  it("should NOT use greedy for # (shortest prefix removal)", () => {
-    const code = transpileBash('echo "${var#prefix}"');
-    // # should NOT have .* at all - just anchored pattern
-    assertStringIncludes(code, 'var.replace(/^prefix/, "")');
-    // Verify no .* follows
-    assertEquals(code.includes('/^prefix.*'), false, '# should not use .*');
+  it("should anchor shortest prefix removal with #", () => {
+    const code = transpileBash('echo "${f#prefix}"');
+    assertStringIncludes(code, '.replace(/^prefix/, "")');
   });
 
-  it("should NOT use greedy for % (shortest suffix removal)", () => {
-    const code = transpileBash('echo "${var%suffix}"');
-    // % should NOT have .* at all - just anchored pattern
-    assertStringIncludes(code, 'var.replace(/suffix$/, "")');
-    // Verify no .* precedes
-    assertEquals(code.includes('.*suffix$/'), false, '% should not use .*');
+  it("should keep the shortest suffix capture for %", () => {
+    const code = transpileBash('echo "${f%suffix}"');
+    assertStringIncludes(code, '.replace(/(.*)suffix$/, "$1")');
   });
 
-  it("## should generate different regex than #", () => {
-    const codeShort = transpileBash('echo "${var#pattern}"');
-    const codeLong = transpileBash('echo "${var##pattern}"');
-    // They must produce different output
-    assertEquals(codeShort === codeLong, false, '# and ## should generate different regexes');
-    // # = anchored only, ## = anchored + greedy
-    assertStringIncludes(codeShort, '/^pattern/');
-    assertStringIncludes(codeLong, '/^pattern.*/');
+  it("## should translate a glob * greedily and # non-greedily", () => {
+    const codeShort = transpileBash('echo "${f#*.}"');
+    const codeLong = transpileBash('echo "${f##*.}"');
+    assertEquals(codeShort === codeLong, false, "# and ## must differ for glob patterns");
+    assertStringIncludes(codeShort, "/^.*?\\./"); // shortest: non-greedy
+    assertStringIncludes(codeLong, "/^.*\\./"); // longest: greedy
   });
 
-  it("%% should generate different regex than %", () => {
-    const codeShort = transpileBash('echo "${var%pattern}"');
-    const codeLong = transpileBash('echo "${var%%pattern}"');
-    // They must produce different output
-    assertEquals(codeShort === codeLong, false, '% and %% should generate different regexes');
-    // % = anchored only, %% = non-greedy prefix + anchored
-    assertStringIncludes(codeShort, '/pattern$/');
-    assertStringIncludes(codeLong, '/.*?pattern$/');
+  it("%% should translate a glob * greedily and % non-greedily", () => {
+    const codeShort = transpileBash('echo "${f%.*}"');
+    const codeLong = transpileBash('echo "${f%%.*}"');
+    assertEquals(codeShort === codeLong, false, "% and %% must differ for glob patterns");
+    assertStringIncludes(codeShort, '.replace(/(.*)\\..*?$/, "$1")'); // shortest suffix
+    assertStringIncludes(codeLong, '.replace(/(.*?)\\..*$/, "$1")'); // longest suffix
   });
 });
 
