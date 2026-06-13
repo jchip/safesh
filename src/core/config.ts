@@ -230,6 +230,7 @@ export const DEFAULT_CONFIG: SafeShellConfig = {
   timeout: DEFAULT_TIMEOUT_MS,
   alwaysTranspile: true,
   passthroughAnalyzable: true,
+  nativeCommands: false,
 };
 
 // ============================================================================

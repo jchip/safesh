@@ -35,6 +35,8 @@ export interface PreambleConfig {
   blockProjectDirWrite?: boolean;
   includeHomeInDefaultRead?: boolean;
   allowProjectCommands?: boolean;
+  /** Route supported commands to native .ts impls before spawning (SSH-629). */
+  nativeCommands?: boolean;
   allowedCommands: string[]; // Merged from permissions.run + external keys
   sessionAllowedCommands?: string[]; // Session-allowed commands (from session file)
   cwd: string;
@@ -91,6 +93,7 @@ export function extractPreambleConfig(config: SafeShellConfig, cwd: string): Pre
     blockProjectDirWrite: config.blockProjectDirWrite,
     includeHomeInDefaultRead: config.includeHomeInDefaultRead,
     allowProjectCommands,
+    nativeCommands: config.nativeCommands,
     allowedCommands: Array.from(allowedCommands),
     sessionAllowedCommands: sessionAllowedCommands.length > 0 ? sessionAllowedCommands : undefined,
     cwd,

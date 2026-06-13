@@ -13,12 +13,30 @@ import { writeStdin } from "./io.ts";
 import { collectStreamBytes, collectStreamBytesWithTimeout } from "../core/utils.ts";
 import { CMD_NAME_SYMBOL, type CommandFn } from "./command-init.ts";
 import { lines } from "./transforms.ts";
+import { getNativeCommand } from "./native-commands.ts";
 import {
   JOB_MARKER,
   CMD_ERROR_MARKER,
   ENV_SHELL_ID,
   ENV_SCRIPT_ID,
 } from "../core/constants.ts";
+
+/** Symbol the preamble uses to inject config onto globalThis.$ (SSH-629). */
+const CONFIG_SYMBOL = Symbol.for("safesh.config");
+
+/**
+ * Whether native command routing is enabled for this runtime.
+ *
+ * Reads the same `Symbol.for("safesh.config")` slot on globalThis.$ that the
+ * preamble injects and that command-init.ts already consults. Returns false
+ * when no config is present (e.g. file-execution mode or unit tests), so the
+ * gate is off by default and behavior matches spawning the real binary.
+ */
+function nativeCommandsEnabled(): boolean {
+  const $ = (globalThis as { $?: Record<symbol, unknown> }).$;
+  const config = $?.[CONFIG_SYMBOL] as { nativeCommands?: boolean } | undefined;
+  return config?.nativeCommands === true;
+}
 
 /**
  * Generate a unique job ID
@@ -450,6 +468,12 @@ export class Command implements PromiseLike<CommandResult> {
    * ```
    */
   async exec(): Promise<CommandResult> {
+    // SSH-629: route to a native .ts implementation when enabled and supported,
+    // before spawning the real binary. Falls through to spawn otherwise, so the
+    // default (gate off) behavior is identical to today.
+    const nativeResult = await this.tryNativeCommand();
+    if (nativeResult) return nativeResult;
+
     if (this.options.mergeStreams) {
       // Merge mode: collect everything into output
       return await this.execMerged();
@@ -457,6 +481,80 @@ export class Command implements PromiseLike<CommandResult> {
       // Separate mode: keep stdout and stderr separate
       return await this.execSeparate();
     }
+  }
+
+  /**
+   * SSH-629: Attempt to satisfy this command via the native-command registry.
+   *
+   * Returns a CommandResult when the gate is enabled AND a registered native
+   * implementation exists AND it supports this argv; otherwise returns
+   * undefined so exec() spawns the real binary unchanged. Scoped to the
+   * buffered exec() path — streaming/.pipe() still spawns (follow-up).
+   */
+  private async tryNativeCommand(): Promise<CommandResult | undefined> {
+    if (!nativeCommandsEnabled()) return undefined;
+    const native = getNativeCommand(this.cmd);
+    if (!native || !native.supports(this.args)) return undefined;
+
+    // Resolve stdin (from an upstream pipe or options.stdin) as a string.
+    const stdinData = await this.resolveStdin();
+    const stdin = await this.stdinToString(stdinData);
+
+    const { stdout, stderr = "", code } = await native.run(this.args, stdin);
+    const pipeStatus = this.getPipeStatus(code);
+
+    // Honor stdout->stderr duplication and file redirects like the spawn path.
+    const stdoutStr = this.options.stdoutToStderr ? "" : stdout;
+    const stderrStr = this.options.stdoutToStderr ? stderr + stdout : stderr;
+
+    if (this.options.stdoutFile) {
+      await this.writeToFile(
+        this.options.stdoutFile.path,
+        stdoutStr,
+        this.options.stdoutFile.options,
+      );
+    }
+    if (this.options.stderrFile) {
+      await this.writeToFile(
+        this.options.stderrFile.path,
+        stderrStr,
+        this.options.stderrFile.options,
+      );
+    }
+
+    if (this.options.mergeStreams) {
+      return {
+        stdout: "",
+        stderr: "",
+        output: stderrStr + stdoutStr,
+        code,
+        success: code === 0,
+        pipeStatus,
+      };
+    }
+
+    return {
+      stdout: stdoutStr,
+      stderr: stderrStr,
+      code,
+      success: code === 0,
+      pipeStatus,
+    };
+  }
+
+  /**
+   * Coerce resolved stdin (string | bytes | stream) into a string for native
+   * command implementations, which operate on buffered text.
+   */
+  private async stdinToString(
+    stdinData: string | Uint8Array | ReadableStream<Uint8Array> | undefined,
+  ): Promise<string> {
+    if (stdinData === undefined) return "";
+    if (typeof stdinData === "string") return stdinData;
+    if (stdinData instanceof Uint8Array) return new TextDecoder().decode(stdinData);
+    // ReadableStream<Uint8Array>
+    const bytes = await collectStreamBytes(stdinData);
+    return new TextDecoder().decode(bytes);
   }
 
   /**
