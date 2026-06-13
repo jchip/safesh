@@ -12,7 +12,7 @@ import { resolve } from "@std/path";
 import { expandPath, isPathAllowed } from "../core/permissions.ts";
 import { pathViolation } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
-import { getDefaultAllowedPaths } from "../core/utils.ts";
+import { getDefaultAllowedPaths, getRealPath } from "../core/utils.ts";
 
 /**
  * Options for glob matching
@@ -57,9 +57,13 @@ function validateGlobPath(
   cwd: string,
   workspace?: string,
 ): void {
-  if (!isPathAllowed(path, allowedPaths, cwd, workspace)) {
-    const expandedAllowed = allowedPaths.map((p) => expandPath(p, cwd, workspace));
-    throw pathViolation(path, expandedAllowed);
+  // SSH-574: compare canonical forms — configured roots may be in symlinked
+  // form (/tmp, macOS /var/...) while expandGlob yields resolved paths
+  // (/private/...), which made every match look out-of-sandbox
+  const realPath = getRealPath(path);
+  const realAllowed = allowedPaths.map((p) => getRealPath(expandPath(p, cwd, workspace)));
+  if (!isPathAllowed(realPath, realAllowed, cwd, workspace)) {
+    throw pathViolation(path, realAllowed);
   }
 }
 
