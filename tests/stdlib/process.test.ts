@@ -292,7 +292,14 @@ Deno.test("spawn() - ref() and unref() are available", async () => {
   // These should not throw
   proc.ref();
   proc.unref();
+  // SSH-617: re-ref so the awaited exit isn't an unref'd promise that lingers
+  // pending when the event loop drains (surfaces as "Promise resolution is still
+  // pending" only at full-suite shutdown).
+  proc.ref();
 
+  // SSH-617: close the piped stdout — the unref() above previously hid this open
+  // stream from the per-test sanitizer, so it escaped and leaked at suite end.
+  await proc.stdout?.cancel();
   await proc.status();
 });
 
