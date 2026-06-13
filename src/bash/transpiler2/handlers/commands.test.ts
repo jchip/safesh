@@ -544,6 +544,25 @@ describe("assignment status reset detection (SSH-597)", () => {
   });
 });
 
+describe("chain-assignment propagates command-substitution status (SSH-626)", () => {
+  it("threads the cmd-sub status into the && / || chain result", () => {
+    // `x=$(false) && ... || ...` must branch on false's status (1), not a
+    // hardcoded 0. The assignment result reads Deno.exitCode that __cmdSubText
+    // recorded.
+    const output = transpile(parse("x=$(false) && echo Y || echo N"));
+    assertStringIncludes(output, "__cmdSubText");
+    assertStringIncludes(output, "code: Deno.exitCode");
+    assertStringIncludes(output, "success: Deno.exitCode === 0");
+  });
+
+  it("resets the chain status to 0 for a plain assignment", () => {
+    // `x=hi && ...` resets $? to 0; the assignment result must NOT read
+    // Deno.exitCode for the status.
+    const output = transpile(parse("x=hi && echo $x || echo N"));
+    assertEquals(output.includes("code: Deno.exitCode"), false);
+  });
+});
+
 describe("env-prefix assignment values (SSH-587)", () => {
   it("emits expansion-bearing env values as template literals", () => {
     const output = transpile(parse('PROJ=/some/path\nBASH_PREHOOK_CWD="$PROJ" git status'));
