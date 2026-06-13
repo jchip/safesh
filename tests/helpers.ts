@@ -89,3 +89,113 @@ export async function withTestDir<T>(
     cleanupTestDir(dir);
   }
 }
+
+let denoDirPromise: Promise<string | undefined> | undefined;
+
+/**
+ * Resolve the DENO_DIR of the current Deno process (cached)
+ *
+ * Integration tests that spawn nested `deno run` subprocesses pass this
+ * through so the child reuses the parent's module cache instead of
+ * re-downloading dependencies.
+ *
+ * @returns The configured DENO_DIR, the denoDir reported by `deno info`,
+ *          or undefined if neither is available
+ */
+export function getCurrentDenoDir(): Promise<string | undefined> {
+  if (!denoDirPromise) {
+    denoDirPromise = (async () => {
+      const configured = Deno.env.get("DENO_DIR");
+      if (configured) return configured;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["info", "--json"],
+        stdout: "piped",
+        stderr: "null",
+      }).output();
+      if (output.code !== 0) return undefined;
+      const info = JSON.parse(new TextDecoder().decode(output.stdout)) as { denoDir?: string };
+      return info.denoDir;
+    })();
+  }
+  return denoDirPromise;
+}
+
+/** Result of a bash-prehook run (see runBashPrehook) */
+export interface BashPrehookResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Options for runBashPrehook */
+export interface RunBashPrehookOptions {
+  /** CLAUDE_SESSION_ID for the prehook process (suites use a per-suite label) */
+  sessionId?: string;
+  /** Extra environment variables merged over the harness defaults */
+  env?: Record<string, string>;
+  /** Set run_in_background on the Bash tool input */
+  runInBackground?: boolean;
+}
+
+/**
+ * Spawn hooks/bash-prehook.ts as Claude Code would for a Bash PreToolUse hook
+ *
+ * Feeds the hook a PreToolUse JSON payload for `commandText` on stdin and
+ * collects its decision output. `cwd` is the simulated Bash tool working
+ * directory (BASH_PREHOOK_CWD); the subprocess itself runs from Deno.cwd()
+ * so the hook script path resolves from the repo root.
+ *
+ * @param commandText - The Bash tool command under test
+ * @param cwd - Simulated working directory for the prehook (BASH_PREHOOK_CWD)
+ * @param options - Session id, extra env, and background flag
+ * @returns Exit code plus captured stdout/stderr of the hook process
+ */
+export async function runBashPrehook(
+  commandText: string,
+  cwd: string,
+  options: RunBashPrehookOptions = {},
+): Promise<BashPrehookResult> {
+  const denoDir = await getCurrentDenoDir();
+  const command = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--allow-read",
+      "--allow-write",
+      "--allow-env",
+      "--allow-run",
+      "hooks/bash-prehook.ts",
+    ],
+    cwd: Deno.cwd(),
+    env: {
+      BASH_PREHOOK_CWD: cwd,
+      CLAUDE_SESSION_ID: options.sessionId ?? "safesh-test",
+      ...(denoDir ? { DENO_DIR: denoDir } : {}),
+      ...options.env,
+    },
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  });
+
+  const child = command.spawn();
+  const writer = child.stdin.getWriter();
+  const toolInput: Record<string, unknown> = { command: commandText };
+  if (options.runInBackground) toolInput.run_in_background = true;
+  await writer.write(
+    new TextEncoder().encode(
+      JSON.stringify({
+        hookEventName: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: toolInput,
+      }),
+    ),
+  );
+  await writer.close();
+
+  const output = await child.output();
+  return {
+    code: output.code,
+    stdout: new TextDecoder().decode(output.stdout),
+    stderr: new TextDecoder().decode(output.stderr),
+  };
+}
