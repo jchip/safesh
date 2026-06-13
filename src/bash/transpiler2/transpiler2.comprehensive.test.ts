@@ -852,8 +852,9 @@ describe("Variable Expansion - All Modifiers", () => {
     it("should handle ${VAR%pattern} (remove shortest suffix)", () => {
       const ast = parse('echo "${FILE%.txt}"');
       const output = transpile(ast);
-      assertStringIncludes(output, ".replace(/");
-      assertStringIncludes(output, "$/, \"\")");
+      // SSH-624: % keeps a leading capture and substitutes $1 to remove the
+      // shortest right-most suffix match.
+      assertStringIncludes(output, '.replace(/(.*)\\.txt$/, "$1")');
     });
 
     it("should handle ${VAR%%pattern} (remove longest suffix)", () => {
@@ -895,13 +896,15 @@ describe("Variable Expansion - All Modifiers", () => {
     it("should handle ${VAR/pattern/replacement} (replace first)", () => {
       const ast = parse('echo "${VAR/old/new}"');
       const output = transpile(ast);
-      assertStringIncludes(output, '.replace("old", "new")');
+      // SSH-624: pattern is a glob -> regex; / replaces the first match.
+      assertStringIncludes(output, '.replace(/old/, "new")');
     });
 
     it("should handle ${VAR//pattern/replacement} (replace all)", () => {
       const ast = parse('echo "${VAR//old/new}"');
       const output = transpile(ast);
-      assertStringIncludes(output, '.replaceAll("old", "new")');
+      // SSH-624: // replaces all matches via a global (/g) regex.
+      assertStringIncludes(output, '.replace(/old/g, "new")');
     });
   });
 
@@ -1402,7 +1405,9 @@ describe("Arithmetic Expressions - Comprehensive", () => {
     it("should handle compound assignment /=", () => {
       const ast = parse("((x /= 5))");
       const output = transpile(ast);
-      assertStringIncludes(output, "x /= 5");
+      // SSH-623: bash arithmetic is integer-only, so `/=` truncates toward zero
+      // (C semantics) rather than emitting a raw float `x /= 5`.
+      assertStringIncludes(output, "x = Math.trunc(x / 5)");
     });
 
     it("should handle compound assignment %=", () => {
@@ -1435,6 +1440,40 @@ describe("Arithmetic Expressions - Comprehensive", () => {
       const output = transpile(ast);
       assertStringIncludes(output, "2 +");
       assertStringIncludes(output, "3 * 4");
+    });
+  });
+
+  describe("Integer division truncation (SSH-623)", () => {
+    it("should truncate the plain / operator toward zero", () => {
+      const ast = parse("echo $((7 / 2))");
+      const output = transpile(ast);
+      // bash arithmetic is integer-only: 7/2 == 3, not 3.5.
+      assertStringIncludes(output, "Math.trunc(7 / 2)");
+    });
+
+    it("should truncate / inside an assignment", () => {
+      const ast = parse("((x = 7 / 2))");
+      const output = transpile(ast);
+      assertStringIncludes(output, "x = Math.trunc(7 / 2)");
+    });
+  });
+
+  describe("Command substitution in arithmetic (SSH-627)", () => {
+    it("should materialize $(...) and coerce its output to a number", () => {
+      const ast = parse("echo $(( $(echo 2) + 3 ))");
+      const output = transpile(ast);
+      // The substitution runs via __cmdSubText; its stdout is trimmed and
+      // Number()-coerced (empty output -> 0) before the addition.
+      assertStringIncludes(output, "__cmdSubText");
+      assertStringIncludes(output, "Number(");
+      assertStringIncludes(output, "|| 0)");
+    });
+
+    it("should support a backtick `...` substitution operand", () => {
+      const ast = parse("echo $(( `echo 2` + 3 ))");
+      const output = transpile(ast);
+      assertStringIncludes(output, "__cmdSubText");
+      assertStringIncludes(output, "Number(");
     });
   });
 });

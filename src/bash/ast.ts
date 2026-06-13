@@ -310,7 +310,11 @@ export type ArithmeticExpression =
   | ConditionalArithmeticExpression
   | AssignmentExpression
   | GroupedArithmeticExpression
-  | ParameterExpansion;
+  | ParameterExpansion
+  // SSH-627: a $(...) / `...` command substitution is a valid arithmetic
+  // operand in bash (e.g. $(( $(echo 2) + 3 ))); its stdout is coerced to a
+  // number. Additive only — no existing arithmetic path produces this node.
+  | CommandSubstitution;
 
 export interface NumberLiteral extends BaseNode {
   type: "NumberLiteral";

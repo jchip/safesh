@@ -15,6 +15,12 @@
  */
 
 import type * as AST from "./ast.ts";
+// SSH-627: a command substitution operand ($(...) / `...`) embeds a full
+// command, so we recursively parse its captured text with the main Parser.
+// parser.ts imports this module, so this is a cyclic import — safe because
+// Parser is referenced only at call time (inside parsePrefix), never at
+// module-init time.
+import { Parser } from "./parser.ts";
 
 // =============================================================================
 // Token Types for Arithmetic Lexer
@@ -24,6 +30,7 @@ enum ArithTokenType {
   NUMBER,
   IDENTIFIER,
   PARAM_EXPANSION, // ${...}
+  CMD_SUBST,   // $(...) or `...` — value holds the raw inner command text
   PLUS,
   MINUS,
   STAR,
@@ -198,6 +205,58 @@ class ArithmeticLexer {
     if (singleCharMap[c]) {
       this.pos++;
       return { type: singleCharMap[c]!, value: c, pos: startPos };
+    }
+
+    // SSH-627: command substitution $(...) as an arithmetic operand.
+    // Capture the raw inner command text (paren-balanced) so the parser can
+    // recursively parse it into a CommandSubstitution node. Checked before the
+    // bare-$NAME / ${...} cases since "(" is neither a letter nor "{".
+    if (c === "$" && c2 === "(") {
+      this.advance(); // consume "$"
+      this.advance(); // consume "("
+      let depth = 1;
+      let inner = "";
+      while (depth > 0 && this.pos < this.input.length) {
+        const ch = this.peek();
+        if (ch === "(") {
+          depth++;
+        } else if (ch === ")") {
+          depth--;
+          if (depth === 0) {
+            this.advance(); // consume closing ")"
+            break;
+          }
+        }
+        inner += this.advance();
+      }
+      if (depth > 0) {
+        throw new Error(
+          `Unterminated command substitution at position ${startPos} in arithmetic expression`,
+        );
+      }
+      return { type: ArithTokenType.CMD_SUBST, value: inner, pos: startPos };
+    }
+
+    // SSH-627: backtick command substitution `...` as an arithmetic operand.
+    if (c === "`") {
+      this.advance(); // consume opening "`"
+      let inner = "";
+      while (this.pos < this.input.length && this.peek() !== "`") {
+        // Honor backslash escapes so an escaped backtick doesn't end the sub.
+        if (this.peek() === "\\") {
+          inner += this.advance();
+          if (this.pos < this.input.length) inner += this.advance();
+          continue;
+        }
+        inner += this.advance();
+      }
+      if (this.peek() !== "`") {
+        throw new Error(
+          `Unterminated command substitution at position ${startPos} in arithmetic expression`,
+        );
+      }
+      this.advance(); // consume closing "`"
+      return { type: ArithTokenType.CMD_SUBST, value: inner, pos: startPos };
     }
 
     // Parameter expansion: ${...}
@@ -376,6 +435,17 @@ export class ArithmeticParser {
       case ArithTokenType.PARAM_EXPANSION: {
         this.advance();
         return this.parseParameterExpansionToken(token.value);
+      }
+
+      case ArithTokenType.CMD_SUBST: {
+        this.advance();
+        // token.value is the raw inner command text; recursively parse it.
+        const innerProgram = new Parser(token.value).parse();
+        return {
+          type: "CommandSubstitution",
+          command: innerProgram.body,
+          backtick: false,
+        };
       }
 
       case ArithTokenType.LPAREN: {

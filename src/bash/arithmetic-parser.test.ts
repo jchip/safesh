@@ -803,3 +803,34 @@ describe("Bare parameter references (SSH-583)", () => {
     assertEquals((bin.left as AST.VariableReference).name, "X");
   });
 });
+
+describe("Command substitution operands (SSH-627)", () => {
+  it("should parse $(...) as a command-substitution operand", () => {
+    const expr = parseArithmetic("$(echo 2)");
+    assertEquals(expr.type, "CommandSubstitution");
+    // The captured inner text is recursively parsed into a full command list.
+    assertEquals((expr as AST.CommandSubstitution).command.length, 1);
+  });
+
+  it("should parse a backtick `...` substitution operand", () => {
+    const expr = parseArithmetic("`echo 2`");
+    assertEquals(expr.type, "CommandSubstitution");
+  });
+
+  it("should parse $(...) as the left operand of a binary expression", () => {
+    const expr = parseArithmetic("$(echo 2) + 3");
+    assertEquals(expr.type, "BinaryArithmeticExpression");
+    const bin = expr as AST.BinaryArithmeticExpression;
+    assertEquals(bin.operator, "+");
+    assertEquals(bin.left.type, "CommandSubstitution");
+    assertEquals(bin.right.type, "NumberLiteral");
+  });
+
+  it("should throw on an unterminated $( substitution", () => {
+    assertThrows(() => parseArithmetic("$(echo 2 + 3"));
+  });
+
+  it("should throw on an unterminated backtick substitution", () => {
+    assertThrows(() => parseArithmetic("`echo 2 + 3"));
+  });
+});

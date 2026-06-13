@@ -6,7 +6,7 @@
 
 import type * as AST from "../../ast.ts";
 import type { VisitorContext } from "../types.ts";
-import { visitParameterExpansion } from "./words.ts";
+import { visitCommandSubstitution, visitParameterExpansion } from "./words.ts";
 
 // =============================================================================
 // Arithmetic Expression Dispatcher
@@ -36,6 +36,8 @@ export function visitArithmeticExpression(
       return visitGroupedArithmetic(expr, _ctx);
     case "ParameterExpansion":
       return visitParameterExpansionInArithmetic(expr, _ctx);
+    case "CommandSubstitution":
+      return visitCommandSubstitutionInArithmetic(expr, _ctx);
     default: {
       const _exhaustive: never = expr;
       _ctx.addDiagnostic({ level: 'warning', message: `Unsupported arithmetic expression type: ${(expr as any).type}` });
@@ -79,6 +81,15 @@ export function visitBinaryArithmetic(
   // Handle power operator (bash ** -> JS **)
   if (node.operator === "**") {
     return `(${left} ** ${right})`;
+  }
+
+  // SSH-623: bash $((...)) is integer arithmetic. Division truncates toward
+  // zero (C semantics), so `7/2`=3 and `-7/2`=-3. Math.trunc matches that.
+  // Truncation must apply PER division (each operator is integer in bash), so
+  // `3/2*2`=2 because 3/2 truncates to 1 first. Other operators keep integer
+  // inputs integer, so only `/` needs wrapping.
+  if (node.operator === "/") {
+    return `Math.trunc(${left} / ${right})`;
   }
 
   return `(${left} ${node.operator} ${right})`;
@@ -136,6 +147,11 @@ export function visitAssignmentExpression(
   ctx: VisitorContext,
 ): string {
   const right = visitArithmeticExpression(node.right, ctx);
+  // SSH-623: `/=` must truncate toward zero like bash integer division.
+  // JS `i /= 2` would store a float, so lower to an explicit Math.trunc assign.
+  if (node.operator === "/=") {
+    return `(${node.left.name} = Math.trunc(${node.left.name} / ${right}))`;
+  }
   return `(${node.left.name} ${node.operator} ${right})`;
 }
 
@@ -169,4 +185,26 @@ export function visitParameterExpansionInArithmetic(
   // In arithmetic context, wrap the result with Number() and default to 0
   // to match Bash behavior where unset/empty variables evaluate to 0
   return `Number(${expansion} ?? 0)`;
+}
+
+// =============================================================================
+// Command Substitution Handler (for arithmetic context) — SSH-627
+// =============================================================================
+
+/**
+ * Visit a CommandSubstitution node in arithmetic context.
+ *
+ * Bash allows $(...) / `...` as an arithmetic operand (e.g. $(( $(echo 2) + 3 )))
+ * and coerces the captured stdout to a number. We reuse visitCommandSubstitution
+ * from words.ts (which emits a `${await __cmdSubText(...)}` template fragment and
+ * handles the subshell-exit case), wrap it in a template literal to materialize
+ * the stdout string, trim the trailing newline, and coerce with Number(). The
+ * `|| 0` keeps empty output evaluating to 0, matching bash's arithmetic default.
+ */
+export function visitCommandSubstitutionInArithmetic(
+  node: AST.CommandSubstitution,
+  ctx: VisitorContext,
+): string {
+  const fragment = visitCommandSubstitution(node, ctx);
+  return `(Number(\`${fragment}\`.trim()) || 0)`;
 }
