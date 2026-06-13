@@ -937,8 +937,10 @@ describe("Transpiler2 - Variable Expansion", () => {
     const ast = parse('echo "${VAR:-default}"');
     const output = transpile(ast);
 
-    // SSH-296: :- should check for both undefined AND empty string
-    assertStringIncludes(output, 'VAR === undefined || VAR === ""');
+    // SSH-296/SSH-578: :- applies the default for unset AND empty values; the
+    // current lowering folds the unset case into the ENV/VARS fallback chain
+    // (which yields "") and tests the result for emptiness.
+    assertStringIncludes(output, '=== "" ? "default"');
   });
 
   it("should transpile length expansion", () => {
