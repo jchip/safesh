@@ -122,6 +122,95 @@ export function formatWcStats(stats: WcStats, options: WcOptions = {}): string {
 }
 
 /**
+ * Format one wc output line the way real wc does (SSH-572)
+ *
+ * Each selected count is right-aligned in an 8-character field (BSD/macOS
+ * `wc` format, e.g. `       3 a.txt`); fields are adjacent and the operand
+ * name, when given, follows after a single space.
+ *
+ * @param stats - Word count statistics
+ * @param options - Which counts to include (same selection rules as wc)
+ * @param name - Operand name to append (filename or "total"); omit for stdin
+ * @returns Formatted line matching real `wc` output
+ *
+ * @example
+ * ```ts
+ * formatWcLine({ lines: 3, words: 3, bytes: 14, chars: 14 }, { lines: true }, "a.txt");
+ * // => "       3 a.txt"
+ * ```
+ */
+export function formatWcLine(
+  stats: WcStats,
+  options: WcOptions = {},
+  name?: string,
+): string {
+  const { lines: showLines, words: showWords, bytes: showBytes, chars: showChars } = options;
+
+  // If no flags specified, show lines, words, and bytes (like wc)
+  const showAll = !showLines && !showWords && !showBytes && !showChars;
+
+  const values: number[] = [];
+  if (showAll || showLines) values.push(stats.lines);
+  if (showAll || showWords) values.push(stats.words);
+  if (showAll || showBytes) values.push(stats.bytes);
+  if (showChars && !showBytes) values.push(stats.chars);
+
+  const counts = values.map((v) => String(v).padStart(8)).join("");
+  return name === undefined ? counts : `${counts} ${name}`;
+}
+
+/**
+ * Count multiple named sources, yielding per-file lines and a total (SSH-572)
+ *
+ * Matches real wc behavior for multiple operands: one formatted line per
+ * operand, plus a `total` line when there is more than one operand.
+ * Mirrors the `grepMultiple` pattern: sources are [name, iterable] tuples so
+ * the caller controls how files are opened (glob expansion, sandbox checks).
+ *
+ * Real wc reference (macOS, 2026-06-12):
+ * ```
+ * $ wc -l a.txt b.txt
+ *        3 a.txt
+ *        2 b.txt
+ *        5 total
+ * ```
+ *
+ * @param sources - Array of [name, asyncIterable] tuples
+ * @param options - Which counts to include
+ * @returns AsyncIterable of formatted output lines
+ *
+ * @example
+ * ```ts
+ * const sources: Array<[string, AsyncIterable<string>]> = [
+ *   ["a.txt", cat("a.txt")],
+ *   ["b.txt", cat("b.txt")],
+ * ];
+ * for await (const line of wcMultiple(sources, { lines: true })) {
+ *   console.log(line);
+ * }
+ * ```
+ */
+export async function* wcMultiple(
+  sources: Array<[string, AsyncIterable<string>]>,
+  options: WcOptions = {},
+): AsyncIterable<string> {
+  const total: WcStats = { lines: 0, words: 0, bytes: 0, chars: 0 };
+
+  for (const [name, source] of sources) {
+    const stats = await wcCount(source);
+    total.lines += stats.lines;
+    total.words += stats.words;
+    total.bytes += stats.bytes;
+    total.chars += stats.chars;
+    yield formatWcLine(stats, options, name);
+  }
+
+  if (sources.length > 1) {
+    yield formatWcLine(total, options, "total");
+  }
+}
+
+/**
  * Count lines in an async iterable
  *
  * @param input - Async iterable of strings

@@ -391,9 +391,13 @@ describe("Transpiler2 - Fluent Commands", () => {
     const ast = parse("wc -l src/mod.ts");
     const output = transpile(ast);
 
-    assertStringIncludes(output, '$.cat("src/mod.ts")');
-    assert(!output.includes(".lines().pipe($.wc"), "wc should consume raw chunks");
-    assertStringIncludes(output, ".pipe($.wc({ lines: true }))");
+    // SSH-572: file operands lower to $.wcMultiple (per-file counts + total,
+    // glob expansion), reading each operand through the sandboxed $.cat
+    assertStringIncludes(output, "$.wcMultiple(");
+    assertStringIncludes(output, '"src/mod.ts"');
+    assertStringIncludes(output, "$.cat(__p)");
+    assertStringIncludes(output, "{ lines: true }");
+    assert(!output.includes(".lines().pipe($.wc"), "wc consumes raw chunks");
   });
 
   it("should handle sort with file argument", () => {

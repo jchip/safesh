@@ -82,6 +82,8 @@ export {
   wcC,
   wcM,
   formatWcStats,
+  formatWcLine,
+  wcMultiple,
   wcWithOptions,
   type WcOptions,
   type WcStats,

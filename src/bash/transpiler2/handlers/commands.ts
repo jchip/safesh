@@ -938,6 +938,7 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
 
   let files: string[];
   let transformCode: string;
+  let optionsStr: string | undefined;
   if (capability.kind === "count-transform" && capability.runtimeName === "tail") {
     const parsed = parseTailCountArg(args);
     files = parsed.files;
@@ -947,7 +948,29 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
   } else {
     const parsed = parseSimpleFluentArgs(capability, args);
     files = parsed.files;
+    optionsStr = parsed.options;
     transformCode = buildSimpleFluentTransform(capability, parsed.options);
+  }
+
+  if (capability.runtimeName === "wc" && files.length > 0) {
+    // SSH-572: real wc semantics — glob-expand every operand at runtime and
+    // emit per-file counts plus a total line via $.wcMultiple; $.cat keeps
+    // the per-file sandbox read checks ($.cat yields whole-file raw chunks,
+    // the shape wcMultiple counts).
+    const opts = optionsStr ? `{ ${optionsStr} }` : "{}";
+    const fileList = `[${formatFileArgs(files)}]`;
+    return {
+      code: `$.wcMultiple((await Promise.all(${fileList}.map((__p) => ` +
+        `/[*?\\[\\]{}]/.test(__p) ? $.globPaths(__p) : Promise.resolve([__p])` +
+        `))).flat().map((__p) => ` +
+        // display the operand the way the shell would have expanded it:
+        // glob hits come back absolute, bash shows them relative to cwd
+        `[__p.startsWith(Deno.cwd() + "/") ? __p.slice(Deno.cwd().length + 1) : __p, $.cat(__p)]` +
+        `), ${opts})`,
+      isTransform: false,
+      isStream: true,
+      requiresRawInput: capability.requiresRawInput,
+    };
   }
 
   if (files.length > 0) {
