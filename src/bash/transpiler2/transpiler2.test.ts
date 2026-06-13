@@ -562,6 +562,24 @@ describe("Transpiler2 - Pipelines", () => {
     );
   });
 
+  it("should fall back to real grep for -n in the pipe form so numbers survive (SSH-615)", () => {
+    // The no-file (pipe) form previously lowered to $.grep(...), dropping -n and
+    // emitting no line numbers. It must fall back to real grep, which numbers by
+    // piped-stdin position like bash.
+    const piped = transpileBash("cat file.txt | grep -n pattern");
+    assertStringIncludes(piped, '$.cmd("grep"');
+    assertStringIncludes(piped, '"-n"');
+    assertEquals(piped.includes("$.grep("), false);
+
+    // -vn (invert + number) must also fall back rather than drop -n.
+    const inverted = transpileBash("cat file.txt | grep -vn pattern");
+    assertStringIncludes(inverted, '$.cmd("grep"');
+    assertStringIncludes(inverted, '"-vn"');
+
+    // Plain grep (no -n) still lowers to the fluent transform.
+    assertStringIncludes(transpileBash("cat file.txt | grep pattern"), "$.grep(/pattern/)");
+  });
+
   it("should use toCmdLines when piping from stream to command", () => {
     const ast = parse("ls | head -5 | awk '{print $1}'");
     const output = transpile(ast);
