@@ -268,7 +268,11 @@ export async function exists(
     await Deno.stat(resolvedPath);
     return true;
   } catch {
-    // Path doesn't exist or access denied - both mean "not accessible"
+    // SSH-608: deliberate conflation — a sandbox rejection (PATH_VIOLATION /
+    // PATH_DENIED) returns false just like NotFound. exists() is a probe with
+    // POSIX access()-style semantics: "can this code see the file", not "is
+    // the denial worth surfacing". Callers that must distinguish should call
+    // fs.read/fs.stat and handle SafeShellError.
     return false;
   }
 }
