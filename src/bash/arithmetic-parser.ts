@@ -219,6 +219,22 @@ class ArithmeticLexer {
       return { type: ArithTokenType.PARAM_EXPANSION, value, pos: startPos };
     }
 
+    // SSH-583: bare parameter references — bash allows $NAME and $? inside
+    // arithmetic; they evaluate like the corresponding variable
+    if (c === "$" && /[a-zA-Z_]/.test(c2)) {
+      this.advance(); // consume "$"
+      let value = "";
+      while (/[a-zA-Z0-9_]/.test(this.peek())) {
+        value += this.advance();
+      }
+      return { type: ArithTokenType.IDENTIFIER, value, pos: startPos };
+    }
+    if (c === "$" && c2 === "?") {
+      this.advance(); // consume "$"
+      this.advance(); // consume "?"
+      return { type: ArithTokenType.IDENTIFIER, value: "?", pos: startPos };
+    }
+
     // Numbers (decimal, octal, hex)
     if (/[0-9]/.test(c)) {
       let value = "";

@@ -900,6 +900,35 @@ describe("Conformance - Pipeline Negation (SSH-594)", () => {
   });
 });
 
+describe("Conformance - $? and $VAR in Arithmetic (SSH-583)", () => {
+  it("expands $? inside $(( ))", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      "false\necho $(($? + 1))",
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "2");
+  });
+
+  it("expands $? inside (( )) conditions", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      "true\nif (( $? == 0 )); then echo ok; fi",
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "ok");
+  });
+
+  it("expands $NAME inside $(( )) like the bare name", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      "X=5\necho $(($X + 2))",
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "7");
+  });
+});
+
 describe("Conformance - Colon Builtin Argument Expansion (SSH-609)", () => {
   it("performs := assignments in colon arguments (SSH-609 + SSH-610)", async () => {
     const { bashResult, tsResult } = await compareExecution(

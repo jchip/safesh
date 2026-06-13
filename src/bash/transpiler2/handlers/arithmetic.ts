@@ -57,6 +57,10 @@ export function visitNumberLiteral(node: AST.NumberLiteral): string {
 // =============================================================================
 
 export function visitVariableReference(node: AST.VariableReference): string {
+  // $? is the last exit status, recorded as Deno.exitCode (SSH-581/SSH-583)
+  if (node.name === "?") {
+    return `Number(Deno.exitCode ?? 0)`;
+  }
   // Use ?? 0 to match Bash behavior: unset variables in arithmetic evaluate to 0
   return `Number(${node.name} ?? 0)`;
 }
