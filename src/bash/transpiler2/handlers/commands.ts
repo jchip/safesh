@@ -1732,6 +1732,18 @@ function buildDownstreamWithStdin(
   const analysis = analyzePipelineStructure(operators);
   const assembled = assemblePipeline(parts, operators, analysis);
 
+  if (assembled.isStream) {
+    // SSH-618: a trailing transform (e.g. `... | sort -k2 | grep x`) turns the
+    // command pipeline into a line stream, which has no .exec(). Collect it into a
+    // result object, matching the transform-first branch above. Newly reachable
+    // once a command like `sort -k2` falls back to $.cmd (SSH-616) ahead of a
+    // transform — previously the lowering crashed with ".exec is not a function".
+    return `(async () => {
+    const __collected = await ${assembled.code}.collect();
+    return { code: 0, stdout: __collected.join("\\n"), stderr: "", success: true };
+  })()`;
+  }
+
   return `${assembled.code}.exec()`;
 }
 

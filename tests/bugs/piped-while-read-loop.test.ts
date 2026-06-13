@@ -61,6 +61,21 @@ Deno.test("piped while read loop in middle with multi-stage downstream", async (
   assertEquals(result.stdout.trim(), "2 b");
 });
 
+Deno.test("piped while read loop downstream command-then-transform collects, not exec (SSH-618)", async () => {
+  // tr is always a real $.cmd, so the downstream is command | transform. The
+  // carrier must collect the resulting line stream, not append .exec() (which a
+  // stream lacks). Regression for the ".exec is not a function" crash.
+  const code = transpileForExecution(`printf "alpha
+beta
+gamma
+" | while read x; do echo "$x"; done | tr a-z A-Z | grep BETA`);
+
+  const result = await executeCode(code, EXEC_CONFIG, { cwd: Deno.cwd() });
+
+  assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+  assertEquals(result.stdout.trim(), "BETA");
+});
+
 Deno.test("piped while read loop with stderr redirect captures command stdout for downstream", async () => {
   const code = transpileForExecution(`printf "a
 b
