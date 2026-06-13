@@ -69,7 +69,11 @@ function buildCapturableInnerCode(
       stmt.type === "Pipeline" &&
       stmt.commands.length === 1 &&
       stmt.commands[0]?.type === "Command" &&
-      !stmt.background
+      !stmt.background &&
+      // SSH-604: `$(! cmd)` — unwrapping to buildCommand drops the negation;
+      // fall through to buildCommandExpression → buildPipeline, which applies
+      // the exit-status flip (SSH-594).
+      !stmt.negated
     ) {
       const expr = ctx.buildCommand(stmt.commands[0], { captureOutput: true });
       innerExprs.push(expr.code);
