@@ -368,6 +368,22 @@ describe("Transpiler2 - Fluent Commands", () => {
     assertStringIncludes(output, "lines: true");
   });
 
+  it("should fall back to the real tool for unmapped sort/uniq/wc flags (SSH-616)", () => {
+    // `-k2` isn't in sort's fluent flag map; dropping it would mis-sort. Fall back
+    // to real sort instead of emitting $.sort() that silently ignores the key.
+    const sortOut = transpileBash("sort -k2 data.txt");
+    assertStringIncludes(sortOut, '$.cmd("sort"');
+    assertStringIncludes(sortOut, '"-k2"');
+    assertEquals(sortOut.includes("$.sort("), false);
+
+    // Known (and combined) flags must still lower to the fluent transform.
+    assertStringIncludes(transpileBash("sort -rn data.txt"), "$.sort(");
+
+    // uniq -f1 (skip fields) and wc -L (max line length) are unmapped → fallback.
+    assertStringIncludes(transpileBash("uniq -f1 data.txt"), '$.cmd("uniq"');
+    assertStringIncludes(transpileBash("wc -L data.txt"), '$.cmd("wc"');
+  });
+
   // SSH-367: Fluent commands with file arguments
   it("should handle head with file argument", () => {
     const ast = parse("head -5 file.txt");

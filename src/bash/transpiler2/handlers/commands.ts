@@ -906,14 +906,21 @@ function hasShortFlag(args: string[], flags: readonly string[]): boolean {
 function parseSimpleFluentArgs(
   capability: SimpleTransformCapability,
   args: string[],
-): { options?: string; files: string[] } {
+): { options?: string; files: string[]; unknownFlags: string[] } {
   if (capability.kind === "count-transform") {
     const { count, files } = parseCountArg(args);
-    return { options: count.toString(), files };
+    return { options: count.toString(), files, unknownFlags: [] };
   }
 
-  const { options, files } = collectFlagOptionsAndFiles(args, capability.flagOptions);
-  return { options: options.length > 0 ? options.join(", ") : undefined, files };
+  const { options, files, unknownFlags } = collectFlagOptionsAndFiles(
+    args,
+    capability.flagOptions,
+  );
+  return {
+    options: options.length > 0 ? options.join(", ") : undefined,
+    files,
+    unknownFlags,
+  };
 }
 
 function buildSimpleFluentTransform(
@@ -930,7 +937,7 @@ function buildSimpleFluentTransform(
 /**
  * Build a simple fluent command using the registry pattern
  */
-function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandResult {
+function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandResult | null {
   const capability = getSimpleTransformCapability(name);
   if (!capability) {
     throw new Error(`Unknown simple fluent command: ${name}`);
@@ -947,6 +954,12 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
       : buildSimpleFluentTransform(capability, parsed.count.toString());
   } else {
     const parsed = parseSimpleFluentArgs(capability, args);
+    if (parsed.unknownFlags.length > 0) {
+      // SSH-616: an unmapped flag (e.g. `sort -k2`, `uniq -f1`, `wc -L`) can't be
+      // lowered to a fluent option without changing semantics. Fall back to the
+      // real tool ($.cmd) so the flag is honored instead of silently dropped.
+      return null;
+    }
     files = parsed.files;
     optionsStr = parsed.options;
     transformCode = buildSimpleFluentTransform(capability, parsed.options);
