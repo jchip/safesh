@@ -123,8 +123,8 @@ pwd > pwd.txt`,
 test -d ${testDir}/missing > missing.txt && echo should-not-print`,
       );
 
-      assertStringIncludes(code, "$.test(");
-      assertEquals(code.includes('$.cmd("test"'), false, code);
+      assertStringIncludes(code, '$.cmd("test"');
+      assertEquals(code.includes("$.test("), false, code);
 
       const result = await executeCode(code, config, { cwd: testDir });
 

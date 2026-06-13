@@ -30,7 +30,10 @@ export const SHELL_BUILTINS: Record<string, BuiltinConfig> = {
   pwd: { fn: "$.pwd", type: "output" },
   dirs: { fn: "$.dirs", type: "output" },
   ls: { fn: "$.ls", type: "output" },
-  test: { fn: "$.test", type: "async" },
+  // SSH-621: `test` (and `[`) are NOT mapped here — shelljs $.test only does
+  // file tests and returns a boolean, so `test 0 -lt 2` was wrong. Falling
+  // through to $.cmd("test", ...) uses the full native test/`[` evaluator,
+  // which returns a proper { code } result for all operators.
   which: { fn: "$.which", type: "async" },
   chmod: { fn: "$.chmod", type: "async" },
   ln: { fn: "$.ln", type: "async" },
