@@ -38,8 +38,9 @@ Deno.test("lines() - splits text into lines", async () => {
 
 Deno.test("lines() - handles empty lines", async () => {
   const result = await $.text("a\n\nb").lines().collect();
-  // Empty lines are filtered out by transforms.lines()
-  assertEquals(result, ["a", "b"]);
+  // SSH-573: interior blank lines are preserved (coreutils parity);
+  // only the empty segment after a trailing newline is dropped.
+  assertEquals(result, ["a", "", "b"]);
 });
 
 Deno.test("grep() - filters by regex pattern", async () => {
