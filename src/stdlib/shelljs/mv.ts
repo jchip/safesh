@@ -13,6 +13,7 @@ import type { OptionsMap } from "./types.ts";
 import { validatePath } from "../../core/permissions.ts";
 import { SafeShellError } from "../../core/errors.ts";
 import { getDefaultConfig } from "../../core/utils.ts";
+import { globPaths } from "../glob.ts";
 
 /** Options for mv command */
 export interface MvOptions {
@@ -81,8 +82,23 @@ export async function mv(
   // Expand tilde in all paths
   const expandedArgs = allArgs.map(expandTilde);
   const dest = expandedArgs[expandedArgs.length - 1]!;
-  const sources = expandedArgs.slice(0, -1);
   const errors: string[] = [];
+
+  const cwd = Deno.cwd();
+  const config = getDefaultConfig(cwd);
+
+  // SSH-574: real mv relies on shell glob expansion; transpiled operands
+  // arrive unexpanded. A non-matching glob keeps the literal (bash without
+  // nullglob) so mv reports it missing like the real tool.
+  const sources: string[] = [];
+  for (const src of expandedArgs.slice(0, -1)) {
+    if (/[*?\[\]{}]/.test(src)) {
+      const matches = await globPaths(src, { cwd, root: cwd }, config);
+      sources.push(...(matches.length > 0 ? matches : [src]));
+    } else {
+      sources.push(src);
+    }
+  }
 
   // Check if dest is a directory
   let destIsDir = false;
@@ -97,9 +113,6 @@ export async function mv(
   if (sources.length > 1 && !destIsDir) {
     return new ShellString("", "mv: target is not a directory", 1);
   }
-
-  const cwd = Deno.cwd();
-  const config = getDefaultConfig(cwd);
   for (const src of sources) {
     try {
       const validatedSrc = await validatePath(src, config, cwd, "write");
