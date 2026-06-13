@@ -12,27 +12,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { withTestDir } from "../helpers.ts";
-
-let denoDirPromise: Promise<string | undefined> | undefined;
-
-async function getCurrentDenoDir(): Promise<string | undefined> {
-  if (!denoDirPromise) {
-    denoDirPromise = (async () => {
-      const configured = Deno.env.get("DENO_DIR");
-      if (configured) return configured;
-      const output = await new Deno.Command(Deno.execPath(), {
-        args: ["info", "--json"],
-        stdout: "piped",
-        stderr: "null",
-      }).output();
-      if (output.code !== 0) return undefined;
-      const info = JSON.parse(new TextDecoder().decode(output.stdout)) as { denoDir?: string };
-      return info.denoDir;
-    })();
-  }
-  return denoDirPromise;
-}
+import { runBashPrehook, withTestDir } from "../helpers.ts";
 
 /** Run the prehook and return the rewritten desh command from the allow JSON. */
 async function getRewrittenCommand(
@@ -40,43 +20,11 @@ async function getRewrittenCommand(
   cwd: string,
   runInBackground = false,
 ): Promise<string> {
-  const denoDir = await getCurrentDenoDir();
-  const command = new Deno.Command(Deno.execPath(), {
-    args: [
-      "run",
-      "--allow-read",
-      "--allow-write",
-      "--allow-env",
-      "--allow-run",
-      "hooks/bash-prehook.ts",
-    ],
-    cwd: Deno.cwd(),
-    env: {
-      BASH_PREHOOK_CWD: cwd,
-      CLAUDE_SESSION_ID: "ssh-580-state-trailer",
-      ...(denoDir ? { DENO_DIR: denoDir } : {}),
-    },
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
+  const result = await runBashPrehook(commandText, cwd, {
+    sessionId: "ssh-580-state-trailer",
+    runInBackground,
   });
-  const child = command.spawn();
-  const writer = child.stdin.getWriter();
-  const toolInput: Record<string, unknown> = { command: commandText };
-  if (runInBackground) toolInput.run_in_background = true;
-  await writer.write(
-    new TextEncoder().encode(
-      JSON.stringify({
-        hookEventName: "PreToolUse",
-        tool_name: "Bash",
-        tool_input: toolInput,
-      }),
-    ),
-  );
-  await writer.close();
-  const output = await child.output();
-  const stdout = new TextDecoder().decode(output.stdout);
-  const parsed = JSON.parse(stdout) as {
+  const parsed = JSON.parse(result.stdout) as {
     hookSpecificOutput: { updatedInput: { command: string } };
   };
   return parsed.hookSpecificOutput.updatedInput.command;
