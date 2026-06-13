@@ -441,8 +441,15 @@ export class Parser {
       const operator = this.advance();
       this.skipNewlines();
 
+      // SSH-602: accept `!` before any &&/|| operand (bash: `a && ! b`).
+      // The negation is recorded on the operand pipeline itself; the chain
+      // node keeps the existing convention of mirroring only the LEADING
+      // operand's flag (which the transpiler compensates for — see the
+      // SSH-594 notes in transpiler2/handlers/commands.ts flattenPipeline).
+      const rightNegated = this.skip(TokenType.BANG);
+
       // Parse the right side as a complete pipeline
-      const rightPipeline = this.parsePipelineOnly(false);
+      const rightPipeline = this.parsePipelineOnly(rightNegated);
       // Unwrap break/continue/return from their single-command wrapper pipeline
       // so they appear directly in commands (they cannot be piped)
       const singleCmd = rightPipeline.commands.length === 1 && rightPipeline.operator === null
