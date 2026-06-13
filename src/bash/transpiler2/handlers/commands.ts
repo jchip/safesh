@@ -378,6 +378,10 @@ type CommandExpressionResult = ExpressionResult & {
   isStream?: boolean;
   isVariableAssignment?: boolean;
   assignmentNames?: string[];
+  // SSH-626: true when the assignment value contains a command substitution, so
+  // its exit status (recorded by __cmdSubText into Deno.exitCode) must flow into
+  // an enclosing &&/|| chain's result instead of being reset to 0.
+  assignmentRecordsStatus?: boolean;
   isShellBuiltin?: boolean;
   isSilentShellBuiltin?: boolean;
   formatsOutput?: boolean;
@@ -645,6 +649,9 @@ function executeCommandStrategy(
         async: false,
         isVariableAssignment: true,
         assignmentNames: strategy.assignments.map((assignment) => assignment.name),
+        // SSH-626: bash gives `x=$(cmd)` the substitution's status; a plain
+        // assignment resets $? to 0.
+        assignmentRecordsStatus: strategy.assignments.some(assignmentRecordsStatus),
       };
     }
 
@@ -1337,6 +1344,8 @@ interface ShellValueDescriptor {
   async: boolean;
   transformInput?: TransformInputMode;
   assignmentNames?: string[];
+  // SSH-626: see CommandExpressionResult.assignmentRecordsStatus
+  assignmentRecordsStatus?: boolean;
 }
 
 interface PipelinePart {
@@ -1351,6 +1360,7 @@ function commandValueDescriptor(result: CommandExpressionResult): ShellValueDesc
       printable: false,
       async: result.async,
       assignmentNames: result.assignmentNames,
+      assignmentRecordsStatus: result.assignmentRecordsStatus,
     };
   }
 
@@ -1426,6 +1436,11 @@ function partIsVariableAssignment(part: PipelinePart): boolean {
 
 function partAssignmentNames(part: PipelinePart): string[] {
   return part.value.assignmentNames ?? [];
+}
+
+// SSH-626: whether this assignment part propagates a command-substitution status
+function partRecordsStatus(part: PipelinePart): boolean {
+  return part.value.assignmentRecordsStatus ?? false;
 }
 
 interface ReadLoopConsumer {
@@ -1768,9 +1783,19 @@ function resultObjectToRawStream(expr: string): string {
   return `$.fromArray([String(((result: any) => result?.output ?? result?.stdout ?? "")(${expr}))])`;
 }
 
-function assignmentResultExpression(code: string, assignmentNames: string[] = []): string {
+function assignmentResultExpression(
+  code: string,
+  assignmentNames: string[] = [],
+  recordsStatus = false,
+): string {
   const sync = assignmentSyncCode(assignmentNames);
-  return `(async () => { ${code}; ${sync}return { code: 0, stdout: "", stderr: "", success: true }; })()`;
+  // SSH-626: `x=$(cmd)` takes cmd's exit status, which __cmdSubText records into
+  // Deno.exitCode while evaluating `code`. Read it back so an enclosing &&/||
+  // chain branches on the real status. A plain assignment resets $? to 0.
+  const status = recordsStatus
+    ? `const __c = Deno.exitCode; return { code: __c, stdout: "", stderr: "", success: __c === 0 };`
+    : `return { code: 0, stdout: "", stderr: "", success: true };`;
+  return `(async () => { ${code}; ${sync}${status} })()`;
 }
 
 /**
@@ -1886,6 +1911,7 @@ export function buildPipeline(
   isResultObject?: boolean;
   isVariableAssignment?: boolean;
   assignmentNames?: string[];
+  assignmentRecordsStatus?: boolean;
 } {
   if (
     !pipeline.background &&
@@ -1957,7 +1983,11 @@ export function buildPipeline(
     if (cmd.type === "Command") {
       const result = buildCommand(cmd, ctx, { captureOutput: true });
       inner = result.isVariableAssignment
-        ? assignmentResultExpression(result.code, result.assignmentNames)
+        ? assignmentResultExpression(
+          result.code,
+          result.assignmentNames,
+          result.assignmentRecordsStatus,
+        )
         : result.code;
     } else if (cmd.type === "Pipeline") {
       inner = buildPipeline(cmd, ctx).code;
@@ -2011,6 +2041,7 @@ export function buildPipeline(
     isResultObject: applyNegation ? true : assembled.isResultObject,
     isVariableAssignment: assembled.isVariableAssignment,
     assignmentNames: assembled.assignmentNames,
+    assignmentRecordsStatus: assembled.assignmentRecordsStatus,
   };
 }
 
@@ -2066,6 +2097,8 @@ class PipelineAssembler {
   private isResultObject: boolean;
   private isVariableAssignment: boolean;
   private assignmentNames: string[];
+  // SSH-626: the current left-hand assignment propagates a cmd-sub status
+  private assignmentRecordsStatus: boolean;
   private captureOutput: boolean;
 
   constructor(initialPart: PipelinePart, captureOutput: boolean) {
@@ -2077,6 +2110,7 @@ class PipelineAssembler {
     this.isResultObject = partIsResultObject(initialPart);
     this.isVariableAssignment = partIsVariableAssignment(initialPart);
     this.assignmentNames = partAssignmentNames(initialPart);
+    this.assignmentRecordsStatus = partRecordsStatus(initialPart);
     this.captureOutput = captureOutput;
   }
 
@@ -2088,6 +2122,7 @@ class PipelineAssembler {
       isResultObject: this.isResultObject,
       isVariableAssignment: this.isVariableAssignment,
       assignmentNames: this.assignmentNames,
+      assignmentRecordsStatus: this.assignmentRecordsStatus,
     };
   }
 
@@ -2190,7 +2225,7 @@ class PipelineAssembler {
 
     const leftSetup = this.currentCaptureSetup();
     const rightValue = partIsVariableAssignment(part)
-      ? assignmentResultExpression(part.code, partAssignmentNames(part))
+      ? assignmentResultExpression(part.code, partAssignmentNames(part), partRecordsStatus(part))
       : part.code;
     const condition = op === "&&" ? "__code === 0" : "__code !== 0";
 
@@ -2203,6 +2238,7 @@ class PipelineAssembler {
     this.isResultObject = true;
     this.isVariableAssignment = false;
     this.assignmentNames = [];
+    this.assignmentRecordsStatus = false;
   }
 
   private handleLogicalStreamOp(
@@ -2210,8 +2246,12 @@ class PipelineAssembler {
     part: PipelinePart,
   ): void {
     const leftValue = this.currentCaptureExpression();
+    // SSH-626: a status-recording assignment (x=$(cmd)) on the left of &&/|| with
+    // a stream on the right takes cmd's status from Deno.exitCode, set while the
+    // assignment code ran __cmdSubText. A plain assignment resets $? to 0.
+    const assignCode = this.assignmentRecordsStatus ? "Deno.exitCode" : "0";
     const leftSetup = this.isVariableAssignment
-      ? `${this.code}; ${assignmentSyncCode(this.assignmentNames)}const __code = 0;`
+      ? `${this.code}; ${assignmentSyncCode(this.assignmentNames)}const __code = ${assignCode};`
       : this.isPrintable
       ? `const __code = await __printCmd(${leftValue});`
       : `const __left: any = await __captureCmd(${leftValue}); if (__left.stdout) await Deno.stdout.write(new TextEncoder().encode(__left.stdout)); if (__left.stderr) await Deno.stderr.write(new TextEncoder().encode(__left.stderr)); const __code = __left.code ?? 0;`;
@@ -2229,6 +2269,7 @@ class PipelineAssembler {
     this.isResultObject = false;
     this.isVariableAssignment = false;
     this.assignmentNames = [];
+    this.assignmentRecordsStatus = false;
   }
 
   /**
@@ -2323,6 +2364,7 @@ class PipelineAssembler {
     this.isResultObject = false;
     this.isVariableAssignment = false;
     this.assignmentNames = [];
+    this.assignmentRecordsStatus = false;
   }
 
   /**
@@ -2344,16 +2386,21 @@ class PipelineAssembler {
 
   private currentCaptureExpression(): string {
     if (this.isVariableAssignment) {
-      return assignmentResultExpression(this.code, this.assignmentNames);
+      return assignmentResultExpression(this.code, this.assignmentNames, this.assignmentRecordsStatus);
     }
     return this.isPromise ? `await ${this.code}` : this.code;
   }
 
   private currentCaptureSetup(): string {
     if (this.isVariableAssignment) {
+      // SSH-626: when the assignment value has a command substitution, its status
+      // was recorded into Deno.exitCode while `this.code` ran __cmdSubText; thread
+      // it into __left.code so the &&/|| chain branches on the real status. A plain
+      // assignment resets $? to 0.
+      const code = this.assignmentRecordsStatus ? "Deno.exitCode" : "0";
       return `${this.code}; ${
         assignmentSyncCode(this.assignmentNames)
-      }const __left: any = { code: 0, stdout: "", stderr: "", success: true };`;
+      }const __left: any = { code: ${code}, stdout: "", stderr: "", success: ${code} === 0 };`;
     }
     return `const __left: any = await __captureCmd(${this.currentCaptureExpression()});`;
   }
@@ -2374,6 +2421,7 @@ function assemblePipeline(
   isResultObject: boolean;
   isVariableAssignment: boolean;
   assignmentNames: string[];
+  assignmentRecordsStatus: boolean;
 } {
   if (parts.length === 0) {
     return {
@@ -2383,6 +2431,7 @@ function assemblePipeline(
       isResultObject: false,
       isVariableAssignment: false,
       assignmentNames: [],
+      assignmentRecordsStatus: false,
     };
   }
 
@@ -2702,14 +2751,18 @@ function buildPrintableStatusLines(
     isPrintable?: boolean;
     isVariableAssignment?: boolean;
     assignmentNames?: string[];
+    assignmentRecordsStatus?: boolean;
   },
   statusVar: string,
   indent: string,
 ): string[] {
   if (result.isVariableAssignment) {
+    // SSH-626: `x=$(cmd)` feeds cmd's status (recorded into Deno.exitCode by
+    // __cmdSubText) to a following control target; a plain assignment resets to 0.
+    const code = result.assignmentRecordsStatus ? "Deno.exitCode" : "0";
     return [
       `${indent}${result.code};`,
-      `${indent}${assignmentSyncCode(result.assignmentNames)}const ${statusVar} = 0;`,
+      `${indent}${assignmentSyncCode(result.assignmentNames)}const ${statusVar} = ${code};`,
     ];
   }
 
