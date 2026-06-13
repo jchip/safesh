@@ -251,15 +251,18 @@ describe("Parameter Expansion - Default Values", () => {
     const script = 'echo "${unset:=default}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "unset ??=");
-    assertStringIncludes(result, "default");
+    // SSH-610: assigns through the local var or $.VARS, for unset OR empty
+    assertStringIncludes(result, '$.VARS.unset = "default"');
+    assertStringIncludes(result, '=== ""');
   });
 
   it("should assign default with =", () => {
     const script = 'echo "${unset=default}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "unset ??=");
+    // SSH-610: = assigns only when unset (definedness probe, not emptiness)
+    assertStringIncludes(result, '$.VARS.unset = "default"');
+    assertStringIncludes(result, "!== undefined");
   });
 
   it("should error if unset with :?", () => {

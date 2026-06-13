@@ -812,7 +812,9 @@ describe("Variable Expansion - All Modifiers", () => {
     it("should handle ${VAR:=default} (assign default)", () => {
       const ast = parse('echo "${VAR:=default_value}"');
       const output = transpile(ast);
-      assertStringIncludes(output, "??=");
+      // SSH-610: assigns through the local var or $.VARS, for unset OR empty
+      assertStringIncludes(output, '$.VARS.VAR = "default_value"');
+      assertStringIncludes(output, '=== ""');
     });
 
     it("should handle ${VAR:?error} (error if unset)", () => {
