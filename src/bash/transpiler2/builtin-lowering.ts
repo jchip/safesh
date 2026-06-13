@@ -72,8 +72,14 @@ export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLower
   }
 
   if (name === ":") {
+    // SSH-609: `:` is a no-op but bash still expands its arguments, so a
+    // `${VAR:=default}` argument must perform its assignment. Evaluate the
+    // argument expressions for their side effects, discard the values.
+    const code = formattedArgs.length > 0
+      ? `(void [${formattedArgs.join(", ")}], { code: 0, stdout: "", stderr: "", success: true })`
+      : `{ code: 0, stdout: "", stderr: "", success: true }`;
     return {
-      code: `{ code: 0, stdout: "", stderr: "", success: true }`,
+      code,
       async: false,
       isShellBuiltin: true,
       isSilentShellBuiltin: true,

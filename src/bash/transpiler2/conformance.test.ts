@@ -896,6 +896,25 @@ describe("Conformance - Pipeline Negation (SSH-594)", () => {
   });
 });
 
+describe("Conformance - Colon Builtin Argument Expansion (SSH-609)", () => {
+  it("evaluates colon arguments for their expansion side effects", () => {
+    // The := expansion itself still lowers incorrectly (SSH-610); once that
+    // is fixed, replace this shape assertion with the end-to-end case
+    // `: ${PORT:=8080}\necho $PORT` → "8080".
+    const output = transpile(parse(': ${PORT:=8080}'));
+    assertStringIncludes(output, "void [");
+    assertStringIncludes(output, "PORT");
+  });
+
+  it("keeps plain colon a successful no-op", async () => {
+    const { bashResult, tsResult } = await compareExecution(":\necho $?", {
+      compareExitCode: true,
+    });
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "0");
+  });
+});
+
 describe("Conformance - Indirect Variable Reference (SSH-330)", () => {
   it("should handle simple indirect reference ${!ref}", async () => {
     const script = `
