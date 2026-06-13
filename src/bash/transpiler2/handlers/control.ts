@@ -81,6 +81,9 @@ export function visitIfStatement(
     if (Array.isArray(stmt.alternate)) {
       lines.push(`${indent}} else {`);
       ctx.indent();
+      // SSH-619: the else branch runs because the condition failed, so $? at its
+      // entry is the condition's status (bash), not the 0 cleared above.
+      lines.push(`${ctx.getIndent()}__recStatus(${testVar}.code);`);
       for (const s of stmt.alternate) {
         const result = ctx.visitStatement(s);
         lines.push(...result.lines);
@@ -91,6 +94,8 @@ export function visitIfStatement(
       // else-if chain
       lines.push(`${indent}} else {`);
       ctx.indent();
+      // SSH-619: the elif branch sees $? = the failed (outer) condition's status.
+      lines.push(`${ctx.getIndent()}__recStatus(${testVar}.code);`);
       const elseIf = visitIfStatement(stmt.alternate, ctx);
       lines.push(...elseIf.lines);
       ctx.dedent();
