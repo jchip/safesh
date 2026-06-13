@@ -316,6 +316,45 @@ const KillJobSchema = z.object({
 // ============================================================================
 
 /**
+ * Apply a per-call env overlay to a shell, returning the pre-call values of
+ * the overlaid keys (SSH-611). Exported for tests.
+ */
+export function applyEnvOverlay(
+  shell: { env: Record<string, string> },
+  overlay: Record<string, string> | undefined,
+): Record<string, string | undefined> {
+  const shadow: Record<string, string | undefined> = {};
+  if (overlay) {
+    for (const key of Object.keys(overlay)) {
+      shadow[key] = shell.env[key];
+    }
+    shell.env = { ...shell.env, ...overlay };
+  }
+  return shadow;
+}
+
+/**
+ * Remove a per-call env overlay after execution (SSH-611). Only keys the
+ * execution left at their overlay value are reverted; keys the script set or
+ * unset keep whatever syncShellState wrote — restoring a saved env object
+ * here used to discard the script's persisted state entirely.
+ */
+export function removeEnvOverlay(
+  shell: { env: Record<string, string> },
+  overlay: Record<string, string> | undefined,
+  shadow: Record<string, string | undefined>,
+): void {
+  if (!overlay) return;
+  for (const [key, value] of Object.entries(overlay)) {
+    if (shell.env[key] === value) {
+      const prev = shadow[key];
+      if (prev === undefined) delete shell.env[key];
+      else shell.env[key] = prev;
+    }
+  }
+}
+
+/**
  * Handle 'run' tool - execute code, shell commands, or files
  */
 async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> {
@@ -397,23 +436,24 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
     { cwd: ctx.configHolder.cwd, env: parsed.env },
   );
 
-  // Merge additional env vars into the actual shell temporarily
-  const originalEnv = shell.env;
-  if (parsed.env) {
-    shell.env = { ...shell.env, ...parsed.env };
-  }
+  // Merge additional env vars into the actual shell temporarily.
+  // SSH-611: revert per overlay key instead of restoring the whole env
+  // object — executeCode's syncShellState rewrites shell.env with the
+  // script's set/unset deltas, and restoring a saved object would discard
+  // that persisted state.
+  const overlayShadow = applyEnvOverlay(shell, parsed.env);
 
   // Background execution: launch script and return immediately
   if (background) {
     const script = await launchCodeScript(code, execConfig, shell);
-    shell.env = originalEnv;
+    removeEnvOverlay(shell, parsed.env, overlayShadow);
 
     return mcpJsonResponse({ scriptId: script.id, pid: script.pid, shellId: shell.id, background: true });
   }
 
   // Foreground execution: wait for completion
   const result = await executeCode(code, execConfig, { timeout: execTimeout, cwd: shell.cwd }, shell);
-  shell.env = originalEnv;
+  removeEnvOverlay(shell, parsed.env, overlayShadow);
 
   // Check for blocked commands from init() (multiple commands)
   if (result.blockedCommands?.length || result.notFoundCommands?.length) {
