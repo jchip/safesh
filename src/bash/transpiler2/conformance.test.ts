@@ -860,6 +860,40 @@ describe("Conformance - Pipeline Negation (SSH-594)", () => {
   it("should run the right side of && after a negated failure", async () => {
     await assertStdoutAndExitCodeMatch("! false && echo yes", "yes");
   });
+
+  // SSH-602: `!` accepted before any &&/|| operand
+  it("should negate the right operand of && (SSH-602)", async () => {
+    await assertStdoutAndExitCodeMatch("true && ! false\necho $?", "0");
+    await assertStdoutAndExitCodeMatch("true && ! true\necho $?", "1");
+  });
+
+  it("should negate the right operand of || (SSH-602)", async () => {
+    await assertStdoutAndExitCodeMatch("false || ! false\necho $?", "0");
+  });
+
+  // SSH-603: negation in condition position
+  it("should honor ! in if conditions (SSH-603)", async () => {
+    await assertStdoutAndExitCodeMatch("if ! false; then echo yes; fi", "yes");
+    await assertStdoutAndExitCodeMatch("if ! true; then echo no; else echo other; fi", "other");
+  });
+
+  it("should honor ! before [[ ]] and (( )) conditions (SSH-603)", async () => {
+    await assertStdoutAndExitCodeMatch("if ! [[ -f /nonexistent/path ]]; then echo absent; fi", "absent");
+    await assertStdoutAndExitCodeMatch("if ! (( 0 )); then echo zero; fi", "zero");
+  });
+
+  it("should honor ! in while conditions (SSH-603)", async () => {
+    await assertStdoutAndExitCodeMatch(
+      "n=0\nwhile ! [ $n -ge 2 ]; do echo $n; n=$((n+1)); done",
+      "0\n1",
+    );
+  });
+
+  // SSH-604: negation inside command substitution
+  it("should honor ! inside command substitution (SSH-604)", async () => {
+    await assertStdoutAndExitCodeMatch("x=$(! false)\necho $?", "0");
+    await assertStdoutAndExitCodeMatch("x=$(! true)\necho $?", "1");
+  });
 });
 
 describe("Conformance - Indirect Variable Reference (SSH-330)", () => {
