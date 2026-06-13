@@ -166,6 +166,10 @@ async function __cmdSubText(cmd: any): Promise<string> {
 
 // Mock SafeShell runtime for conformance testing
 const $ = {
+  // Shell variable stores (the real preamble always defines both; unset-var
+  // reads dereference $.ENV non-optionally, SSH-610)
+  ENV: {} as Record<string, string>,
+  VARS: {} as Record<string, unknown>,
   // Builtins mapped to imported functions
   echo: __echo,
   cd: __cd,
@@ -897,13 +901,31 @@ describe("Conformance - Pipeline Negation (SSH-594)", () => {
 });
 
 describe("Conformance - Colon Builtin Argument Expansion (SSH-609)", () => {
-  it("evaluates colon arguments for their expansion side effects", () => {
-    // The := expansion itself still lowers incorrectly (SSH-610); once that
-    // is fixed, replace this shape assertion with the end-to-end case
-    // `: ${PORT:=8080}\necho $PORT` → "8080".
-    const output = transpile(parse(': ${PORT:=8080}'));
-    assertStringIncludes(output, "void [");
-    assertStringIncludes(output, "PORT");
+  it("performs := assignments in colon arguments (SSH-609 + SSH-610)", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      ': ${PORT:=8080}\necho $PORT',
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "8080");
+  });
+
+  it("assigns := defaults for empty values too (SSH-610)", async () => {
+    const { bashResult, tsResult } = await compareExecution(
+      'V=""\n: ${V:=filled}\necho $V',
+      { compareExitCode: true },
+    );
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "filled");
+  });
+
+  it("keeps existing values with := and skips = for defined-but-empty (SSH-610)", async () => {
+    const a = await compareExecution('W=set\necho ${W:=other}', { compareExitCode: true });
+    assertEquals(a.tsResult.stdout, a.bashResult.stdout);
+    assertEquals(a.tsResult.stdout, "set");
+    const b = await compareExecution('V=""\necho "x${V=def}x"', { compareExitCode: true });
+    assertEquals(b.tsResult.stdout, b.bashResult.stdout);
+    assertEquals(b.tsResult.stdout, "xx");
   });
 
   it("keeps plain colon a successful no-op", async () => {

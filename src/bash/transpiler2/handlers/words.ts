@@ -55,6 +55,21 @@ function shellVarDefinedExpression(param: string, jsParam: string): string {
   } !== undefined)`;
 }
 
+/**
+ * Assignment sink for ${VAR:=default} / ${VAR=default} (SSH-610): assign the
+ * local JS var when one exists, otherwise persist via $.VARS so later reads
+ * and the state trailer observe it. A bare-identifier assignment (`VAR ??=`)
+ * throws for undeclared names under the preamble's "use strict".
+ */
+function shellVarAssignExpression(
+  param: string,
+  jsParam: string,
+  valueExpr: string,
+): string {
+  const prop = shellVarProperty(param);
+  return `(typeof ${jsParam} !== "undefined" ? (${jsParam} = ${valueExpr}) : ($.VARS ??= {}, $.VARS${prop} = ${valueExpr}))`;
+}
+
 function buildCapturableInnerCode(
   statements: AST.Statement[],
   ctx: VisitorContext,
@@ -447,9 +462,17 @@ export function visitParameterExpansion(
       return `\${${varDefinedExpr} ? ${varExpr} : "${escapeForQuotes(modifierArg)}"}`;
 
     case ":=":
+      // ${VAR:=default} - assign default if unset OR empty (bash :=
+      // semantics), then expand to the resulting value (SSH-610)
+      return `\${${varExpr} === "" ? ${
+        shellVarAssignExpression(param, jsParam, `"${escapeForQuotes(modifierArg)}"`)
+      } : ${varExpr}}`;
+
     case "=":
-      // ${VAR:=default} - assign default if unset
-      return `\${${jsParam} ??= "${escapeForQuotes(modifierArg)}"}`;
+      // ${VAR=default} - assign default only if unset (SSH-610)
+      return `\${${varDefinedExpr} ? ${varExpr} : ${
+        shellVarAssignExpression(param, jsParam, `"${escapeForQuotes(modifierArg)}"`)
+      }}`;
 
     case ":?":
     case "?":
