@@ -603,7 +603,22 @@ export function visitCommandSubstitution(
   cs: AST.CommandSubstitution,
   ctx: VisitorContext,
 ): string {
+  // SSH-613: a $(...) runs in a subshell, so `exit N` inside it must only end
+  // the substitution (with $? = N), not Deno.exit the whole script. Enter
+  // subshell scope so `exit` lowers to the SSH-584 sentinel throw rather than
+  // Deno.exit (isInSubshell() is read only by the exit lowering).
+  ctx.enterSubshell();
   const innerCode = buildCapturableInnerCode(cs.command, ctx);
+  ctx.exitSubshell();
+
+  // Only when the body can actually throw the sentinel do we wrap the boundary
+  // to convert it into the substitution's status ($? = N) and the text captured
+  // before the exit — keeping the common no-exit case byte-identical.
+  if (innerCode.includes("__sshSubshellExit")) {
+    return `\${await (async () => { try { return await __cmdSubText(${innerCode}); } ` +
+      `catch (__e) { if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) ` +
+      `{ __recStatus((__e as { __sshSubshellExit: number }).__sshSubshellExit); return ""; } throw __e; } })()}`;
+  }
 
   // Use __cmdSubText helper (defined in preamble) to extract text from result
   return `\${await __cmdSubText(${innerCode})}`;
