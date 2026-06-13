@@ -161,7 +161,11 @@ export function glob(pattern: string, options: GlobOptions = {}): FluentStream<F
           stat,
         };
       } catch {
-        // Skip files outside sandbox or that can't be read
+        // SSH-608: deliberate — sandbox-rejected (PATH_VIOLATION/PATH_DENIED)
+        // and unreadable entries are silently skipped, matching bash glob
+        // semantics where unreadable matches simply don't surface. Throwing
+        // here would abort legitimate broad globs that merely graze a denied
+        // subtree.
         continue;
       }
     }
