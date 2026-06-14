@@ -46,7 +46,12 @@ import { generatePendingId, writePendingCommand, writePendingPath } from "../src
 import { getSessionAllowedCommands } from "../src/core/session.ts";
 import { generateInlineErrorHandler, logExecutionError } from "../src/core/error-handlers.ts";
 import { readStdinFully } from "../src/core/io-utils.ts";
-import { detectHybridCommand, detectTypeScript, SAFESH_SIGNATURE } from "../src/hooks/detection.ts";
+import {
+  detectHybridCommand,
+  detectMisplacedSignature,
+  detectTypeScript,
+  SAFESH_SIGNATURE,
+} from "../src/hooks/detection.ts";
 import {
   analyzeForPassthrough,
   type PassthroughAnalysis,
@@ -1694,11 +1699,16 @@ ${tsCode}
       context = `\n\nCommand preview:\n${preview}${more}`;
     }
 
+    // SSH-640: a /*#*/ signature embedded mid-command (e.g. inside $(...)) is
+    // parsed as bash and fails with a cryptic error. Surface an actionable hint.
+    const signatureHint = fullCommand ? detectMisplacedSignature(fullCommand) : null;
+
     // Build full error message
     const errorLogContent = [
       "=== Bash Transpilation Error ===",
       `Command: ${fullCommand}`,
       `\nError: ${errorMsg}`,
+      signatureHint ? `\nHINT: ${signatureHint}` : "",
       stack ? `\nStack trace:\n${stack}` : "",
       "================================\n",
     ].join("\n");
@@ -1713,6 +1723,9 @@ ${tsCode}
     }
 
     console.error(`Transpilation error: ${errorMsg}${context}`);
+    if (signatureHint) {
+      console.error(`\nHINT: ${signatureHint}`);
+    }
     // Exit 2 to signal error, native bash won't run
     Deno.exit(2);
   }

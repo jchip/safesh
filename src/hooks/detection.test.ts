@@ -8,6 +8,7 @@ import { assertEquals } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
 import {
   detectHybridCommand,
+  detectMisplacedSignature,
   detectTypeScript,
   SAFESH_SIGNATURE,
 } from "./detection.ts";
@@ -290,6 +291,38 @@ for (const file of files) {
       assertEquals(detectHybridCommand(tsCmd), null);
       assertEquals(detectHybridCommand(hybridCmd) !== null, true);
       assertEquals(detectHybridCommand(bashCmd), null);
+    });
+  });
+
+  describe("detectMisplacedSignature", () => {
+    it("returns a hint when the signature is embedded inside $(...)", () => {
+      const cmd = 'mj=$(/*#*/ const n = await $.fs.readDir("."); console.log(n))';
+      const result = detectMisplacedSignature(cmd);
+
+      assertEquals(typeof result, "string");
+      assertEquals(result!.includes(SAFESH_SIGNATURE), true);
+    });
+
+    it("returns a hint when the signature appears mid-command", () => {
+      const result = detectMisplacedSignature("echo hello && /*#*/ console.log(1)");
+
+      assertEquals(result !== null, true);
+    });
+
+    it("returns null for a valid whole-command prefix", () => {
+      assertEquals(detectMisplacedSignature('/*#*/ console.log(1)'), null);
+    });
+
+    it("returns null for a valid prefix with leading whitespace", () => {
+      assertEquals(detectMisplacedSignature("   /*#*/ console.log(1)"), null);
+    });
+
+    it("returns null for a valid `| /*#*/` hybrid command", () => {
+      assertEquals(detectMisplacedSignature("echo test | /*#*/ console.log(1)"), null);
+    });
+
+    it("returns null for plain bash without the signature", () => {
+      assertEquals(detectMisplacedSignature('wc -l < "$mj"'), null);
     });
   });
 });
