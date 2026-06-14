@@ -291,6 +291,24 @@ export async function expandGlobArg(
 }
 
 /**
+ * SSH-642: expand a list of command operands, flattening each pattern's matches
+ * in order (each via {@link expandGlobArg}). Used by fluent file commands such
+ * as `cat` and `wc` that accept multiple operands. The canonical helper for
+ * `$.__expandGlobAll` in transpiled code.
+ */
+export async function expandGlobAll(
+  patterns: string[],
+  config?: SafeShellConfig,
+  cwd?: string,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const pattern of patterns) {
+    out.push(...(await expandGlobArg(pattern, config, cwd)));
+  }
+  return out;
+}
+
+/**
  * Check if any files match the pattern
  *
  * @param pattern - Glob pattern

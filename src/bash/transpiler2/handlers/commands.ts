@@ -648,8 +648,12 @@ function selectCommandStrategy(
 
   // Fluent command (with constraint checking)
   // $.cat(...) is a file stream helper, not a full cat command implementation.
+  // SSH-642: a glob operand (e.g. `cat *.js`) can match multiple files, which
+  // the single-file $.cat helper can't concatenate — route to the real cat so
+  // the quoting-aware command-position glob expansion (Stage 2) applies.
   const catRequiresStandardCommand = analysis.name === "cat" &&
-    (analysis.args.length !== 1 || (analysis.args[0]?.startsWith("-") ?? false));
+    (analysis.args.length !== 1 || (analysis.args[0]?.startsWith("-") ?? false) ||
+      hasGlobPattern(analysis.args[0] ?? ""));
   if (
     isFluentCommand(analysis.name) && !analysis.hasDynamicArgs && !analysis.hasAssignments &&
     !analysis.hasRedirects && !catRequiresStandardCommand
@@ -1051,13 +1055,11 @@ function buildSimpleFluentCommand(name: string, args: string[]): FluentCommandRe
     const opts = optionsStr ? `{ ${optionsStr} }` : "{}";
     const fileList = `[${formatFileArgs(files)}]`;
     return {
-      code: `$.wcMultiple((await Promise.all(${fileList}.map((__p) => ` +
-        `/[*?\\[\\]{}]/.test(__p) ? $.globPaths(__p) : Promise.resolve([__p])` +
-        `))).flat().map((__p) => ` +
-        // display the operand the way the shell would have expanded it:
-        // glob hits come back absolute, bash shows them relative to cwd
-        `[__p.startsWith(Deno.cwd() + "/") ? __p.slice(Deno.cwd().length + 1) : __p, $.cat(__p)]` +
-        `), ${opts})`,
+      // SSH-642: $.__expandGlobAll yields bash-faithful, cwd-relative,
+      // dotfile-excluded operands (replacing the prior $.globPaths approach,
+      // which included dotfiles and returned absolute paths).
+      code: `$.wcMultiple((await $.__expandGlobAll(${fileList})).map((__p) => ` +
+        `[__p, $.cat(__p)]), ${opts})`,
       isTransform: false,
       isStream: true,
       requiresRawInput: capability.requiresRawInput,
