@@ -50,10 +50,17 @@ import { expandPath, validatePath } from "../core/permissions.ts";
 import { executionError } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 import { getDefaultConfig } from "../core/utils.ts";
-import { glob, globArray, globPaths, type GlobOptions, type GlobEntry } from "./glob.ts";
+import {
+  expandGlobArg,
+  glob,
+  globArray,
+  globPaths,
+  type GlobEntry,
+  type GlobOptions,
+} from "./glob.ts";
 
 // Re-export glob utilities
-export { glob, globArray, globPaths, type GlobOptions, type GlobEntry };
+export { expandGlobArg, glob, globArray, globPaths, type GlobEntry, type GlobOptions };
 
 /**
  * Options for file operations that need sandbox validation

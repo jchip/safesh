@@ -8,7 +8,7 @@
  */
 
 import { expandGlob, type ExpandGlobOptions } from "@std/fs/expand-glob";
-import { resolve } from "@std/path";
+import { isAbsolute, relative, resolve } from "@std/path";
 import { expandPath, isPathAllowed } from "../core/permissions.ts";
 import { pathViolation } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
@@ -30,6 +30,10 @@ export interface GlobOptions {
   exclude?: string[];
   /** Case insensitive matching (default: false) */
   caseInsensitive?: boolean;
+  /** Allow ** to cross directory boundaries (default: @std/fs default) */
+  globstar?: boolean;
+  /** Enable extended globs like @(...) +(...) (default: @std/fs default) */
+  extended?: boolean;
 }
 
 /**
@@ -148,6 +152,9 @@ export async function* glob(
     followSymlinks: options.followSymlinks ?? false,
     caseInsensitive: options.caseInsensitive ?? false,
     exclude: options.exclude,
+    // undefined leaves the @std/fs default untouched (existing callers unchanged)
+    globstar: options.globstar,
+    extended: options.extended,
   };
 
   // Expand the glob pattern
@@ -217,6 +224,70 @@ export async function globPaths(
 ): Promise<string[]> {
   const entries = await globArray(pattern, options, config);
   return entries.map((e) => e.path);
+}
+
+/**
+ * SSH-642: per-component dotfile exclusion, matching bash pathname expansion.
+ *
+ * A wildcard does not match a filename component that begins with `.` unless
+ * the corresponding pattern component also begins with `.` (so `*` skips
+ * `.hidden` but `.*` matches it). Pattern and match have the same number of
+ * components because globstar is disabled (a `*` never crosses `/`).
+ */
+function isDotExcluded(pattern: string, rel: string): boolean {
+  const patternComponents = pattern.split("/");
+  const matchComponents = rel.split("/");
+  const n = Math.min(patternComponents.length, matchComponents.length);
+  for (let i = 0; i < n; i++) {
+    if (matchComponents[i]!.startsWith(".") && !patternComponents[i]!.startsWith(".")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * SSH-642: bash-faithful command-argument glob expansion (nullglob OFF).
+ *
+ * Returns matches relative to `cwd` (absolute when the pattern is absolute),
+ * sorted in C/byte order, with dot-prefixed names excluded per bash rules
+ * ({@link isDotExcluded}). When nothing matches, returns the literal pattern —
+ * bash's default (nullglob off). Any failure (malformed pattern, sandbox
+ * violation, etc.) also yields the literal pattern, so a command never receives
+ * fewer or different args than it does today; expansion only ever *adds* real
+ * matches. This is the canonical helper for `$.__expandGlob` in transpiled code.
+ *
+ * @param pattern - The glob pattern (an unquoted command argument)
+ * @param config - SafeShell config for sandbox validation
+ * @param cwd - Base directory for relative patterns (defaults to Deno.cwd())
+ * @returns Sorted matches, or `[pattern]` when there are none
+ */
+export async function expandGlobArg(
+  pattern: string,
+  config?: SafeShellConfig,
+  cwd: string = Deno.cwd(),
+): Promise<string[]> {
+  try {
+    const absolute = isAbsolute(pattern);
+    const matches: string[] = [];
+    for await (
+      const entry of glob(pattern, {
+        cwd,
+        root: cwd,
+        includeDirs: true,
+        globstar: false,
+        extended: false,
+      }, config)
+    ) {
+      const rel = absolute ? entry.path : relative(cwd, entry.path);
+      if (!isDotExcluded(pattern, rel)) matches.push(rel);
+    }
+    matches.sort();
+    return matches.length > 0 ? matches : [pattern];
+  } catch {
+    // nullglob-off literal fallback — never expand to fewer/other args than bash
+    return [pattern];
+  }
 }
 
 /**
