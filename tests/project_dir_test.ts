@@ -5,20 +5,42 @@
 
 import { assertEquals } from "@std/assert";
 import {
-  isWithinProjectDir,
   isCommandWithinProjectDir,
+  isWithinProjectDir,
   validatePath,
 } from "../src/core/permissions.ts";
 import {
   loadConfigWithArgs,
   loadSessionConfig,
-  mergeConfigs,
   type McpInitArgs,
+  mergeConfigs,
 } from "../src/core/config.ts";
 import { createRegistry } from "../src/external/registry.ts";
 import { validateCommand } from "../src/external/validator.ts";
 import type { SafeShellConfig } from "../src/core/types.ts";
 import { REAL_TMP } from "./helpers.ts";
+
+/**
+ * SSH-637: run a config-loading test with the global config isolated to an empty
+ * XDG dir, so the developer's real ~/.config/safesh/config.json can't leak
+ * workspaceRoots/commands into assertions. getGlobalConfigDir() honors XDG_CONFIG_HOME.
+ */
+async function withIsolatedGlobalConfig<T>(fn: () => Promise<T>): Promise<T> {
+  const xdg = await Deno.makeTempDir({ prefix: "safesh-xdg-iso-" });
+  const prev = Deno.env.get("XDG_CONFIG_HOME");
+  Deno.env.set("XDG_CONFIG_HOME", xdg);
+  try {
+    return await fn();
+  } finally {
+    if (prev !== undefined) Deno.env.set("XDG_CONFIG_HOME", prev);
+    else Deno.env.delete("XDG_CONFIG_HOME");
+    try {
+      await Deno.remove(xdg, { recursive: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
 
 // ============================================================================
 // isWithinProjectDir Tests
@@ -258,100 +280,103 @@ Deno.test("loadConfigWithArgs - falls back to baseCwd when no args", async () =>
   assertEquals(effectiveCwd, "/default/cwd");
 });
 
-Deno.test("loadConfigWithArgs - adds git-aware roots for projectDir worktrees", async () => {
-  const testDir = `${REAL_TMP}/safesh-test-git-aware-args`;
-  const topWorktree = `${testDir}/workflow-engine`;
-  const linkedWorktree = `${testDir}/full-local`;
+Deno.test("loadConfigWithArgs - adds git-aware roots for projectDir worktrees", () =>
+  withIsolatedGlobalConfig(async () => {
+    const testDir = `${REAL_TMP}/safesh-test-git-aware-args`;
+    const topWorktree = `${testDir}/workflow-engine`;
+    const linkedWorktree = `${testDir}/full-local`;
 
-  try {
-    await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
-    await Deno.mkdir(linkedWorktree, { recursive: true });
-    await Deno.writeTextFile(
-      `${linkedWorktree}/.git`,
-      `gitdir: ${topWorktree}/.git/worktrees/full-local\n`,
-    );
-
-    const { config, effectiveCwd } = await loadConfigWithArgs("/tmp", {
-      projectDir: linkedWorktree,
-    });
-
-    assertEquals(effectiveCwd, linkedWorktree);
-    assertEquals(config.workspaceRoots, [linkedWorktree, topWorktree]);
-  } finally {
     try {
-      await Deno.remove(testDir, { recursive: true });
-    } catch {
-      // Ignore cleanup errors
+      await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
+      await Deno.mkdir(linkedWorktree, { recursive: true });
+      await Deno.writeTextFile(
+        `${linkedWorktree}/.git`,
+        `gitdir: ${topWorktree}/.git/worktrees/full-local\n`,
+      );
+
+      const { config, effectiveCwd } = await loadConfigWithArgs("/tmp", {
+        projectDir: linkedWorktree,
+      });
+
+      assertEquals(effectiveCwd, linkedWorktree);
+      assertEquals(config.workspaceRoots, [linkedWorktree, topWorktree]);
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
     }
-  }
-});
+  }));
 
-Deno.test("loadConfigWithArgs - omits nested projectDir when top worktree covers it", async () => {
-  const testDir = `${REAL_TMP}/safesh-test-git-aware-nested-args`;
-  const topWorktree = `${testDir}/workflow-engine`;
-  const nestedWorktree = `${topWorktree}/.worktrees/full-local`;
+Deno.test("loadConfigWithArgs - omits nested projectDir when top worktree covers it", () =>
+  withIsolatedGlobalConfig(async () => {
+    const testDir = `${REAL_TMP}/safesh-test-git-aware-nested-args`;
+    const topWorktree = `${testDir}/workflow-engine`;
+    const nestedWorktree = `${topWorktree}/.worktrees/full-local`;
 
-  try {
-    await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
-    await Deno.mkdir(nestedWorktree, { recursive: true });
-    await Deno.writeTextFile(
-      `${nestedWorktree}/.git`,
-      "gitdir: ../../.git/worktrees/full-local\n",
-    );
-
-    const { config, effectiveCwd } = await loadConfigWithArgs("/tmp", {
-      projectDir: nestedWorktree,
-    });
-
-    assertEquals(effectiveCwd, nestedWorktree);
-    assertEquals(config.workspaceRoots, [topWorktree]);
-  } finally {
     try {
-      await Deno.remove(testDir, { recursive: true });
-    } catch {
-      // Ignore cleanup errors
+      await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
+      await Deno.mkdir(nestedWorktree, { recursive: true });
+      await Deno.writeTextFile(
+        `${nestedWorktree}/.git`,
+        "gitdir: ../../.git/worktrees/full-local\n",
+      );
+
+      const { config, effectiveCwd } = await loadConfigWithArgs("/tmp", {
+        projectDir: nestedWorktree,
+      });
+
+      assertEquals(effectiveCwd, nestedWorktree);
+      assertEquals(config.workspaceRoots, [topWorktree]);
+    } finally {
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
     }
-  }
-});
+  }));
 
-Deno.test("loadSessionConfig - adds git-aware roots for linked worktrees", async () => {
-  const testDir = `${REAL_TMP}/safesh-test-git-aware-roots`;
-  const topWorktree = `${testDir}/workflow-engine`;
-  const linkedWorktree = `${testDir}/full-local`;
-  const cwd = `${linkedWorktree}/notes`;
-  const topFile = `${topWorktree}/notes/oauth-tenant-tech.md`;
-  const originalProjectEnv = Deno.env.get("CLAUDE_PROJECT_DIR");
+Deno.test("loadSessionConfig - adds git-aware roots for linked worktrees", () =>
+  withIsolatedGlobalConfig(async () => {
+    const testDir = `${REAL_TMP}/safesh-test-git-aware-roots`;
+    const topWorktree = `${testDir}/workflow-engine`;
+    const linkedWorktree = `${testDir}/full-local`;
+    const cwd = `${linkedWorktree}/notes`;
+    const topFile = `${topWorktree}/notes/oauth-tenant-tech.md`;
+    const originalProjectEnv = Deno.env.get("CLAUDE_PROJECT_DIR");
 
-  try {
-    Deno.env.delete("CLAUDE_PROJECT_DIR");
-    await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
-    await Deno.mkdir(cwd, { recursive: true });
-    await Deno.mkdir(`${topWorktree}/notes`, { recursive: true });
-    await Deno.writeTextFile(topFile, "oauth notes\n");
-    await Deno.writeTextFile(
-      `${linkedWorktree}/.git`,
-      `gitdir: ${topWorktree}/.git/worktrees/full-local\n`,
-    );
-
-    const { config } = await loadSessionConfig(cwd);
-
-    assertEquals(config.projectDir, linkedWorktree);
-    assertEquals(config.workspaceRoots, [linkedWorktree, topWorktree]);
-    assertEquals(await validatePath(topFile, config, cwd, "read"), topFile);
-  } finally {
-    if (originalProjectEnv !== undefined) {
-      Deno.env.set("CLAUDE_PROJECT_DIR", originalProjectEnv);
-    } else {
+    try {
       Deno.env.delete("CLAUDE_PROJECT_DIR");
-    }
+      await Deno.mkdir(`${topWorktree}/.git/worktrees/full-local`, { recursive: true });
+      await Deno.mkdir(cwd, { recursive: true });
+      await Deno.mkdir(`${topWorktree}/notes`, { recursive: true });
+      await Deno.writeTextFile(topFile, "oauth notes\n");
+      await Deno.writeTextFile(
+        `${linkedWorktree}/.git`,
+        `gitdir: ${topWorktree}/.git/worktrees/full-local\n`,
+      );
 
-    try {
-      await Deno.remove(testDir, { recursive: true });
-    } catch {
-      // Ignore cleanup errors
+      const { config } = await loadSessionConfig(cwd);
+
+      assertEquals(config.projectDir, linkedWorktree);
+      assertEquals(config.workspaceRoots, [linkedWorktree, topWorktree]);
+      assertEquals(await validatePath(topFile, config, cwd, "read"), topFile);
+    } finally {
+      if (originalProjectEnv !== undefined) {
+        Deno.env.set("CLAUDE_PROJECT_DIR", originalProjectEnv);
+      } else {
+        Deno.env.delete("CLAUDE_PROJECT_DIR");
+      }
+
+      try {
+        await Deno.remove(testDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
     }
-  }
-});
+  }));
 
 // ============================================================================
 // mergeConfigs Tests
@@ -396,7 +421,10 @@ Deno.test("mergeConfigs - merges denoFlags with union strategy", () => {
   };
 
   const override: SafeShellConfig = {
-    denoFlags: ["--v8-flags=--max-heap-size=4096", "--unsafely-ignore-certificate-errors=localhost"],
+    denoFlags: [
+      "--v8-flags=--max-heap-size=4096",
+      "--unsafely-ignore-certificate-errors=localhost",
+    ],
   };
 
   const merged = mergeConfigs(base, override);
@@ -490,7 +518,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "validatePath - allows both read and write when blockProjectDirWrite is undefined (default)",
+  name:
+    "validatePath - allows both read and write when blockProjectDirWrite is undefined (default)",
   async fn() {
     const testDir = `${REAL_TMP}/safesh-defaultwrite-test`;
     const projectDir = testDir;
@@ -635,7 +664,7 @@ Deno.test("getEffectivePermissions - home directory has read but not write acces
 // ============================================================================
 
 import { executeCode } from "../src/runtime/executor.ts";
-import { assertStringIncludes, assertMatch } from "@std/assert";
+import { assertMatch, assertStringIncludes } from "@std/assert";
 
 Deno.test({
   name: "executor - reads file within projectDir successfully",
@@ -1007,7 +1036,8 @@ Deno.test("SSH-592: root without explicit write allows stays in injected denyWri
 });
 
 Deno.test({
-  name: "SSH-592: validatePath allows explicitly configured write subdir under blockProjectDirWrite",
+  name:
+    "SSH-592: validatePath allows explicitly configured write subdir under blockProjectDirWrite",
   async fn() {
     const testDir = `${REAL_TMP}/safesh-test-ssh592`;
 
