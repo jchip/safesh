@@ -303,6 +303,43 @@ const TEMP_DIR_DEFAULTS: readonly string[] = computeTempDirDefaults(
 );
 
 /**
+ * Compute the $PATH bin-dir entries for the default read list.
+ *
+ * SSH-638: `$.which` / `$.fs.exists` / `test -x` resolve commands by stat-ing
+ * each `PATH/<cmd>` candidate, but the read sandbox excludes system bin dirs
+ * (/usr/bin, /sbin, /opt/homebrew/bin, …), so those stats throw and the
+ * command reads as "not found". Adding the PATH dirs to default read fixes it.
+ *
+ * Pure string processing (no stat/realpath) so the parent (building Deno
+ * flags) and the in-sandbox validatePath compute identical sets — the
+ * executor's getRealPathBoth handles literal/canonical expansion downstream.
+ * Only absolute entries are kept: relative PATH entries (e.g. "." or "") would
+ * let sandbox reads follow cwd and are already covered by the cwd default.
+ *
+ * Exported for tests; runtime callers use the module-scope snapshot below.
+ */
+export function computePathDirDefaults(pathEnv: string | undefined): string[] {
+  if (!pathEnv) return [];
+  const sep = Deno.build.os === "windows" ? ";" : ":";
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const raw of pathEnv.split(sep)) {
+    const dir = raw.replace(/[/\\]+$/, ""); // strip trailing separators
+    if (!dir || !isAbsolute(dir) || seen.has(dir)) continue;
+    seen.add(dir);
+    dirs.push(dir);
+  }
+  return dirs;
+}
+
+// SSH-638: snapshotted once at startup, mirroring TEMP_DIR_DEFAULTS — $PATH is
+// attacker-influenced (exports persist across commands since SSH-580), so later
+// env mutation must not widen the read sandbox.
+const PATH_DIR_DEFAULTS: readonly string[] = computePathDirDefaults(
+  Deno.env.get("PATH"),
+);
+
+/**
  * Get effective permissions by merging defaults with config
  *
  * IMPORTANT: Write permissions are based on projectDir, not cwd.
@@ -324,6 +361,11 @@ export function getEffectivePermissions(
   // Include HOME in default read paths unless explicitly disabled (default: true)
   if (home && config.includeHomeInDefaultRead !== false) {
     defaultRead.push(home);
+  }
+  // SSH-638: include $PATH bin dirs so command resolution (which/exists/test -x)
+  // can stat executables — these are less sensitive than HOME (added above).
+  if (config.includePathDirsInDefaultRead !== false) {
+    defaultRead.push(...PATH_DIR_DEFAULTS);
   }
   const defaultWrite = [...TEMP_DIR_DEFAULTS];
   const workspaceDir = config.workspaceDir ? resolveWorkspace(config.workspaceDir) : undefined;
