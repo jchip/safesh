@@ -226,7 +226,11 @@ export async function printShellValue(
     try {
       for await (const line of iterable) {
         itemCount++;
-        await write(output.stdout, String(line) + "\n");
+        // SSH-635: line-stream items are unterminated and get exactly one "\n",
+        // but a whole-content item (e.g. `cat` yielding a file's bytes) already
+        // ends in its own newline and must not be double-terminated vs bash.
+        const text = String(line);
+        await write(output.stdout, text.endsWith("\n") ? text : text + "\n");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

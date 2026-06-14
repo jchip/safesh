@@ -95,6 +95,32 @@ Deno.test("printShellValue streams stdout and stderr chunks", async () => {
   assertEquals(pipeStatus, [2, 4]);
 });
 
+Deno.test("printShellValue does not double a whole-content item's newline (SSH-635)", async () => {
+  const stdout = memoryWriter();
+  // `cat` yields the entire file contents (with its own trailing newline) as one item.
+  const catLike = (async function* () {
+    yield "hi\n";
+  })();
+
+  const code = await printShellValue(catLike, undefined, { stdout: stdout.writer });
+
+  assertEquals(stdout.text, "hi\n");
+  assertEquals(code, 0);
+});
+
+Deno.test("printShellValue newline-terminates unterminated line-stream items (SSH-635)", async () => {
+  const stdout = memoryWriter();
+  const lineLike = (async function* () {
+    yield "a";
+    yield "b";
+  })();
+
+  const code = await printShellValue(lineLike, undefined, { stdout: stdout.writer });
+
+  assertEquals(stdout.text, "a\nb\n");
+  assertEquals(code, 0);
+});
+
 Deno.test("commandSubstitutionText awaits promises and strips trailing newlines", async () => {
   const text = await commandSubstitutionText(
     Promise.resolve({ stdout: "value\n\n", code: 0 }),
