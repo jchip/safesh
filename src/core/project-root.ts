@@ -13,8 +13,8 @@ import { ensureDirSync } from "./io-utils.ts";
  * Other markers like package.json can exist in subdirectories
  */
 export const PROJECT_MARKERS = [
-  ".claude",        // Claude Code project config (most reliable)
-  ".git",           // Git repository root
+  ".claude", // Claude Code project config (most reliable)
+  ".git", // Git repository root
   ".config/safesh", // SafeShell project config
 ] as const;
 
@@ -101,12 +101,27 @@ function findGitWorktreeMetadata(
   }
 }
 
+/**
+ * Expand a leading ~ / ~/ to $HOME (SSH-636).
+ *
+ * @std/path `resolve()` does not expand tilde, so a workspace root written as
+ * `~/dev` would resolve to `<cwd>/~/dev` and silently fail the command-permission
+ * and workspace-root containment checks. Mirrors resolveWorkspace()'s handling so
+ * `~` works the same for workspaceRoots as it does for the read/write allow-lists.
+ */
+function expandHomeTilde(path: string): string {
+  if (path === "~") return Deno.env.get("HOME") ?? path;
+  if (path.startsWith("~/")) {
+    const home = Deno.env.get("HOME");
+    if (home) return home + path.slice(1);
+  }
+  return path;
+}
+
 export function normalizeWorkspaceRoots(roots: string[]): string[] {
-  const uniqueRoots = [...new Set(roots.map((root) => resolve(root)))];
+  const uniqueRoots = [...new Set(roots.map((root) => resolve(expandHomeTilde(root))))];
   return uniqueRoots.filter((root, index) =>
-    !uniqueRoots.some((other, otherIndex) =>
-      index !== otherIndex && isWithinRoot(root, other)
-    )
+    !uniqueRoots.some((other, otherIndex) => index !== otherIndex && isWithinRoot(root, other))
   );
 }
 

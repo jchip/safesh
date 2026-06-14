@@ -6,7 +6,12 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 import { afterEach, beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
-import { findGitWorkspaceRoots, findProjectRoot, PROJECT_MARKERS } from "./project-root.ts";
+import {
+  findGitWorkspaceRoots,
+  findProjectRoot,
+  normalizeWorkspaceRoots,
+  PROJECT_MARKERS,
+} from "./project-root.ts";
 
 describe("project-root", () => {
   let tempDir: string;
@@ -294,5 +299,26 @@ describe("project-root", () => {
     assertEquals(PROJECT_MARKERS[0], ".claude");
     assertEquals(PROJECT_MARKERS[1], ".git");
     assertEquals(PROJECT_MARKERS[2], ".config/safesh");
+  });
+
+  // SSH-636: a workspace root written as ~/dev must expand to $HOME/dev so the
+  // command-permission and containment checks (which run through this function)
+  // see the same absolute path as the read/write allow-lists.
+  it("expands a leading ~ in workspace roots (SSH-636)", () => {
+    Deno.env.set("HOME", "/Users/test-home");
+    assertEquals(normalizeWorkspaceRoots(["~/dev"]), ["/Users/test-home/dev"]);
+    assertEquals(normalizeWorkspaceRoots(["~"]), ["/Users/test-home"]);
+  });
+
+  it("leaves absolute workspace roots unchanged (SSH-636)", () => {
+    assertEquals(normalizeWorkspaceRoots(["/abs/root"]), ["/abs/root"]);
+  });
+
+  it("expands ~ before nested-root de-duplication (SSH-636)", () => {
+    Deno.env.set("HOME", "/Users/test-home");
+    assertEquals(
+      normalizeWorkspaceRoots(["~/dev", "~/dev/safesh"]),
+      ["/Users/test-home/dev"],
+    );
   });
 });
