@@ -652,7 +652,7 @@ describe("Edge Cases", () => {
 
   it("should handle multiple redirections", () => {
     const code = transpileBash("command < in.txt > out.txt 2> err.txt");
-    assertStringIncludes(code, ".stdin(");
+    assertStringIncludes(code, ".stdinFile(");
     assertStringIncludes(code, ".stdout(");
     assertStringIncludes(code, ".stderr(");
   });
