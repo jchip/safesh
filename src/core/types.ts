@@ -130,6 +130,17 @@ export interface SafeShellConfig {
   includeHomeInDefaultRead?: boolean;
 
   /**
+   * Include the directories on $PATH in default read paths.
+   * When true (default), the bin dirs on $PATH (e.g. /usr/bin, /sbin,
+   * /opt/homebrew/bin) are added to readable paths so command resolution
+   * (`$.which`, `$.fs.exists`, `test -x`) can stat executables inside the
+   * sandbox. These dirs hold system executables and are strictly less
+   * sensitive than HOME (already default-read). Set to false for stricter
+   * sandbox testing. Default: true. (SSH-638)
+   */
+  includePathDirsInDefaultRead?: boolean;
+
+  /**
    * Allow executing any command under projectDir without explicit permission.
    * Requires projectDir to be set.
    */

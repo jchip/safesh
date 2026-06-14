@@ -4,7 +4,11 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { computeTempDirDefaults, getEffectivePermissions } from "./permissions.ts";
+import {
+  computePathDirDefaults,
+  computeTempDirDefaults,
+  getEffectivePermissions,
+} from "./permissions.ts";
 import type { SafeShellConfig } from "./types.ts";
 
 const baseConfig = { projectDir: "/test/project" } as SafeShellConfig;
@@ -72,4 +76,38 @@ Deno.test("SSH-591: TMPDIR mutation after startup does not widen the sandbox", (
     // the snapshot defaults are still present
     assertEquals(perms.write!.includes("/tmp"), true);
   });
+});
+
+Deno.test("SSH-638: computePathDirDefaults keeps absolute dirs, dedupes, strips trailing sep", () => {
+  const dirs = computePathDirDefaults("/usr/bin:/bin:/usr/bin:/opt/x/:.::relative");
+  assertEquals(dirs, ["/usr/bin", "/bin", "/opt/x"]);
+});
+
+Deno.test("SSH-638: computePathDirDefaults returns [] for empty/undefined PATH", () => {
+  assertEquals(computePathDirDefaults(undefined), []);
+  assertEquals(computePathDirDefaults(""), []);
+});
+
+Deno.test("SSH-638: $PATH bin dirs are in effective read by default", () => {
+  // PATH_DIR_DEFAULTS is snapshotted from the real PATH at module load; PATH is
+  // not mutated during the test run, so re-deriving gives the same set.
+  const pathDirs = computePathDirDefaults(Deno.env.get("PATH"));
+  if (pathDirs.length === 0) return; // environment-dependent; skip if PATH empty
+  const perms = getEffectivePermissions(baseConfig, "/test/project");
+  for (const dir of pathDirs) {
+    assertEquals(perms.read!.includes(dir), true);
+  }
+});
+
+Deno.test("SSH-638: includePathDirsInDefaultRead:false drops $PATH bin dirs", () => {
+  const pathDirs = computePathDirDefaults(Deno.env.get("PATH"));
+  // pick a system dir outside HOME/cwd so the assertion is meaningful
+  const systemDir = pathDirs.find((d) => d.startsWith("/usr") || d.startsWith("/bin") || d.startsWith("/sbin"));
+  if (!systemDir) return; // environment-dependent
+  const strict = {
+    ...baseConfig,
+    includePathDirsInDefaultRead: false,
+  } as SafeShellConfig;
+  const perms = getEffectivePermissions(strict, "/test/project");
+  assertEquals(perms.read!.includes(systemDir), false);
 });
