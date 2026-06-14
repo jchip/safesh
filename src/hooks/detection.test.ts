@@ -303,6 +303,19 @@ for (const file of files) {
       assertEquals(result!.includes(SAFESH_SIGNATURE), true);
     });
 
+    it("names the capture case and spells out both concrete workarounds (SSH-644)", () => {
+      const result = detectMisplacedSignature('mj=$(/*#*/ console.log(1))')!;
+
+      // Names the common trigger: capturing into a shell variable.
+      assertEquals(result.includes(`VAR=$(${SAFESH_SIGNATURE} ...)`), true);
+      // States the two valid positions.
+      assertEquals(result.includes(`| ${SAFESH_SIGNATURE}`), true);
+      // Workaround 1: do the whole step in TS, calling external tools from TS.
+      assertEquals(result.includes("$.cmd("), true);
+      // Workaround 2: run the signature command first, then reuse its printed output.
+      assertEquals(result.includes("console.log"), true);
+    });
+
     it("returns a hint when the signature appears mid-command", () => {
       const result = detectMisplacedSignature("echo hello && /*#*/ console.log(1)");
 
