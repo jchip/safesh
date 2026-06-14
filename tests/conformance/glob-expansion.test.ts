@@ -18,7 +18,7 @@ async function setupDir(): Promise<string> {
     await Deno.makeTempDir({ dir: "/tmp", prefix: "safesh-glob-" }),
   );
   for (const f of ["a.js", "b.js", "c.txt", ".hidden.js"]) {
-    await Deno.writeTextFile(`${dir}/${f}`, "");
+    await Deno.writeTextFile(`${dir}/${f}`, `${f}\n`); // distinct content for cat/wc
   }
   await Deno.mkdir(`${dir}/sub`);
   await Deno.writeTextFile(`${dir}/sub/d.js`, "");
@@ -55,6 +55,8 @@ const MATCHING = [
   "echo sub/*", // multi-component, nested dotfile excluded
   "echo [ab].js", // character class
   "echo a*.js x*.no", // mixed: one expands, one stays literal
+  "cat *.js", // fluent cat routed to real cat — concatenates all matches
+  "wc -l *.js", // fluent wc — dotfile-excluded operands via $.__expandGlobAll
 ];
 
 Deno.test({

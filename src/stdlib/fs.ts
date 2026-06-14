@@ -51,6 +51,7 @@ import { executionError } from "../core/errors.ts";
 import type { SafeShellConfig } from "../core/types.ts";
 import { getDefaultConfig } from "../core/utils.ts";
 import {
+  expandGlobAll,
   expandGlobArg,
   glob,
   globArray,
@@ -60,7 +61,15 @@ import {
 } from "./glob.ts";
 
 // Re-export glob utilities
-export { expandGlobArg, glob, globArray, globPaths, type GlobEntry, type GlobOptions };
+export {
+  expandGlobAll,
+  expandGlobArg,
+  glob,
+  globArray,
+  globPaths,
+  type GlobEntry,
+  type GlobOptions,
+};
 
 /**
  * Options for file operations that need sandbox validation
