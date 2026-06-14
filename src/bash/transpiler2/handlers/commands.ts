@@ -648,15 +648,21 @@ function selectCommandStrategy(
 
   // Fluent command (with constraint checking)
   // $.cat(...) is a file stream helper, not a full cat command implementation.
-  // SSH-642: a glob operand (e.g. `cat *.js`) can match multiple files, which
-  // the single-file $.cat helper can't concatenate — route to the real cat so
-  // the quoting-aware command-position glob expansion (Stage 2) applies.
   const catRequiresStandardCommand = analysis.name === "cat" &&
-    (analysis.args.length !== 1 || (analysis.args[0]?.startsWith("-") ?? false) ||
-      hasGlobPattern(analysis.args[0] ?? ""));
+    (analysis.args.length !== 1 || (analysis.args[0]?.startsWith("-") ?? false));
+  // SSH-642: file-only fluent text tools read a single file via $.cat and can't
+  // expand or concatenate a multi-match glob operand. Route any glob-bearing
+  // invocation to the real tool (standard command), where the quoting-aware
+  // command-position glob expansion and real multi-file output formatting
+  // (head's `==>` banners, sort's concatenation) apply. Exempt: wc (dedicated
+  // multi-operand glob handling via $.wcMultiple) and grep (its regex pattern
+  // legitimately contains glob metacharacters like `[`, so routing on a pattern
+  // would be wrong; grep file-operand globbing remains a follow-up).
+  const fluentGlobNeedsRealTool = analysis.name !== "wc" && analysis.name !== "grep" &&
+    analysis.args.some((a) => hasGlobPattern(a));
   if (
     isFluentCommand(analysis.name) && !analysis.hasDynamicArgs && !analysis.hasAssignments &&
-    !analysis.hasRedirects && !catRequiresStandardCommand
+    !analysis.hasRedirects && !catRequiresStandardCommand && !fluentGlobNeedsRealTool
   ) {
     return {
       type: "fluent",

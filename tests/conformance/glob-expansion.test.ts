@@ -57,6 +57,8 @@ const MATCHING = [
   "echo a*.js x*.no", // mixed: one expands, one stays literal
   "cat *.js", // fluent cat routed to real cat — concatenates all matches
   "wc -l *.js", // fluent wc — dotfile-excluded operands via $.__expandGlobAll
+  "sort *.js", // fluent text tool routed to real tool for a glob operand
+  "head -1 *.js", // real head -> ==> banners across matches
 ];
 
 Deno.test({
