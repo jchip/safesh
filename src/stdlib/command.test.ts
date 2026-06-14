@@ -815,3 +815,64 @@ Deno.test("SSH-557 - chained: stream | grep | cmd(sed) | grep", async () => {
 
   assertEquals(result, ["3 match_bar", "2 match_bar"]);
 });
+
+// SSH-641: `.stdinFile()` is the codegen target for a `<` redirect. It reads the
+// file lazily so a missing/empty path fails as a command result (stderr + exit
+// 1) instead of throwing out of the surrounding script.
+Deno.test("stdinFile() - reads file content as stdin", async () => {
+  const tmpDir = await Deno.makeTempDir();
+
+  try {
+    const path = `${tmpDir}/in.txt`;
+    await Deno.writeTextFile(path, "line one\nline two\n");
+
+    const result = await cmd("cat", []).stdinFile(path).exec();
+
+    assertEquals(result.stdout, "line one\nline two\n");
+    assertEquals(result.code, 0);
+    assertEquals(result.success, true);
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("stdinFile() - empty path fails as exit 1 without throwing", async () => {
+  const result = await cmd("cat", []).stdinFile("").exec();
+
+  assertEquals(result.code, 1);
+  assertEquals(result.success, false);
+  assertEquals(result.stdout, "");
+  assert(result.stderr.includes("No such file or directory"));
+});
+
+Deno.test("stdinFile() - missing path fails as exit 1 without throwing", async () => {
+  const result = await cmd("cat", [])
+    .stdinFile("/no/such/safesh-ssh641/file.txt")
+    .exec();
+
+  assertEquals(result.code, 1);
+  assertEquals(result.success, false);
+  assertEquals(result.stdout, "");
+  assert(result.stderr.includes("No such file or directory"));
+});
+
+Deno.test("stdinFile() - failure with mergeStreams reports error in output", async () => {
+  const result = await cmd("cat", [], { mergeStreams: true })
+    .stdinFile("/no/such/safesh-ssh641/file.txt")
+    .exec();
+
+  assertEquals(result.code, 1);
+  assertEquals(result.success, false);
+  assert((result.output ?? "").includes("No such file or directory"));
+});
+
+Deno.test("stdinFile() - a failed redirect does not abort subsequent commands", async () => {
+  // Mirrors the reported bug: `wc -l < "$mj"` with empty $mj crashed the whole
+  // script. The failed command returns a result, so the next command still runs.
+  const failed = await cmd("cat", []).stdinFile("").exec();
+  assertEquals(failed.code, 1);
+
+  const after = await cmd("echo", ["still running"]).exec();
+  assertEquals(after.stdout.trim(), "still running");
+  assertEquals(after.success, true);
+});

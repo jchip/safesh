@@ -1219,7 +1219,9 @@ export function applyRedirection(
 
   switch (redirect.operator) {
     case "<":
-      return `${cmdExpr}.stdin(await Deno.readTextFile(${target}))`;
+      // SSH-641: lazy file read so a missing/empty path fails as a command
+      // result (stderr + exit 1) instead of throwing out of the script.
+      return `${cmdExpr}.stdinFile(${target})`;
     case ">":
       // SSH-308: Check fd field - if fd=2, redirect stderr instead of stdout
       if (redirect.fd === 2) {

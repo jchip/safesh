@@ -167,6 +167,14 @@ export interface CommandOptions {
   /** Standard input data to write to the command */
   stdin?: string | Uint8Array | ReadableStream<Uint8Array>;
 
+  /**
+   * SSH-641: file path for a `<` input redirect, read lazily at exec time.
+   * Reading here (rather than eagerly in generated code) lets a missing/empty
+   * path fail as a command result — stderr + exit 1 — like bash, instead of
+   * throwing out of the surrounding script.
+   */
+  stdinFile?: string;
+
   /** Redirect stdout to file */
   stdoutFile?: { path: string; options?: RedirectOptions };
 
@@ -175,6 +183,50 @@ export interface CommandOptions {
 
   /** Redirect stdout to stderr (for 1>&2) */
   stdoutToStderr?: boolean;
+}
+
+/**
+ * SSH-641: thrown when a `<` input-redirect file (CommandOptions.stdinFile)
+ * cannot be read. Carries a bash-style reason so callers can surface it on
+ * stderr and fail the command with exit 1 instead of crashing the script.
+ */
+class StdinRedirectError extends Error {
+  constructor(readonly path: string, readonly reason: string) {
+    super(`safesh: ${path}: ${reason}`);
+    this.name = "StdinRedirectError";
+  }
+
+  /** Bash-style stderr line (newline-terminated) for this redirect failure. */
+  get stderrLine(): string {
+    return `safesh: ${this.path}: ${this.reason}\n`;
+  }
+}
+
+/** Map a file-read error to a bash-style reason string. */
+function redirectErrorReason(err: unknown): string {
+  if (err instanceof Deno.errors.NotFound) return "No such file or directory";
+  if (err instanceof Deno.errors.PermissionDenied) return "Permission denied";
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("Is a directory")) return "Is a directory";
+  // Deno rejects "" with "Empty path is not allowed"; bash reports not-found.
+  if (msg.includes("Empty path")) return "No such file or directory";
+  return msg;
+}
+
+/**
+ * Read a `<` input-redirect file lazily. An empty path (e.g. `< "$x"` where $x
+ * is unset) is treated as not-found, matching bash. Throws StdinRedirectError
+ * on any failure so the caller can turn it into a command result.
+ */
+async function readStdinRedirect(path: string): Promise<string> {
+  if (path === "") {
+    throw new StdinRedirectError(path, "No such file or directory");
+  }
+  try {
+    return await Deno.readTextFile(path);
+  } catch (err) {
+    throw new StdinRedirectError(path, redirectErrorReason(err));
+  }
 }
 
 /**
@@ -408,6 +460,25 @@ export class Command implements PromiseLike<CommandResult> {
   }
 
   /**
+   * SSH-641: set stdin from a file path for a `<` redirect, read lazily at
+   * exec time. Unlike `.stdin(await Deno.readTextFile(path))`, a missing or
+   * empty path does not throw out of the script — it fails this command with a
+   * bash-style stderr message and exit code 1, and execution continues.
+   *
+   * @param path - File path to read as stdin
+   * @returns New Command instance with the stdin file configured
+   *
+   * @example
+   * ```ts
+   * // Bash: cat < file.txt
+   * await cmd("cat", []).stdinFile("file.txt").exec();
+   * ```
+   */
+  stdinFile(path: string): Command {
+    return new Command(this.cmd, this.args, { ...this.options, stdinFile: path });
+  }
+
+  /**
    * Add environment variables for this command.
    *
    * Creates a new Command with the same cmd/args and merged environment.
@@ -471,16 +542,38 @@ export class Command implements PromiseLike<CommandResult> {
     // SSH-629: route to a native .ts implementation when enabled and supported,
     // before spawning the real binary. Falls through to spawn otherwise, so the
     // default (gate off) behavior is identical to today.
-    const nativeResult = await this.tryNativeCommand();
-    if (nativeResult) return nativeResult;
+    try {
+      const nativeResult = await this.tryNativeCommand();
+      if (nativeResult) return nativeResult;
 
-    if (this.options.mergeStreams) {
-      // Merge mode: collect everything into output
-      return await this.execMerged();
-    } else {
-      // Separate mode: keep stdout and stderr separate
-      return await this.execSeparate();
+      if (this.options.mergeStreams) {
+        // Merge mode: collect everything into output
+        return await this.execMerged();
+      } else {
+        // Separate mode: keep stdout and stderr separate
+        return await this.execSeparate();
+      }
+    } catch (err) {
+      // SSH-641: a `< file` redirect whose path is missing/empty fails this
+      // command (stderr + exit 1) instead of aborting the whole script.
+      if (err instanceof StdinRedirectError) {
+        return this.makeRedirectFailure(err);
+      }
+      throw err;
     }
+  }
+
+  /**
+   * SSH-641: build the command result for a failed `<` input redirect: empty
+   * stdout, the bash-style error on stderr, and exit code 1.
+   */
+  private makeRedirectFailure(err: StdinRedirectError): CommandResult {
+    const code = 1;
+    const pipeStatus = this.getPipeStatus(code);
+    if (this.options.mergeStreams) {
+      return { stdout: "", stderr: "", output: err.stderrLine, code, success: false, pipeStatus };
+    }
+    return { stdout: "", stderr: err.stderrLine, code, success: false, pipeStatus };
   }
 
   /**
@@ -774,7 +867,19 @@ export class Command implements PromiseLike<CommandResult> {
    */
   async *stream(): AsyncGenerator<StreamChunk> {
     // Get stdin from upstream command or options
-    const stdinData = await this.resolveStdin();
+    let stdinData: string | Uint8Array | ReadableStream<Uint8Array> | undefined;
+    try {
+      stdinData = await this.resolveStdin();
+    } catch (err) {
+      // SSH-641: a failed `< file` redirect emits a bash-style stderr line and
+      // exits 1, rather than throwing out of the stream consumer.
+      if (err instanceof StdinRedirectError) {
+        yield { type: "stderr", data: err.stderrLine };
+        yield { type: "exit", code: 1, pipeStatus: this.getPipeStatus(1) };
+        return;
+      }
+      throw err;
+    }
     const hasStdin = stdinData !== undefined;
 
     await this.prepareRedirectFile(this.options.stdoutFile);
@@ -871,7 +976,18 @@ export class Command implements PromiseLike<CommandResult> {
     return createStream(
       (async function* () {
         // Get stdin from upstream command or options
-        const stdinData = await self.resolveStdin();
+        let stdinData: string | Uint8Array | ReadableStream<Uint8Array> | undefined;
+        try {
+          stdinData = await self.resolveStdin();
+        } catch (err) {
+          // SSH-641: surface a failed `< file` redirect on stderr and yield no
+          // output, rather than throwing out of the stream consumer.
+          if (err instanceof StdinRedirectError) {
+            await Deno.stderr.write(new TextEncoder().encode(err.stderrLine));
+            return;
+          }
+          throw err;
+        }
         const hasStdin = stdinData !== undefined;
 
         const process = self.spawnProcess(self.createCommand(hasStdin));
@@ -1066,6 +1182,11 @@ export class Command implements PromiseLike<CommandResult> {
       return result.output ?? result.stdout;
     }
     this.upstreamResult = undefined;
+    if (this.options.stdinFile !== undefined) {
+      // SSH-641: read the `<` redirect file lazily; throws StdinRedirectError
+      // on failure, which exec()/stream() convert into a command failure.
+      return await readStdinRedirect(this.options.stdinFile);
+    }
     return this.options.stdin;
   }
 
