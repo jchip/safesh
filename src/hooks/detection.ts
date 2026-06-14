@@ -95,3 +95,36 @@ export function detectTypeScript(
 
   return null;
 }
+
+/**
+ * SSH-640: Detect a misplaced SafeShell signature.
+ *
+ * The `/*#*\/` signature is only recognized as a whole-command prefix
+ * (see {@link detectTypeScript}) or as a `| /*#*\/` hybrid pipe
+ * (see {@link detectHybridCommand}). When it appears anywhere else — most
+ * commonly embedded inside a command substitution like `x=$(/*#*\/ ...)` — the
+ * command is parsed as bash and fails with a cryptic parser error
+ * (e.g. "Expected command name in subshell").
+ *
+ * Returns an actionable hint when `command` contains a misplaced signature, or
+ * null otherwise. This is meant to enrich an already-failing command's error
+ * message, so a stray signature inside a quoted string is harmless: such a
+ * command parses fine and never reaches the error path.
+ *
+ * @param command - The original command string
+ * @returns Hint string for a misplaced signature, or null
+ */
+export function detectMisplacedSignature(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed.includes(SAFESH_SIGNATURE)) return null;
+  if (trimmed.startsWith(SAFESH_SIGNATURE)) return null; // valid whole-command prefix
+  if (detectHybridCommand(command) !== null) return null; // valid `| /*#*/` hybrid
+
+  return (
+    `A '${SAFESH_SIGNATURE}' SafeShell signature is embedded inside the command ` +
+    `(for example within a $(...) substitution). The signature must be the FIRST ` +
+    `characters of the entire command — it cannot be nested in a substitution or ` +
+    `placed mid-command. To compute a value with TypeScript, run it as its own ` +
+    `'${SAFESH_SIGNATURE} ...' command, or use a bash builtin instead.`
+  );
+}
