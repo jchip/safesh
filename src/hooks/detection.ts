@@ -121,10 +121,14 @@ export function detectMisplacedSignature(command: string): string | null {
   if (detectHybridCommand(command) !== null) return null; // valid `| /*#*/` hybrid
 
   return (
-    `A '${SAFESH_SIGNATURE}' SafeShell signature is embedded inside the command ` +
-    `(for example within a $(...) substitution). The signature must be the FIRST ` +
-    `characters of the entire command — it cannot be nested in a substitution or ` +
-    `placed mid-command. To compute a value with TypeScript, run it as its own ` +
-    `'${SAFESH_SIGNATURE} ...' command, or use a bash builtin instead.`
+    `A '${SAFESH_SIGNATURE}' SafeShell TypeScript signature is embedded inside the ` +
+    `command (commonly \`VAR=$(${SAFESH_SIGNATURE} ...)\` to capture a value). The ` +
+    `signature is only recognized at the very START of a command ` +
+    `(\`${SAFESH_SIGNATURE} ...\`) or right after a pipe (\`cmd | ${SAFESH_SIGNATURE} ...\`) ` +
+    `— never inside a $(...) substitution, so this is parsed as bash and fails. To use a ` +
+    `TypeScript-computed value in following bash, either: (1) write the whole step as one ` +
+    `'${SAFESH_SIGNATURE}' script and call external tools from TS, e.g. ` +
+    `\`await $.cmd('curl', url)\`; or (2) run the '${SAFESH_SIGNATURE} ...' as its own ` +
+    `command first, console.log the value, then use that printed output in the next command.`
   );
 }
