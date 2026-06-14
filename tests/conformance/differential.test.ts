@@ -106,8 +106,8 @@ const CORPUS: Record<string, Case[]> = {
     { src: "echo first > @TMP@/r.txt; echo second > @TMP@/r.txt; cat < @TMP@/r.txt" },
     { src: "echo out 2>/dev/null" },
     { src: "echo discard > /dev/null; echo kept" },
-    // SSH-635: `cat FILE` (path arg) doubles the trailing newline (`cat < FILE` does not).
-    { src: 'printf "hi\\n" > @TMP@/c.txt; cat @TMP@/c.txt', xfail: "SSH-635" },
+    // SSH-635 (fixed): `cat FILE` (path arg) no longer doubles the trailing newline.
+    { src: 'printf "hi\\n" > @TMP@/c.txt; cat @TMP@/c.txt' },
   ],
   assignment: [
     { src: 'a=1; b=2; echo "$a$b"' },
