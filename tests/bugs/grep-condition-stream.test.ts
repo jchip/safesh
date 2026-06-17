@@ -7,7 +7,9 @@ import type { SafeShellConfig } from "../../src/core/types.ts";
 const EXEC_CONFIG: SafeShellConfig = {
   permissions: {
     read: [Deno.cwd(), "/tmp"],
-    write: ["/tmp"],
+    // /dev/null mirrors the real default config (src/core/config.ts): a piped
+    // `cmd 2>/dev/null | grep -q ...` writes the upstream stderr to /dev/null.
+    write: ["/tmp", "/dev/null"],
   },
   timeout: 5000,
 };
@@ -76,7 +78,7 @@ Deno.test("if/else branches on a piped grep -q condition (SSH-645)", async () =>
   assertEquals(no.stdout.trim(), "N");
 });
 
-Deno.test("single fluent grep -q command as a condition reads its file (SSH-645)", async () => {
+Deno.test("single grep -q command as a condition reads its file (SSH-645)", async () => {
   const file = "/tmp/ssh645-grep.txt";
   const found = await run(`printf 'foo\\nbar\\n' > ${file}; if grep -q foo ${file}; then echo Y; else echo N; fi`);
   assertEquals(found.success, true, found.stderr);

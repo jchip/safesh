@@ -22,7 +22,7 @@ Deno.test("command capability registry records grep fallback flags", () => {
   assertEquals(grep.ignoreCaseShortFlags, ["i"]);
   assertEquals(grep.lineNumberShortFlags, ["n"]);
   assertEquals(grep.recursiveShortFlags, ["r", "R"]);
-  assertEquals(grep.unsupportedShortFlags, ["A", "B", "C", "c", "m"]);
+  assertEquals(grep.unsupportedShortFlags, ["A", "B", "C", "c", "m", "q"]);
 });
 
 Deno.test("command capability registry records simple transform stream modes", () => {

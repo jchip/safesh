@@ -61,7 +61,10 @@ export const FLUENT_COMMAND_CAPABILITIES = {
     ignoreCaseShortFlags: ["i"],
     lineNumberShortFlags: ["n"],
     recursiveShortFlags: ["r", "R"],
-    unsupportedShortFlags: ["A", "B", "C", "c", "m"],
+    // SSH-646: `q` joins the delegate-to-real-grep set. Fluent grep is a
+    // passthrough filter, so it can't honor `-q` (quiet): the match would leak
+    // to stdout in print positions even though the exit code is right.
+    unsupportedShortFlags: ["A", "B", "C", "c", "m", "q"],
   },
   head: {
     kind: "count-transform",
