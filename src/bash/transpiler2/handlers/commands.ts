@@ -1150,6 +1150,9 @@ function buildFluentCommand(
           optionsEnded = true;
         } else if (!optionsEnded && arg === "--fixed-strings") {
           fixedStrings = true;
+        } else if (!optionsEnded && (arg === "--quiet" || arg === "--silent")) {
+          // SSH-646: long forms of `-q` — delegate to real grep (see below).
+          return null;
         } else if (!optionsEnded && arg === "--regexp") {
           explicitPatterns.push(args[++i] ?? "");
         } else if (!optionsEnded && arg?.startsWith("--regexp=")) {
@@ -1174,8 +1177,9 @@ function buildFluentCommand(
             } else if (capability.recursiveShortFlags.includes(flag)) {
               recursive = true;
             } else if ((capability.unsupportedShortFlags ?? []).includes(flag)) {
-              // SSH-568: These flags take numeric arguments and aren't supported by fluent grep.
-              // Fall back to $.cmd("grep", ...) for correctness.
+              // SSH-568/646: flags fluent grep can't replicate — context/count
+              // args (A/B/C/m/c) and `-q` quiet (suppress stdout, keep exit
+              // code). Fall back to $.cmd("grep", ...) for faithful behavior.
               return null;
             }
           }
