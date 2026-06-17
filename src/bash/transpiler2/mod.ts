@@ -184,6 +184,19 @@ export class BashTranspiler2 {
           const expr = this.visitArithmetic(test.expression);
           return { code: `{ code: (${expr}) ? 0 : 1, stdout: '', stderr: '' }`, async: false };
         }
+        // SSH-645: a fluent pipeline/command used as a test condition
+        // (`until cmd | grep -q x`, `while grep -q x file`) lowers to a
+        // FluentStream. Awaiting it yields the stream object itself (no `.code`),
+        // so every if/while/until break test silently read `undefined` — `until`
+        // never terminated (infinite loop) and `while`/`if` never entered. Route
+        // stream-typed conditions through __captureCmd so the stream is consumed
+        // and its exit status (grep's getEmptyExitCode: empty→1, non-empty→0)
+        // becomes a real `.code`. Non-stream commands (e.g. `if echo hi`) are
+        // left untouched so their side-effect stdout still prints, as in bash.
+        const captureIfStream = (
+          r: ExpressionResult & { isStream?: boolean },
+        ): ExpressionResult => (r.isStream ? { code: `__captureCmd(${r.code})`, async: true } : r);
+
         if (test.type === "Pipeline") {
           // Handle && and || chains (e.g., [ $x -gt 0 ] && [ $x -lt 10 ])
           // The chain-level `negated` flag mirrors the LEADING operand's flag
@@ -204,7 +217,7 @@ export class BashTranspiler2 {
             };
           }
           if (test.operator === "|") {
-            return handlers.buildPipeline(test, this);
+            return captureIfStream(handlers.buildPipeline(test, this));
           }
 
           // For single-command pipeline wrappers, check the wrapped command.
@@ -223,9 +236,9 @@ export class BashTranspiler2 {
             // SSH-603: `if ! cmd` / `while ! cmd` — unwrapping to buildCommand
             // would drop the negation; buildPipeline applies the exit-status
             // flip (SSH-594) and dedupes a doubled flag on nested pipelines.
-            return handlers.buildPipeline(test, this);
+            return captureIfStream(handlers.buildPipeline(test, this));
           } else if (firstCmd?.type === "Command") {
-            return handlers.buildCommand(firstCmd, this);
+            return captureIfStream(handlers.buildCommand(firstCmd, this));
           } else if (firstCmd?.type === "Pipeline") {
             // Handle nested Pipeline (common when single commands are wrapped)
             return this.buildTestExpression(firstCmd);
@@ -243,7 +256,7 @@ export class BashTranspiler2 {
             };
           }
         } else if (test.type === "Command") {
-          return handlers.buildCommand(test, this);
+          return captureIfStream(handlers.buildCommand(test, this));
         }
         throw new Error("Invalid test expression");
       },
