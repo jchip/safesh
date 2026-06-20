@@ -4,6 +4,8 @@
 
 import { assertEquals } from "@std/assert";
 import {
+  candidateCwds,
+  checkCommandAllowedInAnyCwd,
   checkCommandPermission,
   checkCommandPermissionWithSession,
   checkMultipleCommands,
@@ -311,7 +313,12 @@ Deno.test("checkCommandPermission - session commands work with path-based comman
   const sessionCmds = new Set(["custom-tool"]);
 
   // /usr/bin/custom-tool should be allowed because basename matches session commands
-  const result = await checkCommandPermission("/usr/bin/custom-tool", config, "/home/user", sessionCmds);
+  const result = await checkCommandPermission(
+    "/usr/bin/custom-tool",
+    config,
+    "/home/user",
+    sessionCmds,
+  );
 
   assertEquals(result.allowed, true);
   if (result.allowed) {
@@ -484,5 +491,94 @@ Deno.test("checkCommandPermissionWithSession - blocks non-permitted commands wit
   assertEquals(result.allowed, false);
   if (!result.allowed) {
     assertEquals(result.error, ERROR_COMMAND_NOT_ALLOWED);
+  }
+});
+
+// =============================================================================
+// SSH-647: cd-aware candidate working directories for relative commands
+// =============================================================================
+
+Deno.test("SSH-647: candidateCwds - bare name collapses to base cwd", () => {
+  assertEquals(candidateCwds("git", "/base", new Set(["/ws"])), ["/base"]);
+});
+
+Deno.test("SSH-647: candidateCwds - absolute path collapses to base cwd", () => {
+  assertEquals(candidateCwds("/usr/bin/tool", "/base", new Set(["/ws"])), ["/base"]);
+});
+
+Deno.test("SSH-647: candidateCwds - no descriptors yields base cwd only", () => {
+  assertEquals(candidateCwds("./tool", "/base", undefined), ["/base"]);
+});
+
+Deno.test("SSH-647: candidateCwds - absolute cd descriptor adds the cd dir", () => {
+  assertEquals(candidateCwds("./gradlew", "/base", new Set(["/ws/pkg"])), ["/base", "/ws/pkg"]);
+});
+
+Deno.test("SSH-647: candidateCwds - relative descriptor resolved against base", () => {
+  assertEquals(candidateCwds("./tool", "/base", new Set(["sub"])), ["/base", "/base/sub"]);
+});
+
+Deno.test("SSH-647: candidateCwds - null and empty descriptors fall back to base", () => {
+  assertEquals(candidateCwds("./tool", "/base", new Set([null, ""])), ["/base"]);
+});
+
+Deno.test("SSH-647: relative command under cd target auto-allowed (reported bug)", async () => {
+  // Mirrors `cd /ws/pkg && ./gradlew` from a base cwd where ./gradlew is absent.
+  const tmpDir = await Deno.makeTempDir();
+  const baseCwd = `${tmpDir}/safesh`;
+  const workspaceRoot = `${tmpDir}/dev`;
+  const pkgDir = `${workspaceRoot}/fyntime/android`;
+
+  await Deno.mkdir(baseCwd, { recursive: true });
+  await Deno.mkdir(pkgDir, { recursive: true });
+  await Deno.writeTextFile(`${pkgDir}/gradlew`, "#!/bin/sh\n");
+
+  try {
+    const config = makeConfig({
+      projectDir: baseCwd,
+      workspaceRoots: [workspaceRoot],
+      allowProjectCommands: true,
+    });
+
+    // Base-cwd-only check fails (no gradlew at base) — this is the bug.
+    const atBase = await checkCommandPermission("./gradlew", config, baseCwd);
+    assertEquals(atBase.allowed, false);
+
+    // Checked across base + the cd target, it is allowed under the workspace root.
+    const cwds = candidateCwds("./gradlew", baseCwd, new Set([pkgDir]));
+    const result = await checkCommandAllowedInAnyCwd("./gradlew", config, cwds);
+    assertEquals(result.allowed, true, "command:" + JSON.stringify(result));
+    if (result.allowed) {
+      assertEquals(result.resolvedPath, `${pkgDir}/gradlew`);
+    }
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("SSH-647: cd to a dir outside all workspace roots is still blocked", async () => {
+  const tmpDir = await Deno.makeTempDir();
+  const baseCwd = `${tmpDir}/safesh`;
+  const workspaceRoot = `${tmpDir}/dev`;
+  const outsideDir = `${tmpDir}/elsewhere`;
+
+  await Deno.mkdir(baseCwd, { recursive: true });
+  await Deno.mkdir(outsideDir, { recursive: true });
+  await Deno.writeTextFile(`${outsideDir}/tool`, "#!/bin/sh\n");
+
+  try {
+    const config = makeConfig({
+      projectDir: baseCwd,
+      workspaceRoots: [workspaceRoot],
+      allowProjectCommands: true,
+    });
+
+    // Exists at the cd target, but that target is outside every workspace root,
+    // so auto-allow must not kick in.
+    const cwds = candidateCwds("./tool", baseCwd, new Set([outsideDir]));
+    const result = await checkCommandAllowedInAnyCwd("./tool", config, cwds);
+    assertEquals(result.allowed, false);
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
   }
 });

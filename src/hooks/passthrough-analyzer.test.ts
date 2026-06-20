@@ -388,6 +388,53 @@ describe("passthrough-analyzer", () => {
     });
   });
 
+  describe("relative command cwds (SSH-647)", () => {
+    const cwdsOf = (script: string, cmd: string) => {
+      const set = analyze(script).commandCwds.get(cmd);
+      return set ? [...set].sort() : undefined;
+    };
+
+    it("records the absolute cd dir a relative command runs in", () => {
+      assertEquals(cwdsOf("cd /ws/pkg && ./gradlew build", "./gradlew"), ["/ws/pkg"]);
+    });
+
+    it("records a relative cd as base-relative", () => {
+      assertEquals(cwdsOf("cd sub && ./tool", "./tool"), ["sub"]);
+    });
+
+    it("records the base cwd (empty) when there is no cd", () => {
+      assertEquals(cwdsOf("./tool --x", "./tool"), [""]);
+    });
+
+    it("tracks a relative command through multiple cd segments", () => {
+      assertEquals(cwdsOf("cd a/b && cd ../c && ./tool", "./tool"), ["a/c"]);
+    });
+
+    it("does not record bare PATH-resolved names", () => {
+      assertEquals(analyze("cd /ws && git status").commandCwds.has("git"), false);
+    });
+
+    it("does not record absolute command paths", () => {
+      assertEquals(analyze("cd /ws && /usr/bin/tool").commandCwds.has("/usr/bin/tool"), false);
+    });
+
+    it("does not leak a subshell cd into a later command's cwd", () => {
+      assertEquals(cwdsOf("(cd /etc); ./tool", "./tool"), [""]);
+    });
+
+    it("records null when the command runs from an unknown cwd", () => {
+      // After `cd /a || cd /b` the surviving cwd is not statically known.
+      assertEquals(cwdsOf("cd /a || cd /b\n./tool", "./tool"), [null]);
+    });
+
+    it("collects every distinct cwd a command runs in", () => {
+      assertEquals(
+        cwdsOf("./tool; cd /ws/pkg && ./tool", "./tool"),
+        ["", "/ws/pkg"],
+      );
+    });
+  });
+
   describe("globstar parity (SSH-590 fix #6)", () => {
     it("does not match ** recursively, mirroring bash's default", async () => {
       const dir = await Deno.makeTempDir();

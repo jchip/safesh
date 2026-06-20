@@ -7,7 +7,7 @@
  * @module
  */
 
-import { basename, join, resolve } from "@std/path";
+import { basename, isAbsolute, join, resolve } from "@std/path";
 import type { SafeShellConfig } from "./types.ts";
 import { ERROR_COMMAND_NOT_ALLOWED, ERROR_COMMAND_NOT_FOUND } from "./constants.ts";
 import { isPathWithin } from "./path-utils.ts";
@@ -216,6 +216,71 @@ export async function checkCommandPermission(
 
   // Not found → COMMAND_NOT_FOUND error
   return { allowed: false, error: ERROR_COMMAND_NOT_FOUND, command };
+}
+
+/**
+ * Effective working directories per relative-path command, keyed by command
+ * name (SSH-647). Each value is a set of cwd descriptors: the analyzer cwd
+ * path (absolute, relative to the base cwd, or `""` for the base) when
+ * statically known, or `null` when unknown. Produced by the passthrough
+ * analyzer's static `cd` tracking and consumed by {@link candidateCwds}.
+ */
+export type CommandCwdMap = Map<string, Set<string | null>>;
+
+/**
+ * Compute the working directories a command should be permission-checked in
+ * (SSH-647).
+ *
+ * A bash command may `cd` into another directory before invoking a relative
+ * path (`cd /ws/pkg && ./gradlew`). The prehook runs before execution, so the
+ * canonical check resolved such commands against the base cwd and missed them.
+ * Here we return the base cwd plus every statically-known effective cwd the
+ * command runs in, and the caller allows the command if it passes in ANY of
+ * them. Because the base cwd is always included, this never blocks a command
+ * that the base-cwd-only check would have allowed.
+ *
+ * Bare names (PATH-resolved) and absolute paths are cwd-independent, so they
+ * collapse to the base cwd.
+ */
+export function candidateCwds(
+  command: string,
+  baseCwd: string,
+  descriptors: Set<string | null> | undefined,
+): string[] {
+  if (!descriptors || isAbsolute(command) || !command.includes("/")) {
+    return [baseCwd];
+  }
+  const cwds = new Set<string>([baseCwd]);
+  for (const descriptor of descriptors) {
+    // `null` (unknown) and `""` (base) both fall back to the base cwd; an
+    // absolute descriptor wins over baseCwd inside resolve(), a relative one
+    // is resolved against it.
+    cwds.add(descriptor === null ? baseCwd : resolve(baseCwd, descriptor));
+  }
+  return [...cwds];
+}
+
+/**
+ * Check a command across multiple candidate working directories (SSH-647),
+ * returning the first allowing result, or the last denial if none allow.
+ */
+export async function checkCommandAllowedInAnyCwd(
+  command: string,
+  config: SafeShellConfig,
+  cwds: string[],
+  sessionCommands?: Set<string>,
+): Promise<PermissionResult> {
+  let last: PermissionResult = {
+    allowed: false,
+    error: ERROR_COMMAND_NOT_FOUND,
+    command,
+  };
+  for (const cwd of cwds) {
+    const result = await checkCommandPermission(command, config, cwd, sessionCommands);
+    if (result.allowed) return result;
+    last = result;
+  }
+  return last;
 }
 
 /**
