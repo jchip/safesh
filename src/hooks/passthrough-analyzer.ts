@@ -41,6 +41,19 @@ export interface PassthroughAnalysis {
    * non-matching globs must fall back to transpile.
    */
   globs: string[];
+  /**
+   * Effective working directories per relative-path command (SSH-647).
+   *
+   * Maps a relative command name (e.g. `./gradlew`) to the set of cwds it runs
+   * in, tracked through static `cd`s. Each entry is the analyzer cwd path
+   * (absolute, or relative to the prehook base cwd, or `""` for the base) when
+   * statically known, or `null` when the cwd is unknown at that point. The
+   * permission gate resolves these against the real base cwd so a command that
+   * `cd`s into a workspace dir is checked there, not at the base cwd. Bare
+   * names (PATH-resolved) and absolute paths are not recorded — their
+   * permission does not depend on the working directory.
+   */
+  commandCwds: Map<string, Set<string | null>>;
 }
 
 export interface AnalyzeOptions {
@@ -141,6 +154,8 @@ interface AnalyzerContext {
   cwd: Cwd;
   /** >0 while walking a loop body (relative cds there compound, so go unknown). */
   loopDepth: number;
+  /** Effective cwds per relative-path command (SSH-647); see PassthroughAnalysis. */
+  commandCwds: Map<string, Set<string | null>>;
 }
 
 /**
@@ -173,6 +188,7 @@ export function analyzeForPassthrough(
     env: options.env ?? ((name) => Deno.env.get(name)),
     cwd: { known: true, path: "" },
     loopDepth: 0,
+    commandCwds: new Map(),
   };
 
   analyzeStatements(ast.body, ctx);
@@ -183,6 +199,7 @@ export function analyzeForPassthrough(
     commands: ctx.commands,
     redirects: ctx.redirects,
     globs: ctx.globs,
+    commandCwds: ctx.commandCwds,
   };
 }
 
@@ -207,6 +224,22 @@ function cwdSnapshot(cwd: Cwd): string {
  * the prehook base cwd (which the caller resolves against its real cwd).
  * Undefined when the target is relative and the tracked cwd is unknown.
  */
+/**
+ * Record the working directory a relative-path command runs in (SSH-647), so
+ * the permission gate can resolve it against the post-`cd` directory rather
+ * than the prehook base cwd. Bare names resolve via PATH and absolute paths
+ * are cwd-independent, so neither is recorded.
+ */
+function recordCommandCwd(ctx: AnalyzerContext, name: string): void {
+  if (isAbsolute(name) || !name.includes("/")) return;
+  let cwds = ctx.commandCwds.get(name);
+  if (!cwds) {
+    cwds = new Set();
+    ctx.commandCwds.set(name, cwds);
+  }
+  cwds.add(ctx.cwd.known ? ctx.cwd.path : null);
+}
+
 function resolveAgainstCwd(ctx: AnalyzerContext, target: string): string | undefined {
   if (isAbsolute(target)) return normalize(target);
   if (!ctx.cwd.known) return undefined;
@@ -531,6 +564,7 @@ function analyzeCommand(stmt: AST.Command, ctx: AnalyzerContext): void {
       reject(ctx, "zsh =-expansion hazard in command name");
     } else {
       ctx.commands.add(name);
+      recordCommandCwd(ctx, name);
       const base = name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name;
       if (CARRIER_COMMANDS.has(base)) {
         reject(ctx, `command carrier requires transpile: ${base}`);

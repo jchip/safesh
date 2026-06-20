@@ -25,7 +25,11 @@
 import { parse, transpile } from "../src/bash/mod.ts";
 import type * as AST from "../src/bash/ast.ts";
 import { loadConfig, mergeConfigs } from "../src/core/config.ts";
-import { checkCommandPermission } from "../src/core/command_permission.ts";
+import {
+  candidateCwds,
+  checkCommandAllowedInAnyCwd,
+  type CommandCwdMap,
+} from "../src/core/command_permission.ts";
 import { executeCode, executeCodeStreaming } from "../src/runtime/executor.ts";
 import { SafeShellError } from "../src/core/errors.ts";
 import {
@@ -761,14 +765,19 @@ async function getDisallowedCommands(
   commands: Set<string>,
   config: SafeShellConfig,
   cwd: string,
+  commandCwds?: CommandCwdMap,
 ): Promise<string[]> {
   const sessionCmds = getSessionAllowedCommands(config.projectDir);
   const disallowed: string[] = [];
 
-  // Check all commands in parallel via canonical permission checker
+  // Check all commands in parallel via canonical permission checker.
+  // SSH-647: relative-path commands are checked against every static `cd`
+  // target (plus the base cwd), so `cd /ws/pkg && ./tool` resolves under the
+  // workspace dir it actually runs in instead of the prehook's base cwd.
   const checks = await Promise.all(
     [...commands].map(async (cmd) => {
-      const result = await checkCommandPermission(cmd, config, cwd, sessionCmds);
+      const cwds = candidateCwds(cmd, cwd, commandCwds?.get(cmd));
+      const result = await checkCommandAllowedInAnyCwd(cmd, config, cwds, sessionCmds);
       return { cmd, result };
     }),
   );
@@ -1536,17 +1545,24 @@ ${tsCode}
     const commands = extractCommands(ast);
     debug(`Extracted commands: ${[...commands].join(", ") || "(none)"}`);
 
-    // Check which commands are not allowed
-    const disallowed = await getDisallowedCommands(commands, config, cwd);
+    // Analyze the AST once (SSH-647): its static `cd` tracking tells the
+    // permission gate which directory each relative-path command runs in, and
+    // the same result drives the SSH-576 passthrough decision below. The
+    // analyzer is side-effect free, so running it before the permission check
+    // (and regardless of the passthrough flag) is safe.
+    const analysis = analyzeForPassthrough(ast, {
+      blockedCommands: DANGEROUS_COMMANDS,
+    });
+
+    // Check which commands are not allowed, honoring static `cd` into
+    // workspace directories.
+    const disallowed = await getDisallowedCommands(commands, config, cwd, analysis.commandCwds);
 
     // SSH-576: Passthrough inversion. If every command the script can run is
     // statically enumerable and allowed (including inside command
     // substitutions), and redirect/cd targets pass workspace path checks,
     // hand the original command to native bash instead of transpiling.
     if (config.passthroughAnalyzable !== false && disallowed.length === 0) {
-      const analysis = analyzeForPassthrough(ast, {
-        blockedCommands: DANGEROUS_COMMANDS,
-      });
       if (analysis.eligible) {
         if (await isPassthroughPermitted(analysis, commands, config, cwd)) {
           debug("Analyzable command fully allowed - passthrough to native bash (SSH-576)");
