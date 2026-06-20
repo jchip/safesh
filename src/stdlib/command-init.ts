@@ -9,13 +9,13 @@
 
 import { Command, type CommandOptions, type CommandResult } from "./command.ts";
 import {
-  INIT_ERROR_MARKER,
   ERROR_COMMAND_NOT_ALLOWED,
   ERROR_COMMAND_NOT_FOUND,
   ERROR_COMMANDS_BLOCKED,
+  INIT_ERROR_MARKER,
 } from "../core/constants.ts";
 import { isPathWithin } from "../core/path-utils.ts";
-import { readPendingCommand, writePendingCommand, type PendingCommand } from "../core/pending.ts";
+import { type PendingCommand, readPendingCommand, writePendingCommand } from "../core/pending.ts";
 
 /**
  * Config interface injected by preamble for permission checking.
@@ -25,7 +25,7 @@ import { readPendingCommand, writePendingCommand, type PendingCommand } from "..
  * Note: This file uses its own path utils (getBasename, resolvePath) because
  * the sandbox can't import @std/path. The decision tree mirrors checkCommandPermission().
  */
-interface PreambleConfig {
+export interface PreambleConfig {
   projectDir?: string;
   workspaceRoots?: string[];
   allowProjectCommands?: boolean;
@@ -35,7 +35,7 @@ interface PreambleConfig {
 }
 
 /** Symbol for internal config access */
-const CONFIG_SYMBOL = Symbol.for('safesh.config');
+const CONFIG_SYMBOL = Symbol.for("safesh.config");
 
 /** Get the config from $ namespace (where preamble injects it) */
 function getConfig(): PreambleConfig | undefined {
@@ -113,9 +113,50 @@ type PermResult =
   | { allowed: false; error: typeof ERROR_COMMAND_NOT_FOUND; command: string };
 
 /**
- * Check permission for a single command using the decision tree
+ * Read the live process cwd, returning undefined if it is unavailable (e.g. the
+ * directory was removed). `$.cd()` updates this via Deno.chdir().
  */
-async function checkPermission(
+function liveCwd(): string | undefined {
+  try {
+    return Deno.cwd();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Candidate base directories for resolving a relative-path command (SSH-648).
+ *
+ * At runtime the live process cwd is authoritative — `$.cd()` calls
+ * `Deno.chdir()`, and a spawned command (cwd unset) inherits it — so the live
+ * cwd can diverge from the cwd captured at script start. We try the live cwd
+ * first (it is where the command actually runs) and keep the static start cwd
+ * as a fallback candidate, which makes the change strictly additive: when no
+ * `$.cd()` happened the two are equal and behavior is unchanged.
+ */
+function candidateBaseCwds(startCwd: string): string[] {
+  const live = liveCwd();
+  return live && live !== startCwd ? [live, startCwd] : [startCwd];
+}
+
+/**
+ * Resolve a relative command to the candidate cwd where it exists (for the
+ * returned resolvedPath); falls back to the first candidate when it exists in
+ * none, preserving the original behavior when there is a single candidate.
+ */
+async function resolveExistingPath(command: string, baseCwds: string[]): Promise<string> {
+  for (const baseCwd of baseCwds) {
+    const candidate = resolvePath(baseCwd, command);
+    if (await checkCommandExists(candidate)) return candidate;
+  }
+  return resolvePath(baseCwds[0]!, command);
+}
+
+/**
+ * Check permission for a single command using the decision tree.
+ * Exported for testing; the runtime calls it via initCmds().
+ */
+export async function checkPermission(
   command: string,
   config: PreambleConfig,
 ): Promise<PermResult> {
@@ -128,7 +169,9 @@ async function checkPermission(
 
   // Validate command is actually a string
   if (typeof command !== "string") {
-    throw new Error(`checkPermission expected string, got ${typeof command}: ${JSON.stringify(command)}`);
+    throw new Error(
+      `checkPermission expected string, got ${typeof command}: ${JSON.stringify(command)}`,
+    );
   }
 
   // Is command basic name only (no `/`)?
@@ -144,12 +187,17 @@ async function checkPermission(
     return { allowed: true, resolvedPath: command };
   }
 
+  // SSH-648: relative commands resolve against the live cwd ($.cd → Deno.chdir)
+  // first, then the start cwd. Workspace roots are config-relative, so they keep
+  // resolving against the static start cwd.
+  const baseCwds = candidateBaseCwds(cwd);
+
   // Check basename next
   const cmdBasename = getBasename(command);
   if (isInAllowedList(cmdBasename, allowedCommands)) {
     const resolvedPath = command.startsWith("/")
       ? command
-      : resolvePath(cwd, command);
+      : await resolveExistingPath(command, baseCwds);
     return { allowed: true, resolvedPath };
   }
 
@@ -173,12 +221,15 @@ async function checkPermission(
     return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command };
   }
 
-  // Relative path - check CWD first
-  const cwdPath = resolvePath(cwd, command);
-  if (await checkCommandExists(cwdPath)) {
+  // Relative path - check each candidate cwd (live first), allowing if any
+  // permits. The live cwd reflects $.cd and matches where the command runs.
+  let foundNotAllowed: PermResult | undefined;
+  for (const baseCwd of baseCwds) {
+    const cwdPath = resolvePath(baseCwd, command);
+    if (!(await checkCommandExists(cwdPath))) continue;
     // Check if allowProjectCommands is enabled and path is within any configured root
     if (allowProjectCommands) {
-      // cwdPath is already absolute (resolved from cwd)
+      // cwdPath is already absolute (resolved from baseCwd)
       const matchingRoot = workspaceRoots.find((root) => {
         const absoluteRoot = root.startsWith("/") ? root : resolvePath(cwd, root);
         return isPathWithin(cwdPath, absoluteRoot);
@@ -190,7 +241,11 @@ async function checkPermission(
     if (isInAllowedList(cwdPath, allowedCommands)) {
       return { allowed: true, resolvedPath: cwdPath };
     }
-    return { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command: cwdPath };
+    // Found but not permitted here; remember the first (live-cwd) hit and keep
+    // trying the remaining candidates.
+    if (!foundNotAllowed) {
+      foundNotAllowed = { allowed: false, error: ERROR_COMMAND_NOT_ALLOWED, command: cwdPath };
+    }
   }
 
   // Check configured roots
@@ -208,12 +263,15 @@ async function checkPermission(
     }
   }
 
+  // Found in a candidate cwd but not permitted beats a bare not-found.
+  if (foundNotAllowed) return foundNotAllowed;
+
   // Not found
   return { allowed: false, error: ERROR_COMMAND_NOT_FOUND, command };
 }
 
 /** Symbol for storing command name on CommandFn */
-export const CMD_NAME_SYMBOL = Symbol.for('safesh.cmdName');
+export const CMD_NAME_SYMBOL = Symbol.for("safesh.cmdName");
 
 /**
  * Command callable - call with args to get a Command object
@@ -283,15 +341,13 @@ export async function initCmds<T extends readonly string[]>(
       if (scriptId) {
         // Update or create pending command file with blocked commands
         const existing = readPendingCommand(scriptId);
-        const pending: PendingCommand = existing
-          ? { ...existing, commands: notAllowed }
-          : {
-              id: scriptId,
-              scriptHash: Deno.env.get("SAFESH_SCRIPT_HASH") || "",
-              commands: notAllowed,
-              cwd: Deno.cwd(),
-              createdAt: new Date().toISOString(),
-            };
+        const pending: PendingCommand = existing ? { ...existing, commands: notAllowed } : {
+          id: scriptId,
+          scriptHash: Deno.env.get("SAFESH_SCRIPT_HASH") || "",
+          commands: notAllowed,
+          cwd: Deno.cwd(),
+          createdAt: new Date().toISOString(),
+        };
 
         try {
           writePendingCommand(pending);
