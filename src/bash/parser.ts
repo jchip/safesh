@@ -281,7 +281,11 @@ export class Parser {
     this.skipNewlines();
 
     while (!this.is(TokenType.EOF)) {
-      if (this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON)) {
+      // SSH-649: COMMENT must be skipped here too. After a `;`-terminated
+      // statement, advancing past `;` then `\n` can leave a standalone COMMENT
+      // token as current, which would otherwise reach parseStatement and crash
+      // with "Expected command name".
+      if (this.isAny(TokenType.NEWLINE, TokenType.SEMICOLON, TokenType.COMMENT)) {
         this.advance();
         continue;
       }
@@ -312,7 +316,7 @@ export class Parser {
     this.skipNewlines();
 
     while (!this.is(TokenType.EOF)) {
-      if (this.is(TokenType.NEWLINE) || this.is(TokenType.SEMICOLON)) {
+      if (this.isAny(TokenType.NEWLINE, TokenType.SEMICOLON, TokenType.COMMENT)) {
         this.advance();
         continue;
       }

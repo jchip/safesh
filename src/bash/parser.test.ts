@@ -785,6 +785,23 @@ EOF`);
       const cmd = stmt.commands[0] as AST.Command;
       assertEquals((cmd.name as AST.Word).value, "echo");
     });
+
+    it("SSH-649: should parse a comment line after a semicolon-terminated statement", () => {
+      // A `;` followed by a newline then a standalone comment line previously
+      // crashed with "Expected command name": the top-level loop advanced past
+      // `;` and `\n` but did not skip the trailing COMMENT token.
+      const ast = parse("echo a;\n# a comment\necho b");
+
+      assertEquals(ast.body.length, 2);
+      assertEquals(
+        (((ast.body[0] as AST.Pipeline).commands[0] as AST.Command).name as AST.Word).value,
+        "echo",
+      );
+      assertEquals(
+        (((ast.body[1] as AST.Pipeline).commands[0] as AST.Command).name as AST.Word).value,
+        "echo",
+      );
+    });
   });
 
   describe("Multiple Statements", () => {
