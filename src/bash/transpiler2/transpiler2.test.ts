@@ -314,6 +314,24 @@ describe("Transpiler2 - Timeout Command", () => {
     const code = transpileBash("result=$(timeout 3 get-data)");
     assertStringIncludes(code, '$.cmd({ timeout: 3000 }, "get-data")');
   });
+
+  // SSH-649: an env-var assignment prefix (FOO=bar timeout ...) was silently
+  // dropped because the timeout strategy ignored command.assignments.
+  it("should carry an env-prefix assignment into the timeout command", () => {
+    const code = transpileBash("FOO=bar timeout 10 node app.js");
+    assertStringIncludes(
+      code,
+      '$.cmd({ timeout: 10000, env: { FOO: "bar" } }, "node", "app.js")',
+    );
+  });
+
+  it("should carry multiple env-prefix assignments into the timeout command", () => {
+    const code = transpileBash("A=1 B=2 timeout 5 run task");
+    assertStringIncludes(
+      code,
+      '$.cmd({ timeout: 5000, env: { A: "1", B: "2" } }, "run", "task")',
+    );
+  });
 });
 
 // =============================================================================
