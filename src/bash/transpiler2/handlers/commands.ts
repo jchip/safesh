@@ -214,6 +214,29 @@ function handleTmuxSendKeys(
 }
 
 /**
+ * SSH-649: Build the `env` object entries for an env-prefix assignment list
+ * (e.g. `FOO=bar CMD`). Returns "" when there are no assignments.
+ *
+ * SSH-587: format each value like an argument — an expansion-bearing value must
+ * stay a template literal; unconditional re-quoting leaks the template SOURCE
+ * text into the child's environment.
+ */
+function buildEnvEntries(
+  assignments: AST.VariableAssignment[],
+  ctx: VisitorContext,
+): string {
+  return assignments
+    .map((a) => {
+      const word = a.value as AST.Word;
+      const value = ctx.visitWord(word);
+      return `${a.name}: ${
+        formatArg(value, wordHasExpansion(word), wordIsTemplateEscapedLiteral(word))
+      }`;
+    })
+    .join(", ");
+}
+
+/**
  * SSH-426: Handle timeout command
  * Parses "timeout DURATION COMMAND [ARG...]" and generates code with timeout option
  * @returns Transpiled command with timeout, or null if not a valid timeout command
@@ -224,6 +247,7 @@ function handleTimeoutCommand(
   argExpansions?: boolean[],
   argTemplateEscapedLiterals?: boolean[],
   argIsGlob?: boolean[],
+  assignments?: AST.VariableAssignment[],
 ): { code: string; async: boolean } | null {
   if (args.length < 2) return null;
 
@@ -267,7 +291,13 @@ function handleTimeoutCommand(
     )
       .join(", ")
     : "";
-  const code = `$.cmd({ timeout: ${timeoutMs} }, ${
+  // SSH-649: emit any env-prefix assignments (FOO=bar timeout ...) alongside the
+  // timeout option so the child process actually receives them.
+  const envEntries = buildEnvEntries(assignments ?? [], ctx);
+  const options = envEntries
+    ? `{ timeout: ${timeoutMs}, env: { ${envEntries} } }`
+    : `{ timeout: ${timeoutMs} }`;
+  const code = `$.cmd(${options}, ${
     formatArg(cmdName, argExpansions?.[1], argTemplateEscapedLiterals?.[1])
   }${argsArray ? `, ${argsArray}` : ""})`;
 
@@ -315,18 +345,8 @@ function handleStandardCommand(
   const formattedName = formatArg(name, nameHasExpansion, nameTemplateEscapedLiteral);
 
   if (hasAssignments) {
-    const envEntries = assignments
-      .map((a) => {
-        const word = a.value as AST.Word;
-        const value = ctx.visitWord(word);
-        // SSH-587: format like an argument — an expansion-bearing value must
-        // stay a template literal; unconditional re-quoting leaked the
-        // template SOURCE text into the child's environment
-        return `${a.name}: ${
-          formatArg(value, wordHasExpansion(word), wordIsTemplateEscapedLiteral(word))
-        }`;
-      })
-      .join(", ");
+    // SSH-649: shared with the timeout handler via buildEnvEntries.
+    const envEntries = buildEnvEntries(assignments, ctx);
     const argsArray = args
       .map((a, i) => formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i]))
       .join(", ");
@@ -393,6 +413,9 @@ type CommandStrategy =
     argExpansions: boolean[];
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
+    // SSH-649: carry any env-prefix assignments (FOO=bar timeout ...) so they
+    // reach the child process instead of being silently dropped.
+    assignments: AST.VariableAssignment[];
   }
   | {
     type: "fluent";
@@ -643,6 +666,8 @@ function selectCommandStrategy(
       argExpansions: analysis.argExpansions,
       argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       argIsGlob: analysis.argIsGlob,
+      // SSH-649: preserve env-prefix assignments for the timed command.
+      assignments: command.assignments,
     };
   }
 
@@ -765,6 +790,7 @@ function executeCommandStrategy(
         strategy.argExpansions,
         strategy.argTemplateEscapedLiterals,
         strategy.argIsGlob,
+        strategy.assignments,
       );
       if (timeoutResult) {
         return { code: timeoutResult.code, async: timeoutResult.async };
@@ -773,11 +799,12 @@ function executeCommandStrategy(
       // Extract command name and args from timeout args
       const cmdName = strategy.args[1] ?? "";
       const cmdArgs = strategy.args.slice(2);
+      // SSH-649: keep env-prefix assignments even on the invalid-timeout fallback.
       const cmdExpr = handleStandardCommand(
         cmdName,
         cmdArgs,
-        false,
-        [],
+        strategy.assignments.length > 0,
+        strategy.assignments,
         false,
         ctx,
         strategy.argExpansions[1],
