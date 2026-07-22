@@ -253,7 +253,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
     });
 
     it("should apply stderr append redirection", () => {
-      const script = "command 2>> errors.log";
+      const script = "mycmd 2>> errors.log";
       const output = transpile(parse(script));
 
       assertStringIncludes(output, '.stderr("errors.log", { append: true })');
@@ -269,7 +269,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
     });
 
     it("should apply multiple redirections", () => {
-      const script = "command > out.txt 2> err.txt";
+      const script = "mycmd > out.txt 2> err.txt";
       const output = transpile(parse(script));
 
       assertStringIncludes(output, '.stdout("out.txt")');

@@ -35,6 +35,9 @@ export const SHELL_BUILTINS: Record<string, BuiltinConfig> = {
   // through to $.cmd("test", ...) uses the full native test/`[` evaluator,
   // which returns a proper { code } result for all operators.
   which: { fn: "$.which", type: "async" },
+  // SSH-647: `command` is a builtin, not an executable — spawning it always
+  // failed. $.command handles -v/-V lookup and the plain exec form.
+  command: { fn: "$.command", type: "async" },
   chmod: { fn: "$.chmod", type: "async" },
   ln: { fn: "$.ln", type: "async" },
   rm: { fn: "$.rm", type: "async" },

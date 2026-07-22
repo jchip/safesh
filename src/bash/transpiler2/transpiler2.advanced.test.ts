@@ -262,7 +262,9 @@ describe("Real-World CI/CD Scripts", () => {
     `;
     const code = transpileBash(script);
     assertStringIncludes(code, "for (const cmd of");
-    assertStringIncludes(code, '"command", "-v"');
+    // SSH-647: `command -v` lowers to the builtin, not $.cmd("command", "-v"),
+    // which could never run — there is no `command` executable to spawn.
+    assertStringIncludes(code, '$.command("-v"');
   });
 
   it("should transpile a test runner script", () => {
@@ -651,7 +653,7 @@ describe("Edge Cases", () => {
   });
 
   it("should handle multiple redirections", () => {
-    const code = transpileBash("command < in.txt > out.txt 2> err.txt");
+    const code = transpileBash("mycmd < in.txt > out.txt 2> err.txt");
     assertStringIncludes(code, ".stdinFile(");
     assertStringIncludes(code, ".stdout(");
     assertStringIncludes(code, ".stderr(");

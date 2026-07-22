@@ -827,16 +827,16 @@ describe("Common Utility Patterns", () => {
 
     it("should handle stdout and stderr redirection", () => {
       const code = transpileBash(`
-        command > output.log 2> error.log
+        mycmd > output.log 2> error.log
       `);
-      assertStringIncludes(code, '"command"');
+      assertStringIncludes(code, '"mycmd"');
     });
 
     it("should handle combined output redirection", () => {
       const code = transpileBash(`
-        command &> combined.log
+        mycmd &> combined.log
       `);
-      assertStringIncludes(code, '"command"');
+      assertStringIncludes(code, '"mycmd"');
     });
   });
 
@@ -939,13 +939,13 @@ describe("Common Utility Patterns", () => {
   describe("exit code handling", () => {
     it("should handle exit code checking", () => {
       const code = transpileBash(`
-        command
+        mycmd
         if [ $? -ne 0 ]; then
           echo "Command failed"
           exit 1
         fi
       `);
-      assertStringIncludes(code, '"command"');
+      assertStringIncludes(code, '"mycmd"');
     });
 
     it("should handle PIPESTATUS", () => {
