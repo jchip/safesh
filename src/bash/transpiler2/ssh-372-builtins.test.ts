@@ -81,6 +81,32 @@ describe("SSH-372 - Shell Builtins", () => {
     assertEquals(output.includes('$.cmd("which"'), false, "Should not use $.cmd for which");
   });
 
+  it("should use $.command for the command builtin (SSH-647)", () => {
+    const ast = parse("command -v node");
+    const output = transpile(ast);
+
+    // `command` is a builtin with no executable on disk — spawning it always
+    // failed with `Command not found: "command"`.
+    assertStringIncludes(output, '$.command("-v", "node")');
+    assertEquals(
+      output.includes('$.cmd("command"'),
+      false,
+      "Should not use $.cmd for command",
+    );
+  });
+
+  it("should use $.command for the plain exec form (SSH-647)", () => {
+    const ast = parse("command node --version");
+    const output = transpile(ast);
+
+    assertStringIncludes(output, '$.command("node", "--version")');
+    assertEquals(
+      output.includes('$.cmd("command"'),
+      false,
+      "Should not use $.cmd for command",
+    );
+  });
+
   it("should use $.chmod for chmod command", () => {
     const ast = parse("chmod 755 file.sh");
     const output = transpile(ast);

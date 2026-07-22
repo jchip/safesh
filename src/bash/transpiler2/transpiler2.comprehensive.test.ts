@@ -2070,14 +2070,14 @@ describe("BashTranspiler2 Class Extended", () => {
 describe("Bug Fixes", () => {
   describe("SSH-308: Redirection file descriptor (fd) field", () => {
     it("should redirect stderr with 2> operator", () => {
-      const ast = parse("command 2>error.log");
+      const ast = parse("mycmd 2>error.log");
       const output = transpile(ast);
       assertStringIncludes(output, ".stderr(");
       assertStringIncludes(output, '"error.log"');
     });
 
     it("should redirect stderr with 2>> operator (append)", () => {
-      const ast = parse("command 2>>error.log");
+      const ast = parse("mycmd 2>>error.log");
       const output = transpile(ast);
       assertStringIncludes(output, ".stderr(");
       assertStringIncludes(output, '"error.log"');
@@ -2085,21 +2085,21 @@ describe("Bug Fixes", () => {
     });
 
     it("should redirect stdout with 1> operator", () => {
-      const ast = parse("command 1>output.log");
+      const ast = parse("mycmd 1>output.log");
       const output = transpile(ast);
       assertStringIncludes(output, ".stdout(");
       assertStringIncludes(output, '"output.log"');
     });
 
     it("should redirect stdout with > operator (default)", () => {
-      const ast = parse("command >output.log");
+      const ast = parse("mycmd >output.log");
       const output = transpile(ast);
       assertStringIncludes(output, ".stdout(");
       assertStringIncludes(output, '"output.log"');
     });
 
     it("should handle both stdout and stderr redirects", () => {
-      const ast = parse("command >output.log 2>error.log");
+      const ast = parse("mycmd >output.log 2>error.log");
       const output = transpile(ast);
       assertStringIncludes(output, ".stdout(");
       assertStringIncludes(output, ".stderr(");
@@ -2108,7 +2108,7 @@ describe("Bug Fixes", () => {
 
   describe("SSH-299: Missing redirection operators", () => {
     it("should handle <> (read-write) operator", () => {
-      const ast = parse("command <>file.txt");
+      const ast = parse("mycmd <>file.txt");
       const output = transpile(ast);
       assertStringIncludes(output, ".stdin(");
       assertStringIncludes(output, ".stdout(");
@@ -2116,14 +2116,14 @@ describe("Bug Fixes", () => {
     });
 
     it("should handle >| (force overwrite/clobber) operator", () => {
-      const ast = parse("command >|file.txt");
+      const ast = parse("mycmd >|file.txt");
       const output = transpile(ast);
       assertStringIncludes(output, ".stdout(");
       assertStringIncludes(output, "force: true");
     });
 
     it("should handle 2>| (force overwrite stderr) operator", () => {
-      const ast = parse("command 2>|error.log");
+      const ast = parse("mycmd 2>|error.log");
       const output = transpile(ast);
       assertStringIncludes(output, ".stderr(");
       assertStringIncludes(output, "force: true");
@@ -2134,13 +2134,13 @@ describe("Bug Fixes", () => {
     // See SSH-299 for details.
 
     // it("should handle << (here-document) operator", () => {
-    //   const ast = parse("command <<EOF\nHello\nEOF");
+    //   const ast = parse("mycmd <<EOF\nHello\nEOF");
     //   const output = transpile(ast);
     //   assertStringIncludes(output, ".stdin(");
     // });
 
     // it("should handle <<- (here-document with tab stripping) operator", () => {
-    //   const ast = parse("command <<-EOF\n\tHello\nEOF");
+    //   const ast = parse("mycmd <<-EOF\n\tHello\nEOF");
     //   const output = transpile(ast);
     //   assertStringIncludes(output, ".stdin(");
     //   assertStringIncludes(output, "stripTabs: true");
@@ -2192,7 +2192,7 @@ describe("Bug Fixes", () => {
     });
 
     it("should handle stderr append with force overwrite", () => {
-      const ast = parse("command 2>>error.log; another >|output.txt");
+      const ast = parse("mycmd 2>>error.log; another >|output.txt");
       const output = transpile(ast);
       assertStringIncludes(output, ".stderr(");
       assertStringIncludes(output, "append: true");

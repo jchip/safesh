@@ -74,6 +74,8 @@ export type { ChmodOptions } from "./chmod.ts";
 export { which } from "./which.ts";
 export type { WhichOptions } from "./which.ts";
 
+export { command } from "./command.ts";
+
 export { test } from "./test.ts";
 
 export { echo, parseEchoOptions } from "./echo.ts";
