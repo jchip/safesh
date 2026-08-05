@@ -102,6 +102,19 @@ deno run --allow-all src/cli/main.ts --help
 deno install --allow-all -n safesh src/cli/main.ts
 ```
 
+### Install Codex hooks
+
+To route Codex Bash execution through SafeShell in every repository, install the managed user-level
+hook configuration:
+
+```bash
+deno task install:codex-hooks
+```
+
+This merges SafeShell's hook block into `~/.codex/config.toml` without replacing unrelated user
+settings. Restart Codex, then review and trust the installed definitions with `/hooks`. See
+[`docs/HOOKS.md`](docs/HOOKS.md) for details.
+
 ## Quick Start
 
 ### Common Gotchas

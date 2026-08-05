@@ -11,6 +11,9 @@ This directory contains hook scripts that integrate SafeShell with external tool
   entrypoint.
 - `codex/safesh-permission-hook.ts` is the Codex `PermissionRequest` hook. It approves only a
   short-lived, exact SafeShell runner command emitted by the Codex pre-hook.
+- `codex/config.toml` is the source template for the user-level Codex hook configuration.
+- `codex/install.ts` renders absolute paths and preserves unrelated settings while installing that
+  configuration into `~/.codex/config.toml`.
 
 Do not configure Claude, Gemini, or another CLI to use the files under `codex/`. See
 [`../docs/HOOKS.md`](../docs/HOOKS.md) for client configuration examples.
@@ -145,9 +148,9 @@ Example configuration:
 Codex must use `codex/bash-prehook.ts`, not the shared entrypoint. It also registers
 `codex/safesh-permission-hook.ts` for `PermissionRequest` so only the correlated SafeShell runner can
 be auto-approved. The Codex pre-hook routes every non-control-plane Bash command through SafeShell;
-that policy does not change the shared entrypoint. Complete project and global configuration
-examples are in
-[`../docs/HOOKS.md`](../docs/HOOKS.md).
+that policy does not change the shared entrypoint. Install the user-level configuration with
+`deno task install:codex-hooks`; SafeShell intentionally has no project `.codex/config.toml`.
+Complete configuration details are in [`../docs/HOOKS.md`](../docs/HOOKS.md).
 
 ### Testing the Hook
 
@@ -243,6 +246,7 @@ See SafeShell's main documentation for details on configuring permissions.
 - Check that the file is executable: `chmod +x hooks/bash-prehook.ts`
 - Verify the shebang is correct (requires Deno)
 - Check Deno is installed: `deno --version`
+- For Codex, rerun `deno task install:codex-hooks` and restart Codex
 
 #### Permission denied errors
 
@@ -278,6 +282,8 @@ For long-running commands, the overhead is negligible.
 - `/src/cli/desh.ts` - Deno shell CLI
 - `/src/runtime/executor.ts` - Code execution engine
 - `/src/bash/mod.ts` - `parseShellCommand` function
+- `/hooks/codex/config.toml` - User-level Codex hook configuration source
+- `/hooks/codex/install.ts` - User-level Codex hook installer
 
 ### Contributing
 

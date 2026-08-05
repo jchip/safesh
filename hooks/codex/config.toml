@@ -1,9 +1,11 @@
+# BEGIN SAFESH CODEX HOOKS
+# Managed by hooks/codex/install.ts. Edit this source file, then rerun the installer.
 [[hooks.PreToolUse]]
 matcher = "^Bash$"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = '"$(git rev-parse --show-toplevel)/hooks/codex/bash-prehook.ts"'
+command = "__SAFESH_CODEX_BASH_PREHOOK__"
 timeout = 30
 statusMessage = "Routing Bash through SafeShell"
 
@@ -12,6 +14,7 @@ matcher = "^Bash$"
 
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = '"$(git rev-parse --show-toplevel)/hooks/codex/safesh-permission-hook.ts"'
+command = "__SAFESH_CODEX_PERMISSION_HOOK__"
 timeout = 5
 statusMessage = "Authorizing verified SafeShell runner"
+# END SAFESH CODEX HOOKS

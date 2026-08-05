@@ -38,9 +38,21 @@ Rewritten commands are:
 
 ## Configuration
 
-### Codex CLI project configuration
+### Codex CLI user configuration
 
-This repository includes `.codex/config.toml`:
+Codex must load the SafeShell hooks from the user-level config so they apply in every repository.
+Install or refresh the managed hook block with:
+
+```bash
+deno task install:codex-hooks
+```
+
+The installer reads `hooks/codex/config.toml`, renders absolute paths to this checkout, and merges
+the marked SafeShell block into `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). It preserves
+all unrelated user settings and hooks, and repeated runs are idempotent. Rerun it after moving the
+SafeShell checkout.
+
+The source template contains:
 
 ```toml
 [[hooks.PreToolUse]]
@@ -48,7 +60,7 @@ matcher = "^Bash$"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = '"$(git rev-parse --show-toplevel)/hooks/codex/bash-prehook.ts"'
+command = "__SAFESH_CODEX_BASH_PREHOOK__"
 timeout = 30
 statusMessage = "Routing Bash through SafeShell"
 
@@ -57,24 +69,21 @@ matcher = "^Bash$"
 
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = '"$(git rev-parse --show-toplevel)/hooks/codex/safesh-permission-hook.ts"'
+command = "__SAFESH_CODEX_PERMISSION_HOOK__"
 timeout = 5
 statusMessage = "Authorizing verified SafeShell runner"
 ```
 
-Codex loads project hooks only for trusted projects. After adding or changing the hook, restart
-Codex, run `/hooks`, review the exact definition, and trust its current hash. Unreviewed hooks are
-skipped.
+SafeShell intentionally does not check in `.codex/config.toml`: that location is an auto-loaded,
+trusted-project layer and would limit these hooks to this repository. After installing or changing
+the hooks, restart Codex, run `/hooks`, review the exact user-level definitions, and trust their
+current hashes. Unreviewed hooks are skipped.
 
 The matcher also covers Codex unified execution (`exec_command`), which Codex exposes to hooks as
 `Bash`. The Codex pre-hook uses `updatedInput.command` to replace commands with a SafeShell `desh`
 invocation; it does not replace Codex's configured shell binary. The permission hook approves only
 the exact, short-lived SafeShell runner command registered by the Codex pre-hook. Unmatched requests
 receive no decision from it.
-
-To use the same hooks in every repository, copy both tables to `~/.codex/config.toml` and replace the
-git-root commands with absolute paths to the two files under `hooks/codex/`. A global hook is a
-broader behavior migration and should be reviewed separately.
 
 > **Known limitation:** Codex supplies its session identity as `session_id` in hook input, while
 > SafeShell's current session-scoped permission storage reads `CLAUDE_SESSION_ID`. Until SSH-653 is
@@ -299,9 +308,11 @@ See `safesh.config.ts` documentation for more details.
 
 ### Hook not executing
 
-- Check the path in settings.json is absolute
+- Check the configured hook path is absolute
 - Ensure bash-prehook.ts is executable: `chmod +x hooks/bash-prehook.ts`
-- For Codex, verify both files under `hooks/codex/` are executable and trusted in `/hooks`
+- For Codex, rerun `deno task install:codex-hooks` after moving the SafeShell checkout
+- For Codex, verify both user-level definitions under `hooks/codex/` are executable and trusted in
+  `/hooks`
 - Check Claude Code restart might be needed after config changes
 
 ### Permission errors
@@ -349,6 +360,8 @@ To temporarily disable the hook:
 - `hooks/bash-prehook.ts` - Shared Claude/Gemini/other CLI compatibility entrypoint
 - `hooks/codex/bash-prehook.ts` - Codex `PreToolUse` entrypoint
 - `hooks/codex/safesh-permission-hook.ts` - Codex `PermissionRequest` entrypoint
+- `hooks/codex/config.toml` - Source for the managed user-level Codex hook block
+- `hooks/codex/install.ts` - Idempotent installer for `~/.codex/config.toml`
 - `hooks/README.md` - Hook development documentation
 - `src/bash/transpiler2/` - Bash to TypeScript transpiler
 - `src/runtime/executor.ts` - SafeShell runtime executor
