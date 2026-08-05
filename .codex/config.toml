@@ -1,0 +1,17 @@
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = '"$(git rev-parse --show-toplevel)/hooks/codex/bash-prehook.ts"'
+timeout = 30
+statusMessage = "Routing Bash through SafeShell"
+
+[[hooks.PermissionRequest]]
+matcher = "^Bash$"
+
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = '"$(git rev-parse --show-toplevel)/hooks/codex/safesh-permission-hook.ts"'
+timeout = 5
+statusMessage = "Authorizing verified SafeShell runner"

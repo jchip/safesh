@@ -1,10 +1,10 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write --allow-run --allow-env --allow-net
 /**
- * Bash Pre-hook for Claude Code
+ * Bash Pre-hook for Claude Code and Codex CLI
  *
  * This hook intercepts bash commands, transpiles them to SafeShell TypeScript,
- * and executes them using desh. This allows Claude Code to execute bash commands
- * through SafeShell's sandboxed runtime.
+ * and executes them using desh. This allows supported coding agents to execute
+ * bash commands through SafeShell's sandboxed runtime.
  *
  * Usage (as pre-hook):
  *   - Claude Code passes bash command as stdin or as arguments
@@ -332,38 +332,23 @@ const BUILTIN_COMMANDS = new Set([
 ]);
 
 /**
- * Check if AST represents a simple command that can be executed with native bash
- * Simple commands: basic commands, pipelines with &&/||/|, redirects
- * Complex commands: loops, conditionals, functions, subshells, command substitutions
+ * Check whether an AST can safely remain with the calling CLI's native shell.
  */
 function isSimpleCommand(ast: AST.Program): boolean {
-  // Check each statement in the program
-  for (const stmt of ast.body) {
-    if (!isSimpleStatement(stmt)) {
-      return false;
-    }
-  }
-  return true;
+  return ast.body.every(isSimpleStatement);
 }
 
-/**
- * Check if a statement is simple (can execute with native bash)
- */
 function isSimpleStatement(stmt: AST.Statement): boolean {
   switch (stmt.type) {
     case "Command":
-      // Simple command - check for command substitutions in args
       return !hasComplexExpansions(stmt);
-
     case "Pipeline":
-      // Pipelines are OK if all commands are simple
-      return stmt.commands.every((cmd) => isSimpleStatement(cmd));
-
+      return stmt.commands.every(isSimpleStatement);
     case "VariableAssignment":
-      // Variable assignments are OK if no command substitution in value
       return !hasComplexValue(stmt.value);
-
-    // Complex statements that need transpilation
+    case "TestCommand":
+    case "ArithmeticCommand":
+      return true;
     case "IfStatement":
     case "ForStatement":
     case "CStyleForStatement":
@@ -374,55 +359,31 @@ function isSimpleStatement(stmt: AST.Statement): boolean {
     case "Subshell":
     case "BraceGroup":
       return false;
-
-    case "TestCommand":
-    case "ArithmeticCommand":
-      // These are OK for native bash
-      return true;
-
     default:
-      // Unknown statement type - safer to transpile
       return false;
   }
 }
 
-/**
- * Check if command has complex expansions (command substitution, process substitution, heredocs)
- */
 function hasComplexExpansions(cmd: AST.Command): boolean {
-  // Check command name
-  if (cmd.name.type === "CommandSubstitution") {
-    return true;
-  }
+  if (cmd.name.type === "CommandSubstitution") return true;
 
-  // Check arguments
   for (const arg of cmd.args) {
-    if (arg.type === "CommandSubstitution") {
-      return true;
-    }
-    if (arg.type === "Word" && arg.parts) {
-      for (const part of arg.parts) {
-        if (part.type === "CommandSubstitution" || part.type === "ProcessSubstitution") {
-          return true;
-        }
-      }
-    }
-  }
-
-  // Check redirects for heredocs (<<, <<-, <<<)
-  // Heredocs need transpilation for proper handling
-  for (const redirect of cmd.redirects) {
-    if (redirect.operator === "<<" || redirect.operator === "<<-" || redirect.operator === "<<<") {
+    if (arg.type === "CommandSubstitution") return true;
+    if (
+      arg.type === "Word" &&
+      arg.parts?.some((part) =>
+        part.type === "CommandSubstitution" || part.type === "ProcessSubstitution"
+      )
+    ) {
       return true;
     }
   }
 
-  return false;
+  return cmd.redirects.some((redirect) =>
+    redirect.operator === "<<" || redirect.operator === "<<-" || redirect.operator === "<<<"
+  );
 }
 
-/**
- * Check if value has command substitution
- */
 function hasComplexValue(
   value:
     | AST.Word
@@ -431,31 +392,23 @@ function hasComplexValue(
     | AST.ArithmeticExpansion
     | AST.ArrayLiteral,
 ): boolean {
-  if (value.type === "CommandSubstitution") {
+  if (value.type === "CommandSubstitution") return true;
+  if (
+    value.type === "Word" &&
+    value.parts?.some((part) =>
+      part.type === "CommandSubstitution" || part.type === "ProcessSubstitution"
+    )
+  ) {
     return true;
   }
-  if (value.type === "Word" && value.parts) {
-    for (const part of value.parts) {
-      if (part.type === "CommandSubstitution" || part.type === "ProcessSubstitution") {
-        return true;
-      }
-    }
-  }
-  if (value.type === "ArrayLiteral") {
-    for (const elem of value.elements) {
-      if (elem.type === "CommandSubstitution") {
-        return true;
-      }
-      if (elem.type === "Word" && elem.parts) {
-        for (const part of elem.parts) {
-          if (part.type === "CommandSubstitution" || part.type === "ProcessSubstitution") {
-            return true;
-          }
-        }
-      }
-    }
-  }
-  return false;
+  return value.type === "ArrayLiteral" &&
+    value.elements.some((element) =>
+      element.type === "CommandSubstitution" ||
+      (element.type === "Word" &&
+        element.parts?.some((part) =>
+          part.type === "CommandSubstitution" || part.type === "ProcessSubstitution"
+        ))
+    );
 }
 
 /**
@@ -792,13 +745,7 @@ async function getDisallowedCommands(
 }
 
 /**
- * SSH-576: Final permission gate for passthrough inversion.
- *
- * The analyzer's command set is sound (covers command substitutions and
- * other nesting the legacy extractor misses), so any names it found beyond
- * the already-checked set get the same permission check, and every static
- * redirect/cd target must pass the canonical workspace path validation the
- * runtime would have applied.
+ * Final safety gate before the shared hook leaves a command with native Bash.
  */
 async function isPassthroughPermitted(
   analysis: PassthroughAnalysis,
@@ -808,7 +755,7 @@ async function isPassthroughPermitted(
 ): Promise<boolean> {
   const extra = new Set(
     [...analysis.commands].filter(
-      (cmd) => !BUILTIN_COMMANDS.has(cmd) && !alreadyChecked.has(cmd),
+      (command) => !BUILTIN_COMMANDS.has(command) && !alreadyChecked.has(command),
     ),
   );
   if (extra.size > 0) {
@@ -828,8 +775,6 @@ async function isPassthroughPermitted(
     }
   }
 
-  // SSH-579: a non-matching glob is passed through literally by bash but
-  // aborts the whole command under zsh — only pass through globs that match.
   for (const pattern of analysis.globs) {
     if (!(await globHasMatch(pattern, cwd))) {
       debug(`Passthrough denied, glob has no match: ${pattern}`);
@@ -856,11 +801,15 @@ export async function globHasMatch(pattern: string, cwd: string): Promise<boolea
 }
 
 /**
- * Generic Hook Input format (Claude Code / Gemini CLI)
- * Supports both snake_case (Claude) and camelCase (Gemini potential)
+ * Generic hook input format (Claude Code, Codex CLI, and Gemini CLI)
+ * Supports snake_case and camelCase fields used by supported clients.
  */
 interface HookInput {
+  session_id?: string;
+  turn_id?: string;
+  cwd?: string;
   hookEventName?: string;
+  hook_event_name?: string;
   tool_name?: string;
   toolName?: string;
   tool_input?: {
@@ -882,18 +831,20 @@ interface HookInput {
 /**
  * Parsed command with optional parameters
  */
-interface ParsedCommand {
+export interface ParsedCommand {
   command: string;
   timeout?: number;
   runInBackground?: boolean;
   hookEventName?: string;
+  sessionId?: string;
+  turnId?: string;
 }
 
 /**
  * Parse Hook input from JSON
- * Handles both Claude Code and Gemini CLI formats
+ * Handles Claude Code, Codex CLI, and Gemini CLI formats
  */
-function parseHookInput(input: string): ParsedCommand | null {
+export function parseHookInput(input: string): ParsedCommand | null {
   try {
     const parsed = JSON.parse(input) as HookInput;
 
@@ -917,7 +868,9 @@ function parseHookInput(input: string): ParsedCommand | null {
         command: toolInput.command,
         timeout: timeout,
         runInBackground: runInBackground,
-        hookEventName: parsed.hookEventName,
+        hookEventName: parsed.hook_event_name || parsed.hookEventName,
+        ...(parsed.session_id ? { sessionId: parsed.session_id } : {}),
+        ...(parsed.turn_id ? { turnId: parsed.turn_id } : {}),
       };
     }
   } catch {
@@ -957,15 +910,19 @@ async function getBashCommand(): Promise<ParsedCommand> {
   throw new Error("No bash command provided. Pass as argument or via stdin.");
 }
 
-/**
- * Commands that should pass through to native bash (not intercepted)
- * These are typically SafeShell CLI tools that should run directly
- */
-const PASSTHROUGH_COMMANDS = [
-  /^desh\b/, // desh CLI (includes "desh retry")
-  /^\.\/src\/cli\/desh\.ts\b/, // desh via path
-  /desh\.ts\b/, // any desh.ts path
-  /^deno\b/, // deno runtime (for tests, etc.)
+/** Internal SafeShell control-plane commands that must never recurse through the hook. */
+const CONTROL_PLANE_PASSTHROUGH_COMMANDS = [
+  /^(?:desh|(?:\.\/|[^\s'"]*\/)desh\.ts)\s+retry(?:-path)?\b/,
+  /^(?:["']?(?:\.\/|[^\s'"]*\/)(?:src\/cli\/)?desh\.ts["']?)\s+-q\s+-f\s+["']?\/tmp\/safesh\/scripts\/(?:tx-)?script-[A-Za-z0-9_-]+\.ts\b/,
+  /^\/bin\/zsh\s+-lc\s+["']?[^\s'"]*\/src\/cli\/desh\.ts\s+-q\s+-f\s+["']?\/tmp\/safesh\/scripts\/(?:tx-)?script-[A-Za-z0-9_-]+\.ts\b/,
+];
+
+/** Compatibility passthroughs used by the shared Claude/Gemini entrypoint. */
+const SHARED_PASSTHROUGH_COMMANDS = [
+  /^desh\b/,
+  /^\.\/src\/cli\/desh\.ts\b/,
+  /desh\.ts\b/,
+  /^deno\b/,
 ];
 
 /**
@@ -989,10 +946,13 @@ export function stripLeadingAssignments(command: string): string {
 /**
  * Check if command should pass through to native bash
  */
-export function shouldPassthrough(command: string): boolean {
+export function shouldPassthrough(command: string, routeAllCommands = false): boolean {
   const trimmed = command.trim();
   const withoutAssignments = stripLeadingAssignments(trimmed);
-  for (const pattern of PASSTHROUGH_COMMANDS) {
+  const patterns = routeAllCommands
+    ? CONTROL_PLANE_PASSTHROUGH_COMMANDS
+    : [...CONTROL_PLANE_PASSTHROUGH_COMMANDS, ...SHARED_PASSTHROUGH_COMMANDS];
+  for (const pattern of patterns) {
     if (pattern.test(trimmed) || pattern.test(withoutAssignments)) {
       debug(`Passthrough command detected: ${trimmed}`);
       return true;
@@ -1067,6 +1027,23 @@ interface DeshRewriteOptions {
   originalCommand?: string;
   hookEventName?: string;
   cwd?: string;
+  sessionId?: string;
+  turnId?: string;
+  onRewrite?: (rewrite: BashPrehookRewrite) => void;
+}
+
+export interface BashPrehookRewrite {
+  command: string;
+  cwd?: string;
+  sessionId?: string;
+  turnId?: string;
+}
+
+export interface BashPrehookPolicy {
+  /** Force every eligible Bash command through SafeShell instead of native-shell passthrough. */
+  routeAllCommands?: boolean;
+  /** Optional client-owned side effect after the final rewritten command is known. */
+  onRewrite?: (rewrite: BashPrehookRewrite) => void;
 }
 
 /**
@@ -1166,7 +1143,7 @@ async function outputRewriteToDeshHeredoc(
  */
 function outputHookResponse(
   deshCommand: string,
-  options?: { timeout?: number; runInBackground?: boolean; hookEventName?: string },
+  options?: DeshRewriteOptions,
 ): void {
   const command = options?.runInBackground
     ? `SAFESH_RUN_IN_BACKGROUND=1 ${deshCommand}`
@@ -1180,6 +1157,13 @@ function outputHookResponse(
   if (options?.runInBackground !== undefined) {
     updatedInput.run_in_background = options.runInBackground;
   }
+
+  options?.onRewrite?.({
+    command,
+    cwd: options.cwd,
+    sessionId: options.sessionId,
+    turnId: options.turnId,
+  });
 
   // Correct format with hookSpecificOutput wrapper
   const output = {
@@ -1343,7 +1327,7 @@ async function executeStreaming(
 // Main
 // =============================================================================
 
-async function main() {
+export async function main(policy: BashPrehookPolicy = {}): Promise<void> {
   // Clean up old script files proactively
   cleanupOldScripts();
 
@@ -1361,7 +1345,7 @@ async function main() {
     }
 
     // Check if command should pass through to native bash (e.g., desh)
-    if (shouldPassthrough(parsed.command)) {
+    if (shouldPassthrough(parsed.command, policy.routeAllCommands === true)) {
       outputPassthrough();
       Deno.exit(0);
     }
@@ -1479,6 +1463,9 @@ ${combinedTsCode}
         isDirectTs: true,
         hookEventName: parsed.hookEventName,
         cwd,
+        sessionId: parsed.sessionId,
+        turnId: parsed.turnId,
+        onRewrite: policy.onRewrite,
       });
       Deno.exit(0);
     }
@@ -1503,6 +1490,9 @@ ${tsCode}
         isDirectTs: true,
         hookEventName: parsed.hookEventName,
         cwd,
+        sessionId: parsed.sessionId,
+        turnId: parsed.turnId,
+        onRewrite: policy.onRewrite,
       });
       Deno.exit(0);
     }
@@ -1521,18 +1511,18 @@ ${tsCode}
       throw parseError;
     }
 
-    // Check command complexity and safety
-    // Simple commands: passthrough to native bash (let Bash tool handle permissions)
-    // Complex commands: transpile to TypeScript (need SafeShell runtime)
-    // Dangerous commands: always go through safesh for permission checks
-    // Config option: alwaysTranspile can force all commands through transpiler
-    if (isSimpleCommand(ast) && !hasDangerousCommands(ast) && !config.alwaysTranspile) {
+    if (
+      policy.routeAllCommands !== true &&
+      isSimpleCommand(ast) &&
+      !hasDangerousCommands(ast) &&
+      !config.alwaysTranspile
+    ) {
       debug("Simple command detected - passthrough to native bash");
       outputPassthrough();
       Deno.exit(0);
     }
 
-    if (config.alwaysTranspile) {
+    if (policy.routeAllCommands !== true && config.alwaysTranspile) {
       debug("alwaysTranspile enabled - forcing transpilation");
     }
 
@@ -1546,10 +1536,7 @@ ${tsCode}
     debug(`Extracted commands: ${[...commands].join(", ") || "(none)"}`);
 
     // Analyze the AST once (SSH-647): its static `cd` tracking tells the
-    // permission gate which directory each relative-path command runs in, and
-    // the same result drives the SSH-576 passthrough decision below. The
-    // analyzer is side-effect free, so running it before the permission check
-    // (and regardless of the passthrough flag) is safe.
+    // permission gate which directory each relative-path command runs in.
     const analysis = analyzeForPassthrough(ast, {
       blockedCommands: DANGEROUS_COMMANDS,
     });
@@ -1558,11 +1545,11 @@ ${tsCode}
     // workspace directories.
     const disallowed = await getDisallowedCommands(commands, config, cwd, analysis.commandCwds);
 
-    // SSH-576: Passthrough inversion. If every command the script can run is
-    // statically enumerable and allowed (including inside command
-    // substitutions), and redirect/cd targets pass workspace path checks,
-    // hand the original command to native bash instead of transpiling.
-    if (config.passthroughAnalyzable !== false && disallowed.length === 0) {
+    if (
+      policy.routeAllCommands !== true &&
+      config.passthroughAnalyzable !== false &&
+      disallowed.length === 0
+    ) {
       if (analysis.eligible) {
         if (await isPassthroughPermitted(analysis, commands, config, cwd)) {
           debug("Analyzable command fully allowed - passthrough to native bash (SSH-576)");
@@ -1697,6 +1684,9 @@ ${tsCode}
       originalCommand: parsed.command,
       hookEventName: parsed.hookEventName,
       cwd,
+      sessionId: parsed.sessionId,
+      turnId: parsed.turnId,
+      onRewrite: policy.onRewrite,
     });
     Deno.exit(0);
   } catch (error) {
@@ -1748,5 +1738,5 @@ ${tsCode}
 }
 
 if (import.meta.main) {
-  main();
+  await main();
 }

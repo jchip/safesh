@@ -147,20 +147,15 @@ export interface SafeShellConfig {
   allowProjectCommands?: boolean;
 
   /**
-   * Force all bash commands to be transpiled to TypeScript, even simple ones.
-   * When true (default), disables pass-through to native bash for simple commands.
-   * When false, simple bash commands execute directly in native bash.
-   * Complex commands (loops, functions, subshells, etc.) are always transpiled.
+   * Force simple bash commands through SafeShell instead of the caller's native shell.
+   * Complex commands still transpile regardless of this setting.
    * Default: true.
    */
   alwaysTranspile?: boolean;
 
   /**
-   * Allow statically-analyzable commands to pass through to native bash
-   * even when alwaysTranspile is set (SSH-576). A command passes through
-   * only when every command it can execute is statically enumerable AND
-   * allowed, and its redirect/cd targets pass workspace path checks.
-   * Set to false to force the transpile pipeline for everything.
+   * Allow fully permitted, statically analyzable commands to remain with the
+   * caller's native shell. Codex's dedicated hook policy overrides this option.
    * Default: true.
    */
   passthroughAnalyzable?: boolean;
