@@ -135,10 +135,14 @@ export interface RunBashPrehookOptions {
   env?: Record<string, string>;
   /** Set run_in_background on the Bash tool input */
   runInBackground?: boolean;
+  /** Hook payload shape to emulate (defaults to Claude Code) */
+  client?: "claude" | "codex";
+  /** Codex turn id (defaults to a stable test value) */
+  turnId?: string;
 }
 
 /**
- * Spawn hooks/bash-prehook.ts as Claude Code would for a Bash PreToolUse hook
+ * Spawn the client-owned Claude or Codex Bash PreToolUse hook entrypoint.
  *
  * Feeds the hook a PreToolUse JSON payload for `commandText` on stdin and
  * collects its decision output. `cwd` is the simulated Bash tool working
@@ -156,6 +160,9 @@ export async function runBashPrehook(
   options: RunBashPrehookOptions = {},
 ): Promise<BashPrehookResult> {
   const denoDir = await getCurrentDenoDir();
+  const hookPath = options.client === "codex"
+    ? "hooks/codex/bash-prehook.ts"
+    : "hooks/bash-prehook.ts";
   const command = new Deno.Command(Deno.execPath(), {
     args: [
       "run",
@@ -163,7 +170,7 @@ export async function runBashPrehook(
       "--allow-write",
       "--allow-env",
       "--allow-run",
-      "hooks/bash-prehook.ts",
+      hookPath,
     ],
     cwd: Deno.cwd(),
     env: {
@@ -181,15 +188,27 @@ export async function runBashPrehook(
   const writer = child.stdin.getWriter();
   const toolInput: Record<string, unknown> = { command: commandText };
   if (options.runInBackground) toolInput.run_in_background = true;
-  await writer.write(
-    new TextEncoder().encode(
-      JSON.stringify({
-        hookEventName: "PreToolUse",
-        tool_name: "Bash",
-        tool_input: toolInput,
-      }),
-    ),
-  );
+  const hookInput = options.client === "codex"
+    ? {
+      session_id: options.sessionId ?? "safesh-test",
+      turn_id: options.turnId ?? "safesh-test-turn",
+      cwd,
+      hook_event_name: "PreToolUse",
+      permission_mode: "default",
+      tool_name: "Bash",
+      tool_use_id: "safesh-test-tool-use",
+      tool_input: toolInput,
+    }
+    : {
+      session_id: options.sessionId ?? "safesh-test",
+      cwd,
+      hook_event_name: "PreToolUse",
+      permission_mode: "default",
+      tool_name: "Bash",
+      tool_use_id: "safesh-test-tool-use",
+      tool_input: toolInput,
+    };
+  await writer.write(new TextEncoder().encode(JSON.stringify(hookInput)));
   await writer.close();
 
   const output = await child.output();

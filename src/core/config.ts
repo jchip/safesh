@@ -10,7 +10,7 @@
  * Permissions merge as union, deny rules also merge as union.
  */
 
-import { join, fromFileUrl } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import type {
   EnvConfig,
   ExternalCommandConfig,
@@ -22,11 +22,7 @@ import type {
 import { configError } from "./errors.ts";
 import { resolveWorkspace } from "./permissions.ts";
 import { DEFAULT_TIMEOUT_MS } from "./defaults.ts";
-import {
-  expandGitWorkspaceRoots,
-  findGitWorkspaceRoots,
-  findProjectRoot,
-} from "./project-root.ts";
+import { expandGitWorkspaceRoots, findGitWorkspaceRoots, findProjectRoot } from "./project-root.ts";
 import { mergeSessionPermissions } from "./session.ts";
 import { ensureDir, readJsonFile, writeJsonFile } from "./io-utils.ts";
 
@@ -57,109 +53,276 @@ const SAFE_COMMANDS = [
   // ============================================================================
   // Text Processing
   // ============================================================================
-  "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "tee", "xargs",
-  "sed", "awk", "grep", "rg", "egrep", "fgrep",
-  "diff", "cmp", "comm", "paste", "join", "column",
-  "fold", "fmt", "nl", "rev", "tac", "expand", "unexpand",
-  "strings", "jq", "yq", "python3",
+  "cat",
+  "head",
+  "tail",
+  "wc",
+  "sort",
+  "uniq",
+  "cut",
+  "tr",
+  "tee",
+  "xargs",
+  "sed",
+  "awk",
+  "grep",
+  "rg",
+  "egrep",
+  "fgrep",
+  "diff",
+  "cmp",
+  "comm",
+  "paste",
+  "join",
+  "column",
+  "fold",
+  "fmt",
+  "nl",
+  "rev",
+  "tac",
+  "expand",
+  "unexpand",
+  "strings",
+  "jq",
+  "yq",
+  "python3",
 
   // ============================================================================
   // File/Directory Inspection (read-only)
   // ============================================================================
-  "ls", "find", "fd", "tree", "du", "df", "file", "stat", "pwd",
-  "locate", "whereis", "type",
-  "readlink", "realpath", "basename", "dirname",
+  "ls",
+  "find",
+  "fd",
+  "tree",
+  "du",
+  "df",
+  "file",
+  "stat",
+  "pwd",
+  "locate",
+  "whereis",
+  "type",
+  "readlink",
+  "realpath",
+  "basename",
+  "dirname",
 
   // ============================================================================
   // Encoding & Hashing
   // ============================================================================
-  "base64", "xxd", "od", "hexdump",
-  "md5", "md5sum", "shasum", "sha256sum", "sha512sum", "cksum", "sum",
+  "base64",
+  "xxd",
+  "od",
+  "hexdump",
+  "md5",
+  "md5sum",
+  "shasum",
+  "sha256sum",
+  "sha512sum",
+  "cksum",
+  "sum",
 
   // ============================================================================
   // Compression (read-only operations)
   // ============================================================================
-  "zcat", "bzcat", "xzcat", "lzcat",
-  "gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lz4", "zstd",
-  "tar", "zip", "unzip", "zipinfo",
+  "zcat",
+  "bzcat",
+  "xzcat",
+  "lzcat",
+  "gzip",
+  "gunzip",
+  "bzip2",
+  "bunzip2",
+  "xz",
+  "unxz",
+  "lz4",
+  "zstd",
+  "tar",
+  "zip",
+  "unzip",
+  "zipinfo",
 
   // ============================================================================
   // Process & System Info
   // ============================================================================
-  "ps", "pgrep", "pkill", "lsof", "fuser",
+  "ps",
+  "pgrep",
+  "pkill",
+  "lsof",
+  "fuser",
   "tmux",
-  "top", "htop", "uptime", "w", "who", "users", "last", "lastlog",
-  "uname", "hostname", "hostnamectl", "arch", "nproc", "lscpu", "lsmem",
-  "free", "vmstat", "iostat", "mpstat", "sar",
-  "lsblk", "lsusb", "lspci", "lsmod",
+  "top",
+  "htop",
+  "uptime",
+  "w",
+  "who",
+  "users",
+  "last",
+  "lastlog",
+  "uname",
+  "hostname",
+  "hostnamectl",
+  "arch",
+  "nproc",
+  "lscpu",
+  "lsmem",
+  "free",
+  "vmstat",
+  "iostat",
+  "mpstat",
+  "sar",
+  "lsblk",
+  "lsusb",
+  "lspci",
+  "lsmod",
 
   // ============================================================================
   // User & Group Info
   // ============================================================================
-  "whoami", "id", "groups", "getent", "finger",
+  "whoami",
+  "id",
+  "groups",
+  "getent",
+  "finger",
 
   // ============================================================================
   // Date, Time & Locale
   // ============================================================================
-  "date", "cal", "ncal", "timedatectl",
-  "locale", "localectl",
+  "date",
+  "cal",
+  "ncal",
+  "timedatectl",
+  "locale",
+  "localectl",
 
   // ============================================================================
   // Math & Sequences
   // ============================================================================
-  "seq", "bc", "dc", "expr", "factor", "numfmt",
+  "seq",
+  "bc",
+  "dc",
+  "expr",
+  "factor",
+  "numfmt",
 
   // ============================================================================
   // Help & Documentation
   // ============================================================================
-  "man", "info", "apropos", "whatis", "help",
+  "man",
+  "info",
+  "apropos",
+  "whatis",
+  "help",
 
   // ============================================================================
   // Version Control
   // ============================================================================
-  "git", "hg", "svn",
+  "git",
+  "hg",
+  "svn",
 
   // ============================================================================
   // Network Info (read-only)
   // ============================================================================
-  "ping", "host", "dig", "nslookup", "whois",
-  "netstat", "ss", "ip", "ifconfig", "route", "arp",
-  "traceroute", "tracepath", "mtr",
-  "curl", "wget", "fetch",
+  "ping",
+  "host",
+  "dig",
+  "nslookup",
+  "whois",
+  "netstat",
+  "ss",
+  "ip",
+  "ifconfig",
+  "route",
+  "arp",
+  "traceroute",
+  "tracepath",
+  "mtr",
+  "curl",
+  "wget",
+  "fetch",
 
   // ============================================================================
   // Shell Utilities
   // ============================================================================
-  "echo", "printf", "yes", "true", "false", "test", "[",
-  "env", "printenv", "getconf",
-  "sleep", "timeout", "time", "watch",
+  "echo",
+  "printf",
+  "yes",
+  "true",
+  "false",
+  "test",
+  "[",
+  "env",
+  "printenv",
+  "getconf",
+  "sleep",
+  "timeout",
+  "time",
+  "watch",
   "parallel",
-  "which", "command", "hash",
-  "tput", "clear", "reset",
+  "which",
+  "command",
+  "hash",
+  "tput",
+  "clear",
+  "reset",
 
   // ============================================================================
   // File Creation (requires write permission to target)
   // ============================================================================
-  "touch", "mkdir", "mktemp", "mkfifo",
+  "touch",
+  "mkdir",
+  "mktemp",
+  "mkfifo",
 
   // ============================================================================
   // Package Managers (read-only operations like list/search)
   // ============================================================================
-  "brew", "apt", "apt-cache", "dpkg", "rpm", "yum", "dnf", "pacman", "apk",
-  "pip", "pip3", "gem", "cargo", "go", "rustc", "rustup",
+  "brew",
+  "apt",
+  "apt-cache",
+  "dpkg",
+  "rpm",
+  "yum",
+  "dnf",
+  "pacman",
+  "apk",
+  "pip",
+  "pip3",
+  "gem",
+  "cargo",
+  "go",
+  "rustc",
+  "rustup",
   "swift",
-  "fyn", "nvx", "xrun", "npm", "pnpm", "yarn",
+  "fyn",
+  "nvx",
+  "xrun",
+  "npm",
+  "pnpm",
+  "yarn",
   // NOTE: node, deno, bun removed - can execute arbitrary code, require explicit permission
 
   // ============================================================================
   // Build Tools
   // ============================================================================
-  "make", "cmake", "meson", "ninja", "autoconf", "automake", "configure",
+  "make",
+  "cmake",
+  "meson",
+  "ninja",
+  "autoconf",
+  "automake",
+  "configure",
 
   // ============================================================================
   // Container & Virtualization
   // ============================================================================
-  "docker", "docker-compose", "colima", "podman", "kubectl", "k9s",
+  "docker",
+  "docker-compose",
+  "colima",
+  "podman",
+  "kubectl",
+  "k9s",
 
   // ============================================================================
   // Database Tools
@@ -330,10 +493,12 @@ function mergeExternalCommands(
       const existing = result[cmd];
       result[cmd] = {
         allow: config.allow ?? existing.allow,
-        denyFlags: [...new Set([
-          ...(existing.denyFlags ?? []),
-          ...(config.denyFlags ?? []),
-        ])],
+        denyFlags: [
+          ...new Set([
+            ...(existing.denyFlags ?? []),
+            ...(config.denyFlags ?? []),
+          ]),
+        ],
         requireFlags: config.requireFlags ?? existing.requireFlags,
         pathArgs: config.pathArgs ?? existing.pathArgs,
       };
@@ -715,7 +880,11 @@ async function loadLocalConfig(cwd: string): Promise<{ config: SafeShellConfig |
       },
     };
   } catch (error) {
-    console.warn(`⚠️  Failed to load local config from ${localPath}: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `⚠️  Failed to load local config from ${localPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
     return { config: null };
   }
 }
@@ -761,7 +930,9 @@ export async function saveToLocalJson(cwd: string, commands: string[]): Promise<
 
   // Load existing and merge
   const existing = await loadLocalJsonConfig(cwd);
-  const allCommands = new Set<string>(existing?.allowedCommands?.filter((c): c is string => typeof c === "string") ?? []);
+  const allCommands = new Set<string>(
+    existing?.allowedCommands?.filter((c): c is string => typeof c === "string") ?? [],
+  );
 
   for (const cmd of commands) {
     allCommands.add(cmd);
@@ -828,7 +999,9 @@ export async function loadConfig(
   // config.local.json has highest priority - machine-writable for "always allow"
   const localJsonConfig = await loadLocalJsonConfig(cwd);
   if (localJsonConfig?.allowedCommands && localJsonConfig.allowedCommands.length > 0) {
-    const commands = localJsonConfig.allowedCommands.filter((c): c is string => typeof c === "string");
+    const commands = localJsonConfig.allowedCommands.filter((c): c is string =>
+      typeof c === "string"
+    );
     if (commands.length > 0) {
       config = mergeConfigs(config, {
         external: Object.fromEntries(commands.map((cmd) => [cmd, { allow: true }])),
@@ -1113,7 +1286,6 @@ function validateExternalCommands(config: SafeShellConfig): ConfigValidation {
         );
       }
     }
-
   }
 
   return result;

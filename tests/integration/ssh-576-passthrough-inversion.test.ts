@@ -9,7 +9,11 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { type BashPrehookResult, runBashPrehook as spawnBashPrehook, withTestDir } from "../helpers.ts";
+import {
+  type BashPrehookResult,
+  runBashPrehook as spawnBashPrehook,
+  withTestDir,
+} from "../helpers.ts";
 
 /** Run the prehook with this suite's session id. */
 function runBashPrehook(commandText: string, cwd: string): Promise<BashPrehookResult> {
@@ -19,15 +23,6 @@ function runBashPrehook(commandText: string, cwd: string): Promise<BashPrehookRe
 async function setupProject(projectDir: string): Promise<void> {
   await Deno.mkdir(`${projectDir}/.git`, { recursive: true });
   await Deno.writeTextFile(`${projectDir}/data.txt`, "beta\nalpha\nfoo bar\n");
-}
-
-/** Passthrough = the hook stays silent and exits 0. */
-function assertPassthrough(
-  result: { code: number; stdout: string; stderr: string },
-  label: string,
-): void {
-  assertEquals(result.code, 0, `${label}: exit code (stderr=${result.stderr})`);
-  assertEquals(result.stdout, "", `${label}: passthrough must emit no stdout`);
 }
 
 /** Transpile fallback = an allow decision rewriting the command to desh. */
@@ -40,7 +35,15 @@ function assertRewriteToDesh(
   assert(result.stdout.includes("desh"), `${label}: expected desh rewrite`);
 }
 
-describe("SSH-576 passthrough inversion", () => {
+function assertNativePassthrough(
+  result: { code: number; stdout: string; stderr: string },
+  label: string,
+): void {
+  assertEquals(result.code, 0, `${label}: exit code (stderr=${result.stderr})`);
+  assertEquals(result.stdout, "", `${label}: expected empty hook output`);
+}
+
+describe("SSH-576 shared hook passthrough isolation", () => {
   it("passes through an analyzable allowed pipeline", async () => {
     await withTestDir("ssh576-pipeline", async (projectDir) => {
       await setupProject(projectDir);
@@ -48,18 +51,18 @@ describe("SSH-576 passthrough inversion", () => {
         "grep -n foo data.txt | sort | head -2",
         projectDir,
       );
-      assertPassthrough(result, "allowed pipeline");
+      assertNativePassthrough(result, "allowed pipeline");
     });
   });
 
-  it("passes through command substitution with allowed commands", async () => {
+  it("passes through an analyzable allowed command substitution", async () => {
     await withTestDir("ssh576-cmdsub", async (projectDir) => {
       await setupProject(projectDir);
       const result = await runBashPrehook(
         "echo $(sort data.txt | head -1)",
         projectDir,
       );
-      assertPassthrough(result, "allowed cmdsub");
+      assertNativePassthrough(result, "allowed command substitution");
     });
   });
 
@@ -70,7 +73,7 @@ describe("SSH-576 passthrough inversion", () => {
         "sort data.txt > sorted.txt 2>/dev/null",
         projectDir,
       );
-      assertPassthrough(result, "in-project redirect");
+      assertNativePassthrough(result, "in-project redirect");
     });
   });
 
@@ -125,12 +128,12 @@ describe("SSH-576 passthrough inversion", () => {
     });
   });
 
-  it("passes through matching globs but falls back on non-matching ones (SSH-579)", async () => {
+  it("passes matching globs and rewrites non-matching globs (SSH-579)", async () => {
     await withTestDir("ssh579-globs", async (projectDir) => {
       await setupProject(projectDir);
 
       const matching = await runBashPrehook("wc -l *.txt", projectDir);
-      assertPassthrough(matching, "matching glob");
+      assertNativePassthrough(matching, "matching glob");
 
       const nonMatching = await runBashPrehook("wc -l *.nomatch-ext", projectDir);
       assertRewriteToDesh(nonMatching, "non-matching glob");
@@ -153,7 +156,7 @@ describe("SSH-576 passthrough inversion", () => {
     });
   });
 
-  it("honors passthroughAnalyzable: false", async () => {
+  it("honors the legacy passthrough kill switch", async () => {
     await withTestDir("ssh576-config-off", async (projectDir) => {
       await setupProject(projectDir);
       await Deno.mkdir(`${projectDir}/.config/safesh`, { recursive: true });
@@ -165,7 +168,7 @@ describe("SSH-576 passthrough inversion", () => {
         "grep -n foo data.txt | sort | head -2",
         projectDir,
       );
-      assertRewriteToDesh(result, "config kill-switch");
+      assertRewriteToDesh(result, "legacy passthrough kill switch");
     });
   });
 });

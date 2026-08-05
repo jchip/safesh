@@ -2,16 +2,32 @@
 
 This directory contains hook scripts that integrate SafeShell with external tools and systems.
 
-## Bash Pre-Hook
+## Entry points
 
-The bash pre-hook (`bash-prehook.ts`) enables executing bash commands through SafeShell's sandboxed TypeScript runtime. It transpiles bash syntax to TypeScript and executes it using desh.
+- `bash-prehook.ts` is the shared compatibility hook for Claude Code, Gemini CLI, and other coding
+  CLIs. Preserve its existing compatibility and native-passthrough behavior when adding
+  client-specific features.
+- `codex/bash-prehook.ts` is the Codex `PreToolUse` hook. Codex-only routing belongs in this
+  entrypoint.
+- `codex/safesh-permission-hook.ts` is the Codex `PermissionRequest` hook. It approves only a
+  short-lived, exact SafeShell runner command emitted by the Codex pre-hook.
+
+Do not configure Claude, Gemini, or another CLI to use the files under `codex/`. See
+[`../docs/HOOKS.md`](../docs/HOOKS.md) for client configuration examples.
+
+## Shared Bash Pre-Hook
+
+The shared bash pre-hook (`bash-prehook.ts`) preserves eligible native Bash passthrough and routes
+commands that require SafeShell through its sandboxed TypeScript runtime. It transpiles Bash syntax
+to TypeScript and executes rewritten commands using `desh`.
 
 ### What it Does
 
-1. **Receives** bash commands (via stdin or arguments)
-2. **Transpiles** bash syntax to TypeScript using SafeShell's transpiler2
-3. **Executes** the TypeScript code in a sandboxed Deno runtime via desh
-4. **Returns** output with proper exit codes, stdout/stderr separation
+1. **Receives** Bash commands (via stdin or arguments)
+2. **Preserves** native execution for commands eligible for compatibility passthrough
+3. **Transpiles** rewritten Bash syntax to TypeScript using SafeShell's transpiler2
+4. **Executes** rewritten code in a sandboxed Deno runtime via `desh`
+5. **Returns** output with proper exit codes and stdout/stderr separation
 
 ### Use Cases
 
@@ -123,6 +139,15 @@ Example configuration:
   }
 }
 ```
+
+### Integration with Codex
+
+Codex must use `codex/bash-prehook.ts`, not the shared entrypoint. It also registers
+`codex/safesh-permission-hook.ts` for `PermissionRequest` so only the correlated SafeShell runner can
+be auto-approved. The Codex pre-hook routes every non-control-plane Bash command through SafeShell;
+that policy does not change the shared entrypoint. Complete project and global configuration
+examples are in
+[`../docs/HOOKS.md`](../docs/HOOKS.md).
 
 ### Testing the Hook
 
@@ -263,3 +288,5 @@ When modifying the hook:
 3. Verify exit codes are preserved
 4. Check stderr separation works correctly
 5. Test with Claude Code integration if applicable
+6. Keep Codex-only routing and permission behavior under `hooks/codex/`
+7. Add cross-client regression coverage before changing shared-hook behavior
