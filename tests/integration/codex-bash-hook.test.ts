@@ -37,13 +37,22 @@ async function runPermissionHook(input: Record<string, unknown>) {
   };
 }
 
-Deno.test("SSH-650: project Codex config registers the SafeShell Bash hook", async () => {
-  const config = await Deno.readTextFile(".codex/config.toml");
+Deno.test("SSH-669: Codex hook config is a user-install source, not a project layer", async () => {
+  let projectConfigExists = true;
+  try {
+    await Deno.stat(".codex/config.toml");
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) projectConfigExists = false;
+    else throw error;
+  }
+  assertEquals(projectConfigExists, false);
+
+  const config = await Deno.readTextFile("hooks/codex/config.toml");
   assertStringIncludes(config, 'matcher = "^Bash$"');
-  assertStringIncludes(config, "$(git rev-parse --show-toplevel)/hooks/codex/bash-prehook.ts");
+  assertStringIncludes(config, 'command = "__SAFESH_CODEX_BASH_PREHOOK__"');
   assertStringIncludes(config, 'statusMessage = "Routing Bash through SafeShell"');
   assertStringIncludes(config, "[[hooks.PermissionRequest]]");
-  assertStringIncludes(config, "hooks/codex/safesh-permission-hook.ts");
+  assertStringIncludes(config, 'command = "__SAFESH_CODEX_PERMISSION_HOOK__"');
 });
 
 Deno.test("SSH-657: Codex simple Bash command is rewritten to desh", async () => {
