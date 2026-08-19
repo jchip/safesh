@@ -6,10 +6,14 @@ A safe JavaScript/TypeScript shell in a sandboxed Deno runtime for bash tool rep
 
 SafeShell is a security-first execution environment built on Deno that provides:
 
-- **Sandboxed Code Execution** - Run JS/TS code with pre-configured filesystem, network, and command permissions
-- **Whitelisted External Commands** - Control exactly which commands (git, docker, etc.) can run, with subcommand and flag-level restrictions
-- **Configurable Permissions** - Whitelist commands upfront or grant permissions on-demand when blocked
-- **Built-in Standard Library** - File operations, text processing, and shell utilities available by default
+- **Sandboxed Code Execution** - Run JS/TS code with pre-configured filesystem, network, and command
+  permissions
+- **Whitelisted External Commands** - Control exactly which commands (git, docker, etc.) can run,
+  with subcommand and flag-level restrictions
+- **Configurable Permissions** - Whitelist commands upfront or grant permissions on-demand when
+  blocked
+- **Built-in Standard Library** - File operations, text processing, and shell utilities available by
+  default
 - **MCP Server Integration** - Use as a Model Context Protocol server for AI assistants like Claude
 - **Session Management** - Persistent state (cwd, env, variables) across multiple executions
 - **Background Jobs** - Launch and manage long-running processes
@@ -39,7 +43,8 @@ SafeShell is a security-first execution environment built on Deno that provides:
 - **Shell Support** - Persistent state (cwd, env, variables) between tool calls
 - **Background Jobs** - Launch async jobs with `background: true`, poll or wait for completion
 - **Structured Errors** - AI-friendly error messages with suggestions
-- **Controlled Permissions** - Whitelisted commands run automatically; blocked commands trigger a permission flow
+- **Controlled Permissions** - Whitelisted commands run automatically; blocked commands trigger a
+  permission flow
 
 ## Installation
 
@@ -119,36 +124,42 @@ settings. Restart Codex, then review and trust the installed definitions with `/
 
 ### Common Gotchas
 
-- **`$.ENV`** is a plain object (not Map like Deno.env). Use `$.ENV.FOO = 'bar'` not `.set()`. Persists across calls.
+- **`$.ENV`** is a plain object (not Map like Deno.env). Use `$.ENV.FOO = 'bar'` not `.set()`.
+  Persists across calls.
 - **`ls()`** returns `string[]` (names only); `ls('-l')` returns formatted strings, NOT objects.
-- **`$.glob()`** returns `File` objects `{path, base, contents}`, not strings. Use `f.path` for filtering.
-- **Streaming**: `$.cat().head(1)` returns the first **chunk** (buffer), not the first line. Use `$.cat().lines().head(1)` for line-based operations.
+- **`$.glob()`** returns `File` objects `{path, base, contents}`, not strings. Use `f.path` for
+  filtering.
+- **Streaming**: `$.cat().head(1)` returns the first **chunk** (buffer), not the first line. Use
+  `$.cat().lines().head(1)` for line-based operations.
 
 ### The Fluent Shell API (`$`)
 
-The primary way to use SafeShell is through the fluent `$` API - a chainable, shell-like interface for file and text processing:
+The primary way to use SafeShell is through the fluent `$` API - a chainable, shell-like interface
+for file and text processing:
 
 ```typescript
 // Read and process files with shell-like pipelines
-await $('app.log').lines().grep(/ERROR/).head(10).print();
+await $("app.log").lines().grep(/ERROR/).head(10).print();
 
 // Collect results
-const errors = await $('app.log').lines().grep(/ERROR/).collect();
+const errors = await $("app.log").lines().grep(/ERROR/).collect();
 
 // Transform and save
-await $('data.txt').lines().map(l => l.toUpperCase()).save('output.txt');
+await $("data.txt").lines().map((l) => l.toUpperCase()).save("output.txt");
 
 // From arrays or text
-await $.from(['apple', 'banana', 'cherry']).grep(/a/).print();
-const lines = await $.text('hello\nworld').lines().collect();
+await $.from(["apple", "banana", "cherry"]).grep(/a/).print();
+const lines = await $.text("hello\nworld").lines().collect();
 
 // Count and analyze
-const errorCount = await $('server.log').lines().grep(/ERROR/).count();
-const first = await $('config.json').lines().first();
+const errorCount = await $("server.log").lines().grep(/ERROR/).count();
+const first = await $("config.json").lines().first();
 ```
 
 **Available methods:**
-- **Transforms**: `.lines()`, `.grep(pattern)`, `.head(n)`, `.tail(n)`, `.filter(fn)`, `.map(fn)`, `.take(n)`
+
+- **Transforms**: `.lines()`, `.grep(pattern)`, `.head(n)`, `.tail(n)`, `.filter(fn)`, `.map(fn)`,
+  `.take(n)`
 - **Terminals**: `.print()`, `.save(path)`, `.collect()`, `.first()`, `.count()`, `.forEach(fn)`
 - **Escape hatch**: `.stream()` - access underlying Stream for advanced operations
 
@@ -156,16 +167,16 @@ const first = await $('config.json').lines().first();
 
 ```typescript
 // Run commands with fluent API
-const result = await cmd('ls', ['-la']).exec();
+const result = await cmd("ls", ["-la"]).exec();
 console.log(result.stdout);
 
 // Git, Docker, Deno shortcuts
-await git('status').exec();
-await docker('ps').exec();
-await deno('test').exec();
+await git("status").exec();
+await docker("ps").exec();
+await deno("test").exec();
 
 // Pipe commands together
-await cmd('cat', ['file.txt']).pipe('grep', ['pattern']).pipe('sort').exec();
+await cmd("cat", ["file.txt"]).pipe("grep", ["pattern"]).pipe("sort").exec();
 ```
 
 ### 1. Create a Config File
@@ -251,22 +262,22 @@ Once configured in your MCP client (e.g., Claude Desktop), use the tools:
 
 SafeShell provides three security presets:
 
-| Preset | Use Case | Read | Write | Network | Commands |
-|--------|----------|------|-------|---------|----------|
-| `strict` | Untrusted code | CWD, /tmp | /tmp only | None | None |
-| `standard` | Most projects | CWD, /tmp | CWD, /tmp | None | lsof, ps |
-| `permissive` | Development | CWD, /tmp, HOME | CWD, /tmp | All | git, npm, docker, curl, + many inspection tools |
+| Preset       | Use Case       | Read            | Write     | Network | Commands                                        |
+| ------------ | -------------- | --------------- | --------- | ------- | ----------------------------------------------- |
+| `strict`     | Untrusted code | CWD, /tmp       | /tmp only | None    | None                                            |
+| `standard`   | Most projects  | CWD, /tmp       | CWD, /tmp | None    | lsof, ps                                        |
+| `permissive` | Development    | CWD, /tmp, HOME | CWD, /tmp | All     | git, npm, docker, curl, + many inspection tools |
 
 ### Configuration Hierarchy
 
 Configs are loaded and merged in this order (later overrides earlier):
 
-| Level | Path | Notes |
-|-------|------|-------|
-| Built-in | (in code) | `STANDARD_PRESET` default |
-| Global | `~/.config/safesh/config.[ts\|json]` | Your personal defaults (JSON auto-saved on "always allow (all projects)") |
-| Project | `.config/safesh/config.[ts\|json]` | Project-specific |
-| Local | `.config/safesh/config.local.[ts\|json]` | Machine-writable (auto-saved on "always allow (this project)") |
+| Level    | Path                                     | Notes                                                                     |
+| -------- | ---------------------------------------- | ------------------------------------------------------------------------- |
+| Built-in | (in code)                                | `STANDARD_PRESET` default                                                 |
+| Global   | `~/.config/safesh/config.[ts\|json]`     | Your personal defaults (JSON auto-saved on "always allow (all projects)") |
+| Project  | `.config/safesh/config.[ts\|json]`       | Project-specific                                                          |
+| Local    | `.config/safesh/config.local.[ts\|json]` | Machine-writable (auto-saved on "always allow (this project)")            |
 
 **Note:** JSON overrides TS at each level.
 
@@ -279,20 +290,20 @@ interface SafeShellConfig {
 
   // File system and command permissions
   permissions?: {
-    read?: string[];        // Paths for read access: ["${CWD}", "/tmp"]
-    write?: string[];       // Paths for write access
-    net?: string[] | true;  // Network hosts or true for all
-    run?: string[];         // Allowed external commands
-    env?: string[];         // Allowed environment variables
+    read?: string[]; // Paths for read access: ["${CWD}", "/tmp"]
+    write?: string[]; // Paths for write access
+    net?: string[] | true; // Network hosts or true for all
+    run?: string[]; // Allowed external commands
+    env?: string[]; // Allowed environment variables
   };
 
   // External command configuration
   external?: {
     [command: string]: {
-      allow: boolean | string[];  // true or specific subcommands
-      denyFlags?: string[];       // Forbidden flags
-      requireFlags?: string[];    // Required flags
-      pathArgs?: {                // Path argument validation
+      allow: boolean | string[]; // true or specific subcommands
+      denyFlags?: string[]; // Forbidden flags
+      requireFlags?: string[]; // Required flags
+      pathArgs?: { // Path argument validation
         autoDetect?: boolean;
         validateSandbox?: boolean;
         positions?: number[];
@@ -302,25 +313,25 @@ interface SafeShellConfig {
 
   // Environment variable handling
   env?: {
-    allow?: string[];  // Allowed variables (with wildcards)
-    mask?: string[];   // Masked variables (with wildcards)
+    allow?: string[]; // Allowed variables (with wildcards)
+    mask?: string[]; // Masked variables (with wildcards)
   };
 
   // Import security policy
   imports?: {
-    trusted?: string[];  // Always allowed: ["jsr:@std/*", "safesh:*"]
-    allowed?: string[];  // User-allowed imports
-    blocked?: string[];  // Blocked patterns: ["npm:*", "http:*"]
+    trusted?: string[]; // Always allowed: ["jsr:@std/*", "safesh:*"]
+    allowed?: string[]; // User-allowed imports
+    blocked?: string[]; // Blocked patterns: ["npm:*", "http:*"]
   };
 
   // Task definitions
   tasks?: {
     [name: string]: string | {
-      cmd?: string;           // JS/TS code to execute
-      parallel?: string[];    // Tasks to run concurrently
-      serial?: string[];      // Tasks to run sequentially
-      cwd?: string;           // Working directory
-      env?: Record<string, string>;  // Additional env vars
+      cmd?: string; // JS/TS code to execute
+      parallel?: string[]; // Tasks to run concurrently
+      serial?: string[]; // Tasks to run sequentially
+      cwd?: string; // Working directory
+      env?: Record<string, string>; // Additional env vars
     };
   };
 
@@ -347,6 +358,7 @@ When running as an MCP server, SafeShell exposes these tools:
 Execute JavaScript/TypeScript code in a sandboxed environment.
 
 **Parameters:**
+
 - `code` (required) - JS/TS code to execute
 - `shellId` (optional) - Shell ID for persistent state
 - `background` (optional) - Run asynchronously, returns `{ jobId, pid }`
@@ -354,6 +366,7 @@ Execute JavaScript/TypeScript code in a sandboxed environment.
 - `env` (optional) - Additional environment variables
 
 **Example (sync):**
+
 ```typescript
 {
   "code": "const files = await fs.readDir('.'); console.log(files)",
@@ -363,6 +376,7 @@ Execute JavaScript/TypeScript code in a sandboxed environment.
 ```
 
 **Example (background):**
+
 ```typescript
 {
   "code": "await longRunningTask()",
@@ -377,10 +391,12 @@ Execute JavaScript/TypeScript code in a sandboxed environment.
 Execute a task defined in configuration.
 
 **Parameters:**
+
 - `name` (required) - Task name from config.tasks
 - `shellId` (optional) - Shell ID for context
 
 **Example:**
+
 ```typescript
 {
   "name": "test",
@@ -393,6 +409,7 @@ Execute a task defined in configuration.
 Shells provide persistent state (cwd, env, variables) between tool calls.
 
 **`startShell`** - Create a new shell
+
 ```typescript
 {
   "cwd": "/path/to/project",
@@ -402,6 +419,7 @@ Shells provide persistent state (cwd, env, variables) between tool calls.
 ```
 
 **`updateShell`** - Update shell state
+
 ```typescript
 {
   "shellId": "abc-123",
@@ -411,6 +429,7 @@ Shells provide persistent state (cwd, env, variables) between tool calls.
 ```
 
 **`endShell`** - End a shell and clean up
+
 ```typescript
 {
   "shellId": "abc-123"
@@ -424,6 +443,7 @@ Shells provide persistent state (cwd, env, variables) between tool calls.
 All executions are tracked as jobs within their shell. Jobs provide history and debugging.
 
 **`listJobs`** - List jobs in a shell
+
 ```typescript
 {
   "shellId": "abc-123",
@@ -437,6 +457,7 @@ All executions are tracked as jobs within their shell. Jobs provide history and 
 ```
 
 **`getJobOutput`** - Get buffered output from a job
+
 ```typescript
 {
   "shellId": "abc-123",
@@ -447,6 +468,7 @@ All executions are tracked as jobs within their shell. Jobs provide history and 
 ```
 
 **`waitJob`** - Wait for a background job to complete
+
 ```typescript
 {
   "shellId": "abc-123",
@@ -457,6 +479,7 @@ All executions are tracked as jobs within their shell. Jobs provide history and 
 ```
 
 **`killJob`** - Stop a running job
+
 ```typescript
 {
   "shellId": "abc-123",
@@ -471,7 +494,8 @@ SafeShell implements a defense-in-depth security model:
 
 ### 1. Deno Permissions Layer
 
-All code executes within Deno's permission system. Permissions are configured once and applied consistently.
+All code executes within Deno's permission system. Permissions are configured once and applied
+consistently.
 
 ### 2. Path Sandbox
 
@@ -504,7 +528,7 @@ Sensitive environment variables are automatically masked:
 
 ```typescript
 env: {
-  mask: ["*_KEY", "*_SECRET", "*_TOKEN", "*_PASSWORD"]
+  mask: ["*_KEY", "*_SECRET", "*_TOKEN", "*_PASSWORD"];
 }
 ```
 
@@ -524,37 +548,37 @@ Configs are validated for security issues:
 
 ```javascript
 // Process log files - simple and readable
-await $('app.log').lines().grep(/ERROR/).head(10).print();
+await $("app.log").lines().grep(/ERROR/).head(10).print();
 
 // Collect results into array
-const errors = await $('app.log').lines().grep(/ERROR/).collect();
+const errors = await $("app.log").lines().grep(/ERROR/).collect();
 
 // Filter, transform, and save
-await $('data.csv')
+await $("data.csv")
   .lines()
-  .filter(line => !line.startsWith('#'))
-  .map(line => line.toUpperCase())
-  .save('output.csv');
+  .filter((line) => !line.startsWith("#"))
+  .map((line) => line.toUpperCase())
+  .save("output.csv");
 
 // Count occurrences
-const errorCount = await $('server.log').lines().grep(/ERROR/).count();
+const errorCount = await $("server.log").lines().grep(/ERROR/).count();
 
 // Get first match
-const firstError = await $('app.log').lines().grep(/FATAL/).first();
+const firstError = await $("app.log").lines().grep(/FATAL/).first();
 
 // Create from arrays or text
-const result = await $.from(['apple', 'banana', 'cherry'])
+const result = await $.from(["apple", "banana", "cherry"])
   .grep(/a/)
-  .collect();  // ['apple', 'banana']
+  .collect(); // ['apple', 'banana']
 
-const lines = await $.text('line1\nline2\nline3')
+const lines = await $.text("line1\nline2\nline3")
   .lines()
-  .map(l => l.toUpperCase())
-  .collect();  // ['LINE1', 'LINE2', 'LINE3']
+  .map((l) => l.toUpperCase())
+  .collect(); // ['LINE1', 'LINE2', 'LINE3']
 
 // Iterate with for-await-of
-for await (const line of $('log.txt').lines().grep(/ERROR/)) {
-  console.log('Found:', line);
+for await (const line of $("log.txt").lines().grep(/ERROR/)) {
+  console.log("Found:", line);
 }
 ```
 
@@ -562,22 +586,22 @@ for await (const line of $('log.txt').lines().grep(/ERROR/)) {
 
 ```javascript
 // Execute commands
-const result = await cmd('ls', ['-la']).exec();
+const result = await cmd("ls", ["-la"]).exec();
 console.log(result.stdout);
 
 // Git, Docker, Deno shortcuts
-const status = await git('status', '--short').exec();
-const containers = await docker('ps').exec();
-const version = await deno('--version').exec();
+const status = await git("status", "--short").exec();
+const containers = await docker("ps").exec();
+const version = await deno("--version").exec();
 
 // Pipe commands together (like Unix pipes)
-await cmd('echo', ['hello\nworld\nfoo'])
-  .pipe('grep', ['o'])
-  .pipe('sort')
+await cmd("echo", ["hello\nworld\nfoo"])
+  .pipe("grep", ["o"])
+  .pipe("sort")
   .exec();
 
 // Stream command output
-const commits = await git('log', '--oneline')
+const commits = await git("log", "--oneline")
   .stdout()
   .pipe(lines())
   .pipe(grep(/fix:/))
@@ -610,17 +634,17 @@ for await (const entry of fs.walk(".", { exts: [".ts"] })) {
 
 ```javascript
 // Use $ escape hatch for advanced Stream operations
-const stream = $('data.txt').lines().stream();
+const stream = $("data.txt").lines().stream();
 await stream.pipe(customTransform()).collect();
 
 // Or use low-level streaming API directly
 await glob("src/**/*.ts")
-  .pipe(filter(f => !f.path.includes(".test.")))
-  .pipe(flatMap(file =>
+  .pipe(filter((f) => !f.path.includes(".test.")))
+  .pipe(flatMap((file) =>
     cat(file.path)
       .pipe(lines())
       .pipe(grep(/TODO/))
-      .pipe(map(line => ({ file: file.path, line })))
+      .pipe(map((line) => ({ file: file.path, line })))
   ))
   .forEach(({ file, line }) => {
     console.log(`${file}: ${line}`);
@@ -628,8 +652,8 @@ await glob("src/**/*.ts")
 
 // Count lines of code across modules
 const loc = await glob("src/**/*.ts")
-  .pipe(filter(f => !f.path.includes(".test.")))
-  .pipe(flatMap(file => cat(file.path).pipe(lines())))
+  .pipe(filter((f) => !f.path.includes(".test.")))
+  .pipe(flatMap((file) => cat(file.path).pipe(lines())))
   .count();
 ```
 
@@ -638,12 +662,12 @@ const loc = await glob("src/**/*.ts")
 ```javascript
 // Familiar shell commands
 console.log(pwd());
-console.log(await which('git'));
-console.log(await test('-f', 'deno.json'));  // true if file exists
-console.log(await test('-d', 'src'));        // true if directory exists
+console.log(await which("git"));
+console.log(await test("-f", "deno.json")); // true if file exists
+console.log(await test("-d", "src")); // true if directory exists
 
 // Directory stack
-pushd('/tmp');
+pushd("/tmp");
 popd();
 ```
 
@@ -730,15 +754,15 @@ await killJob({ shellId, jobId, signal: "SIGTERM" });
 
 ```javascript
 // Process multiple files concurrently with Promise.all
-const files = ['data1.json', 'data2.json', 'data3.json'];
+const files = ["data1.json", "data2.json", "data3.json"];
 
 const results = await Promise.all(
   files.map(async (file) => {
     const data = await $.fs.readJson(file);
     // Simulate processing delay
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 500));
     return { file, recordCount: data.length };
-  })
+  }),
 );
 
 // All files processed in ~500ms instead of ~1500ms serial
@@ -750,9 +774,9 @@ console.log(results);
 ```javascript
 // Build a repository dashboard using $.git
 const [branch, commit, log] = await Promise.all([
-  $.git('branch', '--show-current').then(r => r.stdout.trim()),
-  $.git('rev-parse', '--short', 'HEAD').then(r => r.stdout.trim()),
-  $.git('log', '--oneline', '-5').then(r => r.stdout.trim().split('\n')),
+  $.git("branch", "--show-current").then((r) => r.stdout.trim()),
+  $.git("rev-parse", "--short", "HEAD").then((r) => r.stdout.trim()),
+  $.git("log", "--oneline", "-5").then((r) => r.stdout.trim().split("\n")),
 ]);
 
 const dashboard = {

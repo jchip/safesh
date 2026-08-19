@@ -23,8 +23,16 @@ import { z } from "zod";
 import { executeCode, executeFile } from "../runtime/executor.ts";
 import { createShellManager, type ShellManager } from "../runtime/shell.ts";
 import { closeAllStatePersistence } from "../runtime/state-persistence.ts";
-import { getGlobalConfigJsonPath, loadConfigWithArgs, mergeConfigs, saveToGlobalJson, saveToLocalJson, loadConfig, type McpInitArgs } from "../core/config.ts";
-import { createRegistry, type CommandRegistry } from "../external/registry.ts";
+import {
+  getGlobalConfigJsonPath,
+  loadConfig,
+  loadConfigWithArgs,
+  type McpInitArgs,
+  mergeConfigs,
+  saveToGlobalJson,
+  saveToLocalJson,
+} from "../core/config.ts";
+import { type CommandRegistry, createRegistry } from "../external/registry.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { isPathWithin } from "../core/path-utils.ts";
 import { expandGitWorkspaceRoots } from "../core/project-root.ts";
@@ -37,27 +45,23 @@ import {
   VERSION,
 } from "../core/constants.ts";
 import {
+  CODE_PREVIEW_LENGTH,
   DEFAULT_WAIT_TIMEOUT_MS,
   SCRIPT_POLL_INTERVAL_MS,
-  CODE_PREVIEW_LENGTH,
 } from "../core/defaults.ts";
-import {
-  launchCodeScript,
-  getScriptOutput,
-  killScript,
-} from "../runtime/scripts.ts";
+import { getScriptOutput, killScript, launchCodeScript } from "../runtime/scripts.ts";
 import { parseShellCommand } from "../bash/mod.ts";
 import {
   createRunToolDescription,
-  START_SHELL_DESCRIPTION,
-  UPDATE_SHELL_DESCRIPTION,
   END_SHELL_DESCRIPTION,
-  LIST_SHELLS_DESCRIPTION,
-  LIST_SCRIPTS_DESCRIPTION,
   GET_SCRIPT_OUTPUT_DESCRIPTION,
   KILL_SCRIPT_DESCRIPTION,
-  WAIT_SCRIPT_DESCRIPTION,
   LIST_JOBS_DESCRIPTION,
+  LIST_SCRIPTS_DESCRIPTION,
+  LIST_SHELLS_DESCRIPTION,
+  START_SHELL_DESCRIPTION,
+  UPDATE_SHELL_DESCRIPTION,
+  WAIT_SCRIPT_DESCRIPTION,
 } from "./tool-descriptions.ts";
 
 // ============================================================================
@@ -121,7 +125,10 @@ interface ToolContext {
   registry: CommandRegistry;
   updateRegistry: (newRegistry: CommandRegistry) => void;
   rootsPromise: Promise<void>;
-  handleRetryWorkflow: (retryId: string, userChoice: number | undefined) => Promise<RetryResult | RetryError>;
+  handleRetryWorkflow: (
+    retryId: string,
+    userChoice: number | undefined,
+  ) => Promise<RetryResult | RetryError>;
   handleFileExecution: (
     file: string,
     shellId: string | undefined,
@@ -247,15 +254,23 @@ function chooseCwdForRoots(
 // Tool schemas
 const RunSchema = z.object({
   code: z.string().optional().describe("JavaScript/TypeScript code to execute"),
-  shcmd: z.string().optional().describe("Shell command to execute (basic syntax: &&, ||, |, 2>&1, >, >>, &)"),
+  shcmd: z.string().optional().describe(
+    "Shell command to execute (basic syntax: &&, ||, |, 2>&1, >, >>, &)",
+  ),
   file: z.string().optional().describe("Path to file - reads content and executes as code"),
-  module: z.string().optional().describe("Path to .ts module to execute (supports top-level imports/exports)"),
+  module: z.string().optional().describe(
+    "Path to .ts module to execute (supports top-level imports/exports)",
+  ),
   shellId: z.string().optional().describe("Shell ID to use"),
-  background: z.boolean().optional().describe("Run in background (async), returns { scriptId, pid }"),
+  background: z.boolean().optional().describe(
+    "Run in background (async), returns { scriptId, pid }",
+  ),
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
   retry_id: z.string().optional().describe("Retry ID from a previous permission error"),
-  userChoice: z.number().min(1).max(5).optional().describe("User's permission choice. Commands: 1=once, 2=session, 3=always for this project (config.local.json), 4=always for all projects (~/.config/safesh/config.json). Network: 1=once, 2=session, 3=always this host, 4=deny, 5=allow all network"),
+  userChoice: z.number().min(1).max(5).optional().describe(
+    "User's permission choice. Commands: 1=once, 2=session, 3=always for this project (config.local.json), 4=always for all projects (~/.config/safesh/config.json). Network: 1=once, 2=session, 3=always this host, 4=deny, 5=allow all network",
+  ),
 });
 
 const StartShellSchema = z.object({
@@ -362,7 +377,11 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
   await ctx.rootsPromise;
 
   const parsed = RunSchema.parse(args);
-  console.error(`[run] projectDir: ${ctx.configHolder.config.projectDir ?? "(none)"}, cwd: ${ctx.configHolder.cwd}`);
+  console.error(
+    `[run] projectDir: ${
+      ctx.configHolder.config.projectDir ?? "(none)"
+    }, cwd: ${ctx.configHolder.cwd}`,
+  );
 
   // Determine execution context (code, config, shellId, etc.)
   let code: string;
@@ -401,7 +420,12 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
     try {
       code = await Deno.readTextFile(absolutePath);
     } catch (error) {
-      return mcpTextResponse(`Failed to read file '${parsed.file}': ${error instanceof Error ? error.message : String(error)}`, true);
+      return mcpTextResponse(
+        `Failed to read file '${parsed.file}': ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        true,
+      );
     }
   } else if (parsed.shcmd) {
     // Shell command - parse and transpile to TypeScript
@@ -413,12 +437,18 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
         background = parseResult.isBackground;
       }
     } catch (error) {
-      return mcpTextResponse(`Shell parse error: ${error instanceof Error ? error.message : String(error)}`, true);
+      return mcpTextResponse(
+        `Shell parse error: ${error instanceof Error ? error.message : String(error)}`,
+        true,
+      );
     }
   } else if (parsed.code) {
     code = parsed.code;
   } else {
-    return mcpTextResponse("Either 'code', 'shcmd', 'file', 'module', or 'retry_id' must be provided", true);
+    return mcpTextResponse(
+      "Either 'code', 'shcmd', 'file', 'module', or 'retry_id' must be provided",
+      true,
+    );
   }
 
   // Merge session-level allowed commands into config
@@ -448,11 +478,21 @@ async function handleRun(args: unknown, ctx: ToolContext): Promise<McpResponse> 
     const script = await launchCodeScript(code, execConfig, shell);
     removeEnvOverlay(shell, parsed.env, overlayShadow);
 
-    return mcpJsonResponse({ scriptId: script.id, pid: script.pid, shellId: shell.id, background: true });
+    return mcpJsonResponse({
+      scriptId: script.id,
+      pid: script.pid,
+      shellId: shell.id,
+      background: true,
+    });
   }
 
   // Foreground execution: wait for completion
-  const result = await executeCode(code, execConfig, { timeout: execTimeout, cwd: shell.cwd }, shell);
+  const result = await executeCode(
+    code,
+    execConfig,
+    { timeout: execTimeout, cwd: shell.cwd },
+    shell,
+  );
   removeEnvOverlay(shell, parsed.env, overlayShadow);
 
   // Check for blocked commands from init() (multiple commands)
@@ -575,7 +615,9 @@ async function handleListScripts(args: unknown, ctx: ToolContext): Promise<McpRe
   // Serialize scripts (newest first, already sorted by listScripts)
   const serialized = scripts.map((s) => ({
     id: s.id,
-    code: s.code.length > CODE_PREVIEW_LENGTH ? `${s.code.slice(0, CODE_PREVIEW_LENGTH)}...` : s.code,
+    code: s.code.length > CODE_PREVIEW_LENGTH
+      ? `${s.code.slice(0, CODE_PREVIEW_LENGTH)}...`
+      : s.code,
     pid: s.pid,
     status: s.status,
     background: s.background,
@@ -726,7 +768,10 @@ const toolHandlers: Record<string, ToolHandler> = {
 /**
  * Create and configure the MCP server
  */
-export async function createServer(initialConfig: SafeShellConfig, initialCwd: string): Promise<Server> {
+export async function createServer(
+  initialConfig: SafeShellConfig,
+  initialCwd: string,
+): Promise<Server> {
   // Mutable config holder - updated when roots are received
   const configHolder: ConfigHolder = {
     config: initialConfig,
@@ -920,7 +965,9 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             response: {
               content: [{
                 type: "text",
-                text: `Failed to save network permission: ${error instanceof Error ? error.message : String(error)}`,
+                text: `Failed to save network permission: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
               }],
               isError: true,
             },
@@ -979,7 +1026,9 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             response: {
               content: [{
                 type: "text",
-                text: `Failed to save to ${savePath}: ${error instanceof Error ? error.message : String(error)}`,
+                text: `Failed to save to ${savePath}: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
               }],
               isError: true,
             },
@@ -1072,7 +1121,8 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         message: `Command '${blockedCommand}' is not allowed`,
       },
       retry_id: retry.id,
-      hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow for this project, (4) Always allow for all projects, (5) Deny. Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always, this project), or 4 (always, all projects). For (5) Deny, do not retry.`,
+      hint:
+        `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow for this project, (4) Always allow for all projects, (5) Deny. Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always, this project), or 4 (always, all projects). For (5) Deny, do not retry.`,
     }, true);
   }
 
@@ -1110,10 +1160,12 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
       error: {
         type: ERROR_COMMANDS_BLOCKED,
         commands: errors,
-        message: `${blockedCommands.length} command(s) not allowed, ${notFoundCommands.length} command(s) not found`,
+        message:
+          `${blockedCommands.length} command(s) not allowed, ${notFoundCommands.length} command(s) not found`,
       },
       retry_id: retry.id,
-      hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow for this project, (4) Always allow for all projects, (5) Deny. Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always, this project), or 4 (always, all projects). For (5) Deny, do not retry. Note: Commands not found cannot be allowed - they must be fixed in code.`,
+      hint:
+        `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow for this project, (4) Always allow for all projects, (5) Deny. Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always, this project), or 4 (always, all projects). For (5) Deny, do not retry. Note: Commands not found cannot be allowed - they must be fixed in code.`,
     }, true);
   }
 
@@ -1147,7 +1199,8 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         allowedHosts,
       },
       retry_id: retry.id,
-      hint: `STOP: Present this error to user with options: (1) Allow this host once, (2) Allow this host for session, (3) Allow this host always (add to config), (4) Deny, (5) Allow all network access (blanket permission). Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always for this host), or 5 (allow all network).`,
+      hint:
+        `STOP: Present this error to user with options: (1) Allow this host once, (2) Allow this host for session, (3) Allow this host always (add to config), (4) Deny, (5) Allow all network access (blanket permission). Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always for this host), or 5 (allow all network).`,
     }, true);
   }
 
@@ -1162,15 +1215,29 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             type: "object",
             properties: {
               code: { type: "string" },
-              shcmd: { type: "string", description: "Shell cmd (&&, ||, |, >, >>). No heredocs/subshells" },
-              file: { type: "string", description: "File path - reads content and executes as code" },
-              module: { type: "string", description: ".ts module path (supports top-level imports/exports)" },
+              shcmd: {
+                type: "string",
+                description: "Shell cmd (&&, ||, |, >, >>). No heredocs/subshells",
+              },
+              file: {
+                type: "string",
+                description: "File path - reads content and executes as code",
+              },
+              module: {
+                type: "string",
+                description: ".ts module path (supports top-level imports/exports)",
+              },
               shellId: { type: "string" },
               background: { type: "boolean" },
               timeout: { type: "number" },
               env: { type: "object", additionalProperties: { type: "string" } },
               retry_id: { type: "string", description: "From COMMANDS_BLOCKED error" },
-              userChoice: { type: "number", enum: [1, 2, 3, 4, 5], description: "Permission choice. Commands: 1=allow once, 2=allow for session, 3=always for this project (config.local.json), 4=always for all projects (~/.config/safesh/config.json). Network: 1=once, 2=session, 3=always this host, 4=deny, 5=allow all network access" },
+              userChoice: {
+                type: "number",
+                enum: [1, 2, 3, 4, 5],
+                description:
+                  "Permission choice. Commands: 1=allow once, 2=allow for session, 3=always for this project (config.local.json), 4=always for all projects (~/.config/safesh/config.json). Network: 1=once, 2=session, 3=always this host, 4=deny, 5=allow all network access",
+              },
             },
           },
         },
@@ -1201,7 +1268,11 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         {
           name: "endShell",
           description: END_SHELL_DESCRIPTION,
-          inputSchema: { type: "object", properties: { shellId: { type: "string" } }, required: ["shellId"] },
+          inputSchema: {
+            type: "object",
+            properties: { shellId: { type: "string" } },
+            required: ["shellId"],
+          },
         },
         {
           name: "listShells",
@@ -1296,7 +1367,9 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
     getCwd,
     configHolder,
     registry,
-    updateRegistry: (newRegistry: CommandRegistry) => { registry = newRegistry; },
+    updateRegistry: (newRegistry: CommandRegistry) => {
+      registry = newRegistry;
+    },
     rootsPromise,
     handleRetryWorkflow,
     handleFileExecution,
