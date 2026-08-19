@@ -264,9 +264,9 @@ Configs are loaded and merged in this order (later overrides earlier):
 | Level | Path | Notes |
 |-------|------|-------|
 | Built-in | (in code) | `STANDARD_PRESET` default |
-| Global | `~/.config/safesh/config.[ts\|json]` | Your personal defaults |
+| Global | `~/.config/safesh/config.[ts\|json]` | Your personal defaults (JSON auto-saved on "always allow (all projects)") |
 | Project | `.config/safesh/config.[ts\|json]` | Project-specific |
-| Local | `.config/safesh/config.local.[ts\|json]` | Machine-writable (auto-saved on "always allow") |
+| Local | `.config/safesh/config.local.[ts\|json]` | Machine-writable (auto-saved on "always allow (this project)") |
 
 **Note:** JSON overrides TS at each level.
 

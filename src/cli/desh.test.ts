@@ -50,7 +50,7 @@ import {
   writePendingPath,
 } from "../core/pending.ts";
 import { findScriptFilePath, getPendingFilePath } from "../core/temp.ts";
-import { getProjectConfigDir } from "../core/config.ts";
+import { getGlobalConfigJsonPath, getProjectConfigDir } from "../core/config.ts";
 
 // Test utilities
 const TEST_TEMP_DIR = join(Deno.cwd(), ".temp", "test-desh");
@@ -117,6 +117,12 @@ describe("desh - handleRetry decomposition", () => {
       const args = ["--id=test-123", "--choice=4"];
       const result = parseRetryArgs(args);
       assertEquals(result.choice, 4);
+    });
+
+    it("validates choice bounds - choice 5 (always allow, all projects)", () => {
+      const args = ["--id=test-123", "--choice=5"];
+      const result = parseRetryArgs(args);
+      assertEquals(result.choice, 5);
     });
   });
 
@@ -341,6 +347,58 @@ describe("desh - handleRetry decomposition", () => {
 
       const config = await buildRetryConfig(loaded);
       assertEquals(config.permissions?.run?.includes("curl"), true);
+    });
+
+    it("choice 5 (always allow, all projects) saves to user config only", async () => {
+      const id = generatePendingId();
+      testIds.push(id);
+
+      const pending: PendingCommand = {
+        id,
+        scriptHash: "test-hash-5",
+        commands: ["rsync"],
+        cwd: TEST_PROJECT_DIR,
+        timeout: 5000,
+        runInBackground: false,
+        createdAt: new Date().toISOString(),
+      };
+      writePendingCommand(pending);
+
+      const parsed = parseRetryArgs([`--id=${id}`, "--choice=5"]);
+      assertEquals(parsed.choice, 5);
+
+      const xdgConfigHome = await Deno.makeTempDir({ prefix: "safesh-desh-xdg-" });
+      const previousXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+
+      try {
+        Deno.env.set("XDG_CONFIG_HOME", xdgConfigHome);
+
+        await applyPermissionChoice(parsed.choice, loadPendingCommand(id), id);
+
+        // Saved to the user-level config
+        const userConfig = JSON.parse(
+          await Deno.readTextFile(getGlobalConfigJsonPath()),
+        );
+        assertEquals(userConfig.permissions.run.includes("rsync"), true);
+        assertEquals(userConfig.external.rsync.allow, true);
+
+        // Project-local config is untouched
+        let localConfigExists = false;
+        try {
+          Deno.statSync(join(getProjectConfigDir(TEST_PROJECT_DIR), "config.local.json"));
+          localConfigExists = true;
+        } catch {
+          // Expected - nothing written to the project
+        }
+        assertEquals(localConfigExists, false, "config.local.json should not be written");
+      } finally {
+        if (previousXdgConfigHome === undefined) {
+          Deno.env.delete("XDG_CONFIG_HOME");
+        } else {
+          Deno.env.set("XDG_CONFIG_HOME", previousXdgConfigHome);
+        }
+        await Deno.remove(xdgConfigHome, { recursive: true });
+      }
     });
   });
 

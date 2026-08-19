@@ -945,6 +945,36 @@ export async function saveToLocalJson(cwd: string, commands: string[]): Promise<
   await writeJsonFile(jsonPath, config);
 }
 
+/**
+ * Save commands to the user-level config at ~/.config/safesh/config.json
+ * Creates the global config directory if it doesn't exist
+ * Merges with existing permissions (adds new, doesn't remove existing)
+ *
+ * Unlike config.local.json, the global config uses the full SafeShellConfig
+ * shape, so commands go into permissions.run and external.
+ */
+export async function saveToGlobalJson(commands: string[]): Promise<void> {
+  const jsonPath = getGlobalConfigJsonPath();
+
+  const existing = await loadJsonConfigFile(jsonPath) ?? {};
+
+  const allCommands = new Set<string>(existing.permissions?.run ?? []);
+  const external = { ...existing.external };
+
+  for (const cmd of commands) {
+    allCommands.add(cmd);
+    external[cmd] = { ...external[cmd], allow: true };
+  }
+
+  const config: SafeShellConfig = {
+    ...existing,
+    permissions: { ...existing.permissions, run: Array.from(allCommands).sort() },
+    external,
+  };
+
+  await writeJsonFile(jsonPath, config);
+}
+
 /** Options for loading config */
 export interface LoadConfigOptions {
   /** Skip validation (default: false) */

@@ -23,7 +23,7 @@ import { z } from "zod";
 import { executeCode, executeFile } from "../runtime/executor.ts";
 import { createShellManager, type ShellManager } from "../runtime/shell.ts";
 import { closeAllStatePersistence } from "../runtime/state-persistence.ts";
-import { loadConfigWithArgs, mergeConfigs, saveToLocalJson, loadConfig, type McpInitArgs } from "../core/config.ts";
+import { getGlobalConfigJsonPath, loadConfigWithArgs, mergeConfigs, saveToGlobalJson, saveToLocalJson, loadConfig, type McpInitArgs } from "../core/config.ts";
 import { createRegistry, type CommandRegistry } from "../external/registry.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { isPathWithin } from "../core/path-utils.ts";
@@ -255,7 +255,7 @@ const RunSchema = z.object({
   timeout: z.number().optional().describe("Timeout in milliseconds"),
   env: z.record(z.string()).optional().describe("Additional environment variables"),
   retry_id: z.string().optional().describe("Retry ID from a previous permission error"),
-  userChoice: z.number().min(1).max(5).optional().describe("User's permission choice: 1=once, 2=session, 3=always (save to config), 4=deny (network only), 5=allow all network"),
+  userChoice: z.number().min(1).max(5).optional().describe("User's permission choice. Commands: 1=once, 2=session, 3=always for this project (config.local.json), 4=always for all projects (~/.config/safesh/config.json). Network: 1=once, 2=session, 3=always this host, 4=deny, 5=allow all network"),
 });
 
 const StartShellSchema = z.object({
@@ -948,11 +948,19 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
       }
     } else if (blockedCmds.length > 0 && userChoice) {
       // Handle command permission retry
-      if (userChoice === 3) {
-        // Always allow: save to projectDir (from MCP roots), fallback to initial cwd
+      if (userChoice === 3 || userChoice === 4) {
+        // Always allow: 3 = this project, 4 = all projects (user-level config)
+        // Project target is projectDir (from MCP roots), fallback to initial cwd
         const targetDir = configHolder.config.projectDir ?? configHolder.cwd;
+        const savePath = userChoice === 3
+          ? `${targetDir}/.config/safesh/config.local.json`
+          : getGlobalConfigJsonPath();
         try {
-          await saveToLocalJson(targetDir, blockedCmds);
+          if (userChoice === 3) {
+            await saveToLocalJson(targetDir, blockedCmds);
+          } else {
+            await saveToGlobalJson(blockedCmds);
+          }
           const reloadedConfig = await loadConfig(targetDir);
 
           // Preserve projectDir and root permissions from current config
@@ -971,7 +979,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
             response: {
               content: [{
                 type: "text",
-                text: `Failed to save to ${targetDir}/.config/safesh/config.local.json: ${error instanceof Error ? error.message : String(error)}`,
+                text: `Failed to save to ${savePath}: ${error instanceof Error ? error.message : String(error)}`,
               }],
               isError: true,
             },
@@ -1064,7 +1072,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         message: `Command '${blockedCommand}' is not allowed`,
       },
       retry_id: retry.id,
-      hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), or 3 (always).`,
+      hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow for this project, (4) Always allow for all projects, (5) Deny. Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always, this project), or 4 (always, all projects). For (5) Deny, do not retry.`,
     }, true);
   }
 
@@ -1105,7 +1113,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
         message: `${blockedCommands.length} command(s) not allowed, ${notFoundCommands.length} command(s) not found`,
       },
       retry_id: retry.id,
-      hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow, (4) Deny. Ask user to reply with their choice (1-4). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), or 3 (always). Note: Commands not found cannot be allowed - they must be fixed in code.`,
+      hint: `STOP: Present this error to user with options: (1) Allow once, (2) Allow for session, (3) Always allow for this project, (4) Always allow for all projects, (5) Deny. Ask user to reply with their choice (1-5). Then retry with { retry_id: "${retry.id}", userChoice: N } where N=1 (once), 2 (session), 3 (always, this project), or 4 (always, all projects). For (5) Deny, do not retry. Note: Commands not found cannot be allowed - they must be fixed in code.`,
     }, true);
   }
 
@@ -1162,7 +1170,7 @@ export async function createServer(initialConfig: SafeShellConfig, initialCwd: s
               timeout: { type: "number" },
               env: { type: "object", additionalProperties: { type: "string" } },
               retry_id: { type: "string", description: "From COMMANDS_BLOCKED error" },
-              userChoice: { type: "number", enum: [1, 2, 3, 4, 5], description: "Permission choice: 1=allow once, 2=allow for session, 3=always (save to config), 4=deny (network only), 5=allow all network access" },
+              userChoice: { type: "number", enum: [1, 2, 3, 4, 5], description: "Permission choice. Commands: 1=allow once, 2=allow for session, 3=always for this project (config.local.json), 4=always for all projects (~/.config/safesh/config.json). Network: 1=once, 2=session, 3=always this host, 4=deny, 5=allow all network access" },
             },
           },
         },

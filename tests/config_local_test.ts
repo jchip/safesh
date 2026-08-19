@@ -5,10 +5,12 @@
 import { assertEquals, assertExists } from "@std/assert";
 import { join } from "@std/path";
 import {
+  getGlobalConfigJsonPath,
   getLocalConfigPath,
   getLocalJsonConfigPath,
   getProjectConfigDir,
   loadConfig,
+  saveToGlobalJson,
   saveToLocalJson,
 } from "../src/core/config.ts";
 import { getEffectivePermissions } from "../src/core/permissions.ts";
@@ -626,5 +628,81 @@ Deno.test("saveToLocalJson - creates .config/safesh directory if it doesn't exis
     assertEquals(config.allowedCommands, ["cargo"]);
   } finally {
     await cleanupTestDir(testDir);
+  }
+});
+
+Deno.test("saveToGlobalJson - creates user config with permissions.run and external", async () => {
+  const xdgConfigHome = await Deno.makeTempDir({ prefix: "safesh-xdg-save-" });
+  const previousXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+
+  try {
+    Deno.env.set("XDG_CONFIG_HOME", xdgConfigHome);
+
+    await saveToGlobalJson(["curl", "wget"]);
+
+    const content = await Deno.readTextFile(getGlobalConfigJsonPath());
+    const config = JSON.parse(content);
+
+    assertEquals(config.permissions.run, ["curl", "wget"]);
+    assertEquals(config.external.curl, { allow: true });
+    assertEquals(config.external.wget, { allow: true });
+  } finally {
+    restoreEnv("XDG_CONFIG_HOME", previousXdgConfigHome);
+    await cleanupTestDir(xdgConfigHome);
+  }
+});
+
+Deno.test("saveToGlobalJson - merges with existing user config", async () => {
+  const xdgConfigHome = await Deno.makeTempDir({ prefix: "safesh-xdg-merge-" });
+  const previousXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+
+  try {
+    Deno.env.set("XDG_CONFIG_HOME", xdgConfigHome);
+    await Deno.mkdir(join(xdgConfigHome, "safesh"), { recursive: true });
+    await Deno.writeTextFile(
+      getGlobalConfigJsonPath(),
+      JSON.stringify({
+        workspaceDir: "~/workspace",
+        permissions: { run: ["gh"], read: ["/tmp"] },
+        external: { gh: { allow: true } },
+      }),
+    );
+
+    await saveToGlobalJson(["docker"]);
+
+    const config = JSON.parse(await Deno.readTextFile(getGlobalConfigJsonPath()));
+
+    assertEquals(config.permissions.run, ["docker", "gh"]);
+    assertEquals(config.permissions.read, ["/tmp"], "other permissions preserved");
+    assertEquals(config.workspaceDir, "~/workspace", "unrelated settings preserved");
+    assertEquals(config.external.gh, { allow: true });
+    assertEquals(config.external.docker, { allow: true });
+  } finally {
+    restoreEnv("XDG_CONFIG_HOME", previousXdgConfigHome);
+    await cleanupTestDir(xdgConfigHome);
+  }
+});
+
+Deno.test("saveToGlobalJson - command is allowed in any project after save", async () => {
+  const testDir = await createTestDir("global-always-allow");
+  const otherDir = await createTestDir("global-always-allow-other");
+  const xdgConfigHome = await Deno.makeTempDir({ prefix: "safesh-xdg-load-" });
+  const previousXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
+
+  try {
+    Deno.env.set("XDG_CONFIG_HOME", xdgConfigHome);
+
+    await saveToGlobalJson(["rsync"]);
+
+    for (const dir of [testDir, otherDir]) {
+      const config = await loadConfig(dir, { logWarnings: false });
+      assertEquals(config.permissions?.run?.includes("rsync"), true);
+      assertEquals(config.external?.rsync?.allow, true);
+    }
+  } finally {
+    restoreEnv("XDG_CONFIG_HOME", previousXdgConfigHome);
+    await cleanupTestDir(testDir);
+    await cleanupTestDir(otherDir);
+    await cleanupTestDir(xdgConfigHome);
   }
 });
