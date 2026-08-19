@@ -15,7 +15,13 @@
  */
 
 import { parseArgs } from "@std/cli/parse-args";
-import { loadConfig, loadSessionConfig, mergeConfigs, validateConfig } from "../core/config.ts";
+import {
+  loadConfig,
+  loadSessionConfig,
+  mergeConfigs,
+  saveToGlobalJson,
+  validateConfig,
+} from "../core/config.ts";
 import { executeCode, executeCodeStreaming, executeFilePassthrough } from "../runtime/executor.ts";
 import { SafeShellError } from "../core/errors.ts";
 import { getApiDoc, getBashPrehookNote } from "../core/api-doc.ts";
@@ -63,8 +69,8 @@ export function parseRetryArgs(args: string[]): { id: string; choice: number } {
     Deno.exit(1);
   }
 
-  if (isNaN(choice) || choice < 1 || choice > 4) {
-    console.error("Error: --choice must be 1-4");
+  if (isNaN(choice) || choice < 1 || choice > 5) {
+    console.error("Error: --choice must be 1-5");
     Deno.exit(1);
   }
 
@@ -148,7 +154,7 @@ export function loadPendingCommand(id: string): PendingCommand {
  * Apply permission choice (update configs as needed).
  * Security-critical: Handles persistent permission grants.
  *
- * @param choice - User's permission choice (1-4)
+ * @param choice - User's permission choice (1-5)
  * @param pending - Pending command data
  * @param id - Pending command ID
  * @returns Project directory for session-scoped permissions
@@ -166,9 +172,17 @@ export async function applyPermissionChoice(
     Deno.exit(0);
   }
 
-  // Choice 2 = Always allow - update config.local.json
+  // Choice 2 = Always allow (this project) - update config.local.json
   if (choice === 2) {
     await addCommandsToConfig(pending.commands, pending.cwd);
+  }
+
+  // Choice 5 = Always allow (all projects) - update ~/.config/safesh/config.json
+  if (choice === 5) {
+    await saveToGlobalJson(pending.commands);
+    console.error(
+      `[safesh] Added to user-level always-allow: ${pending.commands.join(", ")}`,
+    );
   }
 
   // Load config to get projectDir
@@ -242,9 +256,10 @@ export async function executeRetryScript(
  *
  * Choices:
  * 1 = Allow once (just execute)
- * 2 = Always allow (update config.local.json, then execute)
+ * 2 = Always allow for this project (update config.local.json, then execute)
  * 3 = Allow for session (update session file, then execute)
  * 4 = Deny (do nothing)
+ * 5 = Always allow for all projects (update ~/.config/safesh/config.json, then execute)
  */
 async function handleRetry(args: string[]): Promise<void> {
   // Phase 1: Parse and validate arguments

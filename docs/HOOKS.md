@@ -88,7 +88,8 @@ receive no decision from it.
 > **Known limitation:** Codex supplies its session identity as `session_id` in hook input, while
 > SafeShell's current session-scoped permission storage reads `CLAUDE_SESSION_ID`. Until SSH-653 is
 > resolved, avoid "Allow for session" for Codex because separate Codex sessions can share the
-> default SafeShell permission bucket. "Allow once", "Always allow", and "Deny" are unaffected.
+> default SafeShell permission bucket. "Allow once", both "Always allow" options, and "Deny" are
+> unaffected.
 
 ### Claude Code configuration
 

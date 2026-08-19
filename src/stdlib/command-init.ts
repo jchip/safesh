@@ -359,11 +359,12 @@ export async function initCmds<T extends readonly string[]>(
         const cmdList = notAllowed.join(", ");
         const message = `[SAFESH] BLOCKED: ${cmdList}
 
-WAIT for user choice (1-4):
+WAIT for user choice (1-5):
 1. Allow once
-2. Always allow
+2. Always allow (this project)
 3. Allow for session
 4. Deny
+5. Always allow (all projects)
 
 DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${scriptId} --choice=<user's choice>`;
 
