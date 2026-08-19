@@ -5,9 +5,9 @@ CLIs, plus Codex-specific hooks for Codex's routing and permission-request flow.
 
 ## Entry-point boundary
 
-- `hooks/bash-prehook.ts` is the shared compatibility entrypoint. Existing Claude, Gemini, and
-  other CLI configurations should continue using this path; its compatibility and passthrough
-  behavior must not change to satisfy Codex requirements.
+- `hooks/bash-prehook.ts` is the shared compatibility entrypoint. Existing Claude, Gemini, and other
+  CLI configurations should continue using this path; its compatibility and passthrough behavior
+  must not change to satisfy Codex requirements.
 - `hooks/codex/bash-prehook.ts` is the Codex `PreToolUse` entrypoint. Codex-specific routing belongs
   here.
 - `hooks/codex/safesh-permission-hook.ts` is the Codex `PermissionRequest` entrypoint. Do not
