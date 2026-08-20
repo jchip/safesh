@@ -1127,16 +1127,6 @@ function formatFileArgs(files: string[]): string {
   return files.map((file) => `"${escapeForQuotes(file)}"`).join(", ");
 }
 
-function buildTextFileStream(files: string[]): string {
-  if (files.length === 1 && !hasGlobPattern(files[0] ?? "")) {
-    return `$.cat("${escapeForQuotes(files[0] ?? "")}").lines()`;
-  }
-
-  return `$.src(${formatFileArgs(files)})` +
-    `.map((file) => typeof file.contents === "string" ? file.contents : new TextDecoder().decode(file.contents))` +
-    `.lines()`;
-}
-
 /**
  * Build a fluent-style command (cat, grep, etc.)
  */
@@ -1244,8 +1234,27 @@ function buildFluentCommand(
       const regexPattern = regexSource === "" ? `/(?:)/${flags}` : `/${regexSource}/${flags}`;
 
       if (files.length > 0) {
+        // Real grep prefixes `filename:` and restarts line numbers per operand
+        // whenever it gets more than one. A glob counts too: its expansion size
+        // is only known at runtime. Lower those to $.grepFiles over
+        // glob-expanded [name, lines] sources (mirroring the $.wcMultiple
+        // lowering above); $.cat keeps the per-file sandbox read checks.
+        const singleLiteralFile = files.length === 1 && !hasGlobPattern(files[0] ?? "");
+        if (!singleLiteralFile) {
+          const fileList = `[${formatFileArgs(files)}]`;
+          const opts = `{ lineNumbers: ${lineNumber}, invertMatch: ${invert} }`;
+          const sources = `(await $.__expandGlobAll(${fileList}))` +
+            `.map((__p) => [__p, $.cat(__p).lines()])`;
+          return {
+            code: `$.createStream($.grepFiles(${regexPattern}, ${sources}, ${opts}))` +
+              `.withEmptyExitCode(1)`,
+            isTransform: false,
+            isStream: true,
+          };
+        }
+
         // grep pattern file -> $.cat(file).grep(pattern) - this is a stream chain
-        const fileStream = buildTextFileStream(files);
+        const fileStream = `$.cat("${escapeForQuotes(files[0] ?? "")}").lines()`;
         if (lineNumber) {
           const predicate = invert ? `!${regexPattern}.test(line)` : `${regexPattern}.test(line)`;
           const result = `${fileStream}.map((line, i) => ({ line, number: i + 1 }))` +
