@@ -685,5 +685,53 @@ export async function* grepMultiple(
   }
 }
 
+/**
+ * Grep named sources with real grep's multi-operand output shape
+ *
+ * Formats matches the way grep does for file operands: line numbers restart
+ * per operand, and a `filename:` prefix is added only when there is more than
+ * one operand. Mirrors the `wcMultiple` pattern — sources are
+ * [name, iterable] tuples so the caller controls how files are opened
+ * (glob expansion, sandbox checks).
+ *
+ * Real grep reference (macOS, 2026-08-19):
+ * ```
+ * $ grep -n loaded a.md b.md
+ * a.md:1:alpha loaded
+ * a.md:3:gamma loaded
+ * b.md:2:epsilon loaded
+ * ```
+ *
+ * @param pattern - String or RegExp pattern to match
+ * @param sources - Array of [name, asyncIterable] tuples, in operand order
+ * @param options - Grep options
+ * @returns AsyncIterable of formatted output lines
+ *
+ * @example
+ * ```ts
+ * const sources: Array<[string, AsyncIterable<string>]> = [
+ *   ["a.md", cat("a.md").lines()],
+ *   ["b.md", cat("b.md").lines()],
+ * ];
+ * for await (const line of grepFiles(/loaded/, sources, { lineNumbers: true })) {
+ *   console.log(line);
+ * }
+ * ```
+ */
+export async function* grepFiles(
+  pattern: string | RegExp,
+  sources: Array<[string, AsyncIterable<string>]>,
+  options: GrepOptions = {},
+): AsyncIterable<string> {
+  const showFilename = sources.length > 1;
+
+  for await (const match of grepMultiple(pattern, sources, options)) {
+    yield formatGrepMatch(match, {
+      showLineNumbers: options.lineNumbers ?? false,
+      showFilename,
+    });
+  }
+}
+
 // Re-export types
 export type { Transform };
