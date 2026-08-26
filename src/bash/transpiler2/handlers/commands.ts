@@ -1744,6 +1744,23 @@ function buildReadAssignmentLines(
   return lines;
 }
 
+/**
+ * Expression that feeds a `while read` loop one line at a time.
+ *
+ * `.lines()` carries a partial line across chunk boundaries, so applying it to a
+ * stream that is already split into lines would glue those lines back together.
+ * Only raw chunk streams need the split.
+ */
+function upstreamLineStreamExpression(
+  upstream: { code: string; async?: boolean; isStream?: boolean; isLineStream?: boolean },
+): string {
+  const expr = upstream.isStream
+    ? (upstream.async ? `(await ${upstream.code})` : upstream.code)
+    : upstream.code;
+  if (!upstream.isStream) return `${expr}.stdout().lines()`;
+  return upstream.isLineStream ? expr : `${expr}.lines()`;
+}
+
 function buildReadLoopConsumerExpression(
   pipeline: AST.Pipeline,
   readLoop: ReadLoopConsumer,
@@ -1758,12 +1775,7 @@ function buildReadLoopConsumerExpression(
   };
 
   const upstream = buildPipeline(upstreamPipeline, ctx);
-  const upstreamExpr = upstream.isStream
-    ? (upstream.async ? `(await ${upstream.code})` : upstream.code)
-    : upstream.code;
-  const lineStreamExpr = upstream.isStream
-    ? `${upstreamExpr}.lines()`
-    : `${upstreamExpr}.stdout().lines()`;
+  const lineStreamExpr = upstreamLineStreamExpression(upstream);
 
   const lineVar = ctx.getTempVar("line");
   const sourceVar = ctx.getTempVar("read");
@@ -1803,12 +1815,7 @@ function buildReadGroupConsumerExpression(
   };
 
   const upstream = buildPipeline(upstreamPipeline, ctx);
-  const upstreamExpr = upstream.isStream
-    ? (upstream.async ? `(await ${upstream.code})` : upstream.code)
-    : upstream.code;
-  const lineStreamExpr = upstream.isStream
-    ? `${upstreamExpr}.lines()`
-    : `${upstreamExpr}.stdout().lines()`;
+  const lineStreamExpr = upstreamLineStreamExpression(upstream);
 
   const lineVar = ctx.getTempVar("line");
   const sourceVar = ctx.getTempVar("read");
@@ -1976,12 +1983,7 @@ function buildMidReadLoopExpression(
     negated: false,
   };
   const upstream = buildPipeline(upstreamPipeline, ctx);
-  const upstreamExpr = upstream.isStream
-    ? (upstream.async ? `(await ${upstream.code})` : upstream.code)
-    : upstream.code;
-  const lineStreamExpr = upstream.isStream
-    ? `${upstreamExpr}.lines()`
-    : `${upstreamExpr}.stdout().lines()`;
+  const lineStreamExpr = upstreamLineStreamExpression(upstream);
 
   const captureVar = ctx.getTempVar("__out");
   const lineVar = ctx.getTempVar("line");
@@ -2028,6 +2030,7 @@ export function buildPipeline(
   ctx: VisitorContext,
 ): ExpressionResult & {
   isStream?: boolean;
+  isLineStream?: boolean;
   isPrintable?: boolean;
   isResultObject?: boolean;
   isVariableAssignment?: boolean;
@@ -2158,6 +2161,7 @@ export function buildPipeline(
     code: result,
     async: isAsync,
     isStream: applyNegation ? false : assembled.isStream,
+    isLineStream: applyNegation ? false : assembled.isLineStream,
     isPrintable: applyNegation ? true : assembled.isPrintable,
     isResultObject: applyNegation ? true : assembled.isResultObject,
     isVariableAssignment: assembled.isVariableAssignment,
@@ -2239,6 +2243,7 @@ class PipelineAssembler {
     return {
       code: this.code,
       isStream: this.isStream,
+      isLineStream: this.isLineStream,
       isPrintable: this.isPrintable,
       isResultObject: this.isResultObject,
       isVariableAssignment: this.isVariableAssignment,
@@ -2538,6 +2543,7 @@ function assemblePipeline(
 ): {
   code: string;
   isStream: boolean;
+  isLineStream: boolean;
   isPrintable: boolean;
   isResultObject: boolean;
   isVariableAssignment: boolean;
@@ -2548,6 +2554,7 @@ function assemblePipeline(
     return {
       code: "",
       isStream: false,
+      isLineStream: false,
       isPrintable: false,
       isResultObject: false,
       isVariableAssignment: false,

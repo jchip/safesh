@@ -718,12 +718,13 @@ Deno.test("SSH-422 - git().pipe() with grep transform", async () => {
 
 Deno.test("SSH-422 - Command.pipe() chaining with multiple transforms", async () => {
   // Test chaining: command | transform | transform
+  // (pipe() already splits stdout into lines, so both transforms see lines)
   const stream = await cmd("echo", ["apple\nbanana\ncherry\napricot"])
-    .pipe(grep(/^a/))  // Filter lines starting with 'a'
-    .pipe(lines())     // Split into lines
+    .pipe(grep(/^a/))   // Filter lines starting with 'a'
+    .pipe(grep(/ot$/))  // ...that also end with 'ot'
     .collect();
 
-  assertEquals(stream, ["apple", "apricot"]);
+  assertEquals(stream, ["apricot"]);
 });
 
 // ==================== SSH-557: toCmdLines/toCmd with Command objects ====================
