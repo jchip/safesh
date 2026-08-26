@@ -235,10 +235,40 @@ Deno.test("lines() - empty chunk yields nothing (SSH-573)", async () => {
 });
 
 Deno.test("lines() - handles multiple text chunks", async () => {
-  const stream = fromArray(["chunk1\nchunk2", "chunk3\nchunk4"]);
+  const stream = fromArray(["chunk1\nchunk2\n", "chunk3\nchunk4"]);
   const lineStream = stream.pipe(lines());
   const result = await lineStream.collect();
   assertEquals(result, ["chunk1", "chunk2", "chunk3", "chunk4"]);
+});
+
+Deno.test("lines() - rejoins a line split across a chunk boundary", async () => {
+  // A block-writing producer (a subprocess pipe) splits wherever the buffer
+  // fills, not on newlines. The two fragments are one line.
+  const stream = fromArray(["line 8019 M", "ARKER padding\n"]);
+  const lineStream = stream.pipe(lines());
+  const result = await lineStream.collect();
+  assertEquals(result, ["line 8019 MARKER padding"]);
+});
+
+Deno.test("lines() - chunk boundary does not inflate the line count", async () => {
+  const stream = fromArray(["a\nb", "c\nd\n"]);
+  const lineStream = stream.pipe(lines());
+  const result = await lineStream.collect();
+  assertEquals(result, ["a", "bc", "d"]);
+});
+
+Deno.test("lines() - yields the trailing partial line when the stream ends", async () => {
+  const stream = fromArray(["a\nb", "c"]);
+  const lineStream = stream.pipe(lines());
+  const result = await lineStream.collect();
+  assertEquals(result, ["a", "bc"]);
+});
+
+Deno.test("lines() - empty chunk between fragments does not break a line", async () => {
+  const stream = fromArray(["frag", "", "ment\n"]);
+  const lineStream = stream.pipe(lines());
+  const result = await lineStream.collect();
+  assertEquals(result, ["fragment"]);
 });
 
 Deno.test("lines() - handles single line text", async () => {
@@ -288,6 +318,26 @@ Deno.test("grep() - returns empty for no matches", async () => {
   const noMatch = stream.pipe(grep("notfound"));
   const result = await noMatch.collect();
   assertEquals(result, []);
+});
+
+Deno.test("grep() - a global regex is not stateful across lines", async () => {
+  // A /g RegExp keeps lastIndex between .test() calls, which would drop every
+  // other match. Same reason buildRegex() strips "g" in src/commands/grep.ts.
+  const stream = fromArray(["MARKER 1", "MARKER 2", "MARKER 3", "MARKER 4"]);
+  const result = await stream.pipe(grep(/MARKER/g)).collect();
+  assertEquals(result, ["MARKER 1", "MARKER 2", "MARKER 3", "MARKER 4"]);
+});
+
+Deno.test("grep() - a global+ignoreCase regex keeps its other flags", async () => {
+  const stream = fromArray(["marker 1", "MARKER 2", "nope", "Marker 3"]);
+  const result = await stream.pipe(grep(/marker/gi)).collect();
+  assertEquals(result, ["marker 1", "MARKER 2", "Marker 3"]);
+});
+
+Deno.test("grep() - a sticky regex is not stateful across lines", async () => {
+  const stream = fromArray(["MARKER 1", "MARKER 2", "MARKER 3"]);
+  const result = await stream.pipe(grep(/MARKER/y)).collect();
+  assertEquals(result, ["MARKER 1", "MARKER 2", "MARKER 3"]);
 });
 
 Deno.test("grep() - works with complex patterns", async () => {

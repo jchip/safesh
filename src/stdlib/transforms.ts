@@ -202,17 +202,24 @@ export function take<T>(n: number): Transform<T, T> {
  */
 export function lines(): Transform<string, string> {
   return async function* (stream) {
+    // Chunks arrive at whatever size the producer writes, so a line can straddle
+    // a chunk boundary. Hold the trailing fragment back until the next chunk
+    // completes it, otherwise the line is split in two and silently missed by
+    // every downstream matcher.
+    let carry = "";
     for await (const text of stream) {
       if (text === "") continue;
-      const parts = text.split("\n");
-      // A trailing newline produces one empty segment at the end; that is a
-      // split artifact, not a line. All other (interior) empties are real
-      // blank lines and must be preserved (SSH-573).
-      const end = parts[parts.length - 1] === "" ? parts.length - 1 : parts.length;
-      for (let i = 0; i < end; i++) {
-        yield parts[i]!;
+      const parts = (carry + text).split("\n");
+      // The last segment has no newline yet: either the trailing artifact of a
+      // chunk that ended on "\n" (empty) or a partial line to carry forward.
+      // All other (interior) empties are real blank lines (SSH-573).
+      carry = parts.pop()!;
+      for (const part of parts) {
+        yield part;
       }
     }
+    // A final line with no trailing newline is still a line.
+    if (carry !== "") yield carry;
   };
 }
 
@@ -244,8 +251,20 @@ export function lines(): Transform<string, string> {
  * ```
  */
 export function grep(pattern: RegExp | string): Transform<string, string> {
-  const regex = typeof pattern === "string" ? new RegExp(pattern) : pattern;
+  const regex = typeof pattern === "string" ? new RegExp(pattern) : stripStatefulFlags(pattern);
   return withEmptyExitCode(filter((line) => regex.test(line)), 1);
+}
+
+/**
+ * Drop the flags that make `.test()` stateful.
+ *
+ * `g` and `y` advance `lastIndex` on every successful `.test()`, so reusing one
+ * regex across lines would skip matches. `src/commands/grep.ts` strips `g` in
+ * buildRegex() for the same reason.
+ */
+function stripStatefulFlags(regex: RegExp): RegExp {
+  const flags = regex.flags.replace(/[gy]/g, "");
+  return flags === regex.flags ? regex : new RegExp(regex.source, flags);
 }
 
 /**
