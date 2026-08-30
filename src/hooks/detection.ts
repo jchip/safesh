@@ -97,14 +97,25 @@ export function detectTypeScript(
 }
 
 /**
+ * True if the SafeShell signature at `index` sits directly inside a `$(...)`
+ * command substitution, e.g. `VAR=$(/*#*\/ ...)` — signature immediately
+ * follows `$(` (optionally with whitespace).
+ */
+function isInsideCommandSubstitution(command: string, index: number): boolean {
+  return /\$\(\s*$/.test(command.slice(0, index));
+}
+
+/**
  * SSH-640: Detect a misplaced SafeShell signature.
  *
  * The `/*#*\/` signature is only recognized as a whole-command prefix
  * (see {@link detectTypeScript}) or as a `| /*#*\/` hybrid pipe
- * (see {@link detectHybridCommand}). When it appears anywhere else — most
- * commonly embedded inside a command substitution like `x=$(/*#*\/ ...)` — the
- * command is parsed as bash and fails with a cryptic parser error
- * (e.g. "Expected command name in subshell").
+ * (see {@link detectHybridCommand}). When it appears anywhere else, the
+ * command is parsed as bash and fails with a cryptic parser error (e.g.
+ * "Expected command name in subshell"). Two shapes are common:
+ *  - embedded inside a command substitution, e.g. `x=$(/*#*\/ ...)`
+ *  - mid-command otherwise, e.g. on its own line after prior bash statements
+ *    (SSH-669 follow-up: the old wording blamed $(...) even for this shape)
  *
  * Returns an actionable hint when `command` contains a misplaced signature, or
  * null otherwise. This is meant to enrich an already-failing command's error
@@ -116,18 +127,23 @@ export function detectTypeScript(
  */
 export function detectMisplacedSignature(command: string): string | null {
   const trimmed = command.trim();
-  if (!trimmed.includes(SAFESH_SIGNATURE)) return null;
+  const index = trimmed.indexOf(SAFESH_SIGNATURE);
+  if (index === -1) return null;
   if (trimmed.startsWith(SAFESH_SIGNATURE)) return null; // valid whole-command prefix
   if (detectHybridCommand(command) !== null) return null; // valid `| /*#*/` hybrid
 
+  const positionExplanation = isInsideCommandSubstitution(trimmed, index)
+    ? `Here it's embedded inside a command substitution (commonly ` +
+      `\`VAR=$(${SAFESH_SIGNATURE} ...)\` to capture a value) — that position is never valid.`
+    : `Here it appears mid-command instead — e.g. on its own line after earlier bash ` +
+      `statements — which also isn't a valid position.`;
+
   return (
-    `A '${SAFESH_SIGNATURE}' SafeShell TypeScript signature is embedded inside the ` +
-    `command (commonly \`VAR=$(${SAFESH_SIGNATURE} ...)\` to capture a value). The ` +
-    `signature is only recognized at the very START of a command ` +
-    `(\`${SAFESH_SIGNATURE} ...\`) or right after a pipe (\`cmd | ${SAFESH_SIGNATURE} ...\`) ` +
-    `— never inside a $(...) substitution, so this is parsed as bash and fails. To use a ` +
-    `TypeScript-computed value in following bash, either: (1) write the whole step as one ` +
-    `'${SAFESH_SIGNATURE}' script and call external tools from TS, e.g. ` +
+    `A '${SAFESH_SIGNATURE}' SafeShell TypeScript signature is only recognized at the ` +
+    `very START of a command (\`${SAFESH_SIGNATURE} ...\`) or right after a pipe ` +
+    `(\`cmd | ${SAFESH_SIGNATURE} ...\`). ${positionExplanation} So this is parsed as bash ` +
+    `and fails. To use a TypeScript-computed value in following bash, either: (1) write the ` +
+    `whole step as one '${SAFESH_SIGNATURE}' script and call external tools from TS, e.g. ` +
     `\`await $.cmd('curl', url)\`; or (2) run the '${SAFESH_SIGNATURE} ...' as its own ` +
     `command first, console.log the value, then use that printed output in the next command.`
   );

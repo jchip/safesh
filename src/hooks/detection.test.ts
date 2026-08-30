@@ -337,5 +337,23 @@ for (const file of files) {
     it("returns null for plain bash without the signature", () => {
       assertEquals(detectMisplacedSignature('wc -l < "$mj"'), null);
     });
+
+    it("does not blame $(...) substitution when the signature sits on its own line after prior bash statements (SSH-669 follow-up)", () => {
+      // Reproduces the real failure: bash statements, then a bare `/*#*/` line,
+      // then TS — never inside a $(...) at all.
+      const cmd = `echo "step 1"
+/*#*/
+for (const d of ["a", "b"]) {
+  console.log(d);
+}`;
+      const result = detectMisplacedSignature(cmd)!;
+
+      assertEquals(result !== null, true);
+      // The old wording always claimed a $(...) substitution, which is
+      // misleading here since there is no $(...) anywhere in the command.
+      assertEquals(result.includes("$("), false);
+      // Should instead describe the actual shape: mid-command, own line.
+      assertEquals(result.includes("own line"), true);
+    });
   });
 });
