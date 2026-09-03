@@ -582,36 +582,34 @@ describe("Transpiler2 - Pipelines", () => {
     assertStringIncludes(output, ".pipe($.tail(2))");
   });
 
-  it("should treat grep -- as end of options for dash-prefixed patterns (SSH-85)", () => {
+  it("should pass grep -- through to the real binary (SSH-85)", () => {
+    // `--` and the dash-prefixed pattern after it are just arguments now; grep
+    // itself decides where options end.
     const output = transpileBash(
       "grep -n -- '--real-apis\\|--ipa' scripts/dev/start-local-infra.js | head -20",
     );
 
-    assertStringIncludes(output, '$.cat("scripts/dev/start-local-infra.js")');
-    assertStringIncludes(output, "/--real-apis|--ipa/");
-    assertStringIncludes(output, ".pipe($.head(20))");
-    assertEquals(
-      output.includes("$.grep(/scripts\\/dev\\/start-local-infra.js/).stdout()"),
-      false,
+    assertStringIncludes(
+      output,
+      '$.cmd("grep", "-n", "--", "--real-apis\\\\|--ipa", "scripts/dev/start-local-infra.js")',
     );
+    assertStringIncludes(output, ".stdout().lines().pipe($.head(20))");
   });
 
-  it("should fall back to real grep for -n in the pipe form so numbers survive (SSH-615)", () => {
-    // The no-file (pipe) form previously lowered to $.grep(...), dropping -n and
-    // emitting no line numbers. It must fall back to real grep, which numbers by
-    // piped-stdin position like bash.
+  it("should keep -n on real grep in the pipe form so numbers survive (SSH-615)", () => {
+    // The fluent lowering once dropped -n in the no-file (pipe) form. Real grep
+    // numbers by piped-stdin position like bash, in every form.
     const piped = transpileBash("cat file.txt | grep -n pattern");
-    assertStringIncludes(piped, '$.cmd("grep"');
-    assertStringIncludes(piped, '"-n"');
+    assertStringIncludes(piped, '$.cmd("grep", "-n", "pattern")');
     assertEquals(piped.includes("$.grep("), false);
 
-    // -vn (invert + number) must also fall back rather than drop -n.
     const inverted = transpileBash("cat file.txt | grep -vn pattern");
-    assertStringIncludes(inverted, '$.cmd("grep"');
-    assertStringIncludes(inverted, '"-vn"');
+    assertStringIncludes(inverted, '$.cmd("grep", "-vn", "pattern")');
 
-    // Plain grep (no -n) still lowers to the fluent transform.
-    assertStringIncludes(transpileBash("cat file.txt | grep pattern"), "$.grep(/pattern/)");
+    // SSH-675: the plain form goes to the real binary too.
+    const plain = transpileBash("cat file.txt | grep pattern");
+    assertStringIncludes(plain, '$.cmd("grep", "pattern")');
+    assertEquals(plain.includes("$.grep("), false);
   });
 
   it("should use toCmdLines when piping from stream to command", () => {
@@ -708,7 +706,7 @@ describe("Transpiler2 - Pipelines", () => {
     // printShellValue resolves the async IIFE's promise itself
     assertStringIncludes(output, "await __printCmd((async");
     assertStringIncludes(output, "$.cd");
-    assertStringIncludes(output, "$.grep");
+    assertStringIncludes(output, '$.cmd("grep", "test")');
 
     // SSH-494: The IIFE must NOT wrap the stream return in __printCmd,
     // because __printCmd consumes the stream and returns a number (exit code),
@@ -736,7 +734,11 @@ describe("Transpiler2 - Pipelines", () => {
       const output = transpile(ast);
 
       // SSH-582: outer consumption records status via __printCmd
-      assertStringIncludes(output, "await __printCmd(", `${cmd}: stream should be consumed via __printCmd`);
+      assertStringIncludes(
+        output,
+        "await __printCmd(",
+        `${cmd}: stream should be consumed via __printCmd`,
+      );
 
       // The IIFE should return the stream directly, NOT wrapped in __printCmd
       assertEquals(

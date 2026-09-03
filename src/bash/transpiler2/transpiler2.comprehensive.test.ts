@@ -5,17 +5,17 @@
  * to ensure robust transpilation from Bash to TypeScript/SafeShell.
  */
 
-import { assert, assertEquals, assertStringIncludes, assertNotMatch } from "@std/assert";
+import { assert, assertEquals, assertNotMatch, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
-import { transpile, BashTranspiler2 } from "./mod.ts";
+import { BashTranspiler2, transpile } from "./mod.ts";
 import { TranspilerContext } from "./context.ts";
 import { OutputEmitter } from "./emitter.ts";
 import { resolveOptions } from "./types.ts";
 import {
-  escapeForTemplate,
   escapeForQuotes,
   escapeForSingleQuotes,
+  escapeForTemplate,
   escapeRegex,
   globToRegex,
 } from "./utils/escape.ts";
@@ -40,7 +40,7 @@ describe("Extended Escape Utilities", () => {
     });
 
     it("should escape mixed special characters", () => {
-      const input = 'echo `$var` and ${other}';
+      const input = "echo `$var` and ${other}";
       const result = escapeForTemplate(input);
       assertStringIncludes(result, "\\`");
       assertStringIncludes(result, "\\$");
@@ -101,7 +101,7 @@ describe("Command Handler - Edge Cases", () => {
     const ast = parse("echo 'hello world'");
     const output = transpile(ast);
     // SSH-372: Now uses $.echo builtin
-    assertStringIncludes(output, '$.echo');
+    assertStringIncludes(output, "$.echo");
   });
 
   it("should handle command with variable in name", () => {
@@ -129,7 +129,7 @@ describe("Command Handler - Edge Cases", () => {
     const ast = parse('echo "say \\"hello\\""');
     const output = transpile(ast);
     // SSH-372: Now uses $.echo builtin
-    assertStringIncludes(output, '$.echo');
+    assertStringIncludes(output, "$.echo");
   });
 
   it("should handle empty command gracefully", () => {
@@ -153,124 +153,123 @@ describe("Command Handler - Edge Cases", () => {
 // =============================================================================
 
 describe("Fluent Commands - Comprehensive", () => {
-  describe("grep options", () => {
-    it("should handle grep with -v (invert match)", () => {
-      const ast = parse("grep -v pattern file.txt");
-      const output = transpile(ast);
-      // SSH-503: grep -v with file now uses .lines().filter() instead of .grep().filter()
-      assertStringIncludes(output, "$.cat");
-      assertStringIncludes(output, ".lines().filter(line => !/pattern/.test(line))");
+  // SSH-675: grep is no longer lowered to a fluent JS filter. Every invocation
+  // goes to the real binary, so flags and patterns pass through verbatim and the
+  // whole class of regex-translation bugs (SSH-5, SSH-503, SSH-567, SSH-568,
+  // SSH-615, SSH-646) is gone by construction. These tests pin the passthrough.
+  describe("grep lowers to the real binary", () => {
+    it("passes flags through verbatim instead of translating them", () => {
+      assertStringIncludes(
+        transpile(parse("grep -v pattern file.txt")),
+        '$.cmd("grep", "-v", "pattern", "file.txt")',
+      );
+      assertStringIncludes(
+        transpile(parse("grep -i pattern file.txt")),
+        '$.cmd("grep", "-i", "pattern", "file.txt")',
+      );
+      assertStringIncludes(
+        transpile(parse("grep -n pattern file.txt")),
+        '$.cmd("grep", "-n", "pattern", "file.txt")',
+      );
+      assertStringIncludes(
+        transpile(parse("grep -v -i pattern file.txt")),
+        '$.cmd("grep", "-v", "-i", "pattern", "file.txt")',
+      );
     });
 
-    it("should handle grep with -i (case insensitive)", () => {
-      const ast = parse("grep -i pattern file.txt");
-      const output = transpile(ast);
-      assertStringIncludes(output, "/pattern/i");
+    it("never emits a fluent grep filter, with or without a file operand", () => {
+      for (const script of ["grep pattern", "grep pattern file.txt", 'echo "hi" | grep -v pat']) {
+        const output = transpile(parse(script));
+        assertStringIncludes(output, '$.cmd("grep"');
+        assertEquals(output.includes("$.grep("), false, `${script} must not use $.grep()`);
+        assertEquals(output.includes(".grep("), false, `${script} must not use .grep()`);
+      }
     });
 
-    it("should handle grep with -n (line numbers)", () => {
-      const ast = parse("grep -n pattern file.txt");
-      const output = transpile(ast);
-      assertStringIncludes(output, "map");
+    it("keeps flags that the fluent lowering could not support (SSH-568, SSH-646)", () => {
+      // These once needed an explicit fallback; now they are just ordinary args.
+      // The numeric operand must never be mistaken for the pattern.
+      const after = transpile(parse('echo "test" | grep -A 20 "══"'));
+      assertStringIncludes(after, '$.cmd("grep", "-A", "20", "══")');
+
+      assertStringIncludes(
+        transpile(parse('echo "test" | grep -B 5 "pattern"')),
+        '$.cmd("grep", "-B", "5", "pattern")',
+      );
+      assertStringIncludes(
+        transpile(parse('echo "test" | grep -C 3 "pattern"')),
+        '$.cmd("grep", "-C", "3", "pattern")',
+      );
+      assertStringIncludes(
+        transpile(parse('echo "test" | grep -m 1 "pattern"')),
+        '$.cmd("grep", "-m", "1", "pattern")',
+      );
+      assertStringIncludes(
+        transpile(parse('echo "test" | grep -c "pattern"')),
+        '$.cmd("grep", "-c", "pattern")',
+      );
+      assertStringIncludes(
+        transpile(parse('echo "test" | grep -q "pattern"')),
+        '$.cmd("grep", "-q", "pattern")',
+      );
+      assertStringIncludes(
+        transpile(parse("grep -r pattern dir")),
+        '$.cmd("grep", "-r", "pattern", "dir")',
+      );
     });
 
-    it("should handle grep with multiple options", () => {
-      const ast = parse("grep -v -i pattern file.txt");
-      const output = transpile(ast);
-      assertStringIncludes(output, "/pattern/i");
-      assertStringIncludes(output, "filter");
+    it("hands the pattern to grep unmodified — no BRE→JS regex translation", () => {
+      // SSH-567 / SSH-5: slashes and bracket escapes used to have to survive a
+      // trip through a JS regex literal. They are now plain command arguments,
+      // so grep sees exactly what bash would give it.
+      assertStringIncludes(
+        transpile(parse('echo "test" | grep -E "test/path"')),
+        '$.cmd("grep", "-E", "test/path")',
+      );
+      assertStringIncludes(
+        transpile(parse('cat log | grep "/usr/local/bin"')),
+        '$.cmd("grep", "/usr/local/bin")',
+      );
+      assertStringIncludes(
+        transpile(parse('echo "x" | grep -E "FAILED|test/"')),
+        '$.cmd("grep", "-E", "FAILED|test/")',
+      );
+      // A literal backslash in the source stays a literal backslash in the arg.
+      assertStringIncludes(
+        transpile(parse('grep "\\[INFO\\]" log.txt')),
+        '$.cmd("grep", "\\\\[INFO\\\\]", "log.txt")',
+      );
+      assertStringIncludes(
+        transpile(parse('echo "x" | grep -v "^\\[0m$\\|^$"')),
+        '$.cmd("grep", "-v", "^\\\\[0m$\\\\|^$")',
+      );
     });
 
-    it("should handle grep without file (as transform)", () => {
-      const ast = parse("grep pattern");
-      const output = transpile(ast);
-      assertStringIncludes(output, "$.grep(/pattern/)");
+    it("expands unquoted glob operands the way bash does", () => {
+      assertStringIncludes(
+        transpile(parse("grep -n bar *.md")),
+        '$.cmd("grep", "-n", "bar", ...(await $.__expandGlob("*.md")))',
+      );
+      // A quoted pattern that merely looks like a glob is never expanded.
+      assertStringIncludes(
+        transpile(parse('grep "[abc]" file.txt')),
+        '$.cmd("grep", "[abc]", "file.txt")',
+      );
     });
 
-    it("should handle grep -v without file (as invert transform)", () => {
-      const ast = parse('echo "hello" | grep -v pattern');
-      const output = transpile(ast);
-      assertStringIncludes(output, "$.filter(");
-      assertStringIncludes(output, "!/pattern/.test");
+    it("pipes real grep output into internal JS transforms", () => {
+      // The point of SSH-675: real grep still composes with the fluent stream API.
+      const output = transpile(parse("grep foo file.txt | head -3"));
+      assertStringIncludes(output, '$.cmd("grep", "foo", "file.txt")');
+      assertStringIncludes(output, ".stdout().lines().pipe($.head(3))");
     });
 
-    it("SSH-567: should escape forward slashes in grep pattern", () => {
-      const ast = parse('echo "test" | grep -E "test/path"');
-      const output = transpile(ast);
-      // Forward slash must be escaped to prevent breaking the regex literal
-      assertStringIncludes(output, "test\\/path");
-      // The regex literal must be valid (no double //)
-      assertEquals(output.includes("test//"), false);
-    });
-
-    it("SSH-567: should handle grep pattern with multiple slashes", () => {
-      const ast = parse('cat log | grep "/usr/local/bin"');
-      const output = transpile(ast);
-      assertStringIncludes(output, "\\/usr\\/local\\/bin");
-    });
-
-    it("SSH-567: should handle grep -E with alternation containing slashes", () => {
-      const ast = parse('echo "x" | grep -E "FAILED|test/"');
-      const output = transpile(ast);
-      assertStringIncludes(output, "FAILED|test\\/");
-    });
-
-    it("SSH-568: should fall back to $.cmd for grep -A (after context)", () => {
-      const ast = parse('echo "test" | grep -A 20 "══"');
-      const output = transpile(ast);
-      // -A takes a numeric arg; fluent grep doesn't support context lines
-      // Must fall back to $.cmd("grep", ...) instead of misparsing args
-      assertStringIncludes(output, '$.cmd("grep"');
-      // Should NOT treat "20" as the pattern
-      assert(!output.includes("$.grep(/20/)"), "Should not misparse '20' as grep pattern");
-    });
-
-    it("SSH-568: should fall back to $.cmd for grep -B (before context)", () => {
-      const ast = parse('echo "test" | grep -B 5 "pattern"');
-      const output = transpile(ast);
-      assertStringIncludes(output, '$.cmd("grep"');
-    });
-
-    it("SSH-568: should fall back to $.cmd for grep -C (combined context)", () => {
-      const ast = parse('echo "test" | grep -C 3 "pattern"');
-      const output = transpile(ast);
-      assertStringIncludes(output, '$.cmd("grep"');
-    });
-
-    it("SSH-568: should fall back to $.cmd for grep -m (max count)", () => {
-      const ast = parse('echo "test" | grep -m 1 "pattern"');
-      const output = transpile(ast);
-      assertStringIncludes(output, '$.cmd("grep"');
-    });
-
-    // SSH-5: BRE escape sequences must not produce invalid regex literals
-    it("SSH-5: should generate valid regex for grep pattern with escaped bracket \\[", () => {
-      const ast = parse('echo "x" | grep "group\\|##\\["');
-      const output = transpile(ast);
-      // Must NOT produce \\[ (which opens an unclosed character class)
-      assertNotMatch(output, /\\\\+\[/);
-      // Must produce a valid regex with literal [
-      assertStringIncludes(output, "\\[");
-      // Must use | not \\| for alternation
-      assertNotMatch(output, /\\\\+\|/);
-    });
-
-    it("SSH-5: grep -v with BRE pattern \\[0m\\$\\|^\\$ should produce valid regex", () => {
-      const ast = parse('echo "x" | grep -v "^\\[0m$\\|^$"');
-      const output = transpile(ast);
-      // Must NOT produce \\[ (unclosed character class)
-      assertNotMatch(output, /\\\\+\[/);
-      // Must produce valid filter with \[ for literal bracket
-      assertStringIncludes(output, "\\[");
-    });
-
-    it("SSH-5: grep with escaped bracket in file pattern produces valid regex", () => {
-      const ast = parse('grep "\\[INFO\\]" log.txt');
-      const output = transpile(ast);
-      // Must NOT produce \\[ which creates invalid character class
-      assertNotMatch(output, /\\\\+\[/);
-      // Must have \[ for literal bracket
-      assertStringIncludes(output, "\\[");
+    it("pipes an internal stream into real grep via toCmdLines", () => {
+      const output = transpile(parse("cat file.txt | grep -- -x"));
+      assertStringIncludes(
+        output,
+        '$.cat("file.txt").pipe($.toCmdLines($.cmd("grep", "--", "-x")))',
+      );
     });
   });
 
@@ -568,9 +567,9 @@ describe("Control Flow - Complex Scenarios", () => {
       const output = transpile(ast);
       // Should build dynamic array with temp variable
       assertStringIncludes(output, "const _tmp");
-      assertStringIncludes(output, '.push(`before`)');
+      assertStringIncludes(output, ".push(`before`)");
       assertStringIncludes(output, ".split(/\\s+/)");
-      assertStringIncludes(output, '.push(`after`)');
+      assertStringIncludes(output, ".push(`after`)");
       assertStringIncludes(output, "for (const item of _tmp");
     });
 
@@ -935,13 +934,13 @@ describe("Variable Expansion - All Modifiers", () => {
     });
 
     it("should handle indirect reference in assignment", () => {
-      const ast = parse('value=${!varname}');
+      const ast = parse("value=${!varname}");
       const output = transpile(ast);
       assertStringIncludes(output, "eval(varname)");
     });
 
     it("should handle multiple indirect references", () => {
-      const ast = parse('echo ${!var1} ${!var2}');
+      const ast = parse("echo ${!var1} ${!var2}");
       const output = transpile(ast);
       assertStringIncludes(output, "eval(var1)");
       assertStringIncludes(output, "eval(var2)");
@@ -1549,14 +1548,14 @@ describe("Command Substitution", () => {
   });
 
   it("should handle command substitution in variable assignment", () => {
-    const ast = parse('CURRENT_DIR=$(pwd)');
+    const ast = parse("CURRENT_DIR=$(pwd)");
     const output = transpile(ast);
     assertStringIncludes(output, "let CURRENT_DIR");
     assertStringIncludes(output, "await __cmdSubText");
   });
 
   it("should handle command substitution with pipeline", () => {
-    const ast = parse('COUNT=$(ls | wc -l)');
+    const ast = parse("COUNT=$(ls | wc -l)");
     const output = transpile(ast);
     assertStringIncludes(output, "let COUNT");
   });
@@ -1566,9 +1565,12 @@ describe("Command Substitution", () => {
     const ast = parse('git commit -m "$(cat README.md)"');
     const output = transpile(ast);
     // The arg containing command substitution should use backticks for template literal evaluation
-    assertStringIncludes(output, '`${await __cmdSubText');
+    assertStringIncludes(output, "`${await __cmdSubText");
     // Should NOT have the command substitution wrapped in double quotes
-    assert(!output.includes('"${await __cmdSubText'), "Command substitution should not be in double quotes");
+    assert(
+      !output.includes('"${await __cmdSubText'),
+      "Command substitution should not be in double quotes",
+    );
   });
 
   it("should handle heredoc in command substitution", () => {
@@ -1582,7 +1584,7 @@ EOF
     assertStringIncludes(output, ".stdin(");
     assertStringIncludes(output, "SSH-356: Fix something");
     // The arg should use backticks for template literal evaluation
-    assertStringIncludes(output, '`${await __cmdSubText');
+    assertStringIncludes(output, "`${await __cmdSubText");
   });
 
   // SSH-495: Apostrophe in heredoc body inside $() should not corrupt parser state
@@ -1595,7 +1597,7 @@ EOF
     const output = transpile(ast);
     assertStringIncludes(output, ".stdin(");
     assertStringIncludes(output, "Don't wrap stream producers");
-    assertStringIncludes(output, '`${await __cmdSubText');
+    assertStringIncludes(output, "`${await __cmdSubText");
   });
 
   it("should handle double-quote in heredoc body inside command substitution (SSH-495)", () => {
@@ -1625,13 +1627,13 @@ EOF`;
 
   // SSH-358: Command substitution in variable assignment
   it("should handle command substitution in variable assignment correctly", () => {
-    const ast = parse('BRANCH=$(git branch --show-current)');
+    const ast = parse("BRANCH=$(git branch --show-current)");
     const output = transpile(ast);
     // Should generate valid variable assignment with command substitution
     assertStringIncludes(output, "let BRANCH");
     assertStringIncludes(output, "await __cmdSubText");
     // The command substitution should reference git command (now uses $.git() builtin)
-    assertStringIncludes(output, '$.git(');
+    assertStringIncludes(output, "$.git(");
   });
 });
 
@@ -1670,7 +1672,7 @@ describe("Grouping Constructs", () => {
     const output = transpile(ast);
     assertStringIncludes(output, "(async () => {");
     // SSH-372: Now uses $.ls builtin
-    assertStringIncludes(output, '$.ls(');
+    assertStringIncludes(output, "$.ls(");
   });
 });
 
@@ -1699,12 +1701,12 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let BACKUP_DIR');
-    assertStringIncludes(output, 'let DATE');
-    assertStringIncludes(output, 'if (');
-    assertStringIncludes(output, 'for (const file of');
+    assertStringIncludes(output, "let BACKUP_DIR");
+    assertStringIncludes(output, "let DATE");
+    assertStringIncludes(output, "if (");
+    assertStringIncludes(output, "for (const file of");
     // SSH-372: Now uses $.cp builtin
-    assertStringIncludes(output, '$.cp(');
+    assertStringIncludes(output, "$.cp(");
   });
 
   it("should transpile a log analysis script", () => {
@@ -1722,7 +1724,7 @@ describe("Complex Realistic Bash Scripts", () => {
     // grep with dynamic file arg falls back to generic command style
     // (fluent style can't parse dynamic args at transpile-time)
     assertStringIncludes(output, '$.cmd("grep"');
-    assertStringIncludes(output, '.pipe(');
+    assertStringIncludes(output, ".pipe(");
   });
 
   it("should transpile a function script", () => {
@@ -1745,8 +1747,8 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'async function deploy()');
-    assertStringIncludes(output, 'npm');
+    assertStringIncludes(output, "async function deploy()");
+    assertStringIncludes(output, "npm");
   });
 
   it("should transpile a while loop script", () => {
@@ -1764,8 +1766,8 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'while (true)');
-    assertStringIncludes(output, 'let COUNTER');
+    assertStringIncludes(output, "while (true)");
+    assertStringIncludes(output, "let COUNTER");
   });
 
   it("should transpile a for loop with variable iteration", () => {
@@ -1782,9 +1784,9 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'for (const target of');
+    assertStringIncludes(output, "for (const target of");
     // SSH-372: Now uses $.echo builtin
-    assertStringIncludes(output, '$.echo');
+    assertStringIncludes(output, "$.echo");
   });
 
   it("should transpile a case statement script", () => {
@@ -1801,8 +1803,8 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'if (');
-    assertStringIncludes(output, '} else if (');
+    assertStringIncludes(output, "if (");
+    assertStringIncludes(output, "} else if (");
   });
 
   it("should transpile a pipeline processing script", () => {
@@ -1820,8 +1822,8 @@ describe("Complex Realistic Bash Scripts", () => {
     const output = transpile(ast);
 
     // cat produces $.cat(file)
-    assertStringIncludes(output, 'file.txt');
-    assertStringIncludes(output, '.pipe(');
+    assertStringIncludes(output, "file.txt");
+    assertStringIncludes(output, ".pipe(");
   });
 
   it("should transpile a conditional script", () => {
@@ -1841,9 +1843,9 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let BRANCH');
-    assertStringIncludes(output, 'if (');
-    assertStringIncludes(output, '$.git('); // Now uses $.git() builtin
+    assertStringIncludes(output, "let BRANCH");
+    assertStringIncludes(output, "if (");
+    assertStringIncludes(output, "$.git("); // Now uses $.git() builtin
   });
 
   it("should transpile a health check script", () => {
@@ -1869,8 +1871,8 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'for (const service of');
-    assertStringIncludes(output, 'if (');
+    assertStringIncludes(output, "for (const service of");
+    assertStringIncludes(output, "if (");
   });
 
   it("should transpile a database backup script", () => {
@@ -1887,9 +1889,9 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let DB_NAME');
-    assertStringIncludes(output, 'pg_dump');
-    assertStringIncludes(output, '.pipe(');
+    assertStringIncludes(output, "let DB_NAME");
+    assertStringIncludes(output, "pg_dump");
+    assertStringIncludes(output, ".pipe(");
   });
 });
 
@@ -2032,7 +2034,7 @@ describe("BashTranspiler2 Class Extended", () => {
   it("should handle different import paths", () => {
     const transpiler = new BashTranspiler2({
       importPath: "@safesh/runtime",
-      imports: true
+      imports: true,
     });
     const ast = parse("ls");
     const output = transpiler.transpile(ast);
@@ -2051,7 +2053,7 @@ describe("BashTranspiler2 Class Extended", () => {
       "echo five",
     ];
 
-    const outputs = scripts.map(s => transpiler.transpile(parse(s)));
+    const outputs = scripts.map((s) => transpiler.transpile(parse(s)));
 
     // Each transpilation should produce the correct command with its argument
     // SSH-372: Now uses $.echo builtin

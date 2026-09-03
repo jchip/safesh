@@ -50,7 +50,9 @@ describe("Bug: grep file output", () => {
         `cd ${testDir} && grep -nE "trust-mock|trustMock|Trust-Mock|ts\\.idme|IPL_BACKEND|backend|BACKEND" start-local-infra.js`,
       );
 
-      assertStringIncludes(code, ".lines().map");
+      // SSH-675: the real binary does the matching and the numbering.
+      assertStringIncludes(code, '$.cmd("grep", "-nE"');
+      assertStringIncludes(code, '"start-local-infra.js")');
 
       const result = await executeCode(code, config, { cwd: Deno.cwd() });
 
@@ -71,7 +73,10 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
       );
 
       assertStringIncludes(code, `$.cd("${testDir}")`);
-      assertStringIncludes(code, ".lines().map");
+      assertStringIncludes(
+        code,
+        '$.cmd("grep", "-nE", "trust-mock|backend", "start-local-infra.js")',
+      );
 
       const result = await executeCode(code, config, { cwd: Deno.cwd() });
 
@@ -90,7 +95,10 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
       );
 
       assertStringIncludes(code, "__printCmd");
-      assertStringIncludes(code, ".lines().grep");
+      assertStringIncludes(
+        code,
+        '$.cmd("grep", "-E", "trust-mock|backend", "start-local-infra.js")',
+      );
 
       const result = await executeCode(code, config, { cwd: testDir });
 
@@ -121,7 +129,7 @@ grep -nE "trust-mock|backend" start-local-infra.js`,
       permissions: {
         read: [Deno.cwd(), "/tmp"],
         write: ["/tmp"],
-        run: ["printf"],
+        run: ["printf", "grep"],
       },
       timeout: 5000,
     };

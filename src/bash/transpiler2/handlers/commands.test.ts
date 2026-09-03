@@ -14,7 +14,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "FOO=bar";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "let FOO = \"bar\"");
+      assertStringIncludes(output, 'let FOO = "bar"');
     });
 
     it("should detect command with redirects", () => {
@@ -74,14 +74,14 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "echo hello";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.echo(\"hello\")");
+      assertStringIncludes(output, '$.echo("hello")');
     });
 
     it("should select shell-builtin strategy for cd", () => {
       const script = "cd /tmp";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.cd(\"/tmp\")");
+      assertStringIncludes(output, '$.cd("/tmp")');
     });
 
     it("should select timeout strategy", () => {
@@ -89,14 +89,14 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const output = transpile(parse(script));
 
       assertStringIncludes(output, "timeout: 5000");
-      assertStringIncludes(output, "\"sleep\"");
+      assertStringIncludes(output, '"sleep"');
     });
 
     it("should select fluent strategy for cat", () => {
       const script = "cat file.txt";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.cat(\"file.txt\")");
+      assertStringIncludes(output, '$.cat("file.txt")');
     });
 
     it("should use standard command strategy for cat with options", () => {
@@ -111,11 +111,11 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       );
     });
 
-    it("should select fluent strategy for grep", () => {
+    it("should select standard strategy for grep (SSH-675)", () => {
       const script = "grep pattern";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.grep(/pattern/)");
+      assertStringIncludes(output, '$.cmd("grep", "pattern")');
     });
 
     it("should select fluent strategy for head", () => {
@@ -129,14 +129,14 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "git status";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.git(\"status\")");
+      assertStringIncludes(output, '$.git("status")');
     });
 
     it("should select specialized strategy for docker", () => {
       const script = "docker ps";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.docker(\"ps\")");
+      assertStringIncludes(output, '$.docker("ps")');
     });
 
     it("should select specialized strategy for tmux", () => {
@@ -163,8 +163,8 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "X=1; Y=2";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "let X = \"1\"");
-      assertStringIncludes(output, "let Y = \"2\"");
+      assertStringIncludes(output, 'let X = "1"');
+      assertStringIncludes(output, 'let Y = "2"');
     });
 
     it("should execute timeout strategy with seconds", () => {
@@ -192,15 +192,15 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "cat file.txt";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.cat(\"file.txt\")");
+      assertStringIncludes(output, '$.cat("file.txt")');
       // cat produces a stream Command object - verified by presence of $.cat
     });
 
-    it("should execute fluent grep as transform", () => {
+    it("should execute grep as a real command in a pipeline (SSH-675)", () => {
       const script = "echo test | grep t";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "$.grep(/t/)");
+      assertStringIncludes(output, '$.cmd("echo", "test").pipe($.cmd("grep", "t"))');
     });
 
     it("should execute standard command with arguments", () => {
@@ -265,7 +265,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
 
       // Should use mergeStreams option, not .stderr(1)
       assertStringIncludes(output, "mergeStreams: true");
-      assertEquals(output.includes('.stderr(1)'), false);
+      assertEquals(output.includes(".stderr(1)"), false);
     });
 
     it("should apply multiple redirections", () => {
@@ -300,7 +300,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const output = transpile(parse(script));
 
       // Should fall back to $.cmd due to env var
-      assertStringIncludes(output, '$.cmd');
+      assertStringIncludes(output, "$.cmd");
       assertStringIncludes(output, "env:");
       assertStringIncludes(output, "LANG");
     });
@@ -314,12 +314,11 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       assertStringIncludes(output, ".pipe(");
     });
 
-    it("should use fluent grep for recursive grep fallback", () => {
+    it("should use the real binary for recursive grep", () => {
       const script = "grep -r pattern dir";
       const output = transpile(parse(script));
 
-      // Recursive grep should fall back to $.cmd
-      assertStringIncludes(output, '$.cmd("grep"');
+      assertStringIncludes(output, '$.cmd("grep", "-r", "pattern", "dir")');
     });
   });
 
@@ -358,69 +357,42 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       assertStringIncludes(output, "$.cat");
     });
 
-    it("should set isTransform=true for grep", () => {
+    it("should set isTransform=false for grep (SSH-675)", () => {
       const script = "echo test | grep t";
       const output = transpile(parse(script));
 
-      // Transform should be piped
+      // grep is a real command now, so it is piped as a command, not a transform.
       assertStringIncludes(output, ".pipe(");
-      assertStringIncludes(output, "$.grep");
+      assertStringIncludes(output, '$.cmd("grep", "t")');
+      assertEquals(output.includes("$.grep"), false);
     });
   });
 
-  describe("grep -v with file argument (SSH-503)", () => {
-    it("should use .lines().filter() instead of .grep().filter() for grep -v with file", () => {
-      const script = "grep -v pattern file.txt";
-      const output = transpile(parse(script));
+  // SSH-675: every grep form goes to the real binary. This replaces the SSH-503
+  // suite, which pinned down how the fluent lowering had to hand-build inverted
+  // matches and line numbering — work real grep does natively.
+  describe("grep always lowers to the real binary (SSH-675)", () => {
+    const forms: Array<[string, string]> = [
+      ["grep -v pattern file.txt", '$.cmd("grep", "-v", "pattern", "file.txt")'],
+      ["grep -v -i pattern file.txt", '$.cmd("grep", "-v", "-i", "pattern", "file.txt")'],
+      ["grep pattern file.txt", '$.cmd("grep", "pattern", "file.txt")'],
+      ["echo test | grep -v pattern", '$.cmd("grep", "-v", "pattern")'],
+      ["grep -v -n pattern file.txt", '$.cmd("grep", "-v", "-n", "pattern", "file.txt")'],
+    ];
 
-      // Should NOT use .grep() followed by .filter(x => !x.match) which produces nothing
-      assertEquals(output.includes(".grep("), false,
-        "grep -v with file should NOT use .grep() method");
-      assertEquals(output.includes(".filter(x => !x.match)"), false,
-        "grep -v with file should NOT use .filter(x => !x.match)");
+    for (const [script, expected] of forms) {
+      it(`lowers \`${script}\` to the real grep`, () => {
+        const output = transpile(parse(script));
 
-      // Should use .lines().filter(line => !pattern.test(line))
-      assertStringIncludes(output, '$.cat("file.txt")');
-      assertStringIncludes(output, ".lines().filter(line => !/pattern/.test(line))");
-    });
-
-    it("should use .lines().filter() for grep -vi (invert + case-insensitive) with file", () => {
-      const script = "grep -v -i pattern file.txt";
-      const output = transpile(parse(script));
-
-      // Should use case-insensitive regex with filter
-      assertStringIncludes(output, '$.cat("file.txt")');
-      assertStringIncludes(output, ".lines().filter(line => !/pattern/i.test(line))");
-    });
-
-    it("should still use .grep() for non-inverted grep with file", () => {
-      const script = "grep pattern file.txt";
-      const output = transpile(parse(script));
-
-      // Normal grep with file should still use .grep()
-      assertStringIncludes(output, '$.cat("file.txt")');
-      assertStringIncludes(output, ".grep(/pattern/)");
-    });
-
-    it("should use filter transform for grep -v without file (in pipeline)", () => {
-      const script = "echo test | grep -v pattern";
-      const output = transpile(parse(script));
-
-      // grep -v as a transform should use $.filter()
-      assertStringIncludes(output, "$.filter((line) => !/pattern/.test(line))");
-    });
-
-    it("should handle grep -vn (invert + line numbers) with file", () => {
-      const script = "grep -v -n pattern file.txt";
-      const output = transpile(parse(script));
-
-      // Should preserve original file line numbers before filtering.
-      assertStringIncludes(output, '$.cat("file.txt")');
-      assertStringIncludes(output, ".lines().map((line, i) => ({ line, number: i + 1 }))");
-      assertStringIncludes(output, ".filter(({ line }) => !/pattern/.test(line))");
-      assertStringIncludes(output, ".map(({ line, number }) => `${number}:${line}`)");
-    });
+        assertStringIncludes(output, expected);
+        // No hand-built JS filter, regex literal, or line-numbering map remains.
+        assertEquals(output.includes(".grep("), false, "must not use fluent .grep()");
+        assertEquals(output.includes("$.filter("), false, "must not hand-build a filter");
+        assertEquals(output.includes("/pattern/"), false, "must not emit a regex literal");
+      });
+    }
   });
+  // SSH-675-MARKER
 
   describe("Integration - Full buildCommand Orchestration", () => {
     it("should orchestrate all phases for simple command", () => {
@@ -466,7 +438,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const output = transpile(parse(script));
 
       // cat is stream, head is transform
-      assertStringIncludes(output, "$.cat(\"file.txt\")");
+      assertStringIncludes(output, '$.cat("file.txt")');
       assertStringIncludes(output, "$.head(10)");
       assertStringIncludes(output, ".lines().pipe(");
     });
@@ -489,8 +461,15 @@ describe("Pipeline negation (SSH-594)", () => {
   });
 
   it("should flip the recorded status for a negated fluent command", () => {
+    const output = transpile(parse("! cat file.txt"));
+    assertStringIncludes(output, '$.cat("file.txt")');
+    assertStringIncludes(output, STATUS_FLIP);
+  });
+
+  it("should flip the recorded status for a negated real grep (SSH-675)", () => {
+    // grep's own exit code (1 for no match) now comes from the binary itself.
     const output = transpile(parse("! grep nomatch file.txt"));
-    assertStringIncludes(output, '$.cat("file.txt").lines().grep(/nomatch/)');
+    assertStringIncludes(output, '$.cmd("grep", "nomatch", "file.txt")');
     assertStringIncludes(output, STATUS_FLIP);
   });
 

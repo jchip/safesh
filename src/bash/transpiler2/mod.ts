@@ -32,14 +32,12 @@ export {
   FLUENT_COMMAND_CAPABILITIES,
   FLUENT_COMMAND_NAMES,
   getFluentCommandCapability,
-  getGrepCommandCapability,
   getSimpleTransformCapability,
 } from "./command-capabilities.ts";
 export type {
   CommandDataMode,
   CommandOutputMode,
   FluentCommandCapability,
-  GrepCommandCapability,
   SimpleTransformCapability,
 } from "./command-capabilities.ts";
 export { lowerShellBuiltin } from "./builtin-lowering.ts";

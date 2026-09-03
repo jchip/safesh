@@ -10,7 +10,6 @@ import type * as AST from "../../ast.ts";
 import type { ExpressionResult, StatementResult, VisitorContext } from "../types.ts";
 import { isFluentCommand } from "../types.ts";
 import {
-  getGrepCommandCapability,
   getSimpleTransformCapability,
   type SimpleTransformCapability,
 } from "../command-capabilities.ts";
@@ -24,7 +23,6 @@ import {
   parseTailCountArg,
   sanitizeVarName,
   templateEscapedToLiteral,
-  templateEscapedToRegexSource,
 } from "../utils/mod.ts";
 import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
 
@@ -134,10 +132,6 @@ function formatCommandArg(
     return `...(await $.__expandGlob("${escapeForQuotes(arg)}"))`;
   }
   return formatArg(arg, hasExpansion, templateEscapedLiteral);
-}
-
-function templateEscapedToFixedRegexSource(pattern: string): string {
-  return escapeRegex(templateEscapedToLiteral(pattern)).replace(/\//g, "\\/");
 }
 
 function formatRedirectionTarget(redirect: AST.Redirection, ctx: VisitorContext): string {
@@ -287,7 +281,12 @@ function handleTimeoutCommand(
   // Build the command with timeout option
   const argsArray = cmdArgs.length > 0
     ? cmdArgs.map((a, i) =>
-      formatCommandArg(a, argExpansions?.[i + 2], argTemplateEscapedLiterals?.[i + 2], argIsGlob?.[i + 2])
+      formatCommandArg(
+        a,
+        argExpansions?.[i + 2],
+        argTemplateEscapedLiterals?.[i + 2],
+        argIsGlob?.[i + 2],
+      )
     )
       .join(", ")
     : "";
@@ -319,7 +318,9 @@ function handleSpecializedCommand(
   }
 
   const argsArray = args.length > 0
-    ? args.map((a, i) => formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i]))
+    ? args.map((a, i) =>
+      formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i])
+    )
       .join(", ")
     : "";
   if (hasMergeStreams) {
@@ -348,7 +349,9 @@ function handleStandardCommand(
     // SSH-649: shared with the timeout handler via buildEnvEntries.
     const envEntries = buildEnvEntries(assignments, ctx);
     const argsArray = args
-      .map((a, i) => formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i]))
+      .map((a, i) =>
+        formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i])
+      )
       .join(", ");
     return `$.cmd({ env: { ${envEntries} } }, ${formattedName}${
       argsArray ? `, ${argsArray}` : ""
@@ -356,7 +359,9 @@ function handleStandardCommand(
   }
 
   const argsArray = args.length > 0
-    ? args.map((a, i) => formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i]))
+    ? args.map((a, i) =>
+      formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i])
+    )
       .join(", ")
     : "";
   if (hasMergeStreams) {
@@ -680,10 +685,9 @@ function selectCommandStrategy(
   // invocation to the real tool (standard command), where the quoting-aware
   // command-position glob expansion and real multi-file output formatting
   // (head's `==>` banners, sort's concatenation) apply. Exempt: wc (dedicated
-  // multi-operand glob handling via $.wcMultiple) and grep (its regex pattern
-  // legitimately contains glob metacharacters like `[`, so routing on a pattern
-  // would be wrong; grep file-operand globbing remains a follow-up).
-  const fluentGlobNeedsRealTool = analysis.name !== "wc" && analysis.name !== "grep" &&
+  // multi-operand glob handling via $.wcMultiple). SSH-675: grep is no longer a
+  // fluent command at all, so it never reaches this check.
+  const fluentGlobNeedsRealTool = analysis.name !== "wc" &&
     analysis.args.some((a) => hasGlobPattern(a));
   if (
     isFluentCommand(analysis.name) && !analysis.hasDynamicArgs && !analysis.hasAssignments &&
@@ -1144,153 +1148,6 @@ function buildFluentCommand(
       }
       const files = args.map((a) => `"${escapeForQuotes(a)}"`).join(", ");
       return { code: `$.cat(${files})`, isTransform: false, isStream: true };
-    }
-
-    case "grep": {
-      const capability = getGrepCommandCapability();
-      // $.grep(pattern) as transform or $.grep(pattern, file)
-      // Parse grep options
-      let pattern: string | undefined;
-      const explicitPatterns: string[] = [];
-      let files: string[] = [];
-      let invert = false;
-      let fixedStrings = false;
-      let ignoreCase = false;
-      let lineNumber = false;
-      let recursive = false;
-      let optionsEnded = false;
-
-      for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-
-        if (!optionsEnded && arg === "--") {
-          optionsEnded = true;
-        } else if (!optionsEnded && arg === "--fixed-strings") {
-          fixedStrings = true;
-        } else if (!optionsEnded && (arg === "--quiet" || arg === "--silent")) {
-          // SSH-646: long forms of `-q` — delegate to real grep (see below).
-          return null;
-        } else if (!optionsEnded && arg === "--regexp") {
-          explicitPatterns.push(args[++i] ?? "");
-        } else if (!optionsEnded && arg?.startsWith("--regexp=")) {
-          explicitPatterns.push(arg.slice("--regexp=".length));
-        } else if (!optionsEnded && arg?.startsWith("--")) {
-          // Skip long options for now.
-        } else if (!optionsEnded && arg?.startsWith("-") && arg.length > 1) {
-          for (let flagIndex = 1; flagIndex < arg.length; flagIndex++) {
-            const flag = arg[flagIndex]!;
-            if (capability.invertShortFlags.includes(flag)) {
-              invert = true;
-            } else if (flag === "F") {
-              fixedStrings = true;
-            } else if (flag === "e") {
-              const inlinePattern = arg.slice(flagIndex + 1);
-              explicitPatterns.push(inlinePattern.length > 0 ? inlinePattern : (args[++i] ?? ""));
-              break;
-            } else if (capability.ignoreCaseShortFlags.includes(flag)) {
-              ignoreCase = true;
-            } else if (capability.lineNumberShortFlags.includes(flag)) {
-              lineNumber = true;
-            } else if (capability.recursiveShortFlags.includes(flag)) {
-              recursive = true;
-            } else if ((capability.unsupportedShortFlags ?? []).includes(flag)) {
-              // SSH-568/646: flags fluent grep can't replicate — context/count
-              // args (A/B/C/m/c) and `-q` quiet (suppress stdout, keep exit
-              // code). Fall back to $.cmd("grep", ...) for faithful behavior.
-              return null;
-            }
-          }
-        } else if (pattern === undefined && explicitPatterns.length === 0) {
-          pattern = arg ?? "";
-        } else {
-          files.push(arg ?? "");
-        }
-      }
-
-      // If recursive flag is present, fall back to $.cmd()
-      // Fluent grep doesn't support directory recursion
-      if (recursive) {
-        return null;
-      }
-
-      // SSH-5: pattern comes from visitWord() which applies escapeForTemplate(), doubling
-      // backslashes and escaping $. Embedding the template-escaped string directly in a
-      // regex literal causes \\[ to open an unclosed character class.
-      // templateEscapedToRegexSource() reverses the template escaping then applies
-      // BRE→JS conversions so the result is safe inside /.../.
-      const patternSources = explicitPatterns.length > 0
-        ? explicitPatterns.map((p) =>
-          fixedStrings ? templateEscapedToFixedRegexSource(p) : templateEscapedToRegexSource(p)
-        )
-        : [
-          fixedStrings
-            ? templateEscapedToFixedRegexSource(pattern ?? "")
-            : templateEscapedToRegexSource(pattern ?? ""),
-        ];
-      const regexSource = patternSources.length === 1
-        ? patternSources[0]!
-        : patternSources.map((source) => `(?:${source})`).join("|");
-      const flags = ignoreCase ? "i" : "";
-      const regexPattern = regexSource === "" ? `/(?:)/${flags}` : `/${regexSource}/${flags}`;
-
-      if (files.length > 0) {
-        // Real grep prefixes `filename:` and restarts line numbers per operand
-        // whenever it gets more than one. A glob counts too: its expansion size
-        // is only known at runtime. Lower those to $.grepFiles over
-        // glob-expanded [name, lines] sources (mirroring the $.wcMultiple
-        // lowering above); $.cat keeps the per-file sandbox read checks.
-        const singleLiteralFile = files.length === 1 && !hasGlobPattern(files[0] ?? "");
-        if (!singleLiteralFile) {
-          const fileList = `[${formatFileArgs(files)}]`;
-          const opts = `{ lineNumbers: ${lineNumber}, invertMatch: ${invert} }`;
-          const sources = `(await $.__expandGlobAll(${fileList}))` +
-            `.map((__p) => [__p, $.cat(__p).lines()])`;
-          return {
-            code: `$.createStream($.grepFiles(${regexPattern}, ${sources}, ${opts}))` +
-              `.withEmptyExitCode(1)`,
-            isTransform: false,
-            isStream: true,
-          };
-        }
-
-        // grep pattern file -> $.cat(file).grep(pattern) - this is a stream chain
-        const fileStream = `$.cat("${escapeForQuotes(files[0] ?? "")}").lines()`;
-        if (lineNumber) {
-          const predicate = invert ? `!${regexPattern}.test(line)` : `${regexPattern}.test(line)`;
-          const result = `${fileStream}.map((line, i) => ({ line, number: i + 1 }))` +
-            `.filter(({ line }) => ${predicate})` +
-            ".map(({ line, number }) => `${number}:${line}`).withEmptyExitCode(1)";
-          return { code: result, isTransform: false, isStream: true };
-        }
-        if (invert) {
-          // SSH-503: grep -v with file - skip .grep() since it filters FOR the pattern,
-          // then .filter(x => !x.match) on the result would produce nothing.
-          // Instead, read lines and filter out matches directly.
-          const result =
-            `${fileStream}.filter(line => !${regexPattern}.test(line)).withEmptyExitCode(1)`;
-          return { code: result, isTransform: false, isStream: true };
-        }
-        const result = `${fileStream}.grep(${regexPattern})`;
-        return { code: result, isTransform: false, isStream: true };
-      }
-
-      // SSH-615: the no-file (pipe) form has no running line counter, so it can't
-      // faithfully number lines the way the file-operand form does above. Fall
-      // back to real grep so `-n` (and `-vn`) number by piped-stdin position,
-      // matching bash, instead of silently dropping `-n`.
-      if (lineNumber) {
-        return null;
-      }
-
-      // grep as a transform
-      if (invert) {
-        return {
-          code: `$.filter((line) => !${regexPattern}.test(line))`,
-          isTransform: true,
-          isStream: false,
-        };
-      }
-      return { code: `$.grep(${regexPattern})`, isTransform: true, isStream: false };
     }
 
     case "head":
@@ -2512,7 +2369,11 @@ class PipelineAssembler {
 
   private currentCaptureExpression(): string {
     if (this.isVariableAssignment) {
-      return assignmentResultExpression(this.code, this.assignmentNames, this.assignmentRecordsStatus);
+      return assignmentResultExpression(
+        this.code,
+        this.assignmentNames,
+        this.assignmentRecordsStatus,
+      );
     }
     return this.isPromise ? `await ${this.code}` : this.code;
   }

@@ -21,14 +21,6 @@ export interface OptionTransformCapability extends BaseCommandCapability {
   flagOptions: Record<string, string>;
 }
 
-export interface GrepCommandCapability extends BaseCommandCapability {
-  kind: "grep";
-  invertShortFlags: readonly string[];
-  ignoreCaseShortFlags: readonly string[];
-  lineNumberShortFlags: readonly string[];
-  recursiveShortFlags: readonly string[];
-}
-
 export interface SourceCommandCapability extends BaseCommandCapability {
   kind: "source";
   runtimeName: "cat";
@@ -36,7 +28,6 @@ export interface SourceCommandCapability extends BaseCommandCapability {
 
 export type FluentCommandCapability =
   | CountTransformCapability
-  | GrepCommandCapability
   | OptionTransformCapability
   | SourceCommandCapability;
 
@@ -51,21 +42,12 @@ export const FLUENT_COMMAND_CAPABILITIES = {
     outputMode: "raw-stream",
     fileOperands: true,
   },
-  grep: {
-    kind: "grep",
-    name: "grep",
-    inputMode: "line",
-    outputMode: "transform",
-    fileOperands: true,
-    invertShortFlags: ["v"],
-    ignoreCaseShortFlags: ["i"],
-    lineNumberShortFlags: ["n"],
-    recursiveShortFlags: ["r", "R"],
-    // SSH-646: `q` joins the delegate-to-real-grep set. Fluent grep is a
-    // passthrough filter, so it can't honor `-q` (quiet): the match would leak
-    // to stdout in print positions even though the exit code is right.
-    unsupportedShortFlags: ["A", "B", "C", "c", "m", "q"],
-  },
+  // SSH-675: `grep` is deliberately absent. Every bash `grep` lowers to the real
+  // binary (a standard command) instead of a fluent filter — real grep has the
+  // full BRE/ERE dialect, every flag, native exit codes, and is faster on large
+  // inputs. Its stdout still feeds internal transforms through the usual
+  // `.stdout().lines().pipe(...)` plumbing. `$.grep`/`$.grepFiles` remain
+  // available to hand-written TypeScript; only the bash path stopped using them.
   head: {
     kind: "count-transform",
     name: "head",
@@ -130,10 +112,6 @@ export const FLUENT_COMMAND_NAMES = new Set(Object.keys(FLUENT_COMMAND_CAPABILIT
 
 export function getFluentCommandCapability(name: string): FluentCommandCapability | undefined {
   return FLUENT_COMMAND_CAPABILITIES[name as keyof typeof FLUENT_COMMAND_CAPABILITIES];
-}
-
-export function getGrepCommandCapability(): GrepCommandCapability {
-  return FLUENT_COMMAND_CAPABILITIES.grep;
 }
 
 export function getSimpleTransformCapability(name: string): SimpleTransformCapability | undefined {

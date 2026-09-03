@@ -19,7 +19,11 @@ Deno.test({
     // Should have .stdout().lines() once
     assertStringIncludes(result, ".stdout().lines()");
     // Should NOT have .lines().lines()
-    assertEquals(result.includes(".lines().lines()"), false, "Should not have duplicate .lines() calls");
+    assertEquals(
+      result.includes(".lines().lines()"),
+      false,
+      "Should not have duplicate .lines() calls",
+    );
   },
 });
 
@@ -33,7 +37,11 @@ Deno.test({
     // Should have .stdout().lines().pipe($.sort())
     assertStringIncludes(result, ".stdout().lines().pipe($.sort())");
     // Should NOT have .lines().lines()
-    assertEquals(result.includes(".lines().lines()"), false, "Should not have duplicate .lines() calls");
+    assertEquals(
+      result.includes(".lines().lines()"),
+      false,
+      "Should not have duplicate .lines() calls",
+    );
   },
 });
 
@@ -51,7 +59,11 @@ Deno.test({
     // SSH-571: combined short flags expand instead of being silently dropped
     assertStringIncludes(result, ".pipe($.sort({ reverse: true, numeric: true }))");
     // Should NOT have .lines().lines()
-    assertEquals(result.includes(".lines().lines()"), false, "Should not have duplicate .lines() calls");
+    assertEquals(
+      result.includes(".lines().lines()"),
+      false,
+      "Should not have duplicate .lines() calls",
+    );
     // Should NOT have .lines().pipe() after the first one
     const linesCount = (result.match(/\.lines\(\)/g) || []).length;
     assertEquals(linesCount, 1, "Should have exactly one .lines() call");
@@ -61,7 +73,8 @@ Deno.test({
 Deno.test({
   name: "SSH-408: exact command from bug report",
   fn() {
-    const code = `git shortlog -sn --since="1 month ago" && echo -e "\\n--- Commit activity by day ---" && git log --since="1 month ago" --date=short --pretty=format:"%ad" | sort | uniq -c | sort -rn`;
+    const code =
+      `git shortlog -sn --since="1 month ago" && echo -e "\\n--- Commit activity by day ---" && git log --since="1 month ago" --date=short --pretty=format:"%ad" | sort | uniq -c | sort -rn`;
     const ast = parse(code);
     const result = transpile(ast);
 
@@ -72,8 +85,16 @@ Deno.test({
 
     // Should NOT have .lines().lines() or .lines().pipe() after first .lines()
     assertEquals(result.includes(".lines().lines()"), false, "Should not have .lines().lines()");
-    assertEquals(result.includes(".pipe($.sort()).lines()"), false, "Should not have .lines() after .pipe(transform)");
-    assertEquals(result.includes(".pipe($.uniq({ count: true })).lines()"), false, "Should not have .lines() after .pipe(transform)");
+    assertEquals(
+      result.includes(".pipe($.sort()).lines()"),
+      false,
+      "Should not have .lines() after .pipe(transform)",
+    );
+    assertEquals(
+      result.includes(".pipe($.uniq({ count: true })).lines()"),
+      false,
+      "Should not have .lines() after .pipe(transform)",
+    );
 
     // Count .lines() calls - should be exactly 1
     const linesCount = (result.match(/\.lines\(\)/g) || []).length;
@@ -88,17 +109,21 @@ Deno.test({
     const ast = parse(code);
     const result = transpile(ast);
 
-    // cat produces a stream, so should start with $.cat().lines()
+    // SSH-675: grep is a real command, so the stream crosses into it via
+    // $.toCmdLines and comes back out for the remaining fluent transforms.
     assertStringIncludes(result, "$.cat(");
-    assertStringIncludes(result, ".lines()");
-    assertStringIncludes(result, ".pipe($.grep(");
+    assertStringIncludes(result, '.pipe($.toCmdLines($.cmd("grep", "pattern")))');
     assertStringIncludes(result, ".pipe($.sort())");
     assertStringIncludes(result, ".pipe($.uniq())");
 
-    // Should NOT have duplicate .lines() calls
-    assertEquals(result.includes(".lines().lines()"), false, "Should not have duplicate .lines() calls");
+    // Should NOT re-split a stream that is already line-oriented
+    assertEquals(
+      result.includes(".lines().lines()"),
+      false,
+      "Should not have duplicate .lines() calls",
+    );
     const linesCount = (result.match(/\.lines\(\)/g) || []).length;
-    assertEquals(linesCount, 1, "Should have exactly one .lines() call");
+    assertEquals(linesCount, 0, "toCmdLines handles the split; no extra .lines() needed");
   },
 });
 
@@ -110,6 +135,10 @@ Deno.test({
     const result = transpile(ast);
 
     // Should not have .lines().lines() anywhere
-    assertEquals(result.includes(".lines().lines()"), false, "Should not have duplicate .lines() calls");
+    assertEquals(
+      result.includes(".lines().lines()"),
+      false,
+      "Should not have duplicate .lines() calls",
+    );
   },
 });
