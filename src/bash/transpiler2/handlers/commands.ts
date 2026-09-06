@@ -25,6 +25,7 @@ import {
   templateEscapedToLiteral,
 } from "../utils/mod.ts";
 import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
+import { buildSubshellTestExpression } from "./control.ts";
 
 // =============================================================================
 // Helpers
@@ -2570,12 +2571,29 @@ function flattenPipeline(
  * Wraps the statement in an async IIFE that returns a result object
  */
 function buildStatementAsExpression(stmt: AST.Statement, ctx: VisitorContext): string {
+  // SSH-676: a subshell needs the SSH-620 status-carrying build. visitSubshell
+  // wraps the body in its OWN `await (async () => {...})()`, so a Deno.exitCode
+  // read placed after those lines lands a microtask later — long enough for the
+  // foreground to have overwritten it. buildSubshellTestExpression returns the
+  // status from inside that IIFE instead, with no such gap.
+  if (stmt.type === "Subshell") {
+    return `(async () => (${buildSubshellTestExpression(stmt, ctx)}))()`;
+  }
+
   // Visit the statement to get its lines
   const result = ctx.visitStatement(stmt);
   const lines = result.lines.map((l) => l.trim()).filter((l) => l.length > 0);
 
-  // Wrap in async IIFE that executes the statements and returns success
-  return `(async () => { ${lines.join("; ")}; return { code: 0, stdout: '', stderr: '' }; })()`;
+  // Wrap in async IIFE that executes the statements and returns their status.
+  // SSH-676: the body records each command's status into Deno.exitCode
+  // (SSH-581), and these statement forms emit inline (no nested IIFE), so
+  // reading it back here — synchronously, right after the body — yields the
+  // group's real exit status. It used to be hardcoded to 0, which lost the
+  // status of a backgrounded `{ ...; } &` awaited by `wait $!` and zeroed
+  // PIPESTATUS for a group feeding a pipe.
+  return `(async () => { ${
+    lines.join("; ")
+  }; return { code: Deno.exitCode, stdout: '', stderr: '' }; })()`;
 }
 
 /**
@@ -3030,21 +3048,12 @@ export function visitPipeline(
   if (pipeline.background) {
     const printBackgroundResult = result.isPrintable || result.isStream || result.isResultObject;
 
+    // SSH-676: register the job so `wait` has something to await and `$!` has
+    // an id. __bgStart invokes the thunk synchronously, so the job is running
+    // and registered before the next foreground statement.
     return {
       lines: [
-        `${indent}(async () => {`,
-        `${indent}  const __bgCmd = ${result.code};`,
-        `${indent}  if (__bgCmd && typeof __bgCmd.spawnBackground === "function") {`,
-        `${indent}    const __child = __bgCmd.spawnBackground();`,
-        `${indent}    __LAST_BG_PID = __child.pid;`,
-        `${indent}  } else {`,
-        printBackgroundResult
-          // __rec=false: a background job finishing later must not overwrite
-          // the foreground exit status (bash launches with $?=0) (SSH-581)
-          ? `${indent}    await __printCmd(await Promise.resolve(__bgCmd), false);`
-          : `${indent}    await Promise.resolve(__bgCmd);`,
-        `${indent}  }`,
-        `${indent}})(); // background`,
+        `${indent}__bgStart(() => (${result.code}), ${printBackgroundResult}); // background`,
         `${indent}__recStatus();`,
       ],
     };

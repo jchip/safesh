@@ -118,7 +118,47 @@ const CORPUS: Record<string, Case[]> = {
     // SSH-634: assignment-left &&-chain before a ;-sequence drops the && guard.
     { src: 'x=$(false) && echo Y; echo "rc=$?"', xfail: "SSH-634" },
   ],
+  // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
+  // purpose — the pre-fix failure mode was `wait` falling straight through, so
+  // only the interleaving proves it actually waits. Sleeps are spread far
+  // enough apart (50ms vs 200ms) that the ordering is not a race.
+  jobs: [
+    { src: "( sleep 0.2; echo SLOW ) & echo FG; wait; echo AFTER" },
+    { src: "sleep 0.2 & wait; echo AFTER" },
+    { src: "( sleep 0.2; echo A ) & ( sleep 0.05; echo B ) & wait; echo C" },
+    { src: "{ sleep 0.2; echo BRACE; } & wait; echo AFTER" },
+    { src: "echo pre; ( sleep 0.1; echo mid ) & wait; echo post" },
+    // $! must be non-empty for an in-process job too (bash gives a real pid;
+    // we only pin that something referable comes back), and `wait $!` waits.
+    { src: '( sleep 0.1 ) & p=$!; [ -n "$p" ] && echo haspid; wait' },
+    { src: "( sleep 0.2; echo X ) & wait $!; echo Y" },
+    // $! is the MOST RECENT job, not the first.
+    { src: '( exit 3 ) & ( exit 4 ) & wait $!; echo "rc=$?"' },
+    // Bare `wait` always reports 0, even when a job failed; `wait PID` reports
+    // that job's status; an unknown pid is 127.
+    { src: '( exit 3 ) & wait; echo "rc=$?"' },
+    { src: '( exit 3 ) & wait $!; echo "rc=$?"' },
+    { src: '{ sleep 0.1; false; } & wait $!; echo "rc=$?"' },
+    { src: 'wait; echo "rc=$?"' },
+    { src: 'wait 999999; echo "rc=$?"' },
+    // Reaping: a bare `wait` clears the table (a later `wait $!` is 127), but
+    // `wait PID` leaves the record, so the same pid reports the same status.
+    { src: '( exit 3 ) & p=$!; wait; wait $p; echo "rc=$?"' },
+    { src: '( exit 3 ) & p=$!; wait $p; wait $p; echo "rc=$?"' },
+  ],
 };
+
+// SSH-676 collateral: giving a `( ... )`/`{ ...; }` group in expression
+// position its real exit status (it was hardcoded to 0) also fixes negation
+// and PIPESTATUS for those forms. Kept alongside the jobs corpus because the
+// same change drives both.
+CORPUS.subshell!.push(
+  { src: '! ( false ); echo "rc=$?"' },
+  { src: '! ( true ); echo "rc=$?"' },
+  // SSH-677: the captured-upstream build (buildStatementAsCapturedExpression)
+  // still hardcodes code 0, so a group feeding a pipe loses its status.
+  { src: '( false ) | cat; echo "${PIPESTATUS[0]}"', xfail: "SSH-677" },
+);
 
 function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);

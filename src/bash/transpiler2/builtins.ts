@@ -47,4 +47,8 @@ export const SHELL_BUILTINS: Record<string, BuiltinConfig> = {
   mkdir: { fn: "$.mkdir", type: "async" },
   touch: { fn: "$.touch", type: "async" },
   exit: { fn: "Deno.exit", type: "silent" },
+  // SSH-676: `wait` is a builtin over the transpiler's own job table. Falling
+  // through to $.cmd("wait") dispatched to the real /usr/bin/wait, which starts
+  // its own shell, finds no jobs and silently exits 0 — so `wait` never waited.
+  wait: { fn: "__waitJobs", type: "async" },
 };

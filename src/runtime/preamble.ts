@@ -126,6 +126,102 @@ export function recStatusLines(): string[] {
 }
 
 /**
+ * Emitted background-job runtime (SSH-676) — the table behind `&`, `$!` and
+ * `wait`.
+ *
+ * Bash gives every background job a pid that `$!` reports and `wait` accepts.
+ * An external command spawns a real child, so its pid is the job id. An
+ * in-process job (a backgrounded subshell, brace group or builtin) has no
+ * child, so it gets a synthetic id from a range above every OS pid ceiling
+ * (Linux caps pid_max at 4194304, macOS at 99999) — a synthetic id therefore
+ * can never collide with a live child's pid.
+ *
+ * Reaping follows bash: a bare `wait` waits for every job and clears the
+ * table, so a later `wait $!` reports 127; `wait PID` leaves the record in
+ * place, so waiting the same pid twice reports the same status both times.
+ *
+ * Emitted by statusRecordingLines, so it references __printCmd (hoisted) and
+ * __LAST_BG_PID from the same scope.
+ */
+function backgroundJobLines(): string[] {
+  return [
+    "// SSH-676: background job table for $! and `wait`",
+    `const __JOB_ID_BASE = 10000000;`,
+    `let __JOB_SEQ = 0;`,
+    `interface __JobRec { done: boolean; status: number; p: Promise<number> }`,
+    `const __JOBS = new Map<number, __JobRec>();`,
+    `function __regJob(__id: number, __p: Promise<number>): number {`,
+    `  const __rec: __JobRec = { done: false, status: 0, p: Promise.resolve(0) };`,
+    `  // Settle the record here so a job that is never waited for cannot surface`,
+    `  // as an unhandled rejection.`,
+    `  __rec.p = __p.then(`,
+    `    (__s) => { __rec.done = true; __rec.status = __s; return __s; },`,
+    `    (__e) => { __rec.done = true; __rec.status = 1; return __bgFail(__e); },`,
+    `  );`,
+    `  __JOBS.set(__id, __rec);`,
+    `  __LAST_BG_PID = __id;`,
+    `  return __id;`,
+    `}`,
+    `async function __bgFail(__e: unknown): Promise<number> {`,
+    `  const __m = __e instanceof Error ? __e.message : String(__e);`,
+    `  try { await Deno.stderr.write(new TextEncoder().encode(__m + "\\n")); } catch { /* stderr gone */ }`,
+    `  return 1;`,
+    `}`,
+    "// Start a background pipeline. The thunk is invoked synchronously so the",
+    "// job is already running — and registered, so $! is set — before the next",
+    "// foreground statement runs.",
+    `function __bgStart(__thunk: () => any, __print: boolean): number {`,
+    `  let __cmd: any;`,
+    `  try {`,
+    `    __cmd = __thunk();`,
+    `    if (__cmd && typeof __cmd.spawnBackground === "function") {`,
+    `      const __child = __cmd.spawnBackground();`,
+    `      return __regJob(__child.pid, __child.status.then((__s: any) => __s?.code ?? 0));`,
+    `    }`,
+    `  } catch (__e) {`,
+    `    return __regJob(__JOB_ID_BASE + (++__JOB_SEQ), Promise.reject(__e));`,
+    `  }`,
+    `  return __regJob(__JOB_ID_BASE + (++__JOB_SEQ), (async () => {`,
+    `    const __v = await Promise.resolve(__cmd);`,
+    `    // __rec=false: a background job finishing later must not overwrite the`,
+    `    // foreground exit status (bash launches with $?=0) (SSH-581)`,
+    `    if (__print) return await __printCmd(__v, false);`,
+    `    return typeof __v?.code === "number" ? __v.code : 0;`,
+    `  })());`,
+    `}`,
+    `async function __waitJobs(...__specs: unknown[]): Promise<{ code: number; stdout: string; stderr: string; success: boolean }> {`,
+    `  const __res = (__code: number, __err = "") => (`,
+    `    { code: __code, stdout: "", stderr: __err, success: __code === 0 }`,
+    `  );`,
+    `  if (__specs.length === 0) {`,
+    `    // bash: a bare wait waits for every job, reaps them, and always reports 0`,
+    `    for (;;) {`,
+    `      const __pending = Array.from(__JOBS.values()).filter((__j) => !__j.done);`,
+    `      if (__pending.length === 0) break;`,
+    `      await Promise.all(__pending.map((__j) => __j.p));`,
+    `    }`,
+    `    __JOBS.clear();`,
+    `    return __res(0);`,
+    `  }`,
+    `  let __code = 0;`,
+    `  let __err = "";`,
+    `  for (const __spec of __specs) {`,
+    `    const __raw = String(__spec).trim();`,
+    `    const __id = Number(__raw);`,
+    `    const __job = Number.isInteger(__id) ? __JOBS.get(__id) : undefined;`,
+    `    if (!__job) {`,
+    `      __err += "wait: pid " + __raw + " is not a child of this shell\\n";`,
+    `      __code = 127;`,
+    `      continue;`,
+    `    }`,
+    `    __code = await __job.p;`,
+    `  }`,
+    `  return __res(__code, __err);`,
+    `}`,
+  ];
+}
+
+/**
  * Status-recording runtime shared by buildPreamble and buildFilePreamble
  * (SSH-597): PIPESTATUS plumbing, the SSH-581 Deno.exitCode recording, and
  * the wrappers binding them to the shared shell-value coercions. The emitted
@@ -165,6 +261,8 @@ function statusRecordingLines(): string[] {
     `async function __cmdSubText(__result: unknown): Promise<string> {`,
     `  return await __commandSubstitutionText(__result, __setPipeStatusRec);`,
     `}`,
+    "",
+    ...backgroundJobLines(),
   ];
 }
 
@@ -642,9 +740,7 @@ export function buildErrorHandler(
   hasShell: boolean,
   vfsEnabled = false,
 ): string {
-  const shellOutput = hasShell
-    ? `console.log("${SHELL_STATE_MARKER}" + __sshShellState());`
-    : "";
+  const shellOutput = hasShell ? `console.log("${SHELL_STATE_MARKER}" + __sshShellState());` : "";
 
   const vfsCleanup = vfsEnabled
     ? `  // Cleanup VFS

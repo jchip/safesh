@@ -299,7 +299,10 @@ describe("Docker Entrypoint Scripts", () => {
       wait $PID
     `);
     assertStringIncludes(code, '"trap"');
-    assertStringIncludes(code, '"wait"');
+    // SSH-676: `wait` lowers to the job-table builtin. It used to emit
+    // $.cmd("wait"), which dispatched to the real /usr/bin/wait — a shell that
+    // has no jobs of its own and so exited 0 without waiting.
+    assertStringIncludes(code, "__waitJobs(");
   });
 
   it("should handle file permission setup", () => {
@@ -778,7 +781,8 @@ describe("Common Utility Patterns", () => {
         echo "Task completed with status $?"
       `);
       assertStringIncludes(code, "PID");
-      assertStringIncludes(code, '"wait"');
+      // SSH-676: `wait $PID` waits on the job table, not $.cmd("wait")
+      assertStringIncludes(code, "__waitJobs(");
     });
   });
 
@@ -924,7 +928,9 @@ describe("Common Utility Patterns", () => {
       assertStringIncludes(code, '"task1"');
       assertStringIncludes(code, '"task2"');
       assertStringIncludes(code, '"task3"');
-      assertStringIncludes(code, '"wait"');
+      // SSH-676: bare `wait` waits for every registered background job
+      assertStringIncludes(code, "__waitJobs()");
+      assertStringIncludes(code, "__bgStart(");
     });
 
     it("should handle xargs parallel", () => {
