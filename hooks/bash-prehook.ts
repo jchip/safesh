@@ -421,10 +421,18 @@ interface ExtractCommandsOptions {
 
 interface CommandExtractionState {
   vars: Map<string, string>;
+  /** Names of functions declared by the script itself (bash keeps one global table) */
+  functions: Set<string>;
+}
+
+function newExtractionState(): CommandExtractionState {
+  return { vars: new Map(), functions: new Set() };
 }
 
 function cloneExtractionState(state: CommandExtractionState): CommandExtractionState {
-  return { vars: new Map(state.vars) };
+  // Variables are scoped per branch, but bash function definitions are global
+  // once executed, so the set is shared with every nested scope.
+  return { vars: new Map(state.vars), functions: state.functions };
 }
 
 function isAssignmentOnlyCommand(stmt: AST.Command): boolean {
@@ -549,7 +557,7 @@ function extractCommandsFromStatement(
   stmt: AST.Statement,
   commands: Set<string>,
   options: ExtractCommandsOptions = {},
-  state: CommandExtractionState = { vars: new Map() },
+  state: CommandExtractionState = newExtractionState(),
 ): void {
   const { skipBuiltins = false } = options;
 
@@ -563,7 +571,12 @@ function extractCommandsFromStatement(
       }
 
       const cmdName = extractCommandName(stmt, state);
-      if (cmdName && (!skipBuiltins || !BUILTIN_COMMANDS.has(cmdName))) {
+      // SSH-673: a call to a function the script declared itself is not an
+      // external command — the body was already walked at its declaration.
+      if (
+        cmdName && !state.functions.has(cmdName) &&
+        (!skipBuiltins || !BUILTIN_COMMANDS.has(cmdName))
+      ) {
         commands.add(cmdName);
       }
       break;
@@ -625,6 +638,8 @@ function extractCommandsFromStatement(
       break;
     }
     case "FunctionDeclaration": {
+      // Registered before walking the body so self-recursion resolves too.
+      state.functions.add(stmt.name);
       extractCommandsFromScopedStatements(stmt.body, commands, options, state);
       break;
     }
@@ -643,10 +658,9 @@ function extractCommandsFromStatement(
 /**
  * Extract external command names from a parsed AST (skips builtins)
  */
-function extractCommands(ast: AST.Program): Set<string> {
+export function extractCommands(ast: AST.Program): Set<string> {
   const commands = new Set<string>();
-  const state: CommandExtractionState = { vars: new Map() };
-  extractCommandsFromStatements(ast.body, commands, { skipBuiltins: true }, state);
+  extractCommandsFromStatements(ast.body, commands, { skipBuiltins: true }, newExtractionState());
   return commands;
 }
 
@@ -694,9 +708,9 @@ const DANGEROUS_COMMANDS = new Set([
  */
 function hasDangerousCommands(ast: AST.Program): boolean {
   const commands = new Set<string>();
-  for (const stmt of ast.body) {
-    extractCommandsFromStatement(stmt, commands);
-  }
+  // One shared state across the program so a function declared in an earlier
+  // statement is still known at its call sites (SSH-673).
+  extractCommandsFromStatements(ast.body, commands, {}, newExtractionState());
 
   for (const cmd of commands) {
     if (DANGEROUS_COMMANDS.has(cmd)) {
@@ -806,26 +820,55 @@ export async function globHasMatch(pattern: string, cwd: string): Promise<boolea
  */
 interface HookInput {
   session_id?: string;
+  sessionId?: string;
+  conversation_id?: string;
+  conversationId?: string;
   turn_id?: string;
+  turnId?: string;
   cwd?: string;
   hookEventName?: string;
   hook_event_name?: string;
   tool_name?: string;
   toolName?: string;
   tool_input?: {
-    command: string;
+    command?: string;
+    CommandLine?: string;
+    cwd?: string;
+    Cwd?: string;
     timeout?: number;
     description?: string;
     run_in_background?: boolean;
     runInBackground?: boolean;
+    [k: string]: unknown;
   };
   toolInput?: {
-    command: string;
+    command?: string;
+    CommandLine?: string;
+    cwd?: string;
+    Cwd?: string;
     timeout?: number;
     description?: string;
     run_in_background?: boolean;
     runInBackground?: boolean;
+    [k: string]: unknown;
   };
+  toolCall?: {
+    name?: string;
+    args?: {
+      command?: string;
+      CommandLine?: string;
+      cwd?: string;
+      Cwd?: string;
+      timeout?: number;
+      WaitMsBeforeAsync?: number;
+      description?: string;
+      run_in_background?: boolean;
+      runInBackground?: boolean;
+      [k: string]: unknown;
+    };
+  };
+  stepIdx?: number;
+  workspacePaths?: string[];
 }
 
 /**
@@ -833,44 +876,61 @@ interface HookInput {
  */
 export interface ParsedCommand {
   command: string;
+  cwd?: string;
   timeout?: number;
   runInBackground?: boolean;
   hookEventName?: string;
   sessionId?: string;
   turnId?: string;
+  isAntigravity?: boolean;
 }
 
 /**
  * Parse Hook input from JSON
- * Handles Claude Code, Codex CLI, and Gemini CLI formats
+ * Handles Claude Code, Codex CLI, Antigravity, and Gemini CLI formats
  */
 export function parseHookInput(input: string): ParsedCommand | null {
   try {
     const parsed = JSON.parse(input) as HookInput;
 
     // Normalize fields
-    const toolName = parsed.tool_name || parsed.toolName || "";
+    const toolName = parsed.tool_name || parsed.toolName || parsed.toolCall?.name || "";
     const toolInput = parsed.tool_input || parsed.toolInput;
+    const toolCallArgs = parsed.toolCall?.args;
 
     // Check if it's a supported tool
-    if (/^(Bash|bash|run_shell_command)$/i.test(toolName) && toolInput?.command) {
+    if (/^(Bash|bash|run_shell_command|run_command)$/i.test(toolName)) {
+      const command = toolInput?.command ?? toolInput?.CommandLine ?? toolCallArgs?.CommandLine ?? toolCallArgs?.command;
+      if (!command) {
+        return null;
+      }
       debug(`Parsed input for tool: ${toolName}`);
-      debug(`Command: ${toolInput.command}`);
+      debug(`Command: ${command}`);
 
-      const timeout = toolInput.timeout;
+      const timeout = toolInput?.timeout ?? toolCallArgs?.timeout ??
+        (toolCallArgs?.WaitMsBeforeAsync ? Math.round(toolCallArgs.WaitMsBeforeAsync / 1000) : undefined);
       // Handle both boolean flag styles
-      const runInBackground = toolInput.run_in_background ?? toolInput.runInBackground;
+      const runInBackground = toolInput?.run_in_background ?? toolInput?.runInBackground ??
+        toolCallArgs?.run_in_background ?? toolCallArgs?.runInBackground;
+      const cwd = toolCallArgs?.Cwd ?? toolCallArgs?.cwd ?? toolInput?.cwd ?? toolInput?.Cwd ?? parsed.cwd;
 
       debug(`Timeout: ${timeout}`);
       debug(`Run in background: ${runInBackground}`);
+      if (cwd) debug(`Cwd: ${cwd}`);
+
+      const sessionId = parsed.session_id || parsed.sessionId || parsed.conversationId || parsed.conversation_id;
+      const turnId = parsed.turn_id || parsed.turnId || (parsed.stepIdx !== undefined ? String(parsed.stepIdx) : undefined);
+      const isAntigravity = Boolean(parsed.toolCall || /^(run_command)$/i.test(toolName));
 
       return {
-        command: toolInput.command,
-        timeout: timeout,
-        runInBackground: runInBackground,
+        command,
+        timeout,
+        runInBackground,
         hookEventName: parsed.hook_event_name || parsed.hookEventName,
-        ...(parsed.session_id ? { sessionId: parsed.session_id } : {}),
-        ...(parsed.turn_id ? { turnId: parsed.turn_id } : {}),
+        ...(cwd ? { cwd } : {}),
+        ...(sessionId ? { sessionId } : {}),
+        ...(turnId ? { turnId } : {}),
+        ...(isAntigravity ? { isAntigravity: true } : {}),
       };
     }
   } catch {
@@ -943,6 +1003,67 @@ export function stripLeadingAssignments(command: string): string {
   }
 }
 
+/** Matches the desh executable by name, however it's invoked (bare, relative, or full path). */
+function isDeshInvocation(name: string): boolean {
+  return name === "desh" || name === "desh.ts" || /(?:^|\/)desh\.ts$/.test(name);
+}
+
+/**
+ * Whether a Command AST node is a `desh retry`/`retry-path` control-plane call.
+ * Only the first argument is checked — matches the intent of
+ * CONTROL_PLANE_PASSTHROUGH_COMMANDS, just evaluated per-command instead of
+ * against the whole raw string.
+ */
+function isControlPlaneRetryCommand(stmt: AST.Command): boolean {
+  const state = newExtractionState();
+  if (!isDeshInvocation(extractCommandName(stmt, state))) return false;
+
+  const firstArg = stmt.args[0];
+  if (!firstArg) return false;
+  const argValue = resolveStaticWord(firstArg, state) ??
+    (firstArg.type === "Word" ? firstArg.value : undefined);
+  return argValue === "retry" || argValue === "retry-path";
+}
+
+/**
+ * Walk sequencing/piping/grouping structure (&&, ||, |, ;, subshells, brace
+ * groups) looking for a desh retry control-plane call. Does not descend into
+ * loops, conditionals, case statements, or functions — those aren't realistic
+ * wrapping for a retry command and keeping this narrow avoids widening the
+ * passthrough surface.
+ */
+function statementContainsControlPlaneRetry(stmt: AST.Statement): boolean {
+  switch (stmt.type) {
+    case "Command":
+      return isControlPlaneRetryCommand(stmt);
+    case "Pipeline":
+      return stmt.commands.some(statementContainsControlPlaneRetry);
+    case "Subshell":
+    case "BraceGroup":
+      return stmt.body.some(statementContainsControlPlaneRetry);
+    default:
+      return false;
+  }
+}
+
+/**
+ * `desh retry`/`retry-path` wrapped in a compound command (e.g. the
+ * `cd <dir> && desh retry --id=x --choice=N | tail` that Claude Code produces
+ * when not already in the target directory) doesn't match the whole-string
+ * CONTROL_PLANE_PASSTHROUGH_COMMANDS regexes, so it fell through to full
+ * permission checking and got blocked again instead of executing the
+ * already-approved command. Parse the AST and search it structurally instead
+ * of trying to extend the regexes to cover every possible wrapping.
+ */
+function containsControlPlaneRetryCommand(command: string): boolean {
+  try {
+    const ast = parse(command);
+    return ast.body.some(statementContainsControlPlaneRetry);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Check if command should pass through to native bash
  */
@@ -958,16 +1079,29 @@ export function shouldPassthrough(command: string, routeAllCommands = false): bo
       return true;
     }
   }
+
+  // The desh-retry regexes above only match when desh is the leading token.
+  // Fall back to an AST-based structural check for compound wrapping (cd &&,
+  // pipes, subshells) that a whole-string prefix regex can't express.
+  if (containsControlPlaneRetryCommand(trimmed)) {
+    debug(`Passthrough compound command detected (control-plane retry): ${trimmed}`);
+    return true;
+  }
+
   return false;
 }
 
 /**
  * Output passthrough decision - let native bash handle the command
- * Exits with no output so the hook is effectively a no-op
+ * For Antigravity, output decision: allow.
+ * For Claude/Codex, exits with no output so the hook is effectively a no-op
  * The command continues to the Bash tool which handles it normally
  */
-function outputPassthrough(): void {
-  // Exit 0 with no output = hook completed successfully, no decision made
+function outputPassthrough(isAntigravity?: boolean): void {
+  if (isAntigravity) {
+    console.log(JSON.stringify({ decision: "allow" }));
+  }
+  // Exit 0 with no output for Claude/Codex = hook completed successfully, no decision made
   // This allows the Bash tool to handle the command with its own permission system
   // Cleaner than returning "allow" which might bypass permission checks
 }
@@ -1029,6 +1163,7 @@ interface DeshRewriteOptions {
   cwd?: string;
   sessionId?: string;
   turnId?: string;
+  isAntigravity?: boolean;
   onRewrite?: (rewrite: BashPrehookRewrite) => void;
 }
 
@@ -1165,7 +1300,20 @@ function outputHookResponse(
     turnId: options.turnId,
   });
 
-  // Correct format with hookSpecificOutput wrapper
+  if (options?.isAntigravity) {
+    // Antigravity strict protojson contract: only known protobuf fields allowed
+    const output = {
+      decision: "allow",
+      reason: "Transpiled to SafeShell TypeScript via desh",
+      overwrite: {
+        CommandLine: command,
+      },
+    };
+    console.log(JSON.stringify(output));
+    return;
+  }
+
+  // Claude Code / Codex format with hookSpecificOutput wrapper
   const output = {
     hookSpecificOutput: {
       hookEventName: options?.hookEventName || "PreToolUse",
@@ -1202,6 +1350,7 @@ async function outputDenyWithRetry(
     originalCommand?: string;
     hookEventName?: string;
     cwd?: string;
+    isAntigravity?: boolean;
   },
 ): Promise<void> {
   const cmdList = disallowedCommands.join(", ");
@@ -1258,6 +1407,16 @@ WAIT for user choice (1-5):
 DO NOT SHOW OR REPEAT OPTIONS. AFTER USER RESPONDS: desh retry --id=${pendingId} --choice=<user's choice>
 
 HINT: Use safesh TypeScript code with /*#*/ prefix - many shell utils are pre-approved.`;
+
+  if (options?.isAntigravity) {
+    // Antigravity strict protojson contract: only known protobuf fields allowed
+    const output = {
+      decision: "deny",
+      reason: message,
+    };
+    console.log(JSON.stringify(output));
+    return;
+  }
 
   const output = {
     hookSpecificOutput: {
@@ -1347,12 +1506,12 @@ export async function main(policy: BashPrehookPolicy = {}): Promise<void> {
 
     // Check if command should pass through to native bash (e.g., desh)
     if (shouldPassthrough(parsed.command, policy.routeAllCommands === true)) {
-      outputPassthrough();
+      outputPassthrough(parsed.isAntigravity);
       Deno.exit(0);
     }
 
     // Determine working directory and project root
-    const cwd = OVERRIDE_CWD || Deno.cwd();
+    const cwd = OVERRIDE_CWD || parsed.cwd || Deno.cwd();
     const projectDir = findProjectRoot(cwd);
     debug(`Working directory: ${cwd}, Project root: ${projectDir}`);
 
@@ -1466,6 +1625,7 @@ ${combinedTsCode}
         cwd,
         sessionId: parsed.sessionId,
         turnId: parsed.turnId,
+        isAntigravity: parsed.isAntigravity,
         onRewrite: policy.onRewrite,
       });
       Deno.exit(0);
@@ -1493,6 +1653,7 @@ ${tsCode}
         cwd,
         sessionId: parsed.sessionId,
         turnId: parsed.turnId,
+        isAntigravity: parsed.isAntigravity,
         onRewrite: policy.onRewrite,
       });
       Deno.exit(0);
@@ -1519,7 +1680,7 @@ ${tsCode}
       !config.alwaysTranspile
     ) {
       debug("Simple command detected - passthrough to native bash");
-      outputPassthrough();
+      outputPassthrough(parsed?.isAntigravity);
       Deno.exit(0);
     }
 
@@ -1554,7 +1715,7 @@ ${tsCode}
       if (analysis.eligible) {
         if (await isPassthroughPermitted(analysis, commands, config, cwd)) {
           debug("Analyzable command fully allowed - passthrough to native bash (SSH-576)");
-          outputPassthrough();
+          outputPassthrough(parsed?.isAntigravity);
           Deno.exit(0);
         }
       } else {
@@ -1624,14 +1785,20 @@ Example:
   }`;
 
         // Output hook denial to block execution
-        const output = {
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason: message,
-          },
-        };
-        console.log(JSON.stringify(output));
+        if (parsed?.isAntigravity) {
+          console.log(JSON.stringify({
+            decision: "deny",
+            reason: message,
+          }));
+        } else {
+          console.log(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: message,
+            },
+          }));
+        }
         Deno.exit(1);
       }
     }
@@ -1670,6 +1837,7 @@ ${tsCode}
         originalCommand: parsed.command,
         hookEventName: parsed.hookEventName,
         cwd,
+        isAntigravity: parsed.isAntigravity,
       });
       Deno.exit(0);
     }
@@ -1687,6 +1855,7 @@ ${tsCode}
       cwd,
       sessionId: parsed.sessionId,
       turnId: parsed.turnId,
+      isAntigravity: parsed.isAntigravity,
       onRewrite: policy.onRewrite,
     });
     Deno.exit(0);
