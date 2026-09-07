@@ -890,7 +890,6 @@ Deno.test("missing binary - fails as exit 127 without throwing", async () => {
   assertEquals(result.success, false);
   assertEquals(result.stdout, "");
   assertEquals(result.stderr, `safesh: ${MISSING_CMD}: command not found\n`);
-  assertEquals(result.commandNotFound, true);
 });
 
 Deno.test("missing binary - does not abort subsequent commands", async () => {

@@ -116,13 +116,6 @@ export interface CommandResult {
 
   /** Bash-compatible exit codes for each stage in the pipeline */
   pipeStatus?: number[];
-
-  /**
-   * SSH-682: set when this result is the synthetic failure for a command whose
-   * binary was not on PATH. Lets a downstream pipeline stage surface the
-   * upstream's "command not found" line, which pipelines otherwise drop.
-   */
-  commandNotFound?: boolean;
 }
 
 /**
@@ -628,7 +621,7 @@ export class Command implements PromiseLike<CommandResult> {
       stderr = "";
     }
 
-    return { stdout: "", stderr, code, success: false, pipeStatus, commandNotFound: true };
+    return { stdout: "", stderr, code, success: false, pipeStatus };
   }
 
   /**
@@ -1265,13 +1258,7 @@ export class Command implements PromiseLike<CommandResult> {
       // The downstream command's exit code determines overall success.
       const result = await this.upstream.exec();
       this.upstreamResult = result;
-      // SSH-682: a pipeline drops the upstream's stderr, which would swallow
-      // its "command not found" line entirely. Surface that one on our stderr
-      // so `missing | cat` reports the missing command like bash does, while
-      // the pipeline itself carries on with empty stdin.
-      if (result.commandNotFound && result.stderr) {
-        await Deno.stderr.write(new TextEncoder().encode(result.stderr));
-      }
+      await this.upstream.forwardPipelineStderr(result);
       return result.output ?? result.stdout;
     }
     this.upstreamResult = undefined;
@@ -1281,6 +1268,28 @@ export class Command implements PromiseLike<CommandResult> {
       return await readStdinRedirect(this.options.stdinFile);
     }
     return this.options.stdin;
+  }
+
+  /**
+   * SSH-683: hand this stage's buffered stderr to the shell's stderr.
+   *
+   * Only stdout flows through a bash pipe — a stage's stderr goes straight to
+   * the terminal. `exec()` buffers it into the result instead, so the
+   * downstream stage calls this on its upstream before consuming the stdout.
+   * Without it `ls /nonexistent | cat` printed nothing where bash reports the
+   * error (SSH-682 forwarded only the "command not found" line).
+   *
+   * Skipped when the stage already delivered the message elsewhere:
+   * - `2>file`: exec() wrote it to the file, so it must not also hit stderr.
+   * - `2>&1` (mergeStreams): it is part of `output`, i.e. inside the pipe.
+   */
+  private async forwardPipelineStderr(result: CommandResult): Promise<void> {
+    if (!result.stderr || this.options.stderrFile) return;
+    try {
+      await Deno.stderr.write(new TextEncoder().encode(result.stderr));
+    } catch {
+      // stderr closed (e.g. the shell's output is already torn down)
+    }
   }
 
   /**
