@@ -156,16 +156,21 @@ function backgroundJobLines(): string[] {
     `  // as an unhandled rejection.`,
     `  __rec.p = __p.then(`,
     `    (__s) => { __rec.done = true; __rec.status = __s; return __s; },`,
-    `    (__e) => { __rec.done = true; __rec.status = 1; return __bgFail(__e); },`,
+    `    (__e) => __bgFail(__e).then((__c) => { __rec.done = true; __rec.status = __c; return __c; }),`,
     `  );`,
     `  __JOBS.set(__id, __rec);`,
     `  __LAST_BG_PID = __id;`,
     `  return __id;`,
     `}`,
+    "// SSH-682: a background job whose binary is missing reports bash's 127 and",
+    "// the bash-style stderr line the error carries, not a generic failure.",
     `async function __bgFail(__e: unknown): Promise<number> {`,
-    `  const __m = __e instanceof Error ? __e.message : String(__e);`,
-    `  try { await Deno.stderr.write(new TextEncoder().encode(__m + "\\n")); } catch { /* stderr gone */ }`,
-    `  return 1;`,
+    `  const __any = __e as any;`,
+    `  const __line = typeof __any?.stderrLine === "string"`,
+    `    ? __any.stderrLine`,
+    `    : (__e instanceof Error ? __e.message : String(__e)) + "\\n";`,
+    `  try { await Deno.stderr.write(new TextEncoder().encode(__line)); } catch { /* stderr gone */ }`,
+    `  return typeof __any?.exitCode === "number" ? __any.exitCode : 1;`,
     `}`,
     "// Start a background pipeline. The thunk is invoked synchronously so the",
     "// job is already running — and registered, so $! is set — before the next",
@@ -728,6 +733,54 @@ export function buildFilePostamble(hasShell: boolean): string {
 }
 
 /**
+ * Error messages that are already written for the user — report them as a
+ * plain one-liner with no stack trace. Emitted into generated script source,
+ * so this is the literal text of a RegExp array.
+ *
+ * Shared by buildErrorHandler (inline `-c` code) and buildFileErrorHandler
+ * (file execution) so both paths report the same way (SSH-682).
+ */
+const FRIENDLY_ERROR_PATTERNS =
+  `[/^Command not found:/, /^safesh: .*: command not found$/, /^Command ".+" is not allowed/, /^Project command/]`;
+
+/**
+ * Build the global error reporting for file execution (SSH-682).
+ *
+ * A file's user code cannot be wrapped in a try/catch — its imports have to
+ * stay top-level — so failures are caught as global events instead. Without
+ * this the file path (`desh -f`, and the `desh retry` flow the bash prehook
+ * uses) lets rejections escape as uncaught top-level promises and Deno prints
+ * a raw stack trace at the user, unlike the `-c` path's friendly one-liner.
+ *
+ * Set SAFESH_DEBUG to get the full stack for unrecognized errors.
+ */
+export function buildFileErrorHandler(): string {
+  return `
+// SafeShell global error reporting for file execution (SSH-682)
+function __sshReportError(__e: unknown): void {
+  const __msg = __e instanceof Error ? __e.message : String(__e);
+  const __friendly = ${FRIENDLY_ERROR_PATTERNS};
+  if (!__friendly.some((__p) => __p.test(__msg)) && Deno.env.get("SAFESH_DEBUG")) {
+    console.error(__e instanceof Error ? (__e.stack ?? __msg) : __msg);
+  } else {
+    console.error("Error: " + __msg);
+  }
+  const __code = (__e as any)?.exitCode;
+  Deno.exit(typeof __code === "number" ? __code : 1);
+}
+globalThis.addEventListener("unhandledrejection", (__ev) => {
+  __ev.preventDefault();
+  __sshReportError((__ev as PromiseRejectionEvent).reason);
+});
+globalThis.addEventListener("error", (__ev) => {
+  __ev.preventDefault();
+  const __err = __ev as ErrorEvent;
+  __sshReportError(__err.error ?? __err.message);
+});
+`;
+}
+
+/**
  * Build the error-handling wrapper that closes the async IIFE
  *
  * @param scriptPath - Path to the script file (for stack trace line mapping)
@@ -759,13 +812,13 @@ export function buildErrorHandler(
 }).catch((e) => {
   ${vfsCleanup}
   // Known friendly error patterns that don't need stack traces
-  const FRIENDLY = [/^Command not found:/, /^Command ".+" is not allowed/, /^Project command/];
+  const FRIENDLY = ${FRIENDLY_ERROR_PATTERNS};
   const msg = e instanceof Error ? e.message : String(e);
 
   // Check if friendly error
   if (FRIENDLY.some(p => p.test(msg))) {
     console.error("Error: " + msg);
-    Deno.exit(1);
+    Deno.exit(typeof e?.exitCode === "number" ? e.exitCode : 1);
   }
 
   // For other errors, try to find user code line in stack

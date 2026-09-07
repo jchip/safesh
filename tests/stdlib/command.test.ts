@@ -265,12 +265,14 @@ describe("command execution (SSH-195)", { sanitizeResources: false, sanitizeOps:
       assertEquals(result.success, true);
     });
 
-    it("throws on command not found", async () => {
-      await assertRejects(
-        async () => await cmd("nonexistent-command-xyz", "arg").exec(),
-        Error,
-        "not found",
-      );
+    // SSH-682: a missing binary is a command failure, not a thrown error —
+    // bash reports it on stderr with exit 127 and carries on.
+    it("reports command not found as exit 127", async () => {
+      const result = await cmd("nonexistent-command-xyz", "arg").exec();
+
+      assertEquals(result.code, 127);
+      assertEquals(result.success, false);
+      assertStringIncludes(result.stderr, "command not found");
     });
   });
 
@@ -314,13 +316,13 @@ describe("command execution (SSH-195)", { sanitizeResources: false, sanitizeOps:
   });
 
   describe("error handling", () => {
-    it("throws on command not allowed", async () => {
-      // This depends on SafeShell config
-      // Commands not in permissions.run should fail
-      await assertRejects(
-        async () => await cmd("nonexistent-command").exec(),
-        Error,
-      );
+    it("fails a command that cannot be run", async () => {
+      // No permission gate applies in-process, so this exercises the missing
+      // binary path: SSH-682 fails it as exit 127 instead of throwing.
+      const result = await cmd("nonexistent-command").exec();
+
+      assertEquals(result.code, 127);
+      assertEquals(result.success, false);
     });
 
     it("handles command timeout", async () => {

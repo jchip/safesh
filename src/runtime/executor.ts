@@ -23,6 +23,7 @@ import { collectStreamBytesWithTimeout } from "../core/utils.ts";
 import { createScript, truncateOutput } from "./scripts.ts";
 import {
   buildErrorHandler,
+  buildFileErrorHandler,
   buildFilePostamble,
   buildFilePreamble,
   buildStateTrailerHook,
@@ -956,8 +957,10 @@ async function prepareFileExecution(
 
   // Wrap file code with preamble and postamble. The state-trailer hook
   // (SSH-580) sits right after the preamble so $ exists; it is a no-op
-  // unless SAFESH_STATE_TRAILER is set in the subprocess env.
-  const wrappedCode = filePreamble + buildStateTrailerHook() +
+  // unless SAFESH_STATE_TRAILER is set in the subprocess env. The global
+  // error handler (SSH-682) is registered before the user code so a failure
+  // reports as a friendly one-liner instead of a raw Deno stack trace.
+  const wrappedCode = filePreamble + buildStateTrailerHook() + buildFileErrorHandler() +
     rewriteDollarApiReferences(fileCode) + filePostamble;
 
   // Write wrapped code to temp file

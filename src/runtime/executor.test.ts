@@ -6,7 +6,7 @@
 
 import { assertEquals, assertExists, assertThrows } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
-import { executeCode, buildPermissionFlags } from "./executor.ts";
+import { executeCode, executeFile, buildPermissionFlags } from "./executor.ts";
 import type { SafeShellConfig, Shell, ExecOptions } from "../core/types.ts";
 import { ensureDir } from "@std/fs";
 import { TEMP_SCRIPT_DIR } from "../core/defaults.ts";
@@ -675,6 +675,49 @@ describe("executor", () => {
 
       assertEquals(result.success, true);
       assertEquals(result.stdout.trim().length > 0, true);
+    });
+  });
+
+  // SSH-682: the file path wraps user code with preamble + postamble only, so
+  // before buildFileErrorHandler a failure escaped as an uncaught top-level
+  // rejection and Deno printed a raw stack trace at the user.
+  describe("executeFile - error reporting", () => {
+    const config: SafeShellConfig = {
+      permissions: { read: ["/tmp"], write: ["/tmp"], run: ["echo"] },
+    };
+
+    async function runFile(code: string) {
+      const dir = await Deno.makeTempDir();
+      const path = `${dir}/ssh682.ts`;
+      await Deno.writeTextFile(path, code);
+      try {
+        return await executeFile(path, config);
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    }
+
+    it("reports a thrown error as a one-liner, not a stack trace", async () => {
+      const result = await runFile('throw new Error("boom");\n');
+
+      assertEquals(result.stderr.trim(), "Error: boom");
+      assertEquals(result.code, 1);
+    });
+
+    it("reports a missing binary with bash's message and exit 127", async () => {
+      const result = await runFile(
+        'await $.cmd("safesh-ssh682-no-such-binary").exec().then(r => Deno.exit(r.code));\n',
+      );
+
+      assertEquals(result.stderr.includes("Uncaught"), false);
+      assertEquals(result.code, 127);
+    });
+
+    it("leaves successful runs untouched", async () => {
+      const result = await runFile('console.log("ok");\n');
+
+      assertEquals(result.success, true);
+      assertEquals(result.stdout.trim(), "ok");
     });
   });
 });

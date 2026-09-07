@@ -116,6 +116,13 @@ export interface CommandResult {
 
   /** Bash-compatible exit codes for each stage in the pipeline */
   pipeStatus?: number[];
+
+  /**
+   * SSH-682: set when this result is the synthetic failure for a command whose
+   * binary was not on PATH. Lets a downstream pipeline stage surface the
+   * upstream's "command not found" line, which pipelines otherwise drop.
+   */
+  commandNotFound?: boolean;
 }
 
 /**
@@ -199,6 +206,27 @@ class StdinRedirectError extends Error {
   /** Bash-style stderr line (newline-terminated) for this redirect failure. */
   get stderrLine(): string {
     return `safesh: ${this.path}: ${this.reason}\n`;
+  }
+}
+
+/**
+ * SSH-682: thrown when a command's binary is not on PATH. Carries the
+ * bash-style stderr line and bash's 127 exit status so callers can surface it
+ * as an ordinary command failure instead of aborting the whole script with an
+ * uncaught rejection. Mirrors StdinRedirectError above.
+ */
+export class CommandNotFoundError extends Error {
+  /** bash reports a missing command as exit 127 */
+  readonly exitCode = 127;
+
+  constructor(readonly command: string) {
+    super(`safesh: ${command}: command not found`);
+    this.name = "CommandNotFoundError";
+  }
+
+  /** Bash-style stderr line (newline-terminated) for this failure. */
+  get stderrLine(): string {
+    return `safesh: ${this.command}: command not found\n`;
   }
 }
 
@@ -340,14 +368,12 @@ export class Command implements PromiseLike<CommandResult> {
         );
       }
 
-      // Handle command not found
+      // Handle command not found (SSH-682: callers turn this into exit 127)
       if (
         err instanceof Deno.errors.NotFound ||
         (err instanceof Error && err.message.includes("entity not found"))
       ) {
-        throw new Error(
-          `Command not found: "${this.cmd}". Is it installed and in your PATH?`,
-        );
+        throw new CommandNotFoundError(this.cmd);
       }
 
       throw err;
@@ -559,6 +585,11 @@ export class Command implements PromiseLike<CommandResult> {
       if (err instanceof StdinRedirectError) {
         return this.makeRedirectFailure(err);
       }
+      // SSH-682: a missing binary fails this command with bash's 127 instead of
+      // aborting the script.
+      if (err instanceof CommandNotFoundError) {
+        return await this.makeNotFoundFailure(err);
+      }
       throw err;
     }
   }
@@ -574,6 +605,30 @@ export class Command implements PromiseLike<CommandResult> {
       return { stdout: "", stderr: "", output: err.stderrLine, code, success: false, pipeStatus };
     }
     return { stdout: "", stderr: err.stderrLine, code, success: false, pipeStatus };
+  }
+
+  /**
+   * SSH-682: build the command result for a missing binary: empty stdout, the
+   * bash-style "command not found" line on stderr, and exit code 127.
+   *
+   * The spawn never happened, so `2>file` redirection has to be applied here
+   * for `cmd 2>/dev/null` to suppress the message like bash does.
+   *
+   * Only the separate-streams path reaches this; with mergeStreams exec() goes
+   * through execMerged/stream(), where the line lands in `output` — matching
+   * bash, where `missing 2>&1 | cat` pipes the message downstream.
+   */
+  private async makeNotFoundFailure(err: CommandNotFoundError): Promise<CommandResult> {
+    const code = err.exitCode;
+    const pipeStatus = this.getPipeStatus(code);
+    let stderr = err.stderrLine;
+
+    if (this.options.stderrFile) {
+      await this.writeToFile(this.options.stderrFile.path, stderr, this.options.stderrFile.options);
+      stderr = "";
+    }
+
+    return { stdout: "", stderr, code, success: false, pipeStatus, commandNotFound: true };
   }
 
   /**
@@ -885,7 +940,27 @@ export class Command implements PromiseLike<CommandResult> {
     await this.prepareRedirectFile(this.options.stdoutFile);
     await this.prepareRedirectFile(this.options.stderrFile);
 
-    const process = this.spawnProcess(this.createCommand(hasStdin));
+    let process: Deno.ChildProcess;
+    try {
+      process = this.spawnProcess(this.createCommand(hasStdin));
+    } catch (err) {
+      // SSH-682: a missing binary emits the bash-style line and exits 127
+      // rather than throwing out of the stream consumer.
+      if (err instanceof CommandNotFoundError) {
+        if (this.options.stderrFile) {
+          await this.appendRedirectChunk(this.options.stderrFile, err.stderrLine);
+        } else {
+          yield { type: "stderr", data: err.stderrLine };
+        }
+        yield {
+          type: "exit",
+          code: err.exitCode,
+          pipeStatus: this.getPipeStatus(err.exitCode),
+        };
+        return;
+      }
+      throw err;
+    }
 
     // Emit job start event
     const jobId = generateJobId();
@@ -990,7 +1065,18 @@ export class Command implements PromiseLike<CommandResult> {
         }
         const hasStdin = stdinData !== undefined;
 
-        const process = self.spawnProcess(self.createCommand(hasStdin));
+        let process: Deno.ChildProcess;
+        try {
+          process = self.spawnProcess(self.createCommand(hasStdin));
+        } catch (err) {
+          // SSH-682: a missing binary reports on stderr and yields no output,
+          // rather than throwing out of the stream consumer.
+          if (err instanceof CommandNotFoundError) {
+            await Deno.stderr.write(new TextEncoder().encode(err.stderrLine));
+            return;
+          }
+          throw err;
+        }
         const decoder = new TextDecoder();
 
         // Emit job start event
@@ -1179,6 +1265,13 @@ export class Command implements PromiseLike<CommandResult> {
       // The downstream command's exit code determines overall success.
       const result = await this.upstream.exec();
       this.upstreamResult = result;
+      // SSH-682: a pipeline drops the upstream's stderr, which would swallow
+      // its "command not found" line entirely. Surface that one on our stderr
+      // so `missing | cat` reports the missing command like bash does, while
+      // the pipeline itself carries on with empty stdin.
+      if (result.commandNotFound && result.stderr) {
+        await Deno.stderr.write(new TextEncoder().encode(result.stderr));
+      }
       return result.output ?? result.stdout;
     }
     this.upstreamResult = undefined;

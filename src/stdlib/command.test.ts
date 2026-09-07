@@ -877,3 +877,93 @@ Deno.test("stdinFile() - a failed redirect does not abort subsequent commands", 
   assertEquals(after.stdout.trim(), "still running");
   assertEquals(after.success, true);
 });
+
+// SSH-682: a command whose binary is not on PATH fails like bash — the
+// bash-style line on stderr and exit 127 — instead of throwing a raw error
+// that aborts the whole script.
+const MISSING_CMD = "safesh-ssh682-no-such-binary";
+
+Deno.test("missing binary - fails as exit 127 without throwing", async () => {
+  const result = await cmd(MISSING_CMD, ["arg"]).exec();
+
+  assertEquals(result.code, 127);
+  assertEquals(result.success, false);
+  assertEquals(result.stdout, "");
+  assertEquals(result.stderr, `safesh: ${MISSING_CMD}: command not found\n`);
+  assertEquals(result.commandNotFound, true);
+});
+
+Deno.test("missing binary - does not abort subsequent commands", async () => {
+  const failed = await cmd(MISSING_CMD, []).exec();
+  assertEquals(failed.code, 127);
+
+  const after = await cmd("echo", ["still running"]).exec();
+  assertEquals(after.stdout.trim(), "still running");
+  assertEquals(after.success, true);
+});
+
+Deno.test("missing binary - stream() yields the error and exit 127", async () => {
+  const chunks: StreamChunk[] = [];
+  for await (const chunk of cmd(MISSING_CMD, []).stream()) {
+    chunks.push(chunk);
+  }
+
+  const stderr = chunks.filter((c) => c.type === "stderr").map((c) => c.data).join("");
+  assertEquals(stderr, `safesh: ${MISSING_CMD}: command not found\n`);
+
+  const exit = chunks.find((c) => c.type === "exit");
+  assertEquals(exit?.code, 127);
+  assertEquals(exit?.pipeStatus, [127]);
+});
+
+Deno.test("missing binary - mergeStreams reports the error in output", async () => {
+  const result = await cmd(MISSING_CMD, [], { mergeStreams: true }).exec();
+
+  assertEquals(result.code, 127);
+  assertEquals(result.success, false);
+  assertEquals(result.output, `safesh: ${MISSING_CMD}: command not found\n`);
+});
+
+Deno.test("missing binary - 2>file redirect suppresses the error like bash", async () => {
+  const tmpDir = await Deno.makeTempDir();
+
+  try {
+    const path = `${tmpDir}/err.txt`;
+    const result = await cmd(MISSING_CMD, [], { stderrFile: { path } }).exec();
+
+    assertEquals(result.code, 127);
+    assertEquals(result.stderr, "");
+    assertEquals(await Deno.readTextFile(path), `safesh: ${MISSING_CMD}: command not found\n`);
+  } finally {
+    await Deno.remove(tmpDir, { recursive: true });
+  }
+});
+
+Deno.test("missing binary - upstream of a pipe still runs the downstream stage", async () => {
+  await initTestCmds();
+
+  // bash: `missing | cat` reports the missing command but the pipeline itself
+  // succeeds, because cat (the last stage) exits 0 on empty stdin.
+  const result = await cmd(MISSING_CMD, []).pipe(_cat()).exec();
+
+  assertEquals(result.stdout, "");
+  assertEquals(result.code, 0);
+  assertEquals(result.success, true);
+  assertEquals(result.pipeStatus, [127, 0]);
+});
+
+Deno.test("missing binary - downstream of a pipe fails the pipeline with 127", async () => {
+  await initTestCmds();
+
+  const result = await str("data").pipe(cmd(MISSING_CMD, [])).exec();
+
+  assertEquals(result.code, 127);
+  assertEquals(result.success, false);
+  assertEquals(result.stderr, `safesh: ${MISSING_CMD}: command not found\n`);
+});
+
+Deno.test("missing binary - stdout() stream yields nothing and does not throw", async () => {
+  const collected = await cmd(MISSING_CMD, []).stdout().collect();
+
+  assertEquals(collected, []);
+});
