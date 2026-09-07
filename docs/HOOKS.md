@@ -7,11 +7,12 @@ CLIs, plus Codex-specific hooks for Codex's routing and permission-request flow.
 
 - `hooks/bash-prehook.ts` is the shared compatibility entrypoint. Existing Claude, Gemini, and other
   CLI configurations should continue using this path; its compatibility and passthrough behavior
-  must not change to satisfy Codex requirements.
+  must not change to satisfy Codex or Antigravity requirements.
+- `hooks/agy/bash-prehook.ts` is the Antigravity CLI (`agy`) `PreToolUse` entrypoint for `run_command`.
 - `hooks/codex/bash-prehook.ts` is the Codex `PreToolUse` entrypoint. Codex-specific routing belongs
   here.
 - `hooks/codex/safesh-permission-hook.ts` is the Codex `PermissionRequest` entrypoint. Do not
-  register it for Claude, Gemini, or other CLIs.
+  register it for Claude, Gemini, Antigravity, or other CLIs.
 
 ## What This Does
 
@@ -90,6 +91,76 @@ receive no decision from it.
 > resolved, avoid "Allow for session" for Codex because separate Codex sessions can share the
 > default SafeShell permission bucket. "Allow once", both "Always allow" options, and "Deny" are
 > unaffected.
+
+### Antigravity CLI (agy) configuration
+
+Antigravity CLI (`agy`) hooks intercept the `run_command` tool during the `PreToolUse` lifecycle.
+
+#### Installation
+
+Install the user-level configuration into `~/.gemini/config/hooks.json` (or `$GEMINI_CONFIG_DIR/hooks.json`):
+
+```bash
+deno task install:agy-hooks
+```
+
+For repository-scoped configuration in `.agents/hooks.json`:
+
+```bash
+deno task install:agy-hooks --workspace
+```
+
+The installer reads `hooks/agy/hooks.json`, renders absolute paths to the checkout, and idempotently merges the `safesh` block into the target `hooks.json` file without disturbing other hooks.
+
+#### Hook Configuration Format
+
+The managed configuration in `hooks.json`:
+
+```json
+{
+  "safesh": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/safesh/hooks/agy/bash-prehook.ts",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+#### Lifecycle & Protocol
+
+1. **Invocation**: Antigravity runs the hook before executing `run_command`, sending a protojson payload on stdin containing `conversationId`, `stepIdx`, and `toolCall.args.CommandLine`.
+2. **Rewriting**: When a command requires SafeShell execution, the hook responds with strict protojson:
+   ```json
+   {
+     "decision": "allow",
+     "reason": "Transpiled to SafeShell TypeScript via desh",
+     "overwrite": {
+       "CommandLine": "desh run /path/to/.safesh/scripts/script.ts"
+     }
+   }
+   ```
+3. **Passthrough**: For benign commands allowed natively, the hook responds with `{"decision": "allow"}`.
+4. **Denial**: When a command is denied, the hook responds with `{"decision": "deny", "reason": "..."}`.
+
+#### Verification & Uninstall
+
+```bash
+# Verify installation
+deno task install:agy-hooks --verify
+
+# Remove SafeShell hooks
+deno task uninstall:agy-hooks
+```
 
 ### Claude Code configuration
 

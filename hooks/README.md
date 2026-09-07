@@ -14,6 +14,9 @@ This directory contains hook scripts that integrate SafeShell with external tool
 - `codex/config.toml` is the source template for the user-level Codex hook configuration.
 - `codex/install.ts` renders absolute paths and preserves unrelated settings while installing that
   configuration into `~/.codex/config.toml`.
+- `agy/bash-prehook.ts` is the Antigravity CLI (`agy`) `PreToolUse` hook for `run_command`.
+- `agy/hooks.json` is the source template for Antigravity hook configuration.
+- `agy/install.ts` renders absolute paths and idempotently manages global (`~/.gemini/config/hooks.json`) or workspace (`.agents/hooks.json`) configuration.
 
 Do not configure Claude, Gemini, or another CLI to use the files under `codex/`. See
 [`../docs/HOOKS.md`](../docs/HOOKS.md) for client configuration examples.
@@ -152,6 +155,16 @@ that policy does not change the shared entrypoint. Install the user-level config
 `deno task install:codex-hooks`; SafeShell intentionally has no project `.codex/config.toml`.
 Complete configuration details are in [`../docs/HOOKS.md`](../docs/HOOKS.md).
 
+### Integration with Antigravity CLI (agy)
+
+Antigravity CLI (`agy`) uses `agy/bash-prehook.ts` to intercept `run_command` tool calls during the
+`PreToolUse` lifecycle. It sends a protojson payload containing `toolCall.args.CommandLine` to the hook
+and expects strict protojson back with `decision` (`"allow"` | `"deny"`) and optional
+`overwrite.CommandLine`. Commands requiring SafeShell are transpiled to TypeScript and rewritten to
+execute via `desh run`. Install globally with `deno task install:agy-hooks`, or per workspace with
+`deno task install:agy-hooks --workspace`. Complete configuration details are in
+[`../docs/HOOKS.md`](../docs/HOOKS.md).
+
 ### Testing the Hook
 
 #### Basic functionality
@@ -284,6 +297,9 @@ For long-running commands, the overhead is negligible.
 - `/src/bash/mod.ts` - `parseShellCommand` function
 - `/hooks/codex/config.toml` - User-level Codex hook configuration source
 - `/hooks/codex/install.ts` - User-level Codex hook installer
+- `/hooks/agy/hooks.json` - Antigravity hook configuration source template
+- `/hooks/agy/install.ts` - Antigravity CLI hook installer
+- `/hooks/agy/bash-prehook.ts` - Antigravity CLI hook entrypoint
 
 ### Contributing
 

@@ -1,0 +1,17 @@
+{
+  "safesh": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__SAFESH_AGY_BASH_PREHOOK__",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
