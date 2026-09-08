@@ -64,6 +64,18 @@ Deno.test("SSH-70: DEFAULT_CONFIG allows swift", async () => {
   assertEquals(registry.isWhitelisted("swift"), true);
 });
 
+Deno.test("SSH-684: DEFAULT_CONFIG allows desh", async () => {
+  // Agents that invoke desh directly (e.g. `desh -c '<code>'` under the Codex
+  // hook, where routeAllCommands drops the desh passthrough) must not need a
+  // per-project approval to run SafeShell itself.
+  const result = await checkCommandPermission("desh", DEFAULT_CONFIG, Deno.cwd());
+
+  assertEquals(result.allowed, true);
+  if (result.allowed) {
+    assertEquals(result.resolvedPath, "desh");
+  }
+});
+
 Deno.test("SSH-101: DEFAULT_CONFIG allows tmux helper commands", async () => {
   const result = await checkCommandPermission("tmux", DEFAULT_CONFIG, Deno.cwd());
   const registry = createRegistry(DEFAULT_CONFIG);

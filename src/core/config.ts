@@ -304,6 +304,19 @@ const SAFE_COMMANDS = [
   // NOTE: node, deno, bun removed - can execute arbitrary code, require explicit permission
 
   // ============================================================================
+  // SafeShell Itself
+  // ============================================================================
+  // SSH-684: unlike node/deno/bun above, code run by desh goes through this same
+  // permission model - `desh -c <code>` uses executeInlineCode ->
+  // executeCodeStreaming(code, config), the exact path the hook's /*#*/ rewrite
+  // takes - so it needs no per-project approval. Agents that call desh directly
+  // (notably under the Codex hook, where routeAllCommands drops the desh
+  // passthrough) would otherwise be blocked once per project.
+  // CAVEAT: this also allows `desh --config <other>` / `--project <dir>`, which
+  // can point a run at a different, more permissive config.
+  "desh",
+
+  // ============================================================================
   // Build Tools
   // ============================================================================
   "make",
