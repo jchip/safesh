@@ -719,7 +719,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const ast = parse('function test_func { echo safe; }');
     const output = transpile(ast);
 
-    assertStringIncludes(output, "async function test_func()");
+    assertStringIncludes(output, "async function test_func(");
   });
 
   it("should prevent injection through array indices", () => {

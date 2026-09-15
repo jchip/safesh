@@ -364,7 +364,10 @@ export function visitFunctionDeclaration(
   // Register the function so calls to it are transpiled as direct calls
   ctx.declareFunction(stmt.name);
 
-  lines.push(`${indent}async function ${stmt.name}() {`);
+  // SSH-674: take the call's arguments as a rest parameter named exactly what
+  // $1/$@/$# lower to, so those reads resolve to this function's arguments and
+  // shadow the script-level ones — matching bash's positional parameters.
+  lines.push(`${indent}async function ${stmt.name}(...__POSITIONAL_PARAMS__: string[]) {`);
 
   // Push a new scope for function variables
   ctx.pushScope();

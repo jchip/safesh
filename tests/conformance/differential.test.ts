@@ -142,10 +142,23 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=(1 2 3); echo "${#a[@]}"', xfail: "SSH-697" },
   ],
   functions: [
-    // SSH-674: call-site arguments are dropped and $N inside the body compiles
-    // to an undeclared __POSITIONAL_PARAMS__, so this throws ReferenceError.
-    { src: 'norm() { echo "got=[$1]"; }; norm hello', xfail: "SSH-674" },
+    // SSH-674: call-site arguments used to be dropped, and $N in the body read
+    // an undeclared __POSITIONAL_PARAMS__ (ReferenceError). Arguments are now
+    // forwarded as a rest parameter of that name.
+    { src: 'norm() { echo "got=[$1]"; }; norm hello' },
     { src: "greet() { echo hi; }; greet" },
+    { src: 'f() { echo "$1-$2"; }; f a b' },
+    { src: 'f() { echo "count=$#"; }; f a b c' },
+    { src: 'f() { echo "all=$@"; }; f x y' },
+    { src: 'f() { echo "[$1]"; }; f' },
+    { src: 'g() { echo "hello $1"; }; g world; g again' },
+    { src: 'f() { echo "$1"; }; x=val; f "$x"' },
+    { src: 'f() { i() { echo "inner=$1"; }; i deep; echo "outer=$1"; }; f out' },
+    { src: 'echo "top=[$1]"' },
+    // SSH-698: a function CALL is a Promise, not a Command, so redirecting,
+    // piping or capturing one still fails.
+    { src: "f() { echo hi; }; f | cat", xfail: "SSH-698" },
+    { src: 'f() { echo "a$1"; }; v=$(f X); echo "[$v]"', xfail: "SSH-698" },
   ],
   // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
   // purpose — the pre-fix failure mode was `wait` falling straight through, so

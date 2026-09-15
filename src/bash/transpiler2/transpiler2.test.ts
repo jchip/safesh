@@ -910,7 +910,7 @@ describe("Transpiler2 - Control Flow", () => {
     `);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "async function myfunc()");
+    assertStringIncludes(output, "async function myfunc(");
     // SSH-372: Now uses $.echo builtin
     assertStringIncludes(output, '$.echo("hello")');
   });
@@ -924,7 +924,7 @@ describe("Transpiler2 - Control Flow", () => {
     `);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "async function myfunc()");
+    assertStringIncludes(output, "async function myfunc(");
     assertStringIncludes(output, "var x = ");
   });
 
@@ -949,7 +949,7 @@ describe("Transpiler2 - Control Flow", () => {
     `);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "async function foo()");
+    assertStringIncludes(output, "async function foo(");
     assertStringIncludes(output, "await foo()");
     // Should NOT transpile as (await $.cmd("foo"))()
     assertEquals(output.includes('$.cmd("foo")'), false);
@@ -968,8 +968,8 @@ describe("Transpiler2 - Control Flow", () => {
     `);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "async function greet()");
-    assertStringIncludes(output, "async function goodbye()");
+    assertStringIncludes(output, "async function greet(");
+    assertStringIncludes(output, "async function goodbye(");
     assertStringIncludes(output, "await greet()");
     assertStringIncludes(output, "await goodbye()");
   });

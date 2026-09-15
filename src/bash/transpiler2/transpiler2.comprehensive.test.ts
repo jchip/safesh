@@ -759,7 +759,7 @@ done`;
       `;
       const ast = parse(script);
       const output = transpile(ast);
-      assertStringIncludes(output, "async function setup()");
+      assertStringIncludes(output, "async function setup(");
       assertStringIncludes(output, "mkdir");
     });
 
@@ -771,7 +771,7 @@ done`;
       `;
       const ast = parse(script);
       const output = transpile(ast);
-      assertStringIncludes(output, "async function greet()");
+      assertStringIncludes(output, "async function greet(");
     });
 
     it("should handle function with local variables", () => {
@@ -784,7 +784,7 @@ done`;
       `;
       const ast = parse(script);
       const output = transpile(ast);
-      assertStringIncludes(output, "async function compute()");
+      assertStringIncludes(output, "async function compute(");
     });
   });
 });
@@ -1755,7 +1755,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "async function deploy()");
+    assertStringIncludes(output, "async function deploy(");
     assertStringIncludes(output, "npm");
   });
 

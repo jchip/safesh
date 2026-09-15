@@ -848,7 +848,7 @@ describe("Conformance - Functions", () => {
     `;
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
-    assertStringIncludes(output, "async function greet()");
+    assertStringIncludes(output, "async function greet(");
   });
 
   it("should transpile function with simple echo", async () => {
@@ -861,7 +861,7 @@ describe("Conformance - Functions", () => {
     `;
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
-    assertStringIncludes(output, "async function say_hello()");
+    assertStringIncludes(output, "async function say_hello(");
     // SSH-372: Transpiler now outputs $.echo("Hello") using preamble builtins
     assertStringIncludes(output, "$.echo(");
     assertStringIncludes(output, '"Hello"');

@@ -165,8 +165,10 @@ const SPECIALIZED_COMMANDS = new Set([
 // Command Builder Strategies
 // =============================================================================
 
-function handleUserFunction(name: string): string {
-  return `${name}()`;
+function handleUserFunction(name: string, args = ""): string {
+  // SSH-674: the call's arguments used to be dropped entirely, so $1 inside the
+  // body read an undeclared __POSITIONAL_PARAMS__ and threw.
+  return `${name}(${args})`;
 }
 
 function handleTmuxSendKeys(
@@ -408,7 +410,15 @@ interface CommandAnalysis {
  */
 type CommandStrategy =
   | { type: "variable-assignment"; assignments: AST.VariableAssignment[] }
-  | { type: "user-function"; name: string }
+  | {
+    type: "user-function";
+    name: string;
+    // SSH-674: the call's arguments, forwarded as the function's positionals.
+    args: string[];
+    argExpansions: boolean[];
+    argTemplateEscapedLiterals: boolean[];
+    argIsGlob: boolean[];
+  }
   | { type: "shell-option" }
   | {
     type: "shell-builtin";
@@ -628,7 +638,14 @@ function selectCommandStrategy(
 
   // User function
   if (ctx.isFunction(analysis.name)) {
-    return { type: "user-function", name: analysis.name };
+    return {
+      type: "user-function",
+      name: analysis.name,
+      args: analysis.args,
+      argExpansions: analysis.argExpansions,
+      argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
+      argIsGlob: analysis.argIsGlob,
+    };
   }
 
   if (
@@ -780,7 +797,17 @@ function executeCommandStrategy(
     }
 
     case "user-function": {
-      const cmdExpr = handleUserFunction(strategy.name);
+      const argsArray = strategy.args
+        .map((a, i) =>
+          formatCommandArg(
+            a,
+            strategy.argExpansions?.[i],
+            strategy.argTemplateEscapedLiterals?.[i],
+            strategy.argIsGlob?.[i],
+          )
+        )
+        .join(", ");
+      const cmdExpr = handleUserFunction(strategy.name, argsArray);
       return { code: cmdExpr, async: true, isUserFunction: true };
     }
 
