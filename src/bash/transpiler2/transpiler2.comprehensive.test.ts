@@ -114,9 +114,11 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle multiple variable assignments", () => {
     const ast = parse("A=1 B=2 C=3");
     const output = transpile(ast);
-    assertStringIncludes(output, "var A");
-    assertStringIncludes(output, "var B");
-    assertStringIncludes(output, "var C");
+    // SSH-633: these lower to ONE comma expression, so the declaration is
+    // hoisted once rather than repeated per assignment — `var A = "1", var B =
+    // "2"` was invalid JS and took the whole statement down.
+    assertStringIncludes(output, "var A, B, C;");
+    assertStringIncludes(output, 'A = "1", B = "2", C = "3"');
   });
 
   it("should handle variable assignment with command", () => {

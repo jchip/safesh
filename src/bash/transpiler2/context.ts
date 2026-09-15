@@ -199,12 +199,14 @@ export class TranspilerContext {
     this.hoistedVariables.add(name);
     // Record in the root scope, not the current one: the emitted `var` lives at
     // the top of the IIFE and must stay visible after any scope here is popped.
+    // Keyed on the raw shell name so isDeclared(stmt.name) sees it — callers
+    // sanitize only for emission.
     if (!this.rootScope.variables.has(name)) {
       this.rootScope.variables.set(name, { type: "let", initialized: false });
     }
   }
 
-  /** Names needing a hoisted declaration, in first-requested order */
+  /** Raw shell names needing a hoisted declaration, in first-requested order */
   getHoistedVariables(): string[] {
     return [...this.hoistedVariables];
   }

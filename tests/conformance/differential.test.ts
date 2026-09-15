@@ -120,16 +120,26 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=1; b=2; echo "$a$b"' },
     { src: 'a=hello; echo "${a}world"' },
     { src: "x=5; x=$((x+1)); echo $x" },
-    // SSH-633: multiple prefix assignments transpile to invalid `var a=.., var b=..`
-    // (was `let` before SSH-689; the repeated keyword after the comma is the bug).
-    { src: "a=1 b=2 && echo Y", xfail: "SSH-633" },
+    // SSH-633: multiple prefix assignments used to emit a declaration keyword
+    // per assignment into one comma expression (`var a=.., var b=..`), which is
+    // invalid JS; the names are hoisted instead.
+    { src: "a=1 b=2 && echo Y" },
+    { src: "a=$(false) b=$(true) && echo Y" },
+    { src: 'a=1 b=2 c=3; echo "$a$b$c"' },
     // SSH-634: assignment-left &&-chain before a ;-sequence drops the && guard.
     { src: 'x=$(false) && echo Y; echo "rc=$?"', xfail: "SSH-634" },
-    // SSH-694: a $-prefixed array subscript emits a bare `$i` identifier and
-    // throws ReferenceError. The `${a[i]}` and `${a[1]}` spellings both work.
-    { src: 'a=(1 2 3); i=1; echo "${a[$i]}"', xfail: "SSH-694" },
+    // SSH-694: a subscript is an arithmetic context, so all of these spellings
+    // are equivalent. `$i` used to emit a bare `$i` identifier (ReferenceError).
+    { src: 'a=(1 2 3); i=1; echo "${a[$i]}"' },
     { src: 'a=(1 2 3); i=1; echo "${a[i]}"' },
     { src: 'a=(1 2 3); echo "${a[1]}"' },
+    { src: 'a=(1 2 3); i=1; echo "${a[i+1]}"' },
+    { src: 'a=(x y); n=0; echo "${a[$n]}${a[$((n+1))]}"' },
+    // SSH-697: whole-array expansion is handled for PIPESTATUS but not for an
+    // ordinary array, so these still lower to unparseable output.
+    { src: 'a=(1 2 3); echo "${a[@]}"', xfail: "SSH-697" },
+    { src: 'a=(1 2 3); echo "${a[*]}"', xfail: "SSH-697" },
+    { src: 'a=(1 2 3); echo "${#a[@]}"', xfail: "SSH-697" },
   ],
   functions: [
     // SSH-674: call-site arguments are dropped and $N inside the body compiles

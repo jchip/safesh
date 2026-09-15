@@ -723,10 +723,18 @@ describe("Security - Complex Injection Scenarios", () => {
   });
 
   it("should prevent injection through array indices", () => {
-    const ast = parse('echo ${arr[0]}');
+    const ast = parse("echo ${arr[0]}");
     const output = transpile(ast);
 
-    assertStringIncludes(output, "arr[0]");
+    // SSH-694: the subscript is lowered through the ARITHMETIC parser rather
+    // than spliced in as raw text, so the index position can only ever hold a
+    // numeric expression. That is what makes it non-injectable — asserting the
+    // old literal `arr[0]` substring only described the emission, not the
+    // property. Access is via optional chaining on the sanitized array name.
+    assertStringIncludes(output, "arr?.[0]");
+    // An arithmetic subscript stays arithmetic, and a variable one is coerced.
+    assertStringIncludes(transpile(parse("echo ${arr[1+1]}")), "arr?.[(1 + 1)]");
+    assertStringIncludes(transpile(parse("echo ${arr[i]}")), "arr?.[Number(");
   });
 
   it("should handle multiple injection vectors combined", () => {

@@ -757,6 +757,14 @@ function executeCommandStrategy(
 ): CommandExpressionResult {
   switch (strategy.type) {
     case "variable-assignment": {
+      // SSH-633: these are joined into one comma expression, so a per-assignment
+      // declaration keyword would produce `var a = "1", var b = "2"` — invalid
+      // JS, which took down the whole statement. Hoist the names instead (the
+      // SSH-690 mechanism) so each assignment emits a bare `a = "1"` and the
+      // comma expression stays valid. Single assignments keep declaring inline.
+      if (strategy.assignments.length > 1) {
+        for (const a of strategy.assignments) ctx.hoistVariable(a.name);
+      }
       const assignments = strategy.assignments
         .map((a) => buildVariableAssignment(a, ctx))
         .join(", ");

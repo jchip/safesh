@@ -169,7 +169,9 @@ describe("Parameter Expansion - Array Operations", () => {
     const script = 'arr=(a b c); echo "${arr[1]}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "arr[1]");
+    // SSH-694: the subscript is lowered as arithmetic and indexed with optional
+    // chaining, so the emitted access is `arr?.[1]` rather than a raw `arr[1]`.
+    assertStringIncludes(result, "arr?.[1]");
   });
 
   it("should get length of array with ${#arr[@]}", () => {

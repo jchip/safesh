@@ -18,6 +18,7 @@ import {
 } from "./types.ts";
 import { TranspilerContext } from "./context.ts";
 import { OutputEmitter } from "./emitter.ts";
+import { sanitizeVarName } from "./utils/mod.ts";
 import * as handlers from "./handlers/mod.ts";
 
 // Re-exports
@@ -109,10 +110,11 @@ export class BashTranspiler2 {
       bodyLines.push(...result.lines.map((l) => l.startsWith(indent) ? l.slice(indent.length) : l));
     }
 
-    // SSH-690: arithmetic write targets need a real assignable binding
+    // SSH-690: arithmetic write targets need a real assignable binding.
+    // SSH-633: so do the names in a multi-assignment command prefix.
     const hoisted = ctx.getHoistedVariables();
     if (hoisted.length > 0) {
-      emitter.emit(`var ${hoisted.join(", ")};`);
+      emitter.emit(`var ${hoisted.map(sanitizeVarName).join(", ")};`);
     }
     emitter.emitLines(bodyLines);
 

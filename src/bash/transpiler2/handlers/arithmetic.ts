@@ -16,9 +16,10 @@ import { sanitizeVarName } from "../utils/mod.ts";
  * strict-mode wrapper throws ReferenceError before the expression runs.
  */
 function arithmeticTarget(name: string, ctx: VisitorContext): string {
-  const jsName = sanitizeVarName(name);
-  ctx.hoistVariable(jsName);
-  return jsName;
+  // Hoist under the raw shell name (what isDeclared is keyed on); sanitize only
+  // for the emitted identifier.
+  ctx.hoistVariable(name);
+  return sanitizeVarName(name);
 }
 
 // =============================================================================

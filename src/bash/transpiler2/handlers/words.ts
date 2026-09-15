@@ -6,6 +6,7 @@
  */
 
 import type * as AST from "../../ast.ts";
+import { parseArithmetic } from "../../arithmetic-parser.ts";
 import type { VisitorContext } from "../types.ts";
 import {
   escapeForQuotes,
@@ -485,14 +486,28 @@ export function visitParameterExpansion(
   if (embeddedSubscript && !modifier) {
     const arrayName = embeddedSubscript[1]!;
     const arrayIndex = embeddedSubscript[2]!;
-    if (arrayName !== "PIPESTATUS") {
-      return `\${typeof ${param} !== "undefined" ? ${param} : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`;
-    }
     const jsArrayName = sanitizeVarName(arrayName);
-    if (arrayIndex === "@" || arrayIndex === "*") {
+    const isAllElements = arrayIndex === "@" || arrayIndex === "*";
+    // SSH-694: an array subscript is an ARITHMETIC context in bash, so `$i`,
+    // `i`, `1` and `i+1` are all valid and equivalent there. The raw subscript
+    // text used to be spliced straight into the emitted JS, which turned `$i`
+    // into a reference to a variable literally named `$i` (ReferenceError).
+    const jsIndex = isAllElements ? null : ctx.visitArithmetic(parseArithmetic(arrayIndex));
+    const elementAt = (index: string) =>
+      `\${(typeof ${jsArrayName} !== "undefined" ? ${jsArrayName}?.[${index}] : $.VARS?.${arrayName}?.[${index}]) ?? ""}`;
+
+    if (arrayName !== "PIPESTATUS") {
+      // `${a[@]}` / `${a[*]}` on a non-PIPESTATUS array is a separate,
+      // pre-existing gap (it does not lower to valid JS); left on its old path
+      // rather than silently changed here.
+      return jsIndex === null
+        ? `\${typeof ${param} !== "undefined" ? ${param} : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`
+        : elementAt(jsIndex);
+    }
+    if (jsIndex === null) {
       return `\${Array.isArray(${jsArrayName}) ? ${jsArrayName}.join(" ") : ($.VARS?.${arrayName} ?? []).join?.(" ") ?? ""}`;
     }
-    return `\${(typeof ${jsArrayName} !== "undefined" ? ${jsArrayName}?.[${arrayIndex}] : $.VARS?.${arrayName}?.[${arrayIndex}]) ?? ""}`;
+    return elementAt(jsIndex);
   }
 
   // SSH-330: Handle indirect variable reference ${!ref}
