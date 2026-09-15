@@ -882,3 +882,37 @@ describe("Nested arithmetic expansion operands (SSH-691)", () => {
     assertThrows(() => parseArithmetic("$((2 + 3"));
   });
 });
+
+describe("Empty arithmetic expression (SSH-692)", () => {
+  it("should evaluate an empty expression as 0", () => {
+    const expr = parseArithmetic("");
+    assertEquals(expr.type, "NumberLiteral");
+    assertEquals((expr as AST.NumberLiteral).value, 0);
+  });
+
+  it("should evaluate a whitespace-only expression as 0", () => {
+    for (const input of [" ", "  ", "\t", " \t "]) {
+      const expr = parseArithmetic(input);
+      assertEquals(expr.type, "NumberLiteral", `input: ${JSON.stringify(input)}`);
+      assertEquals((expr as AST.NumberLiteral).value, 0, `input: ${JSON.stringify(input)}`);
+    }
+  });
+
+  it("should evaluate an empty nested expansion as 0", () => {
+    const expr = parseArithmetic("$(())");
+    assertEquals(expr.type, "GroupedArithmeticExpression");
+    const inner = (expr as AST.GroupedArithmeticExpression).expression;
+    assertEquals(inner.type, "NumberLiteral");
+    assertEquals((inner as AST.NumberLiteral).value, 0);
+  });
+
+  // Only a WHOLLY empty expression is 0. bash rejects a missing operand
+  // mid-expression ("operand expected"), so folding empty to 0 in the operand
+  // position would silently accept `1 +` as `1 + 0`.
+  it("should still reject a missing operand", () => {
+    assertThrows(() => parseArithmetic("1 +"));
+    assertThrows(() => parseArithmetic("+"));
+    assertThrows(() => parseArithmetic("* 2"));
+    assertThrows(() => parseArithmetic("1 + * 2"));
+  });
+});

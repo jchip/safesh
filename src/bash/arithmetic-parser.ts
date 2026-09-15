@@ -416,6 +416,14 @@ export class ArithmeticParser {
   }
 
   parse(): AST.ArithmeticExpression {
+    // SSH-692: bash evaluates a wholly empty expression as 0, so `echo $(())`
+    // prints 0 and `(( ))` exits 1 just as `((0))` does. Guard here rather than
+    // in parsePrefix so that a *missing operand* mid-expression still errors —
+    // bash rejects `$((1 +))` ("operand expected"), and folding an empty
+    // operand to 0 there would silently accept it as `1 + 0`.
+    if (this.current().type === ArithTokenType.EOF) {
+      return { type: "NumberLiteral", value: 0 };
+    }
     const result = this.parseExpression(0);
     if (this.current().type !== ArithTokenType.EOF) {
       throw new Error(`Unexpected token: ${this.current().value}`);

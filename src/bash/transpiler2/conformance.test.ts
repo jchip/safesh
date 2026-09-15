@@ -480,6 +480,24 @@ describe("Conformance - Arithmetic", () => {
     assertEquals(tsResult.stdout, "4");
   });
 
+  it("should evaluate an empty arithmetic expansion as zero", async () => {
+    // SSH-692: `$(())` threw "Unexpected token ... EOF", failing the whole script
+    const script = `echo "$(()) $(( )) $(( $(()) + 1 ))"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "0 0 1");
+  });
+
+  it("should exit 1 from an empty arithmetic command like a zero result", async () => {
+    // bash: `(( ))` is a zero-valued expression, so its status is 1
+    const script = `(( )) || echo "status=$?"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "status=1");
+  });
+
   it("should still treat $(...) in arithmetic as a command substitution", async () => {
     // SSH-627 must keep working: only `$((` is redirected to arithmetic
     const script = `echo "$(( $(echo 2) + 3 ))"`;
@@ -744,14 +762,20 @@ describe("Conformance - Control Flow", () => {
     assertEquals(tsResult.stdout, "sum=1\nw=1\ns=5");
   });
 
-  it("should step a string-valued variable numerically", async () => {
+  it("should treat a string-valued variable as a number, not concatenate", async () => {
+    // SSH-690: `((i += 2))` lowered to JS `i += 2`, which on the string "5"
+    // concatenated to "52" instead of adding. `((i++))` already coerced
+    // correctly, and is kept here as a regression guard.
     const script = `i="5"
-    ((i++))
-    echo "i=$i"`;
+    ((i += 2))
+    echo "add=$i"
+    j="5"
+    ((j++))
+    echo "inc=$j"`;
     const { bashResult, tsResult } = await compareExecution(script);
 
     assertEquals(tsResult.stdout, bashResult.stdout);
-    assertEquals(tsResult.stdout, "i=6");
+    assertEquals(tsResult.stdout, "add=7\ninc=6");
   });
 
   it("should not leak a subshell's arithmetic assignment to the parent", async () => {

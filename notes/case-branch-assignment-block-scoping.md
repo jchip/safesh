@@ -360,9 +360,46 @@ must not regress), and an unterminated `$((`. `conformance.test.ts` compares
 the quoted and unquoted forms, precedence, three-deep nesting, and `$(...)` in
 arithmetic against real bash.
 
-### Still open
+### Discovered while fixing: SSH-692 (since fixed)
 
-`$(())` — an **empty** arithmetic expansion — throws
+`$(())` — an **empty** arithmetic expansion — threw
 ("Unexpected token in arithmetic expression: EOF") where bash evaluates it to 0.
-This affects the plain top-level `echo $(())` too, so it is not specific to
-nesting. Pre-existing; filed as SSH-692.
+This affected the plain top-level `echo $(())` too, so it was not specific to
+nesting. Filed as SSH-692 and fixed; see below.
+
+## SSH-692: empty arithmetic expression
+
+`parseArithmetic("")` threw, so every empty form failed the whole script:
+`echo $(())`, `echo $(( ))`, `X=$(())`, `(( ))`. The C-style `for`'s omitted
+clauses (`for ((;;))`) already worked, because that parser skips the call
+rather than passing an empty string.
+
+`ArithmeticParser.parse()` now returns `NumberLiteral 0` when the token stream
+is empty. bash agrees on both consequences: `echo $(())` prints 0, and `(( ))`
+exits 1 — the same status as `((0))`, since the expression value is zero.
+
+The guard is in `parse()` and deliberately **not** in `parsePrefix()`. Only a
+wholly empty expression is 0; bash rejects a *missing operand* mid-expression
+("operand expected"), so folding empty to 0 in the operand position would
+silently accept `$((1 +))` as `1 + 0`. There is a test pinning that
+`1 +`, `+`, `* 2` and `1 + * 2` all still throw.
+
+## On verifying these fixes
+
+Every test added across SSH-689 through SSH-692 was re-run against the
+pre-fix source to confirm it actually fails without the fix — for the earlier
+three, in a scratch git worktree with the fix commits' source files reverted to
+`9ea0721` while keeping the committed tests.
+
+That exercise caught one test of mine with **no teeth**: "should step a
+string-valued variable numerically" (`i="5"; ((i++))`) passed before the
+SSH-690 fix too, because JS `i++` already coerces a numeric string. The
+behaviour that was actually broken is compound assignment — `i="5"; ((i += 2))`
+lowered to JS `i += 2` and **concatenated to "52"** instead of adding to 7.
+The test was replaced with one covering `+=` (which fails pre-fix) and keeping
+`++` as a plain regression guard.
+
+Worth remembering for this area: a passing test proves nothing about a fix
+until it has been seen to fail without it, and "silent wrong value" bugs here
+(`52` for `7`, `0` for `10`, a JS global for a shell variable) are easy to
+write tests *around* rather than *for*.
