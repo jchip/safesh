@@ -6,6 +6,7 @@
  */
 
 import type { ResolvedOptions } from "./types.ts";
+import type * as AST from "../ast.ts";
 
 // =============================================================================
 // Diagnostic Interface
@@ -31,6 +32,13 @@ interface VariableScope {
 interface FunctionRegistry {
   /** Set of user-defined function names */
   functions: Set<string>;
+  /**
+   * SSH-698: each declared function's body, so a call in a VALUE position (a
+   * pipe stage, a redirect, a `$( )` capture) can re-emit it in stdout-capture
+   * mode. The emitted `async function` prints straight to stdout and returns
+   * nothing, so there is no other way to get at its output.
+   */
+  bodies: Map<string, AST.Statement[]>;
 }
 
 // =============================================================================
@@ -52,7 +60,7 @@ export class TranspilerContext {
     this.options = options;
     this.currentScope = { variables: new Map(), parent: null };
     this.rootScope = this.currentScope;
-    this.functionRegistry = { functions: new Set() };
+    this.functionRegistry = { functions: new Set(), bodies: new Map() };
   }
 
   // ===========================================================================
@@ -215,14 +223,20 @@ export class TranspilerContext {
   // Function Registry
   // ===========================================================================
 
-  /** Register a user-defined function */
-  declareFunction(name: string): void {
+  /** Register a user-defined function, with its body when available (SSH-698) */
+  declareFunction(name: string, body?: AST.Statement[]): void {
     this.functionRegistry.functions.add(name);
+    if (body) this.functionRegistry.bodies.set(name, body);
   }
 
   /** Check if a name is a declared user-defined function */
   isFunction(name: string): boolean {
     return this.functionRegistry.functions.has(name);
+  }
+
+  /** A declared function's body, for re-emitting it in capture mode (SSH-698) */
+  getFunctionBody(name: string): AST.Statement[] | undefined {
+    return this.functionRegistry.bodies.get(name);
   }
 
   // ===========================================================================

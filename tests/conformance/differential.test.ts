@@ -170,10 +170,19 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'f() { echo "$1"; }; x=val; f "$x"' },
     { src: 'f() { i() { echo "inner=$1"; }; i deep; echo "outer=$1"; }; f out' },
     { src: 'echo "top=[$1]"' },
-    // SSH-698: a function CALL is a Promise, not a Command, so redirecting,
-    // piping or capturing one still fails.
-    { src: "f() { echo hi; }; f | cat", xfail: "SSH-698" },
-    { src: 'f() { echo "a$1"; }; v=$(f X); echo "[$v]"', xfail: "SSH-698" },
+    // SSH-698 (fixed): a function CALL was a Promise, not a Command, so
+    // piping, redirecting or capturing one threw — except the capture, which
+    // silently produced "". A value position now re-emits the body in capture
+    // mode. NB `f | cat` pins the OUTPUT only; the upstream's status is still
+    // lost by the SSH-677 gap, which is why there is no PIPESTATUS case here.
+    { src: "f() { echo hi; }; f | cat" },
+    { src: 'f() { echo "a$1"; }; v=$(f X); echo "[$v]"' },
+    { src: 'f() { echo "got=[$1]"; }; f one | cat' },
+    { src: "f() { echo one; echo two; }; f | cat" },
+    { src: "f() { echo hi; }; echo pre; f | cat; echo post" },
+    { src: 'f() { echo out; return 3; }; v=$(f); echo "rc=$? v=$v"' },
+    { src: "f() { echo hi; }; f > /dev/null; echo done" },
+    { src: 'f() { return 3; }; f | cat; echo "rc=$?"' },
   ],
   // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
   // purpose — the pre-fix failure mode was `wait` falling straight through, so

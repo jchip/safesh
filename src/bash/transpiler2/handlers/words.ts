@@ -191,7 +191,9 @@ function buildCapturableInnerCode(
 
   for (const stmt of statements) {
     if (stmt.type === "Command") {
-      const expr = ctx.buildCommand(stmt, { captureOutput: true });
+      // SSH-698: valueConsumed — the substitution itself takes this output, so
+      // a user-function call has to yield it rather than print it.
+      const expr = ctx.buildCommand(stmt, { captureOutput: true, valueConsumed: true });
       innerExprs.push(expr.code);
     } else if (
       stmt.type === "Pipeline" &&
@@ -203,7 +205,10 @@ function buildCapturableInnerCode(
       // the exit-status flip (SSH-594).
       !stmt.negated
     ) {
-      const expr = ctx.buildCommand(stmt.commands[0], { captureOutput: true });
+      const expr = ctx.buildCommand(stmt.commands[0], {
+        captureOutput: true,
+        valueConsumed: true,
+      });
       innerExprs.push(expr.code);
     } else if (stmt.type === "Pipeline") {
       const expr = ctx.buildCommandExpression(stmt);

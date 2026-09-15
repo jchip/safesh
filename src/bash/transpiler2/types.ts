@@ -118,11 +118,14 @@ export interface VisitorContext {
   /** Pop current variable scope */
   popScope(): void;
 
-  /** Register a user-defined function */
-  declareFunction(name: string): void;
+  /** Register a user-defined function, with its body when available (SSH-698) */
+  declareFunction(name: string, body?: AST.Statement[]): void;
 
   /** Check if a name is a declared user-defined function */
   isFunction(name: string): boolean;
+
+  /** A declared function's body, for re-emitting it in capture mode (SSH-698) */
+  getFunctionBody(name: string): AST.Statement[] | undefined;
 
   /** Get stdout capture variable name (null if not in capture mode) */
   getStdoutCapture(): string | null;
@@ -163,7 +166,17 @@ export interface VisitorContext {
   /** Build a command expression (without await) */
   buildCommand(
     cmd: AST.Command,
-    options?: { inPipeline?: boolean; captureOutput?: boolean },
+    options?: {
+      inPipeline?: boolean;
+      captureOutput?: boolean;
+      /**
+       * SSH-698: something downstream consumes this command's OUTPUT as a
+       * value — a later pipe stage, or a `$( )` capture. Distinct from
+       * `captureOutput`, which a pipeline sets for every stage including the
+       * last one, whose output is printed rather than consumed.
+       */
+      valueConsumed?: boolean;
+    },
   ): ExpressionResult;
 
   /** Build a command or pipeline expression (for command substitution) */

@@ -3,7 +3,7 @@
  * Tests the decomposed buildCommand() function using integration approach
  */
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parse } from "../../parser.ts";
 import { transpile } from "../mod.ts";
@@ -428,9 +428,16 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       `;
       const output = transpile(parse(script));
 
-      // User function call with redirection
-      assertStringIncludes(output, "myFunc()");
-      assertStringIncludes(output, '.stdout("out.txt")');
+      // SSH-698: this used to assert `myFunc().stdout("out.txt")`, which is the
+      // TypeError — a call is a Promise, and Promise has no .stdout(). The body
+      // is re-emitted in capture mode and the file written from the captured
+      // stdout, so the redirect target appears as a write, not as a method.
+      assertStringIncludes(output, 'const __target0 = "out.txt"');
+      assertStringIncludes(output, "Deno.writeTextFileSync(__target0, __stdout");
+      assert(
+        !output.includes('.stdout("out.txt")'),
+        `still calls .stdout() on the call's Promise: ${output}`,
+      );
     });
 
     it("should handle fluent command in pipeline", () => {

@@ -361,8 +361,10 @@ export function visitFunctionDeclaration(
   const lines: string[] = [];
   const indent = ctx.getIndent();
 
-  // Register the function so calls to it are transpiled as direct calls
-  ctx.declareFunction(stmt.name);
+  // Register the function so calls to it are transpiled as direct calls.
+  // SSH-698: the body goes with it, so a call in a value position can re-emit
+  // it in capture mode — this emission prints straight to stdout.
+  ctx.declareFunction(stmt.name, stmt.body);
 
   // SSH-674: take the call's arguments as a rest parameter named exactly what
   // $1/$@/$# lower to, so those reads resolve to this function's arguments and

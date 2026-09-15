@@ -418,6 +418,14 @@ type CommandStrategy =
     argExpansions: boolean[];
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
+    // SSH-698: the call's output is needed as a value (a pipe stage consumes
+    // it, a `$( )` captures it, or a redirect sends it somewhere), so the plain
+    // `f()` call — which prints and returns nothing — will not do.
+    needsValue: boolean;
+    // True when a pipe or a `$( )` takes that value; false when only a
+    // redirect asked for it, in which case whatever the redirect leaves behind
+    // still prints.
+    valueConsumed: boolean;
   }
   | { type: "shell-option" }
   | {
@@ -477,6 +485,12 @@ type CommandStrategy =
 
 type CommandExpressionResult = ExpressionResult & {
   isUserFunction?: boolean;
+  // SSH-698: `code` evaluates to a { code, stdout, stderr } object rather than
+  // to a Command, so `.pipe(...)`/`.stdout(...)` cannot be called on it.
+  isResultObject?: boolean;
+  // SSH-698: whether that object's stdout still has to be printed — false when
+  // a pipe consumes it, true when only a redirect asked for the value.
+  resultIsPrintable?: boolean;
   isTransform?: boolean;
   requiresRawInput?: boolean;
   isStream?: boolean;
@@ -629,7 +643,7 @@ function selectCommandStrategy(
   command: AST.Command,
   analysis: CommandAnalysis,
   ctx: VisitorContext,
-  options?: { inPipeline?: boolean },
+  options?: { inPipeline?: boolean; valueConsumed?: boolean },
 ): CommandStrategy {
   // Variable assignment only
   if (analysis.isVariableAssignmentOnly) {
@@ -638,6 +652,7 @@ function selectCommandStrategy(
 
   // User function
   if (ctx.isFunction(analysis.name)) {
+    const valueConsumed = Boolean(options?.valueConsumed);
     return {
       type: "user-function",
       name: analysis.name,
@@ -645,6 +660,8 @@ function selectCommandStrategy(
       argExpansions: analysis.argExpansions,
       argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       argIsGlob: analysis.argIsGlob,
+      needsValue: valueConsumed || analysis.hasRedirects,
+      valueConsumed,
     };
   }
 
@@ -807,6 +824,22 @@ function executeCommandStrategy(
           )
         )
         .join(", ");
+      // SSH-698: the emitted `async function` prints its body's output and
+      // returns nothing, so a position that needs the OUTPUT gets the body
+      // re-emitted in capture mode instead of a call. Falls back to the plain
+      // call when that is not possible (see the builder).
+      if (strategy.needsValue) {
+        const captured = buildUserFunctionAsCapturedExpression(strategy.name, argsArray, ctx);
+        if (captured) {
+          return {
+            code: captured,
+            async: true,
+            isUserFunction: true,
+            isResultObject: true,
+            resultIsPrintable: !strategy.valueConsumed,
+          };
+        }
+      }
       const cmdExpr = handleUserFunction(strategy.name, argsArray);
       return { code: cmdExpr, async: true, isUserFunction: true };
     }
@@ -1018,7 +1051,7 @@ function applyBuiltinRedirections(
 export function buildCommand(
   command: AST.Command,
   ctx: VisitorContext,
-  options?: { inPipeline?: boolean; captureOutput?: boolean },
+  options?: { inPipeline?: boolean; captureOutput?: boolean; valueConsumed?: boolean },
 ): CommandExpressionResult {
   // Phase 1: Analyze command
   const analysis = analyzeCommand(command, ctx);
@@ -1042,6 +1075,22 @@ export function buildCommand(
       }),
       async: true,
       isSilentShellBuiltin: false,
+    };
+  }
+
+  // SSH-698: a captured user-function call is a result object, so `.stdout(t)`
+  // would throw. The builtin route awaits the value and writes the file from
+  // its .stdout/.stderr instead, which is what this shape needs too.
+  if (result.isResultObject && command.redirects.length > 0) {
+    return {
+      ...result,
+      code: applyBuiltinRedirections(result.code, command.redirects, ctx, {
+        // The captured stdout is `lines.join("\n")`, so the final line's
+        // newline is not in it; a file written from it needs one back. (That
+        // shape cannot tell `echo hi` from `printf hi`, which bash can.)
+        formatsOutput: true,
+      }),
+      async: true,
     };
   }
 
@@ -1401,6 +1450,17 @@ function commandValueDescriptor(result: CommandExpressionResult): ShellValueDesc
 
   if (result.isStream) {
     return { kind: "raw-stream", printable: true, async: result.async };
+  }
+
+  // SSH-698: a user-function call built as a captured body is a result object,
+  // like a `{ ...; }` group feeding a pipe — the assembler converts it with
+  // resultObjectToLineStream instead of calling .pipe() on it.
+  if (result.isResultObject) {
+    return {
+      kind: "result",
+      printable: result.resultIsPrintable ?? false,
+      async: result.async,
+    };
   }
 
   return {
@@ -1849,6 +1909,65 @@ function assignmentSyncCode(assignmentNames: string[] = []): string {
     .map((name) => `$.VARS[${JSON.stringify(name)}] = ${sanitizeVarName(name)}`)
     .join("; ");
   return syncVars.length > 0 ? `${syncVars}; ` : "";
+}
+
+/**
+ * Functions whose body is currently being re-emitted, so a call to one of them
+ * from inside its own body does not expand forever (SSH-698).
+ */
+const inliningFunctions = new Set<string>();
+
+/**
+ * SSH-698: build a call to a user function as a captured RESULT OBJECT.
+ *
+ * A declaration emits `async function f(...)` whose body prints straight to
+ * stdout and returns nothing, so `f()` is a Promise<undefined> — piping,
+ * redirecting or capturing it either threw (`.pipe is not a function`) or, for
+ * `v=$(f)`, silently produced "". Getting at the output means re-emitting the
+ * body with stdout capture active, which is exactly what a `{ ...; }` group
+ * feeding a pipe already does (buildStatementAsCapturedExpression). Such a call
+ * also runs in a subshell in bash, so the body's own scope is correct here.
+ *
+ * Returns null when the body is unavailable — a call placed BEFORE the
+ * declaration, or a recursive call from inside the body being emitted — leaving
+ * the caller to emit the plain call.
+ */
+function buildUserFunctionAsCapturedExpression(
+  name: string,
+  argsArray: string,
+  ctx: VisitorContext,
+): string | null {
+  const body = ctx.getFunctionBody(name);
+  if (!body || inliningFunctions.has(name)) return null;
+
+  const captureVar = ctx.getTempVar("__out");
+  const codeVar = ctx.getTempVar("__code");
+  const previousCapture = ctx.getStdoutCapture();
+
+  inliningFunctions.add(name);
+  ctx.setStdoutCapture(captureVar);
+  ctx.pushScope();
+  let lines: string[];
+  try {
+    lines = body.flatMap((stmt) => ctx.visitStatement(stmt).lines)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } finally {
+    ctx.popScope();
+    ctx.setStdoutCapture(previousCapture);
+    inliningFunctions.delete(name);
+  }
+
+  // The body gets its own nested IIFE so that a `return` in it (emitted as
+  // `return __recStatus(N)`) leaves the BODY rather than this wrapper — by then
+  // __recStatus has already put N in Deno.exitCode, which is where the status
+  // below is read from, the same way the sibling builder reads a group's.
+  return `(async () => { const ${captureVar}: string[] = []; ` +
+    `const __POSITIONAL_PARAMS__: string[] = [${argsArray}]; ` +
+    `await (async () => { ${lines.join("; ")}; })(); ` +
+    `const ${codeVar} = Deno.exitCode; ` +
+    `return { code: ${codeVar}, stdout: ${captureVar}.join("\\n"), stderr: "", ` +
+    `success: ${codeVar} === 0 }; })()`;
 }
 
 function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorContext): string {
@@ -2570,6 +2689,10 @@ function flattenPipeline(
       const result = buildCommand(left, ctx, {
         inPipeline: hasPipeOperator,
         captureOutput: capturesCommandOutput,
+        // SSH-698: same test the statement branch below uses for
+        // `capturesStdout` — true only when a LATER stage consumes this
+        // output, never for the last stage, whose output is printed.
+        valueConsumed: hasPipeOperator && pipeline.commands.length > 1,
       });
       parts.push({
         code: result.code,
@@ -2611,6 +2734,8 @@ function flattenPipeline(
       const result = buildCommand(cmd, ctx, {
         inPipeline: hasPipeOperator,
         captureOutput: capturesCommandOutput,
+        // SSH-698: as above — a later stage has to exist to consume this.
+        valueConsumed: hasPipeOperator && i < pipeline.commands.length - 1,
       });
       parts.push({
         code: result.code,
