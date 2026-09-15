@@ -308,10 +308,61 @@ otherwise-unset loop variable, the loop variable surviving the loop, unset
 variables counting as 0 across `$(())`/`((i++))`/`((s += 5))`, numeric stepping
 of a string-valued variable, and subshell isolation of an arithmetic write.
 
+### Discovered while fixing: SSH-691 (since fixed)
+
+Nested arithmetic expansion was broken. Filed as SSH-691 and fixed
+immediately after; see the section below — note that the description in this
+file's earlier revision, and the ticket as originally filed, both understated
+it.
+
+## SSH-691: nested arithmetic expansion
+
+`arithmetic-parser.ts` tokenized `$` followed by `(` as a command substitution
+(the SSH-627 operand) without first checking for a second `(`. So `$((` lost
+one paren and the remaining body was parsed as a subshell command.
+
+**The parse error was the loudest symptom, not the main one.** It only happened
+when the mis-parsed body failed to parse as a command; otherwise the expansion
+parsed cleanly and then evaluated to **0**, because
+`visitCommandSubstitutionInArithmetic` ends in `|| 0` and the bogus subshell
+produced no numeric output. Measured against the baseline:
+
+| script | bash | was |
+| --- | --- | --- |
+| `echo $(( $((2+3)) * 2 ))` | `10` | `0` |
+| `echo "pre $(( $((1+1)) )) post"` | `pre 2 post` | `pre 0 post` |
+| `X="$(( $((2+3)) * 2 ))"` | `10` | `0` |
+| `echo "$(( $((2+3)) * 2 ))"` | `10` | parse error |
+
+So this was the same silent-wrong-value class as SSH-689 mode 1, and the
+quoting was a red herring — whether you got a crash or a silent 0 depended only
+on whether the mis-parsed body happened to parse as a command.
+
+The fix checks `$((` before `$(` in the arithmetic lexer, emits a new
+`ARITH_SUBST` token holding the paren-balanced inner text, and recursively
+parses that into a `GroupedArithmeticExpression`. Grouping (rather than
+splicing the inner expression in bare) is what keeps precedence right when the
+expansion is an operand, so `$(( $((1 + 2)) * 3 ))` multiplies the sum and
+gives 9. bash resolves the same `$((` ambiguity toward arithmetic.
+
+Balanced-paren scanning starts at depth 2 and drops a paren from the captured
+text once depth falls below 2, so those two belong to the expansion itself
+rather than the inner expression — that is what keeps `$(( (1+2) * 3 ))` and
+`$(($((2))))` both correct.
+
+### Coverage added
+
+`arithmetic-parser.test.ts` gets a `Nested arithmetic expansion operands
+(SSH-691)` block: `$((...))` parsing as arithmetic rather than a command
+substitution, grouping against surrounding precedence, two-deep nesting,
+balanced inner parens, `$(` still parsing as a command substitution (SSH-627
+must not regress), and an unterminated `$((`. `conformance.test.ts` compares
+the quoted and unquoted forms, precedence, three-deep nesting, and `$(...)` in
+arithmetic against real bash.
+
 ### Still open
 
-A nested `$(())` fails to **parse** when the outer expansion is inside double
-quotes: `echo "$(( $((2 + 3)) * 2 ))"` gives "Parse error at 1:2: Expected
-command name", while the unquoted `echo $(( $((2+3)) * 2 ))` parses fine. So it
-is the quoting interaction, not nesting as such. Pre-existing and in the parser,
-not the transpiler, so out of scope here — filed as SSH-691.
+`$(())` — an **empty** arithmetic expansion — throws
+("Unexpected token in arithmetic expression: EOF") where bash evaluates it to 0.
+This affects the plain top-level `echo $(())` too, so it is not specific to
+nesting. Pre-existing; filed as SSH-692.

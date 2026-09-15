@@ -31,6 +31,7 @@ enum ArithTokenType {
   IDENTIFIER,
   PARAM_EXPANSION, // ${...}
   CMD_SUBST,   // $(...) or `...` — value holds the raw inner command text
+  ARITH_SUBST, // $((...)) — value holds the raw inner arithmetic text
   PLUS,
   MINUS,
   STAR,
@@ -205,6 +206,41 @@ class ArithmeticLexer {
     if (singleCharMap[c]) {
       this.pos++;
       return { type: singleCharMap[c]!, value: c, pos: startPos };
+    }
+
+    // SSH-691: a nested arithmetic expansion $((...)) as an operand. Must come
+    // before the $(...) case below, which would otherwise consume only the
+    // first "(" and parse the rest as a command substitution of a subshell —
+    // either crashing ("Expected command name") or, when the body happens to
+    // parse as a command, silently yielding 0 via that operand's `|| 0`.
+    // bash resolves the same ambiguity toward arithmetic.
+    if (c === "$" && c2 === "(" && this.input[this.pos + 2] === "(") {
+      this.advance(); // consume "$"
+      this.advance(); // consume first "("
+      this.advance(); // consume second "("
+      let depth = 2;
+      let inner = "";
+      while (depth > 0 && this.pos < this.input.length) {
+        const ch = this.peek();
+        if (ch === "(") {
+          depth++;
+        } else if (ch === ")") {
+          depth--;
+          // Below depth 2 this paren is one of the pair closing the expansion,
+          // so it is consumed without becoming part of the inner text.
+          if (depth < 2) {
+            this.advance();
+            continue;
+          }
+        }
+        inner += this.advance();
+      }
+      if (depth > 0) {
+        throw new Error(
+          `Unterminated arithmetic expansion at position ${startPos} in arithmetic expression`,
+        );
+      }
+      return { type: ArithTokenType.ARITH_SUBST, value: inner, pos: startPos };
     }
 
     // SSH-627: command substitution $(...) as an arithmetic operand.
@@ -445,6 +481,17 @@ export class ArithmeticParser {
           type: "CommandSubstitution",
           command: innerProgram.body,
           backtick: false,
+        };
+      }
+
+      case ArithTokenType.ARITH_SUBST: {
+        this.advance();
+        // SSH-691: a nested $((...)) is just a parenthesized sub-expression.
+        // Grouping it keeps precedence right when it is an operand, so
+        // `$(( $((1 + 2)) * 3 ))` multiplies the sum and gives 9.
+        return {
+          type: "GroupedArithmeticExpression",
+          expression: parseArithmetic(token.value),
         };
       }
 

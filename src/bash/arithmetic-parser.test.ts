@@ -834,3 +834,51 @@ describe("Command substitution operands (SSH-627)", () => {
     assertThrows(() => parseArithmetic("`echo 2 + 3"));
   });
 });
+
+describe("Nested arithmetic expansion operands (SSH-691)", () => {
+  it("should parse $((...)) as arithmetic, not a command substitution", () => {
+    // `$((` used to fall into the $( case, consuming one paren and leaving the
+    // body to be parsed as a subshell command
+    const expr = parseArithmetic("$((2 + 3))");
+    assertEquals(expr.type, "GroupedArithmeticExpression");
+    const inner = (expr as AST.GroupedArithmeticExpression).expression;
+    assertEquals(inner.type, "BinaryArithmeticExpression");
+    assertEquals((inner as AST.BinaryArithmeticExpression).operator, "+");
+  });
+
+  it("should group a nested expansion against surrounding precedence", () => {
+    const expr = parseArithmetic("$((1 + 2)) * 3");
+    assertEquals(expr.type, "BinaryArithmeticExpression");
+    const bin = expr as AST.BinaryArithmeticExpression;
+    assertEquals(bin.operator, "*");
+    assertEquals(bin.left.type, "GroupedArithmeticExpression");
+    assertEquals(bin.right.type, "NumberLiteral");
+  });
+
+  it("should parse an expansion nested two deep", () => {
+    const expr = parseArithmetic("$(( $((1 + 1)) + 1 ))");
+    assertEquals(expr.type, "GroupedArithmeticExpression");
+    const outer = (expr as AST.GroupedArithmeticExpression).expression;
+    assertEquals(outer.type, "BinaryArithmeticExpression");
+    assertEquals(
+      (outer as AST.BinaryArithmeticExpression).left.type,
+      "GroupedArithmeticExpression",
+    );
+  });
+
+  it("should keep parens inside a nested expansion balanced", () => {
+    const expr = parseArithmetic("$(( (1 + 2) * 3 ))");
+    assertEquals(expr.type, "GroupedArithmeticExpression");
+    const inner = (expr as AST.GroupedArithmeticExpression).expression;
+    assertEquals(inner.type, "BinaryArithmeticExpression");
+    assertEquals((inner as AST.BinaryArithmeticExpression).operator, "*");
+  });
+
+  it("should still parse $( as a command substitution", () => {
+    assertEquals(parseArithmetic("$(echo 2)").type, "CommandSubstitution");
+  });
+
+  it("should throw on an unterminated $(( expansion", () => {
+    assertThrows(() => parseArithmetic("$((2 + 3"));
+  });
+});

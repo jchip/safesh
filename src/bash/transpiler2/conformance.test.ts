@@ -444,6 +444,50 @@ describe("Conformance - Arithmetic", () => {
     const { bashResult, tsResult } = await compareExecution(script);
     assertEquals(tsResult.stdout, bashResult.stdout);
   });
+
+  it("should evaluate a nested arithmetic expansion", async () => {
+    // SSH-691: `$((` inside arithmetic was taken as a command substitution of a
+    // subshell, so this either failed to parse or silently evaluated to 0.
+    const script = `echo "$(( $((2 + 3)) * 2 ))"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "10");
+  });
+
+  it("should evaluate a nested arithmetic expansion unquoted", async () => {
+    // The unquoted form parsed, but evaluated to 0 rather than 10
+    const script = "echo $(( $((2 + 3)) * 2 ))";
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "10");
+  });
+
+  it("should keep a nested expansion grouped against surrounding precedence", async () => {
+    const script = `echo "$(( $((1 + 2)) * 3 )) $(( 2 * $((1 + 2)) )) $(( -$((2 + 3)) ))"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "9 6 -5");
+  });
+
+  it("should evaluate arithmetic expansions nested three deep", async () => {
+    const script = `echo "$(( $(( $((1 + 1)) + 1 )) + 1 ))"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "4");
+  });
+
+  it("should still treat $(...) in arithmetic as a command substitution", async () => {
+    // SSH-627 must keep working: only `$((` is redirected to arithmetic
+    const script = `echo "$(( $(echo 2) + 3 ))"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "5");
+  });
 });
 
 // =============================================================================
