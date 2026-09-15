@@ -386,6 +386,17 @@ export function visitFunctionDeclaration(
 // Subshell Handler
 // =============================================================================
 
+/**
+ * SSH-693: restore the process environment to a snapshot taken before a
+ * subshell body ran — deleting anything the body added and putting back
+ * anything it changed or removed, so `export` inside `( )` cannot escape.
+ */
+function restoreEnvExpression(savedEnv: string): string {
+  return `{ const __envNow = Deno.env.toObject(); ` +
+    `for (const __k of Object.keys(__envNow)) if (!(__k in ${savedEnv})) Deno.env.delete(__k); ` +
+    `for (const [__k, __v] of Object.entries(${savedEnv})) if (__envNow[__k] !== __v) Deno.env.set(__k, __v); }`;
+}
+
 export function visitSubshell(
   stmt: AST.Subshell,
   ctx: VisitorContext,
@@ -417,12 +428,24 @@ export function visitSubshell(
 
   const inheritedBindings = ctx.getVisibleVariables().map(sanitizeVarName);
   const savedVariables = inheritedBindings.length > 0 ? ctx.getTempVar("__subVars") : null;
+  // SSH-693: restoring the JS bindings is not enough — `export` writes the
+  // process environment too, so without this a child process spawned after the
+  // subshell still saw the subshell's value. Snapshot the whole environment
+  // rather than the inherited names only, so a variable first exported INSIDE
+  // the subshell is also contained. Only pay for it when the body writes env.
+  const bodyWritesEnv = bodyLines.some((l) =>
+    l.includes("Deno.env.set") || l.includes("Deno.env.delete")
+  );
+  const savedEnv = bodyWritesEnv ? ctx.getTempVar("__subEnv") : null;
 
   lines.push(`${indent}await (async () => {`);
   if (savedVariables) {
     lines.push(
       `${bodyIndent}const ${savedVariables} = structuredClone([${inheritedBindings.join(", ")}]);`,
     );
+  }
+  if (savedEnv) {
+    lines.push(`${bodyIndent}const ${savedEnv} = Deno.env.toObject();`);
   }
   // SSH-584: `exit N` in the body throws a sentinel; convert it here to the
   // subshell's status so only the subshell terminates (bash parity)
@@ -433,9 +456,14 @@ export function visitSubshell(
     `${bodyIndent}  if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) { __recStatus((__e as { __sshSubshellExit: number }).__sshSubshellExit); return; }`,
   );
   lines.push(`${bodyIndent}  throw __e;`);
-  if (savedVariables) {
+  if (savedVariables || savedEnv) {
     lines.push(`${bodyIndent}} finally {`);
-    lines.push(`${bodyIndent}  [${inheritedBindings.join(", ")}] = ${savedVariables};`);
+    if (savedVariables) {
+      lines.push(`${bodyIndent}  [${inheritedBindings.join(", ")}] = ${savedVariables};`);
+    }
+    if (savedEnv) {
+      lines.push(`${bodyIndent}  ${restoreEnvExpression(savedEnv)}`);
+    }
   }
   lines.push(`${bodyIndent}}`);
   ctx.dedent();

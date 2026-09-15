@@ -187,11 +187,13 @@ CORPUS.subshell!.push(
   // SSH-677: the captured-upstream build (buildStatementAsCapturedExpression)
   // still hardcodes code 0, so a group feeding a pipe loses its status.
   { src: '( false ) | cat; echo "${PIPESTATUS[0]}"', xfail: "SSH-677" },
-  // SSH-693: SSH-689 restores a subshell's inherited JS bindings, so the parent
-  // READ is right, but Deno.env is not restored — a child process spawned after
-  // the subshell still sees the subshell's exported value.
-  { src: "export X=outer; ( export X=inner ); printenv X", xfail: "SSH-693" },
+  // SSH-693: a subshell restores the process environment as well as the JS
+  // bindings, so an `export` inside `( )` cannot reach a later child process.
+  { src: "export X=outer; ( export X=inner ); printenv X" },
   { src: 'export X=outer; ( export X=inner ); echo "$X"' },
+  { src: "export X=outer; ( export X=inner; printenv X )" },
+  { src: '( export NEW=1 ); printenv NEW; echo "rc=$?"' },
+  { src: "export X=outer; ( unset X ); printenv X" },
 );
 
 function msg(e: unknown): string {

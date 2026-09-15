@@ -1828,6 +1828,30 @@ function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorCon
   const captureVar = ctx.getTempVar("__out");
   const previousCapture = ctx.getStdoutCapture();
 
+  // SSH-677: this build used to hardcode `code: 0`, so a `( ... )` or `{ ...; }`
+  // group feeding a pipe reported success no matter what it did, and
+  // PIPESTATUS[0] was wrong. SSH-676 fixed the same hardcoded zero in the
+  // sibling buildStatementAsExpression; neither of its two routes transfers
+  // directly here, because this form also has to collect the captured stdout.
+  if (stmt.type === "Subshell") {
+    // A subshell emits its own nested IIFE, so a Deno.exitCode read placed
+    // after those lines lands a microtask late — after the foreground may have
+    // overwritten it. buildSubshellTestExpression reports the status from
+    // inside that IIFE; run it with the capture active so the body's stdout
+    // still lands in captureVar, then combine the two.
+    const statusVar = ctx.getTempVar("__st");
+    ctx.setStdoutCapture(captureVar);
+    let subshellExpr: string;
+    try {
+      subshellExpr = buildSubshellTestExpression(stmt, ctx);
+    } finally {
+      ctx.setStdoutCapture(previousCapture);
+    }
+    return `(async () => { const ${captureVar}: string[] = []; const ${statusVar} = ${subshellExpr}; ` +
+      `return { code: ${statusVar}.code, stdout: ${captureVar}.join("\\n"), stderr: "", ` +
+      `success: ${statusVar}.code === 0 }; })()`;
+  }
+
   ctx.setStdoutCapture(captureVar);
   let result: StatementResult;
   try {
@@ -1837,9 +1861,13 @@ function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorCon
   }
 
   const lines = result.lines.map((line) => line.trim()).filter((line) => line.length > 0);
-  return `(async () => { const ${captureVar}: string[] = []; ${
-    lines.join("; ")
-  }; return { code: 0, stdout: ${captureVar}.join("\\n"), stderr: "", success: true }; })()`;
+  // These forms emit inline (no nested IIFE), so reading Deno.exitCode right
+  // after the body — synchronously — yields the group's real status.
+  const codeVar = ctx.getTempVar("__code");
+  return `(async () => { const ${captureVar}: string[] = []; ${lines.join("; ")}; ` +
+    `const ${codeVar} = Deno.exitCode; ` +
+    `return { code: ${codeVar}, stdout: ${captureVar}.join("\\n"), stderr: "", ` +
+    `success: ${codeVar} === 0 }; })()`;
 }
 
 /**
