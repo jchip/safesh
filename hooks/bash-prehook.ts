@@ -55,6 +55,7 @@ import {
   detectMisplacedSignature,
   detectTypeScript,
   SAFESH_SIGNATURE,
+  usesSignatureAsCommandName,
 } from "../src/hooks/detection.ts";
 import {
   analyzeForPassthrough,
@@ -1679,7 +1680,14 @@ ${tsCode}
     // which asked the user to approve a "command" named /*#*/ and — on "always
     // allow" — persisted that into allowedCommands, where it can never match.
     // Check it here, before the gate, and deny with the actionable hint.
-    const misplacedSignature = detectMisplacedSignature(parsed.command);
+    //
+    // SSH-696: the position has to come from the AST. detectMisplacedSignature
+    // scans the raw string, which reads a signature inside a quoted argument
+    // (`git commit -m "... /*#*/ ..."`) or a comment as misplaced — valid bash
+    // that this then refused. Only a command-name position can reach the gate.
+    const misplacedSignature = usesSignatureAsCommandName(ast)
+      ? detectMisplacedSignature(parsed.command)
+      : null;
     if (misplacedSignature) {
       debug("Misplaced /*#*/ signature detected before permission gate");
       const reason = `[SAFESH] ${misplacedSignature}`;

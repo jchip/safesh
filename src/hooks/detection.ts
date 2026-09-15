@@ -122,6 +122,12 @@ function isInsideCommandSubstitution(command: string, index: number): boolean {
  * message, so a stray signature inside a quoted string is harmless: such a
  * command parses fine and never reaches the error path.
  *
+ * SSH-696: a caller that DENIES on the result cannot rely on that, because it
+ * sees commands that parse fine. It must confirm the position structurally with
+ * {@link usesSignatureAsCommandName} first — this scan is string-based and
+ * cannot tell a signature the shell would run from one inside a quoted
+ * argument or a comment.
+ *
  * @param command - The original command string
  * @returns Hint string for a misplaced signature, or null
  */
@@ -147,4 +153,41 @@ export function detectMisplacedSignature(command: string): string | null {
     `\`await $.cmd('curl', url)\`; or (2) run the '${SAFESH_SIGNATURE} ...' as its own ` +
     `command first, console.log the value, then use that printed output in the next command.`
   );
+}
+
+/**
+ * SSH-696: whether a parsed program actually puts the SafeShell signature in a
+ * COMMAND-NAME position — the shape the shell would try to execute, and the one
+ * that reaches the permission gate as a command literally named `/*#*&#47;`.
+ *
+ * This is the question {@link detectMisplacedSignature}'s string scan cannot
+ * answer. A signature inside a quoted argument (`git commit -m "... /*#*&#47; ..."`)
+ * or a comment is ordinary, valid bash and must not be blocked; one in
+ * argument position is likewise just a literal word to the shell.
+ *
+ * The walk is structural rather than per-node-type so it covers every position
+ * the grammar can nest a command in — sequences, pipelines, `$( )`
+ * substitutions, subshells, loop/function bodies — without duplicating the
+ * typed traversal the permission extractor already owns. Takes `unknown` so
+ * this module stays free of AST imports.
+ *
+ * @param node - A parsed AST node (normally the whole Program)
+ * @returns true when some command's name begins with the signature
+ */
+export function usesSignatureAsCommandName(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(usesSignatureAsCommandName);
+  if (node === null || typeof node !== "object") return false;
+
+  const record = node as Record<string, unknown>;
+  if (record.type === "Command") {
+    const name = record.name as { type?: unknown; value?: unknown } | null;
+    if (
+      name && name.type === "Word" && typeof name.value === "string" &&
+      name.value.startsWith(SAFESH_SIGNATURE)
+    ) {
+      return true;
+    }
+  }
+
+  return Object.values(record).some(usesSignatureAsCommandName);
 }
