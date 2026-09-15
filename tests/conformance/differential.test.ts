@@ -113,10 +113,22 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=1; b=2; echo "$a$b"' },
     { src: 'a=hello; echo "${a}world"' },
     { src: "x=5; x=$((x+1)); echo $x" },
-    // SSH-633: multiple prefix assignments transpile to invalid `let a=.., let b=..`.
+    // SSH-633: multiple prefix assignments transpile to invalid `var a=.., var b=..`
+    // (was `let` before SSH-689; the repeated keyword after the comma is the bug).
     { src: "a=1 b=2 && echo Y", xfail: "SSH-633" },
     // SSH-634: assignment-left &&-chain before a ;-sequence drops the && guard.
     { src: 'x=$(false) && echo Y; echo "rc=$?"', xfail: "SSH-634" },
+    // SSH-694: a $-prefixed array subscript emits a bare `$i` identifier and
+    // throws ReferenceError. The `${a[i]}` and `${a[1]}` spellings both work.
+    { src: 'a=(1 2 3); i=1; echo "${a[$i]}"', xfail: "SSH-694" },
+    { src: 'a=(1 2 3); i=1; echo "${a[i]}"' },
+    { src: 'a=(1 2 3); echo "${a[1]}"' },
+  ],
+  functions: [
+    // SSH-674: call-site arguments are dropped and $N inside the body compiles
+    // to an undeclared __POSITIONAL_PARAMS__, so this throws ReferenceError.
+    { src: 'norm() { echo "got=[$1]"; }; norm hello', xfail: "SSH-674" },
+    { src: "greet() { echo hi; }; greet" },
   ],
   // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
   // purpose — the pre-fix failure mode was `wait` falling straight through, so
@@ -158,6 +170,11 @@ CORPUS.subshell!.push(
   // SSH-677: the captured-upstream build (buildStatementAsCapturedExpression)
   // still hardcodes code 0, so a group feeding a pipe loses its status.
   { src: '( false ) | cat; echo "${PIPESTATUS[0]}"', xfail: "SSH-677" },
+  // SSH-693: SSH-689 restores a subshell's inherited JS bindings, so the parent
+  // READ is right, but Deno.env is not restored — a child process spawned after
+  // the subshell still sees the subshell's exported value.
+  { src: "export X=outer; ( export X=inner ); printenv X", xfail: "SSH-693" },
+  { src: 'export X=outer; ( export X=inner ); echo "$X"' },
 );
 
 function msg(e: unknown): string {
