@@ -148,16 +148,20 @@ describe("SSH-303: Array Variable Support", () => {
   });
 
   describe("Array length", () => {
+    // SSH-697: this used to assert `arr[@].length`, which is not a JS
+    // expression — the raw subscript text was being spliced into the output.
+    // The count is taken from the array itself, and a name that holds no array
+    // counts 0 (bash gives 0 for an unset name, not an error).
     it("should support ${#arr[@]} for array length", () => {
       const code = transpileBash('echo ${#arr[@]}');
-      // Transpiler generates .length on the subscripted array reference
-      assertStringIncludes(code, "arr[@].length");
+      assertStringIncludes(code, "Array.isArray");
+      assertStringIncludes(code, ".length : 0");
     });
 
     it("should support ${#arr[*]} for array length", () => {
       const code = transpileBash('echo ${#arr[*]}');
-      // Transpiler generates .length on the subscripted array reference
-      assertStringIncludes(code, "arr[*].length");
+      assertStringIncludes(code, "Array.isArray");
+      assertStringIncludes(code, ".length : 0");
     });
   });
 

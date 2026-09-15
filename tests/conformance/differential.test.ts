@@ -147,11 +147,14 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=(1 2 3); echo "${a[1]}"' },
     { src: 'a=(1 2 3); i=1; echo "${a[i+1]}"' },
     { src: 'a=(x y); n=0; echo "${a[$n]}${a[$((n+1))]}"' },
-    // SSH-697: whole-array expansion is handled for PIPESTATUS but not for an
-    // ordinary array, so these still lower to unparseable output.
-    { src: 'a=(1 2 3); echo "${a[@]}"', xfail: "SSH-697" },
-    { src: 'a=(1 2 3); echo "${a[*]}"', xfail: "SSH-697" },
-    { src: 'a=(1 2 3); echo "${#a[@]}"', xfail: "SSH-697" },
+    // SSH-697 (fixed): whole-array expansion used to be honored for PIPESTATUS
+    // only, so every other array spliced its raw `a[@]` subscript text into the
+    // output as a JS expression.
+    { src: 'a=(1 2 3); echo "${a[@]}"' },
+    { src: 'a=(1 2 3); echo "${a[*]}"' },
+    { src: 'a=(1 2 3); echo "${#a[@]}"' },
+    { src: 'a=(); echo "[${a[@]}]"; echo "${#a[@]}"' },
+    { src: 'a=hello; echo "${a[@]}"' },
   ],
   functions: [
     // SSH-674: call-site arguments used to be dropped, and $N in the body read

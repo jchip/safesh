@@ -147,22 +147,24 @@ describe("Word Expansion - Glob Pattern", () => {
 });
 
 describe("Parameter Expansion - Array Operations", () => {
+  // SSH-697: these used to assert only that the output mentioned `arr` and the
+  // subscript character — satisfied incidentally by the raw `arr[@]` text being
+  // spliced in as a JS expression, which is exactly the defect. Both subscripts
+  // now expand to the elements joined by a space.
   it("should expand array with @ subscript", () => {
     const script = 'arr=(a b c); echo "${arr[@]}"';
     const ast = parse(script);
     const result = transpile(ast);
-    // Parser treats [@] as literal subscript access, not special expansion
-    assertStringIncludes(result, "arr");
-    assertStringIncludes(result, "@");
+    assertStringIncludes(result, 'Array.isArray((typeof arr !== "undefined"');
+    assertStringIncludes(result, '.join(" ")');
   });
 
   it("should expand array with * subscript", () => {
     const script = 'arr=(a b c); echo "${arr[*]}"';
     const ast = parse(script);
     const result = transpile(ast);
-    // Parser treats [*] as literal subscript access, not special expansion
-    assertStringIncludes(result, "arr");
-    assertStringIncludes(result, "*");
+    assertStringIncludes(result, 'Array.isArray((typeof arr !== "undefined"');
+    assertStringIncludes(result, '.join(" ")');
   });
 
   it("should expand array with numeric subscript", () => {
@@ -174,20 +176,22 @@ describe("Parameter Expansion - Array Operations", () => {
     assertStringIncludes(result, "arr?.[1]");
   });
 
+  // SSH-697: `arr[@].length` was not a JS expression. The count comes off the
+  // array itself, with 0 for a name that holds no array.
   it("should get length of array with ${#arr[@]}", () => {
     const script = 'arr=(a b c); echo "${#arr[@]}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "arr[@]");
-    assertStringIncludes(result, ".length");
+    assertStringIncludes(result, 'Array.isArray((typeof arr !== "undefined"');
+    assertStringIncludes(result, ".length : 0");
   });
 
   it("should get length of array with ${#arr[*]}", () => {
     const script = 'arr=(a b c); echo "${#arr[*]}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "arr[*]");
-    assertStringIncludes(result, ".length");
+    assertStringIncludes(result, 'Array.isArray((typeof arr !== "undefined"');
+    assertStringIncludes(result, ".length : 0");
   });
 
   it("should get length of simple variable", () => {

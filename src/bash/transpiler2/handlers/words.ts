@@ -483,31 +483,46 @@ export function visitParameterExpansion(
     return `\${__POSITIONAL_PARAMS__?.[${parseInt(param) - 1}] || ""}`;
   }
   const embeddedSubscript = param.match(/^([A-Za-z_][A-Za-z0-9_]*)\[(.+)\]$/);
-  if (embeddedSubscript && !modifier) {
+  if (embeddedSubscript) {
     const arrayName = embeddedSubscript[1]!;
     const arrayIndex = embeddedSubscript[2]!;
     const jsArrayName = sanitizeVarName(arrayName);
     const isAllElements = arrayIndex === "@" || arrayIndex === "*";
-    // SSH-694: an array subscript is an ARITHMETIC context in bash, so `$i`,
-    // `i`, `1` and `i+1` are all valid and equivalent there. The raw subscript
-    // text used to be spliced straight into the emitted JS, which turned `$i`
-    // into a reference to a variable literally named `$i` (ReferenceError).
-    const jsIndex = isAllElements ? null : ctx.visitArithmetic(parseArithmetic(arrayIndex));
     const elementAt = (index: string) =>
       `\${(typeof ${jsArrayName} !== "undefined" ? ${jsArrayName}?.[${index}] : $.VARS?.${arrayName}?.[${index}]) ?? ""}`;
 
-    if (arrayName !== "PIPESTATUS") {
-      // `${a[@]}` / `${a[*]}` on a non-PIPESTATUS array is a separate,
-      // pre-existing gap (it does not lower to valid JS); left on its old path
-      // rather than silently changed here.
-      return jsIndex === null
-        ? `\${typeof ${param} !== "undefined" ? ${param} : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`
-        : elementAt(jsIndex);
+    if (isAllElements) {
+      // SSH-697: this used to be honored for PIPESTATUS only; every other
+      // array fell through to a branch that spliced the raw `a[@]` parameter
+      // text in as a JS expression. An array assignment lowers to a real JS
+      // array — the same shape PIPESTATUS has — so the whole array is
+      // available from whichever scope holds it. `typeof` guarded because an
+      // unassigned name is a ReferenceError in JS but empty in bash.
+      const arrayValue =
+        `(typeof ${jsArrayName} !== "undefined" ? ${jsArrayName} : $.VARS?.${arrayName})`;
+
+      // `${#a[@]}` is the ELEMENT COUNT, and it has to be answered here: the
+      // modifier switch below only ever sees the raw `a[@]` parameter text.
+      if (modifier === "length") {
+        return `\${Array.isArray(${arrayValue}) ? ${arrayValue}.length : 0}`;
+      }
+      if (!modifier) {
+        // Both `[@]` and `[*]` print the elements separated by a space; they
+        // differ only in word splitting, which is not done here — an unquoted
+        // `${a[@]}` still reaches a command as one argument rather than one per
+        // element. A scalar answers with its own value, as in bash.
+        return `\${Array.isArray(${arrayValue}) ? ${arrayValue}.join(" ") : (${arrayValue} ?? "")}`;
+      }
+      // Any other modifier on a whole-array subscript (`${a[@]:1}`,
+      // `${a[@]/x/y}`) is still unhandled — left on its old path rather than
+      // given a silently wrong value here.
+    } else if (!modifier) {
+      // SSH-694: an array subscript is an ARITHMETIC context in bash, so `$i`,
+      // `i`, `1` and `i+1` are all valid and equivalent there. The raw subscript
+      // text used to be spliced straight into the emitted JS, which turned `$i`
+      // into a reference to a variable literally named `$i` (ReferenceError).
+      return elementAt(ctx.visitArithmetic(parseArithmetic(arrayIndex)));
     }
-    if (jsIndex === null) {
-      return `\${Array.isArray(${jsArrayName}) ? ${jsArrayName}.join(" ") : ($.VARS?.${arrayName} ?? []).join?.(" ") ?? ""}`;
-    }
-    return elementAt(jsIndex);
   }
 
   // SSH-330: Handle indirect variable reference ${!ref}
