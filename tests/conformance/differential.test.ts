@@ -82,12 +82,15 @@ const CORPUS: Record<string, Case[]> = {
     // SSH-631: native $.wc omits coreutils right-justified field-width padding.
     { src: 'printf "one two three\\n" | wc -w', xfail: "SSH-631" },
     { src: 'printf "x\\ny\\nz\\n" | head -2; echo --; printf "x\\ny\\nz\\n" | tail -1' },
-    // SSH-632: || across a pipeline returns rc1/empty instead of the fallback.
+    // SSH-632: this was never about || precedence — the `2>/dev/null` failed
+    // because /dev/null was missing from the getDefaultConfig write list.
     {
       src:
         'seq 1 3 2>/dev/null | paste -sd+ - 2>/dev/null || printf "1\\n2\\n3\\n" | tr "\\n" "+"; echo',
-      xfail: "SSH-632",
     },
+    { src: "seq 1 3 2>/dev/null | paste -sd+ - 2>/dev/null" },
+    { src: "false | cat || echo fallback" },
+    { src: 'false || printf "a\\nb\\n" | tr "\\n" "+"; echo' },
   ],
   control: [
     { src: "false; echo $?" },
@@ -126,8 +129,17 @@ const CORPUS: Record<string, Case[]> = {
     { src: "a=1 b=2 && echo Y" },
     { src: "a=$(false) b=$(true) && echo Y" },
     { src: 'a=1 b=2 c=3; echo "$a$b$c"' },
-    // SSH-634: assignment-left &&-chain before a ;-sequence drops the && guard.
-    { src: 'x=$(false) && echo Y; echo "rc=$?"', xfail: "SSH-634" },
+    // SSH-634: an `x=$(cmd)` left operand carries the substitution's status, so
+    // hoisting it out of the && chain (which then ran the rest
+    // unconditionally) dropped the guard. Not specific to the ;-sequence the
+    // ticket described — the bare chain was broken too.
+    { src: 'x=$(false) && echo Y; echo "rc=$?"' },
+    { src: "x=$(false) && echo Y" },
+    { src: "x=$(true) && echo Y" },
+    { src: 'x=$(echo hi) && echo "got=$x"' },
+    // Assignments that CANNOT fail must still hoist (they always succeed).
+    { src: "a=1 && echo Y" },
+    { src: 'a=1 && b=2 && echo "$a$b"' },
     // SSH-694: a subscript is an arithmetic context, so all of these spellings
     // are equivalent. `$i` used to emit a bare `$i` identifier (ReferenceError).
     { src: 'a=(1 2 3); i=1; echo "${a[$i]}"' },

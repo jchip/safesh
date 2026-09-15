@@ -3009,25 +3009,40 @@ export function visitPipeline(
     const statements: Array<AST.Statement> = [];
     flattenAndChain(pipeline, statements);
 
+    const isPureAssignment = (stmt: AST.Statement): stmt is AST.Command =>
+      stmt.type === "Command" && stmt.assignments.length > 0 &&
+      stmt.name.type === "Word" && stmt.name.value === "";
+
+    // SSH-634: this path emits the hoisted assignments and then the rest of the
+    // chain UNCONDITIONALLY, which is only sound when the hoisted assignments
+    // cannot fail. `x=$(cmd)` takes the substitution's exit status (SSH-626), so
+    // hoisting it dropped the `&&` guard entirely — `x=$(false) && echo Y`
+    // printed Y and reported rc=0. When any hoisted assignment carries a
+    // status, fall through to the normal expression assembly, which guards
+    // correctly. Classified before building so the skipped path has no side
+    // effects on declarations or temp-var numbering.
+    const canHoist = statements.some(isPureAssignment) &&
+      !statements.some((stmt) =>
+        isPureAssignment(stmt) &&
+        stmt.assignments.some(assignmentRecordsStatus)
+      );
+
     // Find variable assignments that need hoisting
     const hoistedVars: string[] = [];
     const nonVarStatements: AST.Statement[] = [];
     let hoistedRecordsStatus = false;
 
-    for (const stmt of statements) {
-      if (
-        stmt.type === "Command" &&
-        stmt.assignments.length > 0 &&
-        stmt.name.type === "Word" &&
-        stmt.name.value === ""
-      ) {
-        // Pure variable assignment - hoist it
-        const result = buildCommand(stmt, ctx);
-        hoistedVars.push(result.code);
-        hoistedRecordsStatus = hoistedRecordsStatus ||
-          stmt.assignments.some(assignmentRecordsStatus);
-      } else {
-        nonVarStatements.push(stmt);
+    if (canHoist) {
+      for (const stmt of statements) {
+        if (isPureAssignment(stmt)) {
+          // Pure variable assignment - hoist it
+          const result = buildCommand(stmt, ctx);
+          hoistedVars.push(result.code);
+          hoistedRecordsStatus = hoistedRecordsStatus ||
+            stmt.assignments.some(assignmentRecordsStatus);
+        } else {
+          nonVarStatements.push(stmt);
+        }
       }
     }
 

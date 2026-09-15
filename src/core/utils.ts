@@ -107,7 +107,12 @@ export function getDefaultConfig(cwd: string): SafeShellConfig {
   return {
     permissions: {
       read: [realCwd, tmpPath],
-      write: [realCwd, tmpPath],
+      // SSH-632: /dev/null is in the shipped default write list (see
+      // DEFAULT_CONFIG in core/config.ts) but was missing from this fallback,
+      // so `cmd 2>/dev/null` — a ubiquitous idiom — failed with
+      // `NotCapable: Requires write access to "/dev/null"` wherever this
+      // fallback applies. It is a discard sink, so granting it costs nothing.
+      write: [realCwd, tmpPath, "/dev/null"],
     },
   };
 }
