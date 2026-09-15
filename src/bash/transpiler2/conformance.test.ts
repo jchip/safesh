@@ -6,11 +6,28 @@
  */
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { describe, it, beforeAll } from "@std/testing/bdd";
+import { beforeAll, describe, it } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
 import { transpile } from "./mod.ts";
 import { recStatusLines } from "../../runtime/preamble.ts";
-import { echo, cd, pwd, pushd, popd, dirs, test as shellTest, which, chmod, ln, rm, cp, mv, mkdir, touch, ls } from "../../stdlib/shelljs/mod.ts";
+import {
+  cd,
+  chmod,
+  cp,
+  dirs,
+  echo,
+  ln,
+  ls,
+  mkdir,
+  mv,
+  popd,
+  pushd,
+  pwd,
+  rm,
+  test as shellTest,
+  touch,
+  which,
+} from "../../stdlib/shelljs/mod.ts";
 
 // =============================================================================
 // Test Execution Helpers
@@ -321,7 +338,7 @@ async function compareExecution(
     compareStdout?: boolean;
     compareExitCode?: boolean;
     outputContains?: string[];
-  }
+  },
 ): Promise<{
   bashResult: ExecutionResult;
   tsResult: ExecutionResult;
@@ -417,13 +434,13 @@ describe("Conformance - Variable Expansion", () => {
 
 describe("Conformance - Arithmetic", () => {
   it("should handle arithmetic expansion", async () => {
-    const script = 'echo $((2 + 3))';
+    const script = "echo $((2 + 3))";
     const { bashResult, tsResult } = await compareExecution(script);
     assertEquals(tsResult.stdout, bashResult.stdout);
   });
 
   it("should handle complex arithmetic", async () => {
-    const script = 'echo $((10 * 5 - 20 / 4))';
+    const script = "echo $((10 * 5 - 20 / 4))";
     const { bashResult, tsResult } = await compareExecution(script);
     assertEquals(tsResult.stdout, bashResult.stdout);
   });
@@ -597,6 +614,87 @@ describe("Conformance - Control Flow", () => {
     assertEquals(tsResult.stdout, bashResult.stdout);
     assertEquals(tsResult.stdout, "matches everything");
   });
+
+  it("should preserve case branch assignments across loop iterations", async () => {
+    const script = `for E in dev staging; do
+      case "$E" in
+        dev) L1="a" ;;
+        staging) L1="b" ;;
+      esac
+      echo "L=[$L1]"
+    done`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "L=[a]\nL=[b]");
+    assertEquals(tsResult.code, bashResult.code);
+  });
+
+  it("should preserve assignments made inside if/elif branches", async () => {
+    const script = `if false; then
+      B="then"
+    elif true; then
+      B="elif"
+    fi
+    echo "B=[$B]"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "B=[elif]");
+  });
+
+  it("should preserve assignments made inside a while body", async () => {
+    const script = `N=0
+    while [ "$N" -lt 2 ]; do
+      W="w$N"
+      N=$((N + 1))
+    done
+    echo "W=[$W]"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "W=[w1]");
+  });
+
+  // SSH-690: the C-style for init emits a bare `i = 0` for an undeclared loop
+  // variable, which throws ReferenceError in the strict-mode wrapper before the
+  // body ever runs. Re-enable once the loop variable is declared.
+  it.ignore("should preserve assignments made inside a C-style for body", async () => {
+    const script = `for ((i = 0; i < 2; i++)); do
+      C="c$i"
+    done
+    echo "C=[$C]"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "C=[c1]");
+  });
+
+  it("should preserve assignments made inside a brace group", async () => {
+    const script = `{ G="grouped"; }
+    echo "G=[$G]"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "G=[grouped]");
+  });
+
+  it("should not read a JS global when a branch assigns a colliding name", async () => {
+    // A block-scoped declaration used to die at the closing brace, leaving the
+    // read to fall through to the ambient `URL`/`Response` globals — a silently
+    // wrong value rather than an error.
+    const script = `for E in a b; do
+      case "$E" in
+        a) URL="one"; Response="1" ;;
+        b) URL="two"; Response="2" ;;
+      esac
+      echo "$URL:$Response"
+    done`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "one:1\ntwo:2");
+  });
 });
 
 // =============================================================================
@@ -609,7 +707,7 @@ describe("Conformance - Control Flow", () => {
 describe("Conformance - Command Substitution", () => {
   it("should parse command substitution syntax", async () => {
     // Just verify parsing works - execution requires full runtime
-    const script = 'VAR=$(echo test)';
+    const script = "VAR=$(echo test)";
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
     assertStringIncludes(output, "VAR");
@@ -631,7 +729,7 @@ describe("Conformance - Functions", () => {
     `;
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
-    assertStringIncludes(output, "async function greet()")
+    assertStringIncludes(output, "async function greet()");
   });
 
   it("should transpile function with simple echo", async () => {
@@ -644,9 +742,9 @@ describe("Conformance - Functions", () => {
     `;
     const ast = parse(script);
     const output = transpile(ast, { imports: false });
-    assertStringIncludes(output, "async function say_hello()")
+    assertStringIncludes(output, "async function say_hello()");
     // SSH-372: Transpiler now outputs $.echo("Hello") using preamble builtins
-    assertStringIncludes(output, '$.echo(');
+    assertStringIncludes(output, "$.echo(");
     assertStringIncludes(output, '"Hello"');
   });
 });
@@ -769,11 +867,11 @@ describe("Conformance - Exit Status (SSH-581)", () => {
   });
 
   it("should exit zero when a builtin succeeds after a failure", async () => {
-    await assertExitCodeMatches('false\necho after');
+    await assertExitCodeMatches("false\necho after");
   });
 
   it("should reset status on a plain assignment", async () => {
-    await assertExitCodeMatches('false\nVAR=x');
+    await assertExitCodeMatches("false\nVAR=x");
   });
 
   it("should propagate a command substitution's status to its assignment", async () => {
@@ -882,7 +980,10 @@ describe("Conformance - Pipeline Negation (SSH-594)", () => {
   });
 
   it("should honor ! before [[ ]] and (( )) conditions (SSH-603)", async () => {
-    await assertStdoutAndExitCodeMatch("if ! [[ -f /nonexistent/path ]]; then echo absent; fi", "absent");
+    await assertStdoutAndExitCodeMatch(
+      "if ! [[ -f /nonexistent/path ]]; then echo absent; fi",
+      "absent",
+    );
     await assertStdoutAndExitCodeMatch("if ! (( 0 )); then echo zero; fi", "zero");
   });
 
@@ -912,7 +1013,7 @@ describe("Conformance - exit inside subshell (SSH-584)", () => {
 
   it("runs subshell body before the exit and skips the rest", async () => {
     const { bashResult, tsResult } = await compareExecution(
-      '( echo in; exit 5; echo never )\necho $?',
+      "( echo in; exit 5; echo never )\necho $?",
       { compareExitCode: true },
     );
     assertEquals(tsResult.stdout, bashResult.stdout);
@@ -921,7 +1022,7 @@ describe("Conformance - exit inside subshell (SSH-584)", () => {
 
   it("nested subshell exit only leaves the inner shell", async () => {
     const { bashResult, tsResult } = await compareExecution(
-      '( ( exit 3 ); echo inner $? )\necho outer $?',
+      "( ( exit 3 ); echo inner $? )\necho outer $?",
       { compareExitCode: true },
     );
     assertEquals(tsResult.stdout, bashResult.stdout);
@@ -1000,7 +1101,7 @@ describe("Conformance - $? and $VAR in Arithmetic (SSH-583)", () => {
 describe("Conformance - Colon Builtin Argument Expansion (SSH-609)", () => {
   it("performs := assignments in colon arguments (SSH-609 + SSH-610)", async () => {
     const { bashResult, tsResult } = await compareExecution(
-      ': ${PORT:=8080}\necho $PORT',
+      ": ${PORT:=8080}\necho $PORT",
       { compareExitCode: true },
     );
     assertEquals(tsResult.stdout, bashResult.stdout);
@@ -1017,7 +1118,7 @@ describe("Conformance - Colon Builtin Argument Expansion (SSH-609)", () => {
   });
 
   it("keeps existing values with := and skips = for defined-but-empty (SSH-610)", async () => {
-    const a = await compareExecution('W=set\necho ${W:=other}', { compareExitCode: true });
+    const a = await compareExecution("W=set\necho ${W:=other}", { compareExitCode: true });
     assertEquals(a.tsResult.stdout, a.bashResult.stdout);
     assertEquals(a.tsResult.stdout, "set");
     const b = await compareExecution('V=""\necho "x${V=def}x"', { compareExitCode: true });
@@ -1081,7 +1182,7 @@ describe("Conformance - Indirect Variable Reference (SSH-330)", () => {
  */
 export async function runConformanceTest(
   name: string,
-  bashScript: string
+  bashScript: string,
 ): Promise<{
   name: string;
   bashOutput: string;
@@ -1107,7 +1208,7 @@ export async function runConformanceTest(
  * Run multiple conformance tests and return a report
  */
 export async function runConformanceSuite(
-  tests: Array<{ name: string; script: string }>
+  tests: Array<{ name: string; script: string }>,
 ): Promise<{
   passed: number;
   failed: number;

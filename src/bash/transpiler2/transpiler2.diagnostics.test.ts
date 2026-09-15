@@ -240,7 +240,7 @@ describe("Transpiler Error Handling", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let result");
+    assertStringIncludes(output, "var result");
     assertStringIncludes(output, "count");
   });
 });
@@ -402,7 +402,7 @@ describe("Error Recovery", () => {
 
     // Valid statements should be transpiled
     assertStringIncludes(output, '$.echo("start")');
-    assertStringIncludes(output, "let VAR");
+    assertStringIncludes(output, "var VAR");
     assertStringIncludes(output, '$.echo("end")');
   });
 });
@@ -677,7 +677,7 @@ describe("Integration - Real-World Error Scenarios", () => {
 
     // Valid parts should be transpiled correctly
     assertStringIncludes(output, '$.echo("Starting...")');
-    assertStringIncludes(output, "let VAR");
+    assertStringIncludes(output, "var VAR");
   });
 
   it("should provide useful diagnostics for complex scripts", () => {
@@ -720,7 +720,7 @@ describe("Integration - Real-World Error Scenarios", () => {
     const output = transpile(ast);
 
     // Should handle nested substitutions
-    assertStringIncludes(output, "let result");
+    assertStringIncludes(output, "var result");
   });
 
   it("should handle edge case: empty array assignment", () => {
@@ -728,7 +728,7 @@ describe("Integration - Real-World Error Scenarios", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let arr = []");
+    assertStringIncludes(output, "var arr = []");
   });
 
   it("should handle edge case: array with single element", () => {
@@ -736,7 +736,7 @@ describe("Integration - Real-World Error Scenarios", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let arr = ["single"]');
+    assertStringIncludes(output, 'var arr = ["single"]');
   });
 });
 
@@ -795,7 +795,7 @@ describe("Edge Cases and Boundary Conditions", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let result");
+    assertStringIncludes(output, "var result");
   });
 
   it("should handle multiple consecutive operators", () => {
@@ -812,7 +812,7 @@ describe("Edge Cases and Boundary Conditions", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let VAR = ""');
+    assertStringIncludes(output, 'var VAR = ""');
   });
 
   it("should handle special characters in variable names", () => {
@@ -821,7 +821,7 @@ describe("Edge Cases and Boundary Conditions", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let var_123");
+    assertStringIncludes(output, "var var_123");
   });
 
   it("should handle arithmetic with parentheses", () => {
@@ -829,7 +829,7 @@ describe("Edge Cases and Boundary Conditions", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let result");
+    assertStringIncludes(output, "var result");
   });
 
   it("should handle test expressions with complex conditions", () => {
@@ -872,8 +872,8 @@ describe("Performance and Stress Tests", () => {
     const output = transpile(ast);
 
     // Should declare all variables
-    assertStringIncludes(output, "let VAR0");
-    assertStringIncludes(output, "let VAR49");
+    assertStringIncludes(output, "var VAR0");
+    assertStringIncludes(output, "var VAR49");
   });
 
   it("should handle deeply nested control structures", () => {

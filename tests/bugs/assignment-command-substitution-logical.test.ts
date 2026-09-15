@@ -24,7 +24,7 @@ describe("Bug: assignment command substitution in logical chains", () => {
       `out=$(printf "ok" 2>&1) && echo "$out" || echo fail`,
     );
 
-    assertEquals(code.includes("__captureCmd(let out"), false, code);
+    assertEquals(/__captureCmd\((?:var|let|const) out/.test(code), false, code);
 
     const result = await executeCode(code, config, { cwd: Deno.cwd() });
 
@@ -40,7 +40,7 @@ done
 echo done`,
     );
 
-    assertEquals(code.includes("__captureCmd(let out"), false, code);
+    assertEquals(/__captureCmd\((?:var|let|const) out/.test(code), false, code);
 
     const result = await executeCode(code, config, { cwd: Deno.cwd() });
 

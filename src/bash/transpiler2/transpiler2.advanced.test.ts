@@ -210,8 +210,8 @@ describe("Real-World CI/CD Scripts", () => {
       fi
     `;
     const code = transpileBash(script);
-    assertStringIncludes(code, "let IMAGE_NAME");
-    assertStringIncludes(code, "let VERSION");
+    assertStringIncludes(code, "var IMAGE_NAME");
+    assertStringIncludes(code, "var VERSION");
     assertStringIncludes(code, '$.docker("build"');
     assertStringIncludes(code, '$.docker("push"');
   });
@@ -233,8 +233,8 @@ describe("Real-World CI/CD Scripts", () => {
       echo "Released version $VERSION"
     `;
     const code = transpileBash(script);
-    assertStringIncludes(code, "let VERSION");
-    assertStringIncludes(code, "let BRANCH");
+    assertStringIncludes(code, "var VERSION");
+    assertStringIncludes(code, "var BRANCH");
     assertStringIncludes(code, '$.git("tag"');
     assertStringIncludes(code, '$.git("push"');
   });
@@ -337,8 +337,8 @@ describe("Real-World Deployment Scripts", () => {
       fi
     `;
     const code = transpileBash(script);
-    assertStringIncludes(code, "let CURRENT");
-    assertStringIncludes(code, "let TARGET");
+    assertStringIncludes(code, "var CURRENT");
+    assertStringIncludes(code, "var TARGET");
     assertStringIncludes(code, "rsync");
     assertStringIncludes(code, "curl");
   });
@@ -547,7 +547,7 @@ describe("Complex Parameter Expansions", () => {
 
   it("should handle multiple modifiers", () => {
     const code = transpileBash('FILE="${1:-default.txt}"; echo "${FILE%.txt}.bak"');
-    assertStringIncludes(code, "let FILE");
+    assertStringIncludes(code, "var FILE");
     assertStringIncludes(code, ".replace(");
   });
 
@@ -586,7 +586,7 @@ describe("Complex Arithmetic", () => {
 
   it("should handle arithmetic with variables and literals", () => {
     const code = transpileBash("result=$((var1 * 100 + var2 / 10 - 5))");
-    assertStringIncludes(code, "let result");
+    assertStringIncludes(code, "var result");
     assertStringIncludes(code, "var1");
     assertStringIncludes(code, "var2");
   });
@@ -644,7 +644,7 @@ describe("Edge Cases", () => {
 
   it("should handle special characters in variable values", () => {
     const code = transpileBash('VAR="$@#%^&*()"');
-    assertStringIncludes(code, "let VAR");
+    assertStringIncludes(code, "var VAR");
   });
 
   it("should handle commands with no arguments", () => {
@@ -676,8 +676,8 @@ describe("Stress Tests", () => {
       .map((_, i) => `VAR${i}=value${i}`)
       .join("\n");
     const code = transpileBash(assignments);
-    assertStringIncludes(code, "let VAR0");
-    assertStringIncludes(code, "let VAR49");
+    assertStringIncludes(code, "var VAR0");
+    assertStringIncludes(code, "var VAR49");
   });
 
   it("should handle long for loop with many items", () => {
@@ -746,6 +746,6 @@ describe("Maintenance Scripts", () => {
     `;
     const code = transpileBash(script);
     assertStringIncludes(code, "tar");
-    assertStringIncludes(code, "let COUNT");
+    assertStringIncludes(code, "var COUNT");
   });
 });

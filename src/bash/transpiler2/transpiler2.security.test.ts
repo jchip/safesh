@@ -144,7 +144,7 @@ describe("Security - Command Injection Prevention", () => {
     const output = transpile(ast);
 
     // Variable should be assigned as a string literal
-    assertStringIncludes(output, 'let VAR = "value; rm -rf /"');
+    assertStringIncludes(output, 'var VAR = "value; rm -rf /"');
     // Semicolon should not create a new statement
     assert(!output.includes('"; rm -rf /"'));
   });
@@ -153,7 +153,7 @@ describe("Security - Command Injection Prevention", () => {
     const ast = parse('VAR="value & background_cmd"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let VAR = "value & background_cmd"');
+    assertStringIncludes(output, 'var VAR = "value & background_cmd"');
     assert(!output.includes(".background"), "Should not create background execution");
   });
 
@@ -161,7 +161,7 @@ describe("Security - Command Injection Prevention", () => {
     const ast = parse('VAR="value | grep secret"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let VAR = "value | grep secret"');
+    assertStringIncludes(output, 'var VAR = "value | grep secret"');
     assert(!output.includes(".pipe("), "Pipe should not create a pipeline");
   });
 
@@ -444,7 +444,7 @@ describe("Security - Quote Escaping", () => {
     const output = transpile(ast);
 
     // Everything should be in the string value
-    assertStringIncludes(output, 'let VAR = ');
+    assertStringIncludes(output, 'var VAR = ');
     assertStringIncludes(output, '"; malicious; #"');
     assert(!output.includes('$.cmd("malicious")'), "Should not create separate statements");
   });
@@ -488,8 +488,8 @@ describe("Security - Environment Variable Safety", () => {
     const ast = parse('PATH="/malicious:$PATH"');
     const output = transpile(ast);
 
-    // SSH-566: Self-referencing assignments split declaration to avoid TDZ
-    assertStringIncludes(output, "let PATH;");
+    // Function-scoped var makes the self-reference safe without a TDZ split.
+    assertStringIncludes(output, "var PATH =");
     assertStringIncludes(output, "$.ENV.PATH");
   });
 
@@ -497,14 +497,14 @@ describe("Security - Environment Variable Safety", () => {
     const ast = parse('LD_PRELOAD="/tmp/malicious.so"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let LD_PRELOAD = "/tmp/malicious.so"');
+    assertStringIncludes(output, 'var LD_PRELOAD = "/tmp/malicious.so"');
   });
 
   it("should handle IFS manipulation safely", () => {
     const ast = parse('IFS=";"');
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let IFS = ";"');
+    assertStringIncludes(output, 'var IFS = ";"');
   });
 
   it("should handle environment variable expansion in commands", () => {
@@ -527,7 +527,7 @@ describe("Security - Environment Variable Safety", () => {
     const output = transpile(ast);
 
     // Export with assignment is currently transpiled as export command + assignment
-    assertStringIncludes(output, 'let VAR = "value"');
+    assertStringIncludes(output, 'var VAR = "value"');
   });
 
   it("should handle readonly variables", () => {
@@ -535,7 +535,7 @@ describe("Security - Environment Variable Safety", () => {
     const output = transpile(ast);
 
     // Readonly with assignment is transpiled as readonly command + assignment
-    assertStringIncludes(output, 'let VAR = "value"');
+    assertStringIncludes(output, 'var VAR = "value"');
   });
 });
 
@@ -550,7 +550,7 @@ describe("Security - Subshell Safety", () => {
 
     // Subshell creates IIFE scope
     assertStringIncludes(output, "await (async () => {");
-    assertStringIncludes(output, "let VAR");
+    assertStringIncludes(output, "var VAR");
   });
 
   it("should handle command substitution in subshell", () => {
@@ -695,7 +695,7 @@ describe("Security - Complex Injection Scenarios", () => {
     const output = transpile(ast);
 
     // Two separate statements
-    assertStringIncludes(output, 'let VAR = "value"');
+    assertStringIncludes(output, 'var VAR = "value"');
     assertStringIncludes(output, "$.echo(");
   });
 

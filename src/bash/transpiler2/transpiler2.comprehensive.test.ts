@@ -114,9 +114,9 @@ describe("Command Handler - Edge Cases", () => {
   it("should handle multiple variable assignments", () => {
     const ast = parse("A=1 B=2 C=3");
     const output = transpile(ast);
-    assertStringIncludes(output, "let A");
-    assertStringIncludes(output, "let B");
-    assertStringIncludes(output, "let C");
+    assertStringIncludes(output, "var A");
+    assertStringIncludes(output, "var B");
+    assertStringIncludes(output, "var C");
   });
 
   it("should handle variable assignment with command", () => {
@@ -1550,14 +1550,14 @@ describe("Command Substitution", () => {
   it("should handle command substitution in variable assignment", () => {
     const ast = parse("CURRENT_DIR=$(pwd)");
     const output = transpile(ast);
-    assertStringIncludes(output, "let CURRENT_DIR");
+    assertStringIncludes(output, "var CURRENT_DIR");
     assertStringIncludes(output, "await __cmdSubText");
   });
 
   it("should handle command substitution with pipeline", () => {
     const ast = parse("COUNT=$(ls | wc -l)");
     const output = transpile(ast);
-    assertStringIncludes(output, "let COUNT");
+    assertStringIncludes(output, "var COUNT");
   });
 
   // SSH-357: Command substitution in args should use template literals
@@ -1630,7 +1630,7 @@ EOF`;
     const ast = parse("BRANCH=$(git branch --show-current)");
     const output = transpile(ast);
     // Should generate valid variable assignment with command substitution
-    assertStringIncludes(output, "let BRANCH");
+    assertStringIncludes(output, "var BRANCH");
     assertStringIncludes(output, "await __cmdSubText");
     // The command substitution should reference git command (now uses $.git() builtin)
     assertStringIncludes(output, "$.git(");
@@ -1701,8 +1701,8 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let BACKUP_DIR");
-    assertStringIncludes(output, "let DATE");
+    assertStringIncludes(output, "var BACKUP_DIR");
+    assertStringIncludes(output, "var DATE");
     assertStringIncludes(output, "if (");
     assertStringIncludes(output, "for (const file of");
     // SSH-372: Now uses $.cp builtin
@@ -1767,7 +1767,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "while (true)");
-    assertStringIncludes(output, "let COUNTER");
+    assertStringIncludes(output, "var COUNTER");
   });
 
   it("should transpile a for loop with variable iteration", () => {
@@ -1843,7 +1843,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let BRANCH");
+    assertStringIncludes(output, "var BRANCH");
     assertStringIncludes(output, "if (");
     assertStringIncludes(output, "$.git("); // Now uses $.git() builtin
   });
@@ -1889,7 +1889,7 @@ describe("Complex Realistic Bash Scripts", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let DB_NAME");
+    assertStringIncludes(output, "var DB_NAME");
     assertStringIncludes(output, "pg_dump");
     assertStringIncludes(output, ".pipe(");
   });
@@ -1925,10 +1925,10 @@ describe("TranspilerContext Extended", () => {
   it("should generate unique temp vars with different prefixes", () => {
     const ctx = new TranspilerContext(resolveOptions());
 
-    assertEquals(ctx.getTempVar("cmd"), "cmd0");
-    assertEquals(ctx.getTempVar("cmd"), "cmd1");
-    assertEquals(ctx.getTempVar("result"), "result2");
-    assertEquals(ctx.getTempVar(), "_tmp3");
+    assertEquals(ctx.getTempVar("cmd"), "cmd$0");
+    assertEquals(ctx.getTempVar("cmd"), "cmd$1");
+    assertEquals(ctx.getTempVar("result"), "result$2");
+    assertEquals(ctx.getTempVar(), "_tmp$3");
   });
 
   it("should handle complex snapshot/restore scenarios", () => {
@@ -2154,7 +2154,7 @@ describe("Bug Fixes", () => {
     it("should export variable with export keyword", () => {
       const ast = parse("export VAR=value");
       const output = transpile(ast);
-      assertStringIncludes(output, "let VAR");
+      assertStringIncludes(output, "var VAR");
       assertStringIncludes(output, "Deno.env.set");
       assertStringIncludes(output, '"VAR"');
     });
@@ -2162,22 +2162,22 @@ describe("Bug Fixes", () => {
     it("should export multiple variables", () => {
       const ast = parse("export VAR1=value1; export VAR2=value2");
       const output = transpile(ast);
-      assertStringIncludes(output, "let VAR1");
-      assertStringIncludes(output, "let VAR2");
+      assertStringIncludes(output, "var VAR1");
+      assertStringIncludes(output, "var VAR2");
       assertStringIncludes(output, "Deno.env.set");
     });
 
     it("should export already declared variable", () => {
       const ast = parse("VAR=initial; export VAR=updated");
       const output = transpile(ast);
-      assertStringIncludes(output, "let VAR");
+      assertStringIncludes(output, "var VAR");
       assertStringIncludes(output, "Deno.env.set");
     });
 
     it("should handle non-exported variable assignment normally", () => {
       const ast = parse("VAR=value");
       const output = transpile(ast);
-      assertStringIncludes(output, "let VAR");
+      assertStringIncludes(output, "var VAR");
       // Should NOT include Deno.env.set for non-exported vars
       if (output.includes("Deno.env.set")) {
         throw new Error("Non-exported variable should not call Deno.env.set");
@@ -2189,7 +2189,7 @@ describe("Bug Fixes", () => {
     it("should handle export with stderr redirection", () => {
       const ast = parse("export DEBUG=1; command 2>error.log");
       const output = transpile(ast);
-      assertStringIncludes(output, "let DEBUG");
+      assertStringIncludes(output, "var DEBUG");
       assertStringIncludes(output, "Deno.env.set");
     });
 

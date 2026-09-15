@@ -14,7 +14,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "FOO=bar";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, 'let FOO = "bar"');
+      assertStringIncludes(output, 'var FOO = "bar"');
     });
 
     it("should detect command with redirects", () => {
@@ -56,7 +56,7 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "VAR=value";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, "let VAR");
+      assertStringIncludes(output, "var VAR");
       assertEquals(output.includes("await"), false);
     });
 
@@ -163,8 +163,8 @@ describe("buildCommand - Phase-based decomposition (SSH-436)", () => {
       const script = "X=1; Y=2";
       const output = transpile(parse(script));
 
-      assertStringIncludes(output, 'let X = "1"');
-      assertStringIncludes(output, 'let Y = "2"');
+      assertStringIncludes(output, 'var X = "1"');
+      assertStringIncludes(output, 'var Y = "2"');
     });
 
     it("should execute timeout strategy with seconds", () => {

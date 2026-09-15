@@ -33,7 +33,7 @@ describe("Bug: Tilde Expansion in String Contexts", () => {
 
     assertStringIncludes(
       code,
-      'let files = [`${Deno.env.get("HOME") || "~"}/one.txt`, `${Deno.env.get("HOME") || "~"}/two.txt`];',
+      'var files = [`${Deno.env.get("HOME") || "~"}/one.txt`, `${Deno.env.get("HOME") || "~"}/two.txt`];',
     );
   });
 });

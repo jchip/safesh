@@ -180,7 +180,7 @@ pwd > pwd.txt`,
     status: "assignment-only command succeeds",
     script: () => `out=$(printf "ok" 2>&1) && echo "$out" || echo fail`,
     verify({ code, result }) {
-      assertEquals(code.includes("__captureCmd(let out"), false, code);
+      assertEquals(/__captureCmd\((?:var|let|const) out/.test(code), false, code);
       assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
       assertEquals(result.stdout, "ok\n");
     },
@@ -196,6 +196,54 @@ pwd > pwd.txt`,
       assertEquals(code.includes(".pipe((async () =>"), false, code);
       assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
       assertStringIncludes(result.stdout, "123");
+    },
+  },
+  {
+    name: "subshell assignment does not mutate parent",
+    source: "subshell",
+    context: "parent and child assignment",
+    dataMode: "isolated shell state",
+    status: "parent value retained",
+    script: () => 'X=outer; (X=inner); echo "$X"',
+    verify({ code, result }) {
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertEquals(result.stdout, "outer\n");
+    },
+  },
+  {
+    name: "subshell exit restores parent assignment",
+    source: "subshell",
+    context: "assignment followed by exit",
+    dataMode: "isolated shell state and exit status",
+    status: "parent value and child status retained",
+    script: () => 'X=outer; (X=inner; exit 7); echo "$X:$?"',
+    verify({ code, result }) {
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertEquals(result.stdout, "outer:7\n");
+    },
+  },
+  {
+    name: "subshell declaration does not pollute parent scope",
+    source: "subshell",
+    context: "child declaration followed by parent assignment",
+    dataMode: "isolated transpiler scope",
+    status: "parent assignment succeeds",
+    script: () => '(Y=child); Y=parent; echo "$Y"',
+    verify({ code, result }) {
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertEquals(result.stdout, "parent\n");
+    },
+  },
+  {
+    name: "generated case temporary does not collide with shell variable",
+    source: "case statement",
+    context: "generated identifier collision",
+    dataMode: "shell variable value",
+    status: "successful output",
+    script: () => '_tmp0=user; case x in x) echo "$_tmp0";; esac',
+    verify({ code, result }) {
+      assertEquals(result.success, true, `stderr: ${result.stderr}\ncode:\n${code}`);
+      assertEquals(result.stdout, "user\n");
     },
   },
 ];

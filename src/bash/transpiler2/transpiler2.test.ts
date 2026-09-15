@@ -103,9 +103,9 @@ describe("TranspilerContext", () => {
 
   it("should generate unique temp vars", () => {
     const ctx = new TranspilerContext(resolveOptions());
-    assertEquals(ctx.getTempVar(), "_tmp0");
-    assertEquals(ctx.getTempVar(), "_tmp1");
-    assertEquals(ctx.getTempVar("test"), "test2");
+    assertEquals(ctx.getTempVar(), "_tmp$0");
+    assertEquals(ctx.getTempVar(), "_tmp$1");
+    assertEquals(ctx.getTempVar("test"), "test$2");
   });
 
   it("should manage variable scopes", () => {
@@ -490,16 +490,16 @@ describe("Transpiler2 - Pipelines", () => {
     const output = transpile(ast);
 
     // Variable assignment should NOT be wrapped in __printCmd
-    // Invalid: await __printCmd(let BRANCH = ...)
-    // Valid: let BRANCH = ...; then use the var
+    // Invalid: await __printCmd(var BRANCH = ...)
+    // Valid: var BRANCH = ...; then use the variable
     assertEquals(
-      output.includes("__printCmd(let"),
+      output.includes("__printCmd(var"),
       false,
       "Variable assignment should not be wrapped in __printCmd",
     );
 
     // The variable assignment should still be present
-    assertStringIncludes(output, "let BRANCH");
+    assertStringIncludes(output, "var BRANCH");
     // SSH-372: The echo command now uses $.echo builtin
     assertStringIncludes(output, "$.echo");
   });
@@ -508,12 +508,12 @@ describe("Transpiler2 - Pipelines", () => {
     const ast = parse('A=1 && B=2 && echo "$A + $B"');
     const output = transpile(ast);
 
-    // Should NOT generate "return let" which is invalid syntax
-    assertEquals(output.includes("return let"), false, "Should not have 'return let' in output");
+    // Should NOT generate "return var" which is invalid syntax
+    assertEquals(output.includes("return var"), false, "Should not have 'return var' in output");
 
     // Both variable assignments should be present
-    assertStringIncludes(output, 'let A = "1"');
-    assertStringIncludes(output, 'let B = "2"');
+    assertStringIncludes(output, 'var A = "1"');
+    assertStringIncludes(output, 'var B = "2"');
     // The echo command should be present
     assertStringIncludes(output, "$.echo");
   });
@@ -525,8 +525,8 @@ describe("Transpiler2 - Pipelines", () => {
     const output = transpile(ast);
 
     // Variable should be hoisted to outer scope, not inside nested IIFEs
-    // The let SRC should come BEFORE the await __printCmd
-    const srcIndex = output.indexOf("let SRC");
+    // The var SRC should come BEFORE the await __printCmd
+    const srcIndex = output.indexOf("var SRC");
     const printCmdIndex = output.indexOf("await __printCmd");
     assertEquals(srcIndex > 0, true, "Should have variable assignment");
     assertEquals(printCmdIndex > 0, true, "Should have __printCmd");
@@ -925,7 +925,7 @@ describe("Transpiler2 - Control Flow", () => {
     const output = transpile(ast);
 
     assertStringIncludes(output, "async function myfunc()");
-    assertStringIncludes(output, "let x = ");
+    assertStringIncludes(output, "var x = ");
   });
 
   it("should handle scoping in for loops (SSH-304)", () => {
@@ -1029,21 +1029,21 @@ describe("Transpiler2 - Array Assignments", () => {
     const ast = parse("arr=(one two three)");
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let arr = ["one", "two", "three"]');
+    assertStringIncludes(output, 'var arr = ["one", "two", "three"]');
   });
 
   it("should transpile empty array assignment", () => {
     const ast = parse("arr=()");
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let arr = []");
+    assertStringIncludes(output, "var arr = []");
   });
 
   it("should transpile array with quoted elements", () => {
     const ast = parse('arr=("hello world" foo "bar baz")');
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let arr = ["hello world", "foo", "bar baz"]');
+    assertStringIncludes(output, 'var arr = ["hello world", "foo", "bar baz"]');
   });
 
   it("should transpile array with variable expansion", () => {
@@ -1051,7 +1051,7 @@ describe("Transpiler2 - Array Assignments", () => {
     const output = transpile(ast);
 
     // SSH-484: Variable expansion now includes proper lookup chain
-    assertStringIncludes(output, 'let arr = ["one"');
+    assertStringIncludes(output, 'var arr = ["one"');
     assertStringIncludes(output, "$.ENV.VAR");
     assertStringIncludes(output, '"three"]');
   });
@@ -1060,9 +1060,9 @@ describe("Transpiler2 - Array Assignments", () => {
     const ast = parse("arr=(a b); arr=(c d)");
     const output = transpile(ast);
 
-    // First assignment should declare with let
-    assertStringIncludes(output, 'let arr = ["a", "b"]');
-    // Second assignment should not use let
+    // First assignment should declare with var
+    assertStringIncludes(output, 'var arr = ["a", "b"]');
+    // Second assignment should not redeclare
     assertStringIncludes(output, 'arr = ["c", "d"]');
   });
 });
@@ -1275,7 +1275,7 @@ describe("Transpiler2 - Integration", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, 'let NAME = "World"');
+    assertStringIncludes(output, 'var NAME = "World"');
     // SSH-372: Now uses $.echo builtin
     assertStringIncludes(output, '$.echo("Hello")');
   });
@@ -1446,7 +1446,7 @@ describe("BashTranspiler2 - VisitorContext Coverage", () => {
     const ast = parse(script);
     const output = transpile(ast);
 
-    assertStringIncludes(output, "let VAR = ");
+    assertStringIncludes(output, "var VAR = ");
     assertStringIncludes(output, "value");
   });
 
@@ -1637,7 +1637,7 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
     const script = "VAR=value";
     const ast = parse(script);
     const output = transpile(ast);
-    assertStringIncludes(output, "let VAR");
+    assertStringIncludes(output, "var VAR");
   });
 
   it("should handle Subshell", () => {
@@ -1835,7 +1835,7 @@ describe("BashTranspiler2 - Direct Statement Types", () => {
     };
 
     const output = transpiler.transpile(manualAST as any);
-    assertStringIncludes(output, "let MYVAR");
+    assertStringIncludes(output, "var MYVAR");
     assertStringIncludes(output, "myvalue");
   });
 });

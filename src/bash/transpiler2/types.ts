@@ -103,6 +103,9 @@ export interface VisitorContext {
   /** Check if a variable is declared */
   isDeclared(name: string): boolean;
 
+  /** Get all variable names visible in the current scope */
+  getVisibleVariables(): string[];
+
   /** Declare a variable in current scope */
   declareVariable(name: string, type?: "const" | "let"): void;
 

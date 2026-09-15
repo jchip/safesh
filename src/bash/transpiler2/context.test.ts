@@ -67,24 +67,24 @@ Deno.test("TranspilerContext - Temporary Variables", async (t) => {
     const ctx = new TranspilerContext(createTestOptions());
 
     // Generate some temp vars
-    assertEquals(ctx.getTempVar(), "_tmp0");
-    assertEquals(ctx.getTempVar(), "_tmp1");
-    assertEquals(ctx.getTempVar(), "_tmp2");
+    assertEquals(ctx.getTempVar(), "_tmp$0");
+    assertEquals(ctx.getTempVar(), "_tmp$1");
+    assertEquals(ctx.getTempVar(), "_tmp$2");
 
     // Reset and verify it starts from 0 again
     ctx.resetTempVars();
-    assertEquals(ctx.getTempVar(), "_tmp0");
-    assertEquals(ctx.getTempVar(), "_tmp1");
+    assertEquals(ctx.getTempVar(), "_tmp$0");
+    assertEquals(ctx.getTempVar(), "_tmp$1");
   });
 
   await t.step("resetTempVars should work with custom prefix", () => {
     const ctx = new TranspilerContext(createTestOptions());
 
-    assertEquals(ctx.getTempVar("_custom"), "_custom0");
-    assertEquals(ctx.getTempVar("_custom"), "_custom1");
+    assertEquals(ctx.getTempVar("_custom"), "_custom$0");
+    assertEquals(ctx.getTempVar("_custom"), "_custom$1");
 
     ctx.resetTempVars();
-    assertEquals(ctx.getTempVar("_custom"), "_custom0");
+    assertEquals(ctx.getTempVar("_custom"), "_custom$0");
   });
 });
 
@@ -262,8 +262,8 @@ Deno.test("TranspilerContext - Integration Tests", async (t) => {
 
     // Verify state
     assertEquals(ctx.getIndentLevel(), 2);
-    assertEquals(temp1, "_tmp0");
-    assertEquals(temp2, "_tmp1");
+    assertEquals(temp1, "_tmp$0");
+    assertEquals(temp2, "_tmp$1");
     assertEquals(ctx.isDeclared("var1"), true);
     assertEquals(ctx.isDeclared("var2"), true);
     assertEquals(ctx.isInCurrentScope("var1"), false);
@@ -293,11 +293,11 @@ Deno.test("TranspilerContext - Integration Tests", async (t) => {
     ctx.indent();
     ctx.getTempVar();
     assertEquals(ctx.getIndentLevel(), 3);
-    assertEquals(ctx.getTempVar(), "_tmp3");
+    assertEquals(ctx.getTempVar(), "_tmp$3");
 
     // Restore
     ctx.restore(snapshot);
     assertEquals(ctx.getIndentLevel(), 2);
-    assertEquals(ctx.getTempVar(), "_tmp2");
+    assertEquals(ctx.getTempVar(), "_tmp$2");
   });
 });

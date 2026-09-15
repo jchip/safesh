@@ -98,7 +98,7 @@ export class TranspilerContext {
 
   /** Generate a unique temporary variable name */
   getTempVar(prefix = "_tmp"): string {
-    return `${prefix}${this.tempVarCounter++}`;
+    return `${prefix}$${this.tempVarCounter++}`;
   }
 
   /** Reset temp variable counter (useful for tests) */
@@ -157,6 +157,23 @@ export class TranspilerContext {
       scope = scope.parent;
     }
     return undefined;
+  }
+
+  /** Get visible variable names, preferring the nearest declaration. */
+  getVisibleVariables(): string[] {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    let scope: VariableScope | null = this.currentScope;
+    while (scope) {
+      for (const name of scope.variables.keys()) {
+        if (!seen.has(name)) {
+          names.push(name);
+          seen.add(name);
+        }
+      }
+      scope = scope.parent;
+    }
+    return names;
   }
 
   /** Check if variable is in current scope (not parent) */

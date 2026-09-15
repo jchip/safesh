@@ -119,6 +119,7 @@ export class BashTranspiler2 {
       getTempVar: (prefix?: string) => ctx.getTempVar(prefix),
       getOptions: () => ctx.getOptions(),
       isDeclared: (name: string) => ctx.isDeclared(name),
+      getVisibleVariables: () => ctx.getVisibleVariables(),
       declareVariable: (name: string, type?: "const" | "let") => ctx.declareVariable(name, type),
       pushScope: () => ctx.pushScope(),
       popScope: () => ctx.popScope(),

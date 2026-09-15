@@ -7,7 +7,7 @@
 import { globToRegExp } from "@std/path";
 import type * as AST from "../../ast.ts";
 import type { StatementResult, VisitorContext } from "../types.ts";
-import { escapeForQuotes } from "../utils/mod.ts";
+import { escapeForQuotes, sanitizeVarName } from "../utils/mod.ts";
 
 function wordHasExpansion(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
@@ -392,27 +392,44 @@ export function visitSubshell(
 ): StatementResult {
   const lines: string[] = [];
   const indent = ctx.getIndent();
+  const inheritedVariables = ctx.getVisibleVariables();
+  const inheritedBindings = inheritedVariables.map(sanitizeVarName);
+  const savedVariables = inheritedBindings.length > 0 ? ctx.getTempVar("__subVars") : null;
 
   lines.push(`${indent}await (async () => {`);
 
   ctx.indent();
   const bodyIndent = ctx.getIndent();
+  if (savedVariables) {
+    lines.push(
+      `${bodyIndent}const ${savedVariables} = structuredClone([${inheritedBindings.join(", ")}]);`,
+    );
+  }
   // SSH-584: `exit N` in the body throws a sentinel; convert it here to the
   // subshell's status so only the subshell terminates (bash parity)
   lines.push(`${bodyIndent}try {`);
+  ctx.pushScope();
   ctx.enterSubshell();
   ctx.indent();
-  for (const s of stmt.body) {
-    const result = ctx.visitStatement(s);
-    lines.push(...result.lines);
+  try {
+    for (const s of stmt.body) {
+      const result = ctx.visitStatement(s);
+      lines.push(...result.lines);
+    }
+  } finally {
+    ctx.dedent();
+    ctx.exitSubshell();
+    ctx.popScope();
   }
-  ctx.dedent();
-  ctx.exitSubshell();
   lines.push(`${bodyIndent}} catch (__e) {`);
   lines.push(
     `${bodyIndent}  if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) { __recStatus((__e as { __sshSubshellExit: number }).__sshSubshellExit); return; }`,
   );
   lines.push(`${bodyIndent}  throw __e;`);
+  if (savedVariables) {
+    lines.push(`${bodyIndent}} finally {`);
+    lines.push(`${bodyIndent}  [${inheritedBindings.join(", ")}] = ${savedVariables};`);
+  }
   lines.push(`${bodyIndent}}`);
   ctx.dedent();
 
@@ -455,25 +472,40 @@ export function buildSubshellTestExpression(
   stmt: AST.Subshell,
   ctx: VisitorContext,
 ): string {
+  const inheritedVariables = ctx.getVisibleVariables();
+  const inheritedBindings = inheritedVariables.map(sanitizeVarName);
   const bodyLines: string[] = [];
+  ctx.pushScope();
   ctx.enterSubshell();
-  for (const s of stmt.body) {
-    const result = ctx.visitStatement(s);
-    bodyLines.push(...result.lines.map((line) => line.trim()).filter((line) => line.length > 0));
+  try {
+    for (const s of stmt.body) {
+      const result = ctx.visitStatement(s);
+      bodyLines.push(...result.lines.map((line) => line.trim()).filter((line) => line.length > 0));
+    }
+  } finally {
+    ctx.exitSubshell();
+    ctx.popScope();
   }
-  ctx.exitSubshell();
   // SSH-620: capture the body's exit status as the test result, but restore the
   // prior Deno.exitCode so evaluating the condition has no side effect on $?
   // (matching a `[ ]` test) — the if/while handler then sets $? from the result.
   const saved = ctx.getTempVar();
-  return `{ code: await (async () => { const ${saved} = Deno.exitCode; try {\n` +
+  const savedVariables = inheritedBindings.length > 0 ? ctx.getTempVar("__subVars") : null;
+  return `{ code: await (async () => { const ${saved} = Deno.exitCode;\n` +
+    (savedVariables
+      ? `const ${savedVariables} = structuredClone([${inheritedBindings.join(", ")}]);\n`
+      : "") +
+    `try {\n` +
     `${bodyLines.join("\n")}\n` +
     `return Deno.exitCode;\n` +
     `} catch (__e) {\n` +
     `if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) ` +
     `return (__e as { __sshSubshellExit: number }).__sshSubshellExit;\n` +
     `throw __e;\n` +
-    `} finally { Deno.exitCode = ${saved}; } })(), stdout: '', stderr: '' }`;
+    `} finally {\n` +
+    (savedVariables ? `[${inheritedBindings.join(", ")}] = ${savedVariables};\n` : "") +
+    `Deno.exitCode = ${saved};\n` +
+    `} })(), stdout: '', stderr: '' }`;
 }
 
 /**

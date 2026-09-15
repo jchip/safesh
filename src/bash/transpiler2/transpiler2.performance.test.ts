@@ -334,7 +334,7 @@ describe("Performance: Many Variables", () => {
     const result = transpile(ast);
 
     // Check that variables are properly declared
-    const varCount = (result.match(/let var\d+/g) || []).length;
+    const varCount = (result.match(/var var\d+/g) || []).length;
     assert(varCount > 15, `Expected at least 15 variable declarations, got ${varCount}`);
   });
 });
