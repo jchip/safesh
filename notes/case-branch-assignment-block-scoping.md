@@ -245,11 +245,73 @@ a `case` branch in a loop, `if`/`elif`, a `while` body, a brace group, and a
 name colliding with a JS global (`URL`, `Response`). `tests/bugs/bash-lowering-
 conformance.test.ts` covers the subshell isolation cases.
 
-### Discovered while fixing: SSH-690
+### Discovered while fixing: SSH-690 (since fixed)
 
 The C-style `for` case from the report's list turned out to be broken for an
 unrelated reason. `visitCStyleForStatement` emits the init expression verbatim,
 so `for ((i = 0; i < 2; i++))` lowers to `for ((i = 0); …)` — a bare assignment
 to an undeclared binding, i.e. `ReferenceError` in the strict-mode wrapper
 before the body runs. Verified pre-existing: the baseline emits the identical
-init. Filed as SSH-690 with an `it.ignore` conformance test to re-enable.
+init. Filed as SSH-690 and fixed immediately after; see the section below.
+
+## SSH-690: arithmetic references to shell variables
+
+The C-style `for` was the visible symptom of a wider defect. Every arithmetic
+operand was lowered to a **bare JS identifier** — `visitVariableReference`
+emitted `Number(i ?? 0)` — so any arithmetic touching a variable that had not
+already been assigned in-script threw `ReferenceError`. The C-style `for` hits
+it every time because its loop variable is normally fresh, but so did
+`echo $((z + 1))`, `((w++))` and `((s += 5))`.
+
+Two halves to the fix:
+
+**Reads** now use the same `typeof`-guarded form that word expansion uses, with
+an environment fallback: `Number((typeof i !== "undefined" ? i : ($.ENV.i ??
+$.VARS?.i)) ?? 0)`. `typeof` is the one operator that is safe on an undeclared
+name, so this never throws, and it also fixes reads of variables that exist
+only in the environment — bash does see those in arithmetic, e.g.
+`LIM=2 bash -c 'for ((i=0;i<LIM;i++))'`. Unset still evaluates to 0.
+
+**Writes** need a real assignable binding, so `ctx.hoistVariable()` records the
+name and `mod.ts` emits one `var a, b;` at the top of the IIFE. Hoisting rather
+than declaring at the use site is what makes this work everywhere: arithmetic
+can appear in expression position (`echo $((v = 7))`) where there is no
+statement to prepend a declaration to. Declaring at the root also matches bash,
+where an assignment inside a function body is global unless `local` — verified
+that `f() { for ((m=0;m<2;m++)); do :; done; }; f; echo $m` prints 2.
+
+Note this is the declaration-hoisting pass the original report proposed, but
+demand-driven: only names that actually need an assignable binding are
+collected, and only from arithmetic, rather than walking the whole AST.
+
+Two subtleties worth recording:
+
+1. **`++`/`--` and compound assignment read before they write**, so they cannot
+   use the raw binding either. `undefined++` is NaN where bash counts 0. `++`
+   normalizes first — `((i = <guarded read>), i++)` — which also coerces a
+   string, so `i="5"; ((i++))` gives 6 and not `"51"`. Compound assignment
+   expands `i op= n` to `i = <guarded read> op n`, so `((s += 5))` on an unset
+   `s` yields 5. This changed the five compound-assignment structural tests,
+   which now assert the expanded form.
+2. **Hoisting re-opened the subshell leak SSH-689 had just closed.** A name
+   hoisted from inside a subshell body lands in the root scope, so
+   `( ((y++)) )` would have leaked to the parent. `visitSubshell` and
+   `buildSubshellTestExpression` now compute their save/restore list *after*
+   visiting the body rather than before, since visiting is what discovers the
+   hoisted names. Brace groups deliberately do not isolate — bash `{ ((bg++)); }`
+   does leak — so they were left alone.
+
+### Coverage added
+
+`conformance.test.ts` compares against real bash for a C-style `for` with an
+otherwise-unset loop variable, the loop variable surviving the loop, unset
+variables counting as 0 across `$(())`/`((i++))`/`((s += 5))`, numeric stepping
+of a string-valued variable, and subshell isolation of an arithmetic write.
+
+### Still open
+
+A nested `$(())` fails to **parse** when the outer expansion is inside double
+quotes: `echo "$(( $((2 + 3)) * 2 ))"` gives "Parse error at 1:2: Expected
+command name", while the unquoted `echo $(( $((2+3)) * 2 ))` parses fine. So it
+is the quoting interaction, not nesting as such. Pre-existing and in the parser,
+not the transpiler, so out of scope here — filed as SSH-691.

@@ -85,15 +85,25 @@ export class BashTranspiler2 {
     emitter.emit("(async () => {");
     ctx.indent();
 
-    // Transpile statements
+    // Transpile statements. Buffer them rather than emitting as we go: visiting
+    // is what discovers which variables need a hoisted declaration (SSH-690),
+    // and those have to be emitted ahead of the body.
+    const bodyLines: string[] = [];
     for (const statement of program.body) {
       const result = this.visitStatement(statement, visitorCtx);
       // SSH-507: Use startsWith+slice instead of String.replace to only strip
       // leading indentation. String.replace removes the first occurrence anywhere
       // in the line, which corrupts code if the indent string appears in content.
       const indent = ctx.getIndent();
-      emitter.emitLines(result.lines.map((l) => l.startsWith(indent) ? l.slice(indent.length) : l));
+      bodyLines.push(...result.lines.map((l) => l.startsWith(indent) ? l.slice(indent.length) : l));
     }
+
+    // SSH-690: arithmetic write targets need a real assignable binding
+    const hoisted = ctx.getHoistedVariables();
+    if (hoisted.length > 0) {
+      emitter.emit(`var ${hoisted.join(", ")};`);
+    }
+    emitter.emitLines(bodyLines);
 
     ctx.dedent();
     emitter.emit("})();");
@@ -121,6 +131,7 @@ export class BashTranspiler2 {
       isDeclared: (name: string) => ctx.isDeclared(name),
       getVisibleVariables: () => ctx.getVisibleVariables(),
       declareVariable: (name: string, type?: "const" | "let") => ctx.declareVariable(name, type),
+      hoistVariable: (name: string) => ctx.hoistVariable(name),
       pushScope: () => ctx.pushScope(),
       popScope: () => ctx.popScope(),
       declareFunction: (name: string) => ctx.declareFunction(name),

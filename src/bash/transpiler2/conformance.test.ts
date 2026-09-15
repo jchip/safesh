@@ -656,10 +656,7 @@ describe("Conformance - Control Flow", () => {
     assertEquals(tsResult.stdout, "W=[w1]");
   });
 
-  // SSH-690: the C-style for init emits a bare `i = 0` for an undeclared loop
-  // variable, which throws ReferenceError in the strict-mode wrapper before the
-  // body ever runs. Re-enable once the loop variable is declared.
-  it.ignore("should preserve assignments made inside a C-style for body", async () => {
+  it("should preserve assignments made inside a C-style for body", async () => {
     const script = `for ((i = 0; i < 2; i++)); do
       C="c$i"
     done
@@ -668,6 +665,60 @@ describe("Conformance - Control Flow", () => {
 
     assertEquals(tsResult.stdout, bashResult.stdout);
     assertEquals(tsResult.stdout, "C=[c1]");
+  });
+
+  it("should run a C-style for whose loop variable is otherwise unset", async () => {
+    // SSH-690: the init clause used to emit a bare `i = 0` for an undeclared
+    // binding, throwing ReferenceError before the first iteration.
+    const script = `for ((i = 0; i < 3; i++)); do echo "i=$i"; done`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "i=0\ni=1\ni=2");
+  });
+
+  it("should keep a C-style for loop variable after the loop", async () => {
+    // bash has no block-scoped variables, so the loop variable survives
+    const script = `for ((i = 0; i < 2; i++)); do :; done
+    echo "after=[$i]"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "after=[2]");
+  });
+
+  it("should count an unset variable as zero in arithmetic", async () => {
+    // SSH-690: each of these used to reference an undeclared binding
+    const script = `echo "sum=$((z + 1))"
+    ((w++))
+    echo "w=$w"
+    ((s += 5))
+    echo "s=$s"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "sum=1\nw=1\ns=5");
+  });
+
+  it("should step a string-valued variable numerically", async () => {
+    const script = `i="5"
+    ((i++))
+    echo "i=$i"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "i=6");
+  });
+
+  it("should not leak a subshell's arithmetic assignment to the parent", async () => {
+    const script = `x=1
+    ( ((x++)); echo "in=$x" )
+    ( ((y++)) )
+    echo "out=$x y=[$y]"`;
+    const { bashResult, tsResult } = await compareExecution(script);
+
+    assertEquals(tsResult.stdout, bashResult.stdout);
+    assertEquals(tsResult.stdout, "in=2\nout=1 y=[]");
   });
 
   it("should preserve assignments made inside a brace group", async () => {

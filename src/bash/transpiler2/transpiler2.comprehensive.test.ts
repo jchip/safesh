@@ -1383,22 +1383,28 @@ describe("Arithmetic Expressions - Comprehensive", () => {
       assertStringIncludes(output, "x = 5");
     });
 
+    // SSH-690: a compound assignment reads its target, so it expands to
+    // `x = <guarded read> op 5` rather than the JS `x op= 5`. The guarded read
+    // is what makes an unset variable count as 0 like bash, instead of
+    // `undefined += 5` yielding NaN.
+    const guardedRead = 'Number((typeof x !== "undefined" ? x : ($.ENV.x ?? $.VARS?.x)) ?? 0)';
+
     it("should handle compound assignment +=", () => {
       const ast = parse("((x += 5))");
       const output = transpile(ast);
-      assertStringIncludes(output, "x += 5");
+      assertStringIncludes(output, `x = ${guardedRead} + 5`);
     });
 
     it("should handle compound assignment -=", () => {
       const ast = parse("((x -= 5))");
       const output = transpile(ast);
-      assertStringIncludes(output, "x -= 5");
+      assertStringIncludes(output, `x = ${guardedRead} - 5`);
     });
 
     it("should handle compound assignment *=", () => {
       const ast = parse("((x *= 5))");
       const output = transpile(ast);
-      assertStringIncludes(output, "x *= 5");
+      assertStringIncludes(output, `x = ${guardedRead} * 5`);
     });
 
     it("should handle compound assignment /=", () => {
@@ -1406,13 +1412,13 @@ describe("Arithmetic Expressions - Comprehensive", () => {
       const output = transpile(ast);
       // SSH-623: bash arithmetic is integer-only, so `/=` truncates toward zero
       // (C semantics) rather than emitting a raw float `x /= 5`.
-      assertStringIncludes(output, "x = Math.trunc(x / 5)");
+      assertStringIncludes(output, `x = Math.trunc(${guardedRead} / 5)`);
     });
 
     it("should handle compound assignment %=", () => {
       const ast = parse("((x %= 5))");
       const output = transpile(ast);
-      assertStringIncludes(output, "x %= 5");
+      assertStringIncludes(output, `x = ${guardedRead} % 5`);
     });
   });
 

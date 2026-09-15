@@ -7,6 +7,19 @@
 import type * as AST from "../../ast.ts";
 import type { VisitorContext } from "../types.ts";
 import { visitCommandSubstitution, visitParameterExpansion } from "./words.ts";
+import { sanitizeVarName } from "../utils/mod.ts";
+
+/**
+ * SSH-690: Lower an arithmetic write target (`i` in `((i++))` or `i = 0`) to an
+ * assignable JS identifier, requesting the hoisted declaration that makes it
+ * one. Without the declaration the bare identifier is a free variable and the
+ * strict-mode wrapper throws ReferenceError before the expression runs.
+ */
+function arithmeticTarget(name: string, ctx: VisitorContext): string {
+  const jsName = sanitizeVarName(name);
+  ctx.hoistVariable(jsName);
+  return jsName;
+}
 
 // =============================================================================
 // Arithmetic Expression Dispatcher
@@ -23,7 +36,7 @@ export function visitArithmeticExpression(
     case "NumberLiteral":
       return visitNumberLiteral(expr);
     case "VariableReference":
-      return visitVariableReference(expr);
+      return visitVariableReference(expr, _ctx);
     case "BinaryArithmeticExpression":
       return visitBinaryArithmetic(expr, _ctx);
     case "UnaryArithmeticExpression":
@@ -58,13 +71,21 @@ export function visitNumberLiteral(node: AST.NumberLiteral): string {
 // Variable Reference Handler
 // =============================================================================
 
-export function visitVariableReference(node: AST.VariableReference): string {
+export function visitVariableReference(
+  node: AST.VariableReference,
+  _ctx?: VisitorContext,
+): string {
   // $? is the last exit status, recorded as Deno.exitCode (SSH-581/SSH-583)
   if (node.name === "?") {
     return `Number(Deno.exitCode ?? 0)`;
   }
+  // SSH-690: a bare identifier throws ReferenceError when the shell variable
+  // was never assigned in-script, so guard the read with typeof and fall back
+  // to the environment — bash reads exported variables in arithmetic, e.g.
+  // `LIM=2 bash -c 'for ((i=0;i<LIM;i++)); do ...'`.
   // Use ?? 0 to match Bash behavior: unset variables in arithmetic evaluate to 0
-  return `Number(${node.name} ?? 0)`;
+  const jsName = sanitizeVarName(node.name);
+  return `Number((typeof ${jsName} !== "undefined" ? ${jsName} : ($.ENV.${node.name} ?? $.VARS?.${node.name})) ?? 0)`;
 }
 
 // =============================================================================
@@ -107,14 +128,20 @@ export function visitUnaryArithmetic(
   // because Number(i ?? 0)++ is invalid JavaScript
   const isIncrementDecrement = node.operator === "++" || node.operator === "--";
 
-  let arg: string;
   if (isIncrementDecrement && node.argument.type === "VariableReference") {
     // Use the variable name directly for ++/-- operators
-    arg = node.argument.name;
-  } else {
-    // For other unary operators or complex expressions, use the full expression
-    arg = visitArithmeticExpression(node.argument, ctx);
+    const target = arithmeticTarget(node.argument.name, ctx);
+    // SSH-690: normalize to a number before stepping. The hoisted binding is
+    // undefined until first assigned, and `undefined++` yields NaN where bash
+    // counts an unset variable as 0; this also coerces a string-valued shell
+    // variable, so `i="5"; ((i++))` gives 6 rather than "51".
+    const current = visitVariableReference(node.argument, ctx);
+    const step = node.prefix ? `${node.operator}${target}` : `${target}${node.operator}`;
+    return `((${target} = ${current}), ${step})`;
   }
+
+  // For other unary operators or complex expressions, use the full expression
+  const arg = visitArithmeticExpression(node.argument, ctx);
 
   if (node.prefix) {
     return `(${node.operator}${arg})`;
@@ -147,12 +174,25 @@ export function visitAssignmentExpression(
   ctx: VisitorContext,
 ): string {
   const right = visitArithmeticExpression(node.right, ctx);
+  const target = arithmeticTarget(node.left.name, ctx);
+
+  if (node.operator === "=") {
+    return `(${target} = ${right})`;
+  }
+
+  // SSH-690: a compound assignment reads the target first, so it has to go
+  // through the guarded read — `undefined += 5` is NaN, where bash counts an
+  // unset variable as 0 and yields 5.
+  const current = visitVariableReference(node.left, ctx);
+
   // SSH-623: `/=` must truncate toward zero like bash integer division.
   // JS `i /= 2` would store a float, so lower to an explicit Math.trunc assign.
   if (node.operator === "/=") {
-    return `(${node.left.name} = Math.trunc(${node.left.name} / ${right}))`;
+    return `(${target} = Math.trunc(${current} / ${right}))`;
   }
-  return `(${node.left.name} ${node.operator} ${right})`;
+
+  // Expand `i op= n` to `i = i op n` so the read is the guarded one
+  return `(${target} = ${current} ${node.operator.slice(0, -1)} ${right})`;
 }
 
 // =============================================================================

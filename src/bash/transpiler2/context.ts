@@ -45,10 +45,13 @@ export class TranspilerContext {
   private diagnostics: Diagnostic[] = [];
   private functionRegistry: FunctionRegistry;
   private stdoutCaptureVar: string | null = null;
+  private readonly rootScope: VariableScope;
+  private readonly hoistedVariables = new Set<string>();
 
   constructor(options: ResolvedOptions) {
     this.options = options;
     this.currentScope = { variables: new Map(), parent: null };
+    this.rootScope = this.currentScope;
     this.functionRegistry = { functions: new Set() };
   }
 
@@ -179,6 +182,31 @@ export class TranspilerContext {
   /** Check if variable is in current scope (not parent) */
   isInCurrentScope(name: string): boolean {
     return this.currentScope.variables.has(name);
+  }
+
+  /**
+   * SSH-690: Request a function-scoped declaration for a shell variable whose
+   * lowering needs a real assignable binding — an arithmetic write target such
+   * as `((i++))` or the `i = 0` of a C-style for.
+   *
+   * The declaration is emitted once at the top of the generated IIFE rather
+   * than at the use site, because arithmetic can appear in expression position
+   * (`echo $((v = 7))`) where there is no statement to prepend to. Declaring at
+   * the root also matches bash, where an assignment inside a function body is
+   * global unless `local`.
+   */
+  hoistVariable(name: string): void {
+    this.hoistedVariables.add(name);
+    // Record in the root scope, not the current one: the emitted `var` lives at
+    // the top of the IIFE and must stay visible after any scope here is popped.
+    if (!this.rootScope.variables.has(name)) {
+      this.rootScope.variables.set(name, { type: "let", initialized: false });
+    }
+  }
+
+  /** Names needing a hoisted declaration, in first-requested order */
+  getHoistedVariables(): string[] {
+    return [...this.hoistedVariables];
   }
 
   // ===========================================================================

@@ -109,6 +109,9 @@ export interface VisitorContext {
   /** Declare a variable in current scope */
   declareVariable(name: string, type?: "const" | "let"): void;
 
+  /** Request a function-scoped declaration, emitted at the top of the output */
+  hoistVariable(name: string): void;
+
   /** Push a new variable scope */
   pushScope(): void;
 

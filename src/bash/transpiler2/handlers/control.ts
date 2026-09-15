@@ -392,14 +392,33 @@ export function visitSubshell(
 ): StatementResult {
   const lines: string[] = [];
   const indent = ctx.getIndent();
-  const inheritedVariables = ctx.getVisibleVariables();
-  const inheritedBindings = inheritedVariables.map(sanitizeVarName);
-  const savedVariables = inheritedBindings.length > 0 ? ctx.getTempVar("__subVars") : null;
-
-  lines.push(`${indent}await (async () => {`);
 
   ctx.indent();
   const bodyIndent = ctx.getIndent();
+
+  // Visit the body before deciding what to save: SSH-690 lets the body hoist a
+  // declaration into the enclosing scope (an arithmetic write target such as
+  // `( ((y++)) )`), and those bindings have to be restored too or the subshell
+  // leaks into its parent.
+  const bodyLines: string[] = [];
+  ctx.pushScope();
+  ctx.enterSubshell();
+  ctx.indent();
+  try {
+    for (const s of stmt.body) {
+      const result = ctx.visitStatement(s);
+      bodyLines.push(...result.lines);
+    }
+  } finally {
+    ctx.dedent();
+    ctx.exitSubshell();
+    ctx.popScope();
+  }
+
+  const inheritedBindings = ctx.getVisibleVariables().map(sanitizeVarName);
+  const savedVariables = inheritedBindings.length > 0 ? ctx.getTempVar("__subVars") : null;
+
+  lines.push(`${indent}await (async () => {`);
   if (savedVariables) {
     lines.push(
       `${bodyIndent}const ${savedVariables} = structuredClone([${inheritedBindings.join(", ")}]);`,
@@ -408,19 +427,7 @@ export function visitSubshell(
   // SSH-584: `exit N` in the body throws a sentinel; convert it here to the
   // subshell's status so only the subshell terminates (bash parity)
   lines.push(`${bodyIndent}try {`);
-  ctx.pushScope();
-  ctx.enterSubshell();
-  ctx.indent();
-  try {
-    for (const s of stmt.body) {
-      const result = ctx.visitStatement(s);
-      lines.push(...result.lines);
-    }
-  } finally {
-    ctx.dedent();
-    ctx.exitSubshell();
-    ctx.popScope();
-  }
+  lines.push(...bodyLines);
   lines.push(`${bodyIndent}} catch (__e) {`);
   lines.push(
     `${bodyIndent}  if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) { __recStatus((__e as { __sshSubshellExit: number }).__sshSubshellExit); return; }`,
@@ -472,8 +479,6 @@ export function buildSubshellTestExpression(
   stmt: AST.Subshell,
   ctx: VisitorContext,
 ): string {
-  const inheritedVariables = ctx.getVisibleVariables();
-  const inheritedBindings = inheritedVariables.map(sanitizeVarName);
   const bodyLines: string[] = [];
   ctx.pushScope();
   ctx.enterSubshell();
@@ -486,6 +491,9 @@ export function buildSubshellTestExpression(
     ctx.exitSubshell();
     ctx.popScope();
   }
+  // Computed after the body so a declaration the body hoisted is restored too
+  // (SSH-690) — see visitSubshell.
+  const inheritedBindings = ctx.getVisibleVariables().map(sanitizeVarName);
   // SSH-620: capture the body's exit status as the test result, but restore the
   // prior Deno.exitCode so evaluating the condition has no side effect on $?
   // (matching a `[ ]` test) — the if/while handler then sets $? from the result.
