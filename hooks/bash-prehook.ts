@@ -1673,6 +1673,30 @@ ${tsCode}
       throw parseError;
     }
 
+    // SSH-687: a misplaced /*#*/ signature only reached the hint when the
+    // transpile THREW. When the rest of the line still parses as bash, `/*#*/`
+    // is just an ordinary command word: it flowed on to the permission gate,
+    // which asked the user to approve a "command" named /*#*/ and — on "always
+    // allow" — persisted that into allowedCommands, where it can never match.
+    // Check it here, before the gate, and deny with the actionable hint.
+    const misplacedSignature = detectMisplacedSignature(parsed.command);
+    if (misplacedSignature) {
+      debug("Misplaced /*#*/ signature detected before permission gate");
+      const reason = `[SAFESH] ${misplacedSignature}`;
+      if (parsed?.isAntigravity) {
+        console.log(JSON.stringify({ decision: "deny", reason }));
+      } else {
+        console.log(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: reason,
+          },
+        }));
+      }
+      Deno.exit(1);
+    }
+
     if (
       policy.routeAllCommands !== true &&
       isSimpleCommand(ast) &&
@@ -1736,8 +1760,17 @@ ${tsCode}
       /const\s+\w+\s+=\s+for\s+await/, // "const x = for await" - invalid syntax
       /for\s*\(\s*const\s+\w+\s+of\s+\["\$\{await/, // "for (const x of ["${await..." - template in array
       /for\s*\(\s*const\s+\w+\s+of\s+\["[^"]*await/, // Alternative: for (const x of ["...await
-      /\.pipe\(\$\.(?:grep|head|tail|sort|uniq|wc|filter|map|flatMap|take|tee)\((?:(?!\breturn\b)[^\n`]){0,500}\)\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.stdout\(\)/, // Calling stdout() after transform pipes - invalid (SSH-496/498/570/34: avoid command-pipe false positives)
-      /\.lines\(\)\.pipe\((?:(?!\breturn\b)[^\n`]){1,500}\)\.lines\(\)/, // Calling .lines() twice with pipe - invalid (SSH-496: exclude cross-IIFE, SSH-498: exclude cross-template-literal, SSH-570: exclude cross-statement)
+      // Calling stdout() after transform pipes - invalid (SSH-496/498/570/34: avoid command-pipe false positives)
+      // SSH-685: the gaps also refuse `${`, so a match cannot start inside one
+      // `${...}` command substitution and end on the `.stdout()` of the NEXT
+      // one when both are emitted on a single line of the same template
+      // literal. Excluding `}` instead would break the common
+      // `$.wc({ lines: true })` form and neuter the guard.
+      /\.pipe\(\$\.(?:grep|head|tail|sort|uniq|wc|filter|map|flatMap|take|tee)\((?:(?!\breturn\b)(?!\$\{)[^\n`]){0,500}\)\)\.pipe\((?:(?!\breturn\b)(?!\$\{)[^\n`]){1,500}\)\.stdout\(\)/,
+      // Calling .lines() twice with pipe - invalid (SSH-496: exclude cross-IIFE, SSH-498: exclude cross-template-literal, SSH-570: exclude cross-statement)
+      // SSH-685: same `${`-crossing guard as the pattern above — verified this
+      // one had the identical latent false positive across two substitutions.
+      /\.lines\(\)\.pipe\((?:(?!\breturn\b)(?!\$\{)[^\n`]){1,500}\)\.lines\(\)/,
     ];
 
     for (const pattern of knownBadPatterns) {

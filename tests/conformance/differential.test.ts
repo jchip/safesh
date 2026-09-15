@@ -35,6 +35,13 @@ interface Case {
   src: string;
   /** Open ticket id when this case is a KNOWN divergence (expected-fail). */
   xfail?: string;
+  /**
+   * SSH-695: case needs bash 4+ syntax and is skipped on an older host. Tag
+   * only the cases that genuinely need it — the gate used to be all-or-nothing,
+   * which silently disabled the whole corpus (and every `xfail` assertion in
+   * it) on macOS, where /bin/bash is 3.2.
+   */
+  bash4?: true;
 }
 
 /**
@@ -51,7 +58,7 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'echo "${UNSET:-default}"' },
     { src: 's=hello; echo "${s/l/L}"; echo "${s//l/L}"' },
     { src: 's=hello; echo "${#s}"; echo "${s:1:3}"' },
-    { src: 's=hello; echo "${s^^}"; echo "${s,,}"' },
+    { src: 's=hello; echo "${s^^}"; echo "${s,,}"', bash4: true },
     { src: 'r=PATH; echo "${!r}" | head -c0; echo indirect-ok' },
   ],
   arithmetic: [
@@ -222,9 +229,13 @@ function divergenceReport(
   ].filter(Boolean).join("\n");
 }
 
-// The corpus uses bash 4+ features (e.g. ${s^^}); skip rather than red-fail on a
-// host whose `bash` is older or absent (macOS /bin/bash is 3.2).
-async function bashSupportsCorpus(): Promise<{ ok: boolean; reason: string }> {
+// SSH-695: only a handful of cases need bash 4+ syntax, so probe the version and
+// skip just those (`bash4: true`) rather than the whole corpus. The gate was
+// previously all-or-nothing, which meant that on macOS — where /bin/bash is 3.2 —
+// every case AND every `xfail` assertion was silently inactive, so a fixed bug
+// never tripped the "XFAIL now MATCHES" alarm this harness exists to raise.
+// `bash` being absent or unrunnable is still a whole-corpus skip.
+async function bashVersion(): Promise<{ ok: boolean; major: number; reason: string }> {
   try {
     const o = await new Deno.Command("bash", {
       args: ["-c", "echo ${BASH_VERSINFO[0]}"],
@@ -232,20 +243,24 @@ async function bashSupportsCorpus(): Promise<{ ok: boolean; reason: string }> {
       stdout: "piped",
       stderr: "null",
     }).output();
-    if (o.code !== 0) return { ok: false, reason: "`bash` exited non-zero" };
+    if (o.code !== 0) return { ok: false, major: 0, reason: "`bash` exited non-zero" };
     const major = Number.parseInt(dec.decode(o.stdout).trim(), 10);
-    if (!(major >= 4)) {
-      return { ok: false, reason: `bash ${major} < 4 (corpus uses bash 4+ features)` };
+    if (!Number.isFinite(major)) {
+      return { ok: false, major: 0, reason: "could not read BASH_VERSINFO" };
     }
-    return { ok: true, reason: `bash ${major}` };
+    return { ok: true, major, reason: `bash ${major}` };
   } catch (e) {
-    return { ok: false, reason: `\`bash\` not runnable: ${msg(e)}` };
+    return { ok: false, major: 0, reason: `\`bash\` not runnable: ${msg(e)}` };
   }
 }
 
-const bash = await bashSupportsCorpus();
+const bash = await bashVersion();
 if (!bash.ok) {
   console.warn(`[SSH-628] differential conformance SKIPPED — ${bash.reason}`);
+} else if (bash.major < 4) {
+  console.warn(
+    `[SSH-628] ${bash.reason}: running the corpus, skipping only the bash4-tagged cases`,
+  );
 }
 
 Deno.test({
@@ -263,22 +278,26 @@ Deno.test({
       for (const [cat, cases] of Object.entries(CORPUS)) {
         for (const c of cases) {
           const label = c.xfail ? `${c.src}  (xfail ${c.xfail})` : c.src;
-          await t.step(`[${cat}] ${label}`, async () => {
-            const src = c.src.replaceAll("@TMP@", tmp);
-            const b = await runBash(src);
-            const s = await runSafesh(src);
-            const diverged = b.out !== s.out || b.code !== s.code;
+          await t.step({
+            name: `[${cat}] ${label}`,
+            ignore: Boolean(c.bash4) && bash.major < 4,
+            fn: async () => {
+              const src = c.src.replaceAll("@TMP@", tmp);
+              const b = await runBash(src);
+              const s = await runSafesh(src);
+              const diverged = b.out !== s.out || b.code !== s.code;
 
-            if (c.xfail) {
-              if (!diverged) {
-                throw new Error(
-                  `XFAIL ${c.xfail} now MATCHES bash — the bug appears fixed. ` +
-                    `Remove the \`xfail\` from this case and close ${c.xfail}.\n  src: ${c.src}`,
-                );
+              if (c.xfail) {
+                if (!diverged) {
+                  throw new Error(
+                    `XFAIL ${c.xfail} now MATCHES bash — the bug appears fixed. ` +
+                      `Remove the \`xfail\` from this case and close ${c.xfail}.\n  src: ${c.src}`,
+                  );
+                }
+                return; // still diverges as documented; gate stays green
               }
-              return; // still diverges as documented; gate stays green
-            }
-            if (diverged) throw new Error(divergenceReport(cat, c.src, b, s));
+              if (diverged) throw new Error(divergenceReport(cat, c.src, b, s));
+            },
           });
         }
       }

@@ -243,6 +243,7 @@ function handleTimeoutCommand(
   argTemplateEscapedLiterals?: boolean[],
   argIsGlob?: boolean[],
   assignments?: AST.VariableAssignment[],
+  hasMergeStreams?: boolean,
 ): { code: string; async: boolean } | null {
   if (args.length < 2) return null;
 
@@ -293,10 +294,13 @@ function handleTimeoutCommand(
     : "";
   // SSH-649: emit any env-prefix assignments (FOO=bar timeout ...) alongside the
   // timeout option so the child process actually receives them.
+  // SSH-686: timeout, env and mergeStreams all share one options object; the
+  // 2>&1 half used to be dropped here the same way the env-prefix path dropped it.
   const envEntries = buildEnvEntries(assignments ?? [], ctx);
-  const options = envEntries
-    ? `{ timeout: ${timeoutMs}, env: { ${envEntries} } }`
-    : `{ timeout: ${timeoutMs} }`;
+  const optionParts = [`timeout: ${timeoutMs}`];
+  if (envEntries) optionParts.push(`env: { ${envEntries} }`);
+  if (hasMergeStreams) optionParts.push("mergeStreams: true");
+  const options = `{ ${optionParts.join(", ")} }`;
   const code = `$.cmd(${options}, ${
     formatArg(cmdName, argExpansions?.[1], argTemplateEscapedLiterals?.[1])
   }${argsArray ? `, ${argsArray}` : ""})`;
@@ -354,9 +358,12 @@ function handleStandardCommand(
         formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i])
       )
       .join(", ");
-    return `$.cmd({ env: { ${envEntries} } }, ${formattedName}${
-      argsArray ? `, ${argsArray}` : ""
-    })`;
+    // SSH-686: an env prefix and a 2>&1 both contribute to the SAME options
+    // object. This branch used to emit only the env half, silently dropping the
+    // stream merge, so stderr the script asked to suppress still printed.
+    const opts = [`env: { ${envEntries} }`];
+    if (hasMergeStreams) opts.push("mergeStreams: true");
+    return `$.cmd({ ${opts.join(", ")} }, ${formattedName}${argsArray ? `, ${argsArray}` : ""})`;
   }
 
   const argsArray = args.length > 0
@@ -422,6 +429,8 @@ type CommandStrategy =
     // SSH-649: carry any env-prefix assignments (FOO=bar timeout ...) so they
     // reach the child process instead of being silently dropped.
     assignments: AST.VariableAssignment[];
+    // SSH-686: 2>&1 has to reach the same options object as timeout/env.
+    hasMergeStreams: boolean;
   }
   | {
     type: "fluent";
@@ -674,6 +683,8 @@ function selectCommandStrategy(
       argIsGlob: analysis.argIsGlob,
       // SSH-649: preserve env-prefix assignments for the timed command.
       assignments: command.assignments,
+      // SSH-686: preserve 2>&1 for the timed command.
+      hasMergeStreams: analysis.hasMergeStreams,
     };
   }
 
@@ -796,6 +807,7 @@ function executeCommandStrategy(
         strategy.argTemplateEscapedLiterals,
         strategy.argIsGlob,
         strategy.assignments,
+        strategy.hasMergeStreams,
       );
       if (timeoutResult) {
         return { code: timeoutResult.code, async: timeoutResult.async };

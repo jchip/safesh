@@ -7,6 +7,7 @@
  */
 
 import type * as AST from "../ast.ts";
+import { parse } from "../parser.ts";
 import {
   type ExpressionResult,
   type ResolvedOptions,
@@ -64,6 +65,16 @@ export class BashTranspiler2 {
    * Transpile a bash AST program to TypeScript code.
    */
   transpile(program: AST.Program): string {
+    // SSH-688: `transpile` takes a parsed AST, and `deno run` does not
+    // type-check, so handing it bash source used to fail deep inside with
+    // "program.body is not iterable". Name the actual mistake instead.
+    if (typeof program !== "object" || program === null || !Array.isArray(program.body)) {
+      throw new TypeError(
+        `transpile() expects a parsed AST.Program, got ${
+          typeof program === "string" ? "a string" : typeof program
+        } — call parse(bash) first, or use transpileSource(bash).`,
+      );
+    }
     const ctx = new TranspilerContext(this.options);
     const emitter = new OutputEmitter(ctx);
 
@@ -336,4 +347,18 @@ export function transpile(
 ): string {
   const transpiler = new BashTranspiler2(options);
   return transpiler.transpile(program);
+}
+
+/**
+ * SSH-688: parse + transpile bash source in one call.
+ *
+ * `transpile` takes an AST, which is an easy trap in one-off scripts since
+ * `deno run` does not type-check. This is the shape the test files kept
+ * hand-rolling as a local `transpileBash` helper.
+ */
+export function transpileSource(
+  source: string,
+  options?: TranspilerOptions,
+): string {
+  return transpile(parse(source), options);
 }
