@@ -197,37 +197,100 @@ export function wholeArrayModifiedElements(
   return opts.split ? `${modified}${WORD_SPLIT_SUFFIX}` : modified;
 }
 
-/**
- * SSH-700: the whole-array expansion when `word` is EXACTLY one `${a[@]}` and
- * nothing else — the form that expands to one argument PER ELEMENT. A modifier
- * is allowed: `"${a[@]:1}"` is still one argument per surviving element.
- *
- * Returns null, leaving the word on the normal string-interpolating path, for:
- *   - `[*]`, which is specified to join into one word;
- *   - a word that glues text onto the expansion (`pre"${a[@]}"post`). bash
- *     splits that at the seams (`pre1`, `2post`); not implemented (SSH-702).
- *
- * `${#a[@]}` is not rejected here — it is a count, and
- * {@link wholeArrayModifiedElements} returns null for it, so the caller falls
- * back to the single-word path on its own.
- */
-export function wordWholeArraySplat(
-  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
-): { arrayName: string; expansion: AST.ParameterExpansion } | null {
-  if (word.type !== "Word") return null;
-  if (word.parts.length !== 1) return null;
-  const part = word.parts[0];
-  if (!part || part.type !== "ParameterExpansion") return null;
-  const pe = part as AST.ParameterExpansion;
+/** The array name when this expansion is a whole-array `[@]`, else null. */
+function wholeArrayAtName(pe: AST.ParameterExpansion): string | null {
   const embedded = WHOLE_ARRAY_PARAM.exec(pe.parameter);
-  if (embedded) {
-    return embedded[2] === "@" ? { arrayName: embedded[1]!, expansion: pe } : null;
-  }
+  // `[*]` is specified to join into one word, so it is not a splat.
+  if (embedded) return embedded[2] === "@" ? embedded[1]! : null;
   // Legacy shape: the subscript arrives in its own field (SSH-303).
   if (pe.subscript === "@" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(pe.parameter)) {
-    return { arrayName: pe.parameter, expansion: pe };
+    return pe.parameter;
   }
   return null;
+}
+
+/**
+ * SSH-700/702: locate the ONE whole-array `${a[@]}` expansion in `word`, with
+ * whatever parts sit before and after it. A modifier is allowed — `"${a[@]:1}"`
+ * is still one argument per surviving element.
+ *
+ * Returns null when the word holds no `[@]` expansion, or more than one
+ * (`"${a[@]}${b[@]}"`, whose seam behaviour is not implemented).
+ */
+function wordArraySplat(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+): {
+  arrayName: string;
+  expansion: AST.ParameterExpansion;
+  before: AST.WordPart[];
+  after: AST.WordPart[];
+} | null {
+  if (word.type !== "Word") return null;
+  let found: { arrayName: string; expansion: AST.ParameterExpansion; index: number } | null = null;
+  for (const [index, part] of word.parts.entries()) {
+    if (part.type !== "ParameterExpansion") continue;
+    const arrayName = wholeArrayAtName(part);
+    if (arrayName === null) continue;
+    if (found !== null) return null; // two `[@]` in one word — left as it was
+    found = { arrayName, expansion: part, index };
+  }
+  if (found === null) return null;
+  return {
+    arrayName: found.arrayName,
+    expansion: found.expansion,
+    before: word.parts.slice(0, found.index),
+    after: word.parts.slice(found.index + 1),
+  };
+}
+
+/**
+ * SSH-700/702: the element list a whole-array `${a[@]}` WORD expands to — one
+ * entry per argument — or null when `word` is not such a form, leaving it on
+ * the normal string-interpolating path.
+ *
+ * A LONE `${a[@]}` yields the elements themselves. A word that GLUES text onto
+ * the expansion splits at the seams, as bash does: the first element takes the
+ * prefix, the last takes the suffix, and an empty array collapses to the
+ * prefix and suffix joined as a single argument (`pre"${a[@]}"post` with an
+ * empty `a` is one argument `prepost`, not zero arguments).
+ *
+ * `${#a[@]}` returns null — it is a count, a single word, and
+ * {@link wholeArrayModifiedElements} rejects it.
+ *
+ * KNOWN GAP (SSH-704): the glued form always word-splits its elements, because
+ * the AST records quoting per WORD and a glued word is never marked quoted, so
+ * `pre"${a[@]}"post` is indistinguishable here from `pre${a[@]}post`. That is
+ * visible only for an element containing whitespace.
+ */
+export function arraySplatWords(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+  ctx: VisitorContext,
+): string | null {
+  const splat = wordArraySplat(word);
+  if (splat === null) return null;
+
+  const quoted = word.type === "Word" && (word.quoted || word.singleQuoted);
+  const modifierArg = splat.expansion.modifierArg
+    ? visitWord(splat.expansion.modifierArg as AST.Word, ctx)
+    : "";
+  const elements = wholeArrayModifiedElements(
+    splat.arrayName,
+    splat.expansion.modifier,
+    modifierArg,
+    { split: !quoted },
+  );
+  if (elements === null) return null;
+  if (splat.before.length === 0 && splat.after.length === 0) return elements;
+
+  // A literal part of a partially quoted word still carries its quote
+  // characters (`pre"`), which visitWordPart strips for an unquoted word —
+  // the same rendering visitWord itself does.
+  const render = (parts: AST.WordPart[]) =>
+    parts.map((part) => visitWordPart(part, ctx, quoted)).join("");
+  return `((__els, __pre, __suf) => __els.length === 0 ? [__pre + __suf] ` +
+    `: __els.map((__e, __i) => (__i === 0 ? __pre : "") + __e ` +
+    `+ (__i === __els.length - 1 ? __suf : "")))` +
+    `(${elements}, \`${render(splat.before)}\`, \`${render(splat.after)}\`)`;
 }
 
 /**

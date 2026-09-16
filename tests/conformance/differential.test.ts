@@ -183,6 +183,33 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=(ax bx); echo "${a[@]#a}"' },
     { src: 'a=(a.tar.gz b.tar.gz); echo "${a[@]%.gz}"' },
     { src: 'a=(1 2 3); printf "[%s]" "${a[@]:1}"; echo' },
+    // SSH-702: a whole-array expansion GLUED to adjacent text splits at the
+    // seams — the first element takes the prefix, the last takes the suffix,
+    // and the middle elements stand alone.
+    { src: 'a=(1 2); printf "[%s]" pre"${a[@]}"post; echo' },
+    { src: 'a=(1 2 3); printf "[%s]" pre"${a[@]}"; echo' },
+    { src: 'a=(1 2 3); printf "[%s]" "${a[@]}"post; echo' },
+    { src: 'a=(1 2); printf "[%s]" pre${a[@]}post; echo' },
+    // The prefix may itself be an expansion, not just a literal.
+    { src: 'a=(1 2); x=P; printf "[%s]" "$x${a[@]}"; echo' },
+    // One element takes BOTH sides; an empty array leaves prefix+suffix glued
+    // together as a single argument (NOT zero arguments, which is what the
+    // lone `"${a[@]}"` form yields).
+    { src: 'a=(1); printf "[%s]" pre"${a[@]}"post; echo' },
+    { src: 'a=(); printf "[%s]" pre"${a[@]}"post; echo END' },
+    { src: 'a=(); x=P; printf "[%s]" "$x${a[@]}"; echo END' },
+    // A glued expansion still composes with a modifier (SSH-701).
+    { src: 'a=(ax bx); printf "[%s]" pre"${a[@]#a}"post; echo' },
+    { src: 'a=(1 2); for v in pre"${a[@]}"post; do echo "v=$v"; done' },
+    // SSH-704: a glued word is never marked quoted in the AST, so its elements
+    // always word-split — visible only for an element containing whitespace.
+    // The unquoted glued form below is correct and guards against a fix that
+    // stops splitting altogether.
+    {
+      src: 'a=("x y" z); printf "[%s]" pre"${a[@]}"post; echo',
+      xfail: "SSH-704",
+    },
+    { src: 'a=("x y" z); printf "[%s]" pre${a[@]}post; echo' },
   ],
   functions: [
     // SSH-674: call-site arguments used to be dropped, and $N in the body read

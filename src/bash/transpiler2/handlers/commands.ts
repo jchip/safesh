@@ -26,7 +26,7 @@ import {
 } from "../utils/mod.ts";
 import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
 import { buildSubshellTestExpression } from "./control.ts";
-import { wholeArrayModifiedElements, wordWholeArraySplat } from "./words.ts";
+import { arraySplatWords } from "./words.ts";
 
 // =============================================================================
 // Helpers
@@ -126,21 +126,7 @@ function arraySplatSpread(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
   ctx: VisitorContext,
 ): string | null {
-  const splat = wordWholeArraySplat(word);
-  if (splat === null) return null;
-  const unquoted = word.type === "Word" && !word.quoted && !word.singleQuoted;
-  const modifierArg = splat.expansion.modifierArg
-    ? ctx.visitWord(splat.expansion.modifierArg as AST.Word)
-    : "";
-  // SSH-701: a modifier keeps the per-element split — `"${a[@]:1}"` is one
-  // argument per surviving element. null here means the form is not a list
-  // (`${#a[@]}` is a count), so the word stays on the normal path.
-  const elements = wholeArrayModifiedElements(
-    splat.arrayName,
-    splat.expansion.modifier,
-    modifierArg,
-    { split: unquoted },
-  );
+  const elements = arraySplatWords(word, ctx);
   return elements === null ? null : `...${elements}`;
 }
 
