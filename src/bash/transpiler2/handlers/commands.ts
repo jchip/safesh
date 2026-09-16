@@ -1957,7 +1957,8 @@ function buildDownstreamWithStdin(
  * Split raw text into the line list a line stream carries: the trailing empty
  * produced by a terminating newline is dropped, interior blanks are kept.
  * Lossy by nature — "x" and "x\n" both split to ["x"] — which is why a command
- * downstream is fed {@link resultObjectToRawStream} instead (SSH-703).
+ * downstream receives the captured text as stdin directly, while a raw
+ * transform is fed {@link resultObjectToRawStream} instead (SSH-703).
  */
 const LINE_SPLIT =
   `.split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1)`;
@@ -2660,14 +2661,11 @@ class PipelineAssembler {
       this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
       this.isLineStream = true;
     } else if (this.isResultObject) {
-      // SSH-703: a command's stdin is BYTES, so hand it the captured output raw
-      // rather than round-tripping it through a line list — that split dropped
-      // the trailing terminator and the rejoin in execStreamToCmd could not put
-      // it back, leaving every downstream stage one byte short. A line-oriented
-      // TRANSFORM still gets the line stream (handleTransformPipe), since
-      // $.head/$.tail/$.grep consume items.
-      this.code = `${resultObjectToRawStream(this.code)}.pipe($.toCmdLines(${part.code}))`;
-      this.isLineStream = true;
+      // A command's stdin is bytes. Feed the captured result straight into the
+      // command so its stdout stays on the byte-preserving Command path; routing
+      // it through toCmdLines invents a terminator when the output has none.
+      this.code = `((__result: any) => ${part.code}.stdin(String(__result?.output ?? __result?.stdout ?? "")))(${this.code})`;
+      this.isLineStream = false;
     } else {
       // When piping from a command to a command, can pipe directly
       this.code = `${this.code}.pipe(${part.code})`;

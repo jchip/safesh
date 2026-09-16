@@ -341,6 +341,8 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'echo -n -e "a\\tb"; echo END' },
     { src: "echo -n; echo END" },
     { src: "echo -n x | cat; echo END" },
+    { src: "{ echo -n x; } | cat; echo END" },
+    { src: "f=-n; { echo $f x; } | cat; echo END" },
     // Captured and redirected, where the flag also decides the bytes.
     { src: "{ echo -n x; } | cat > @TMP@/e1; od -c @TMP@/e1" },
     { src: "rm -f @TMP@/e2; { echo -n x; } > @TMP@/e2; od -c @TMP@/e2" },
