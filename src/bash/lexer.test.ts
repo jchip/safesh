@@ -405,6 +405,26 @@ describe("Special Brace Handling", () => {
 // =============================================================================
 
 describe("Quote Handling Edge Cases", () => {
+  it("records quote state at each braced parameter expansion", () => {
+    const cases: Array<[source: string, value: string, offset: number, quoted: boolean]> = [
+      ['echo "${a[@]}"post', "${a[@]}post", 0, true],
+      ['echo pre"${a[@]}"post', 'pre"${a[@]}"post', 4, true],
+      ['echo "pre"${a[@]}"post"', "pre${a[@]}post", 3, false],
+    ];
+
+    for (const [source, value, offset, quoted] of cases) {
+      const token = tokenize(source)[1]!;
+      assertEquals(token.value, value);
+      assertEquals(token.parameterExpansionQuotes, [{ offset, length: 7, quoted }]);
+    }
+  });
+
+  it("records the boundary of an unbraced parameter expansion", () => {
+    const token = tokenize('echo "pre"$v"post"')[1]!;
+    assertEquals(token.value, "pre$vpost");
+    assertEquals(token.parameterExpansionQuotes, [{ offset: 3, length: 2, quoted: false }]);
+  });
+
   it("should handle $\"...\" locale quoting", () => {
     const tokens = tokenize('echo $"translated"');
     assertEquals(tokens[1]?.type, TokenType.NAME); // Note: "translated" is a valid name

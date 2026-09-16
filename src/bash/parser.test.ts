@@ -70,6 +70,35 @@ describe("Bash Parser", () => {
       assertEquals((cmd.args[0] as AST.Word).singleQuoted, true);
     });
 
+    it("preserves each parameter expansion's own quote state (SSH-709)", () => {
+      const cases: Array<[source: string, quoted: boolean]> = [
+        ['echo "${a[@]}"post', true],
+        ['echo pre"${a[@]}"post', true],
+        ['echo "pre"${a[@]}"post"', false],
+      ];
+
+      for (const [source, quoted] of cases) {
+        const ast = parse(source);
+        const pipeline = ast.body[0] as AST.Pipeline;
+        const cmd = pipeline.commands[0] as AST.Command;
+        const word = cmd.args[0] as AST.Word;
+        const expansion = word.parts.find((part) => part.type === "ParameterExpansion");
+        assertExists(expansion);
+        assertEquals(expansion.quoted, quoted);
+      }
+    });
+
+    it("preserves an unbraced expansion boundary across stripped quotes (SSH-709)", () => {
+      const ast = parse('echo "pre"$v"post"');
+      const pipeline = ast.body[0] as AST.Pipeline;
+      const cmd = pipeline.commands[0] as AST.Command;
+      const word = cmd.args[0] as AST.Word;
+      const expansion = word.parts.find((part) => part.type === "ParameterExpansion");
+      assertExists(expansion);
+      assertEquals(expansion.parameter, "v");
+      assertEquals(expansion.quoted, false);
+    });
+
     it("should parse unquoted reserved words as command arguments", () => {
       const ast = parse("echo if then else fi do done case esac in time");
       const pipeline = ast.body[0] as AST.Pipeline;

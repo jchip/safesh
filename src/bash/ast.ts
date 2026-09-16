@@ -261,9 +261,9 @@ export interface ParameterExpansion extends BaseNode {
    * question the word-level flag cannot answer: that flag means "the word
    * began with a quote", not "this expansion was quoted".
    *
-   * Only set when the scanner actually sees the quotes. A word the LEXER marks
-   * quoted has had them stripped already (SSH-709), so the word-level flag is
-   * the only signal there.
+   * The lexer records explicit true/false quote state at the expansion offset;
+   * undefined is reserved for words produced without that metadata. Consumers
+   * must therefore use nullish fallback rather than boolean OR (SSH-709).
    */
   quoted?: boolean;
 }

@@ -282,7 +282,7 @@ export function arraySplatWords(
   //     partially quoted word (`pre"${a[@]}"post`) is not marked quoted, yet
   //     the expansion inside it is — the parser records that on the part.
   const wordQuoted = word.type === "Word" && (word.quoted || word.singleQuoted);
-  const quoted = splat.expansion.quoted === true || wordQuoted;
+  const quoted = splat.expansion.quoted ?? wordQuoted;
   const modifierArg = splat.expansion.modifierArg
     ? visitWord(splat.expansion.modifierArg as AST.Word, ctx)
     : "";

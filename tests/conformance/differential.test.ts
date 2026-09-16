@@ -242,13 +242,11 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=("x y" z); printf "[%s]" "pre${a[@]}post"; echo' },
     { src: 'a=("x y" z); printf "[%s]" "${a[@]}"post; echo' },
     { src: 'a=("x y" z); x=P; printf "[%s]" "$x${a[@]}"; echo' },
-    // SSH-709: the LEXER strips every quote from a word it marks quoted, so
-    // for `"pre"${a[@]}"post"` the expansion's own (un)quoting is gone before
-    // the parser runs — bash splits here, safesh does not.
-    {
-      src: 'a=("x y" z); printf "[%s]" "pre"${a[@]}"post"; echo',
-      xfail: "SSH-709",
-    },
+    // SSH-709: the expansion itself is unquoted even though quoted segments
+    // surround it and the lexer marks the whole word quoted.
+    { src: 'a=("x y" z); printf "[%s]" "pre"${a[@]}"post"; echo' },
+    // A scalar in the same quote shape still concatenates into one word.
+    { src: 'v=x; printf "[%s]" "pre"$v"post"; echo' },
     // SSH-710: two whole-array expansions in one word.
     {
       src: 'a=(x z); printf "[%s]" pre"${a[@]}"mid"${a[@]}"; echo',

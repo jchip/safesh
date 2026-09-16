@@ -120,6 +120,8 @@ export interface Token {
   /** For WORD tokens: quote information */
   quoted?: boolean;
   singleQuoted?: boolean;
+  /** Boundary and quote state at each parameter expansion's normalized value offset */
+  parameterExpansionQuotes?: Array<{ offset: number; length: number; quoted: boolean }>;
 }
 
 // =============================================================================
@@ -704,6 +706,7 @@ export class Lexer {
     let inSingleQuote = false;
     let inDoubleQuote = false;
     let startsWithQuote = input[pos] === '"' || input[pos] === "'";
+    const parameterExpansionQuotes: Array<{ offset: number; length: number; quoted: boolean }> = [];
 
     while (pos < len) {
       const char = input[pos];
@@ -839,6 +842,11 @@ export class Lexer {
       // Handle ${...} parameter expansion
       if (char === "$" && pos + 1 < len && input[pos + 1] === "{") {
         const result = this.readParameterExpansion(pos, col, ln);
+        parameterExpansionQuotes.push({
+          offset: value.length,
+          length: result.value.length,
+          quoted: inDoubleQuote,
+        });
         value += result.value;
         pos = result.pos;
         col = result.col;
@@ -849,11 +857,28 @@ export class Lexer {
       // Handle special variables
       if (char === "$" && pos + 1 < len) {
         const next = input[pos + 1]!;
-        if (next === "#" || next === "?" || next === "$" || next === "!" ||
-            next === "@" || next === "*" || next === "-" || (next >= "0" && next <= "9")) {
+        if (
+          next === "#" || next === "?" || next === "$" || next === "!" ||
+          next === "@" || next === "*" || next === "-" || (next >= "0" && next <= "9")
+        ) {
+          parameterExpansionQuotes.push({ offset: value.length, length: 2, quoted: inDoubleQuote });
           value += char + next;
           pos += 2;
           col += 2;
+          continue;
+        }
+        if (/^[A-Za-z_]$/.test(next)) {
+          let end = pos + 2;
+          while (end < len && /^[A-Za-z0-9_]$/.test(input[end]!)) end++;
+          const expansion = input.slice(pos, end);
+          parameterExpansionQuotes.push({
+            offset: value.length,
+            length: expansion.length,
+            quoted: inDoubleQuote,
+          });
+          value += expansion;
+          col += expansion.length;
+          pos = end;
           continue;
         }
       }
@@ -881,9 +906,12 @@ export class Lexer {
     this.pos = pos;
     this.column = col;
     this.line = ln;
+    const expansionMetadata = parameterExpansionQuotes.length > 0
+      ? { parameterExpansionQuotes }
+      : {};
 
     if (value === "") {
-      return { type: TokenType.WORD, value: "", start, end: pos, line, column, quoted, singleQuoted };
+      return { type: TokenType.WORD, value: "", start, end: pos, line, column, quoted, singleQuoted, ...expansionMetadata };
     }
 
     if (!quoted && RESERVED_WORDS[value]) {
@@ -893,7 +921,7 @@ export class Lexer {
     if (!startsWithQuote) {
       const eqIdx = value.indexOf("=");
       if (eqIdx > 0 && isValidAssignmentLHS(value.slice(0, eqIdx))) {
-        return { type: TokenType.ASSIGNMENT_WORD, value, start, end: pos, line, column, quoted, singleQuoted };
+        return { type: TokenType.ASSIGNMENT_WORD, value, start, end: pos, line, column, quoted, singleQuoted, ...expansionMetadata };
       }
     }
 
@@ -902,10 +930,10 @@ export class Lexer {
     }
 
     if (isValidName(value)) {
-      return { type: TokenType.NAME, value, start, end: pos, line, column, quoted, singleQuoted };
+      return { type: TokenType.NAME, value, start, end: pos, line, column, quoted, singleQuoted, ...expansionMetadata };
     }
 
-    return { type: TokenType.WORD, value, start, end: pos, line, column, quoted, singleQuoted };
+    return { type: TokenType.WORD, value, start, end: pos, line, column, quoted, singleQuoted, ...expansionMetadata };
   }
 
   /**

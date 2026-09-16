@@ -659,7 +659,12 @@ export class Parser {
         value: token.value,
         quoted: token.quoted || false,
         singleQuoted: token.singleQuoted || false,
-        parts: this.parseWordParts(token.value, token.quoted || false, token.singleQuoted || false),
+        parts: this.parseWordParts(
+          token.value,
+          token.quoted || false,
+          token.singleQuoted || false,
+          token.parameterExpansionQuotes,
+        ),
       };
     } else {
       name = { type: "Word", value: "", quoted: false, singleQuoted: false, parts: [] };
@@ -749,6 +754,7 @@ export class Parser {
             token.value,
             token.quoted || false,
             token.singleQuoted || false,
+            token.parameterExpansionQuotes,
           ),
         });
       } else {
@@ -1689,7 +1695,12 @@ export class Parser {
       value: token.value,
       quoted: token.quoted || false,
       singleQuoted: token.singleQuoted || false,
-      parts: this.parseWordParts(token.value, token.quoted || false, token.singleQuoted || false),
+      parts: this.parseWordParts(
+        token.value,
+        token.quoted || false,
+        token.singleQuoted || false,
+        token.parameterExpansionQuotes,
+      ),
     };
   }
 
@@ -1728,7 +1739,12 @@ export class Parser {
     });
   }
 
-  private parseWordParts(value: string, _quoted: boolean, singleQuoted = false): AST.WordPart[] {
+  private parseWordParts(
+    value: string,
+    _quoted: boolean,
+    singleQuoted = false,
+    parameterExpansionQuotes?: Array<{ offset: number; length: number; quoted: boolean }>,
+  ): AST.WordPart[] {
     // Single-quoted strings have NO expansion at all - everything is literal
     if (singleQuoted) {
       return [{ type: "LiteralPart", value }];
@@ -1776,11 +1792,17 @@ export class Parser {
 
       // Handle $ expansions
       if (char === "$") {
-        const result = this.tryParseDollarExpansion(value, pos);
+        const recordedQuote = parameterExpansionQuotes?.find((entry) => entry.offset === pos);
+        const result = this.tryParseDollarExpansion(
+          value,
+          pos,
+          recordedQuote ? pos + recordedQuote.length : undefined,
+        );
         if (result) {
           flushLiteral();
-          if (inQuote && result.part.type === "ParameterExpansion") {
-            result.part.quoted = true;
+          if (result.part.type === "ParameterExpansion") {
+            if (recordedQuote) result.part.quoted = recordedQuote.quoted;
+            else if (inQuote) result.part.quoted = true;
           }
           parts.push(result.part);
           pos = result.newPos;
@@ -1820,6 +1842,7 @@ export class Parser {
   private tryParseDollarExpansion(
     value: string,
     pos: number,
+    expansionEnd?: number,
   ): { part: AST.WordPart; newPos: number } | null {
     const next = value[pos + 1];
 
@@ -1859,7 +1882,7 @@ export class Parser {
     }
 
     // Simple $VAR
-    const varMatch = value.slice(pos + 1).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
+    const varMatch = value.slice(pos + 1, expansionEnd).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
     if (varMatch) {
       return {
         part: { type: "ParameterExpansion", parameter: varMatch[0] },
