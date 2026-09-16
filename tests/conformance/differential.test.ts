@@ -250,15 +250,49 @@ const CORPUS: Record<string, Case[]> = {
     { src: "{ echo hi; } | cat > /dev/null; echo done" },
     { src: "f() { echo hi; }; f | cat > @TMP@/p1; cat @TMP@/p1" },
     { src: "{ echo hi; } | cat > @TMP@/p2; cat @TMP@/p2" },
-    // SSH-703: the two cases above read the file back with `cat`, which re-adds
-    // a trailing newline and so hides that the FILE is a byte short. `od -c`
-    // formats identically on both sides (unlike `wc`, whose native adapter pads
-    // differently), so it pins the bytes.
-    {
-      src: "{ echo a; echo b; } | cat > @TMP@/nl; od -c @TMP@/nl",
-      xfail: "SSH-703",
-    },
+    // SSH-703: a `cat` readback re-adds a trailing newline and so hides that
+    // the FILE is a byte short. `od -c` formats identically on both sides
+    // (unlike `wc`, whose native adapter pads differently), so it pins the
+    // bytes. The capture buffer used to hold unterminated LINES, which made
+    // `{ echo x; }` and `{ printf x; }` indistinguishable before any pipe.
+    { src: "{ echo a; echo b; } | cat > @TMP@/nl; od -c @TMP@/nl" },
     { src: "echo a | cat > @TMP@/nl2; od -c @TMP@/nl2" },
+    { src: "{ echo a; } | cat > @TMP@/nl3; od -c @TMP@/nl3" },
+    // Output that genuinely has NO trailing newline must not gain one.
+    { src: "{ printf x; } | cat > @TMP@/nl4; od -c @TMP@/nl4" },
+    { src: '{ printf "a\\nb"; } | cat > @TMP@/nl5; od -c @TMP@/nl5' },
+    // An interior blank line survives, and so does the terminator after it.
+    { src: '{ printf "a\\n\\nb\\n"; } | cat > @TMP@/nl6; od -c @TMP@/nl6' },
+    { src: "{ :; } | cat > @TMP@/nl7; od -c @TMP@/nl7" },
+    // Every captured-upstream form shares the capture buffer.
+    { src: "f() { echo a; echo b; }; f | cat > @TMP@/nl8; od -c @TMP@/nl8" },
+    { src: "( echo a; echo b ) | cat > @TMP@/nl9; od -c @TMP@/nl9" },
+    // Line-oriented consumers of a captured upstream must not regress — these
+    // pass today and are the reason the capture cannot simply become one
+    // whole-content chunk ($.head/$.tail consume it item-wise).
+    { src: "{ echo a; echo b; } | grep b" },
+    { src: "{ echo a; echo b; } | head -1" },
+    { src: "{ echo a; echo b; } | tail -1" },
+    { src: "{ echo b; echo a; } | sort" },
+    { src: "{ echo a; echo b; } | cat" },
+    { src: 'f() { echo a; echo b; }; v=$(f); echo "[$v]"' },
+    // SSH-703 payoff: a redirect writes the captured bytes verbatim. The old
+    // lowering appended a newline to compensate for the lossy capture, which
+    // by construction could not tell `echo hi` from `printf hi`.
+    { src: "f() { printf x; }; f > @TMP@/r1; od -c @TMP@/r1" },
+    { src: "f() { echo hi; }; f > @TMP@/r2; od -c @TMP@/r2" },
+    { src: 'f() { printf "a\\nb"; }; f | cat > @TMP@/r3; od -c @TMP@/r3' },
+    { src: 'f() { echo a; echo b; }; v=$(f); printf "[%s]" "$v"; echo' },
+    // SSH-705: a BRACE GROUP in a value position still prints its output —
+    // SSH-698 taught only a function call to yield it. Pre-existing, and
+    // unrelated to SSH-703 (the file/`$( )` content is byte-correct; the
+    // output is additionally printed).
+    { src: "{ echo hi; } > @TMP@/b1; od -c @TMP@/b1", xfail: "SSH-705" },
+    { src: 'v=$({ printf x; }); printf "[%s]" "$v"; echo', xfail: "SSH-705" },
+    // SSH-706: the $.echo builtin path prints `-n` as text instead of honoring
+    // it, captured and uncaptured alike.
+    { src: "echo -n x; echo y", xfail: "SSH-706" },
+    { src: "{ echo -n x; } | cat > @TMP@/e1; od -c @TMP@/e1", xfail: "SSH-706" },
   ],
   // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
   // purpose — the pre-fix failure mode was `wait` falling straight through, so

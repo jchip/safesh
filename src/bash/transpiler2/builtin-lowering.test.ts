@@ -2,6 +2,11 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { lowerShellBuiltin } from "./builtin-lowering.ts";
 import { SHELL_BUILTINS } from "./builtins.ts";
 
+// SSH-703: the capture buffer holds RAW CHUNKS, terminators included, so the
+// captured bytes are the bytes the block printed. `echo` terminates its line.
+// Pushing it unterminated is what used to make `{ echo x; }` and
+// `{ printf x; }` capture identically as ["x"], leaving a downstream stage a
+// byte short of what bash produced.
 Deno.test("builtin lowering captures print builtins into stdout capture context", () => {
   const result = lowerShellBuiltin({
     name: "echo",
@@ -11,7 +16,7 @@ Deno.test("builtin lowering captures print builtins into stdout capture context"
   });
 
   assertEquals(result, {
-    code: '__stdout.push(["one", "two"].join(" "))',
+    code: '__stdout.push(["one", "two"].join(" ") + "\\n")',
     async: false,
   });
 });

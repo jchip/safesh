@@ -134,7 +134,15 @@ export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLower
   }
 
   if (builtin.type === "prints" && stdoutCaptureVar) {
-    return { code: `${stdoutCaptureVar}.push(${capturedPrintArg(formattedArgs)})`, async: false };
+    // SSH-703: the capture buffer holds RAW CHUNKS, terminators included, so
+    // the captured bytes are the bytes the block printed. `echo` terminates its
+    // line, and pushing it unterminated is what used to make `{ echo x; }` and
+    // `{ printf x; }` indistinguishable — both captured as `["x"]` — so a
+    // downstream stage could never be fed the right number of bytes.
+    return {
+      code: `${stdoutCaptureVar}.push(${capturedPrintArg(formattedArgs)} + "\\n")`,
+      async: false,
+    };
   }
 
   if (builtin.type === "output") {

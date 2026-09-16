@@ -1152,10 +1152,12 @@ export function buildCommand(
     return {
       ...result,
       code: applyBuiltinRedirections(result.code, command.redirects, ctx, {
-        // The captured stdout is `lines.join("\n")`, so the final line's
-        // newline is not in it; a file written from it needs one back. (That
-        // shape cannot tell `echo hi` from `printf hi`, which bash can.)
-        formatsOutput: true,
+        // SSH-703: the captured stdout is now byte-faithful, so the file is
+        // written from it verbatim. This used to pass `formatsOutput: true` to
+        // add back the terminator that `lines.join("\n")` had dropped — a
+        // compensation that could not tell `echo hi` from `printf hi`, and
+        // which now doubles the newline the capture already carries.
+        formatsOutput: false,
       }),
       async: true,
     };
@@ -1429,7 +1431,7 @@ export function visitCommand(
       lines: [
         `${indent}const ${resultVar} = await ${result.code};`,
         `${indent}const ${stdoutVar} = ${resultVar}.output ?? ${resultVar}.stdout;`,
-        `${indent}if (${stdoutVar}) ${captureVar}.push(...String(${stdoutVar}).split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1));`,
+        `${indent}if (${stdoutVar}) ${captureVar}.push(String(${stdoutVar}));`,
         `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
       ],
     };
@@ -1439,7 +1441,7 @@ export function visitCommand(
     const lineVar = ctx.getTempVar("__line");
     return {
       lines: [
-        `${indent}for await (const ${lineVar} of ${streamExpr}) { ${captureVar}.push(String(${lineVar})); }`,
+        `${indent}for await (const ${lineVar} of ${streamExpr}) { ${captureVar}.push(String(${lineVar}) + "\\n"); }`,
       ],
     };
   }
@@ -1882,7 +1884,7 @@ function buildDownstreamWithStdin(
   ctx: VisitorContext,
 ): string {
   if (downstreamCommands.length === 0) {
-    return `Promise.resolve({ code: 0, stdout: ${captureVar}.join("\\n"), stderr: "", success: true })`;
+    return `Promise.resolve({ code: 0, stdout: ${captureVar}.join(""), stderr: "", success: true })`;
   }
 
   const parts: PipelinePart[] = [];
@@ -1897,13 +1899,15 @@ function buildDownstreamWithStdin(
   flattenPipeline(synthPipeline, parts, operators, ctx);
 
   if (parts.length === 0) {
-    return `Promise.resolve({ code: 0, stdout: ${captureVar}.join("\\n"), stderr: "", success: true })`;
+    return `Promise.resolve({ code: 0, stdout: ${captureVar}.join(""), stderr: "", success: true })`;
   }
 
   if (partIsTransform(parts[0]!)) {
     // Downstream starts with a Transform (e.g. $.grep(), $.sort()) — use $.fromArray()
     // to feed the captured lines into the transform chain and collect results.
-    let chain = `$.fromArray(${captureVar})`;
+    // SSH-703: the capture buffer holds raw chunks now, so split it back into
+    // the lines a transform consumes rather than handing it chunks.
+    let chain = `$.fromArray(${captureVar}.join("")${LINE_SPLIT})`;
     for (const part of parts) {
       chain += `.pipe(${part.code})`;
     }
@@ -1915,7 +1919,7 @@ function buildDownstreamWithStdin(
   }
 
   // Downstream starts with a Command — inject captured output as stdin.
-  parts[0]!.code = `${parts[0]!.code}.stdin(${captureVar}.join("\\n"))`;
+  parts[0]!.code = `${parts[0]!.code}.stdin(${captureVar}.join(""))`;
 
   const analysis = analyzePipelineStructure(operators);
   const assembled = assemblePipeline(parts, operators, analysis);
@@ -1935,8 +1939,17 @@ function buildDownstreamWithStdin(
   return `${assembled.code}.exec()`;
 }
 
+/**
+ * Split raw text into the line list a line stream carries: the trailing empty
+ * produced by a terminating newline is dropped, interior blanks are kept.
+ * Lossy by nature — "x" and "x\n" both split to ["x"] — which is why a command
+ * downstream is fed {@link resultObjectToRawStream} instead (SSH-703).
+ */
+const LINE_SPLIT =
+  `.split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1)`;
+
 function resultObjectToLineStream(expr: string): string {
-  return `$.fromArray(((result: any) => String(result?.output ?? result?.stdout ?? "").split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1))(${expr}))`;
+  return `$.fromArray(((result: any) => String(result?.output ?? result?.stdout ?? "")${LINE_SPLIT})(${expr}))`;
 }
 
 function resultObjectToRawStream(expr: string): string {
@@ -2033,7 +2046,7 @@ function buildUserFunctionAsCapturedExpression(
     `const __POSITIONAL_PARAMS__: string[] = [${argsArray}]; ` +
     `await (async () => { ${lines.join("; ")}; })(); ` +
     `const ${codeVar} = Deno.exitCode; ` +
-    `return { code: ${codeVar}, stdout: ${captureVar}.join("\\n"), stderr: "", ` +
+    `return { code: ${codeVar}, stdout: ${captureVar}.join(""), stderr: "", ` +
     `success: ${codeVar} === 0 }; })()`;
 }
 
@@ -2061,7 +2074,7 @@ function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorCon
       ctx.setStdoutCapture(previousCapture);
     }
     return `(async () => { const ${captureVar}: string[] = []; const ${statusVar} = ${subshellExpr}; ` +
-      `return { code: ${statusVar}.code, stdout: ${captureVar}.join("\\n"), stderr: "", ` +
+      `return { code: ${statusVar}.code, stdout: ${captureVar}.join(""), stderr: "", ` +
       `success: ${statusVar}.code === 0 }; })()`;
   }
 
@@ -2079,7 +2092,7 @@ function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorCon
   const codeVar = ctx.getTempVar("__code");
   return `(async () => { const ${captureVar}: string[] = []; ${lines.join("; ")}; ` +
     `const ${codeVar} = Deno.exitCode; ` +
-    `return { code: ${codeVar}, stdout: ${captureVar}.join("\\n"), stderr: "", ` +
+    `return { code: ${codeVar}, stdout: ${captureVar}.join(""), stderr: "", ` +
     `success: ${codeVar} === 0 }; })()`;
 }
 
@@ -2581,7 +2594,13 @@ class PipelineAssembler {
       this.code = `${this.code}.pipe($.toCmdLines(${part.code}))`;
       this.isLineStream = true;
     } else if (this.isResultObject) {
-      this.code = `${resultObjectToLineStream(this.code)}.pipe($.toCmdLines(${part.code}))`;
+      // SSH-703: a command's stdin is BYTES, so hand it the captured output raw
+      // rather than round-tripping it through a line list — that split dropped
+      // the trailing terminator and the rejoin in execStreamToCmd could not put
+      // it back, leaving every downstream stage one byte short. A line-oriented
+      // TRANSFORM still gets the line stream (handleTransformPipe), since
+      // $.head/$.tail/$.grep consume items.
+      this.code = `${resultObjectToRawStream(this.code)}.pipe($.toCmdLines(${part.code}))`;
       this.isLineStream = true;
     } else {
       // When piping from a command to a command, can pipe directly
@@ -3348,7 +3367,7 @@ export function visitPipeline(
       const lineVar = ctx.getTempVar("__line");
       return {
         lines: [
-          `${indent}for await (const ${lineVar} of ${streamExpr}) { ${captureVar}.push(String(${lineVar})); }`,
+          `${indent}for await (const ${lineVar} of ${streamExpr}) { ${captureVar}.push(String(${lineVar}) + "\\n"); }`,
         ],
       };
     }
@@ -3363,7 +3382,7 @@ export function visitPipeline(
         lines: [
           `${indent}const ${resultVar} = ${resultExpr};`,
           `${indent}const ${stdoutVar} = ${resultVar}.output ?? ${resultVar}.stdout;`,
-          `${indent}if (${stdoutVar}) ${captureVar}.push(...String(${stdoutVar}).split(/\\r?\\n/).filter((line, i, lines) => line.length > 0 || i < lines.length - 1));`,
+          `${indent}if (${stdoutVar}) ${captureVar}.push(String(${stdoutVar}));`,
           `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
         ],
       };
