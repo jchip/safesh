@@ -1649,13 +1649,16 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
   });
 
   // SSH-481: Subshell with trailing redirections
+  // SSH-705: a redirected group now CAPTURES its body's stdout (so the
+  // redirect can be honored) instead of printing it, so `echo` in the body
+  // lowers to a push into the capture buffer rather than a `$.echo` call.
   it("should handle Subshell with redirections", () => {
     const script = "(cd /tmp && echo test) 2>&1";
     const ast = parse(script);
     const output = transpile(ast);
     // Should parse and transpile without error
     assertStringIncludes(output, "$.cd");
-    assertStringIncludes(output, '$.echo({ silent: true }, "test")');
+    assertStringIncludes(output, '.push("test" + "\\n"), 0)');
   });
 
   it("should handle BraceGroup", () => {
@@ -1671,8 +1674,11 @@ describe("BashTranspiler2 - Statement Type Coverage", () => {
     const script = "{ echo test; } >out.txt 2>&1";
     const ast = parse(script);
     const output = transpile(ast);
-    // Should parse and transpile without error
-    assertStringIncludes(output, '$.echo("test")');
+    // SSH-705: the body is captured, and the redirect actually writes the
+    // file — it used to be dropped, leaving the body to print instead.
+    assertStringIncludes(output, '.push("test" + "\\n"), 0)');
+    assertStringIncludes(output, '"out.txt"');
+    assertStringIncludes(output, "Deno.writeTextFileSync");
   });
 
   it("should handle TestCommand", () => {

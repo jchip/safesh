@@ -16,7 +16,9 @@ Deno.test("builtin lowering captures print builtins into stdout capture context"
   });
 
   assertEquals(result, {
-    code: '__stdout.push(["one", "two"].join(" ") + "\\n")',
+    // SSH-705: yields 0, not push()'s return value — the caller wraps this in
+    // __recStatus(), which was recording the buffer's new LENGTH as the status.
+    code: '(__stdout.push(["one", "two"].join(" ") + "\\n"), 0)',
     async: false,
   });
 });

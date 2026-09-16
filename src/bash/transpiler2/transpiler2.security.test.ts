@@ -9,11 +9,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parse } from "../parser.ts";
 import { transpile } from "./mod.ts";
-import {
-  escapeForTemplate,
-  escapeForQuotes,
-  escapeRegex,
-} from "./utils/escape.ts";
+import { escapeForQuotes, escapeForTemplate, escapeRegex } from "./utils/escape.ts";
 
 // =============================================================================
 // Escape Utilities Security Tests
@@ -91,7 +87,7 @@ describe("Security - Escape Utilities", () => {
     });
 
     it("should handle multiple quote types safely", () => {
-      const malicious = 'mix "double" and \'single\' quotes';
+      const malicious = "mix \"double\" and 'single' quotes";
       const escaped = escapeForQuotes(malicious);
       assertStringIncludes(escaped, '\\"double\\"');
       // Single quotes don't need escaping in double-quoted strings
@@ -184,7 +180,7 @@ describe("Security - Command Injection Prevention", () => {
   });
 
   it("should handle command substitution safely", () => {
-    const ast = parse('VAR=$(cat /etc/passwd)');
+    const ast = parse("VAR=$(cat /etc/passwd)");
     const output = transpile(ast);
 
     // Command substitution should be properly wrapped
@@ -193,7 +189,7 @@ describe("Security - Command Injection Prevention", () => {
   });
 
   it("should prevent injection through unquoted variables", () => {
-    const ast = parse('echo $VAR');
+    const ast = parse("echo $VAR");
     const output = transpile(ast);
 
     // Variable should be resolved through ENV proxy with fallback chain
@@ -218,7 +214,7 @@ describe("Security - Command Injection Prevention", () => {
 
 describe("Security - Path Traversal Prevention", () => {
   it("should handle directory traversal attempts in cat command", () => {
-    const ast = parse('cat ../../etc/passwd');
+    const ast = parse("cat ../../etc/passwd");
     const output = transpile(ast);
 
     // Path should be passed as-is (security enforcement at runtime)
@@ -226,7 +222,7 @@ describe("Security - Path Traversal Prevention", () => {
   });
 
   it("should handle absolute paths safely", () => {
-    const ast = parse('cat /etc/passwd');
+    const ast = parse("cat /etc/passwd");
     const output = transpile(ast);
 
     assertStringIncludes(output, "/etc/passwd");
@@ -256,7 +252,7 @@ describe("Security - Path Traversal Prevention", () => {
   });
 
   it("should handle redirection to dangerous paths", () => {
-    const ast = parse('echo data > /dev/null');
+    const ast = parse("echo data > /dev/null");
     const output = transpile(ast);
 
     assertStringIncludes(output, ".stdout");
@@ -264,7 +260,7 @@ describe("Security - Path Traversal Prevention", () => {
   });
 
   it("should handle symbolic link traversal attempts", () => {
-    const ast = parse('cat /tmp/link/../../../etc/passwd');
+    const ast = parse("cat /tmp/link/../../../etc/passwd");
     const output = transpile(ast);
 
     assertStringIncludes(output, "/tmp/link/../../../etc/passwd");
@@ -290,7 +286,7 @@ describe("Security - Parameter Expansion Safety", () => {
 
     // Command substitution in default should be transpiled
     // The modifierArg is transpiled and then wrapped in quotes/escaped
-    assertStringIncludes(output, '$.cmd(');
+    assertStringIncludes(output, "$.cmd(");
     assertStringIncludes(output, "malicious");
     assertStringIncludes(output, "__cmdSubText");
   });
@@ -341,7 +337,7 @@ describe("Security - Parameter Expansion Safety", () => {
 
 describe("Security - Shell Metacharacter Handling", () => {
   it("should safely handle semicolons in commands", () => {
-    const ast = parse('cmd1; cmd2');
+    const ast = parse("cmd1; cmd2");
     const output = transpile(ast);
 
     // Should create two separate statements
@@ -350,7 +346,7 @@ describe("Security - Shell Metacharacter Handling", () => {
   });
 
   it("should safely handle ampersands for background execution", () => {
-    const ast = parse('cmd1 & cmd2');
+    const ast = parse("cmd1 & cmd2");
     const output = transpile(ast);
 
     // Background execution should be handled
@@ -359,7 +355,7 @@ describe("Security - Shell Metacharacter Handling", () => {
   });
 
   it("should safely handle pipes", () => {
-    const ast = parse('cmd1 | cmd2');
+    const ast = parse("cmd1 | cmd2");
     const output = transpile(ast);
 
     // Pipe should create fluent chain
@@ -367,7 +363,7 @@ describe("Security - Shell Metacharacter Handling", () => {
   });
 
   it("should safely handle redirections", () => {
-    const ast = parse('cmd > output.txt');
+    const ast = parse("cmd > output.txt");
     const output = transpile(ast);
 
     assertStringIncludes(output, ".stdout");
@@ -375,7 +371,7 @@ describe("Security - Shell Metacharacter Handling", () => {
   });
 
   it("should safely handle command substitution with $(...)", () => {
-    const ast = parse('VAR=$(cmd)');
+    const ast = parse("VAR=$(cmd)");
     const output = transpile(ast);
 
     assertStringIncludes(output, '$.cmd("cmd")');
@@ -392,7 +388,7 @@ EOF`);
   });
 
   it("should handle nested subshells safely", () => {
-    const ast = parse('( (echo inner) )');
+    const ast = parse("( (echo inner) )");
     const output = transpile(ast);
 
     // Nested subshells should create nested IIFEs
@@ -444,7 +440,7 @@ describe("Security - Quote Escaping", () => {
     const output = transpile(ast);
 
     // Everything should be in the string value
-    assertStringIncludes(output, 'var VAR = ');
+    assertStringIncludes(output, "var VAR = ");
     assertStringIncludes(output, '"; malicious; #"');
     assert(!output.includes('$.cmd("malicious")'), "Should not create separate statements");
   });
@@ -508,7 +504,7 @@ describe("Security - Environment Variable Safety", () => {
   });
 
   it("should handle environment variable expansion in commands", () => {
-    const ast = parse('echo $HOME');
+    const ast = parse("echo $HOME");
     const output = transpile(ast);
 
     assertStringIncludes(output, "$.ENV.HOME");
@@ -545,7 +541,7 @@ describe("Security - Environment Variable Safety", () => {
 
 describe("Security - Subshell Safety", () => {
   it("should isolate subshell variable assignments", () => {
-    const ast = parse('(VAR=value; echo $VAR)');
+    const ast = parse("(VAR=value; echo $VAR)");
     const output = transpile(ast);
 
     // Subshell creates IIFE scope
@@ -554,16 +550,19 @@ describe("Security - Subshell Safety", () => {
   });
 
   it("should handle command substitution in subshell", () => {
-    const ast = parse('VAR=$( (echo inner) )');
+    const ast = parse("VAR=$( (echo inner) )");
     const output = transpile(ast);
 
     // Subshell inside command substitution generates async IIFE
     assertStringIncludes(output, "(async () => {");
-    assertStringIncludes(output, '$.echo("inner")');
+    // SSH-705: the substitution CONSUMES the subshell's output, so the body
+    // captures it instead of printing — that is what makes VAR="inner"
+    // rather than empty with "inner" on the terminal.
+    assertStringIncludes(output, '.push("inner" + "\\n"), 0)');
   });
 
   it("should prevent subshell escape to parent scope", () => {
-    const ast = parse('(cd /tmp); pwd');
+    const ast = parse("(cd /tmp); pwd");
     const output = transpile(ast);
 
     // cd in subshell should not affect parent
@@ -573,7 +572,7 @@ describe("Security - Subshell Safety", () => {
   });
 
   it("should handle nested subshells securely", () => {
-    const ast = parse('( (echo inner) )');
+    const ast = parse("( (echo inner) )");
     const output = transpile(ast);
 
     // Nested subshells should be safely isolated
@@ -582,7 +581,7 @@ describe("Security - Subshell Safety", () => {
   });
 
   it("should handle subshell with pipelines", () => {
-    const ast = parse('(ls | grep test)');
+    const ast = parse("(ls | grep test)");
     const output = transpile(ast);
 
     assertStringIncludes(output, "await (async () => {");
@@ -590,7 +589,7 @@ describe("Security - Subshell Safety", () => {
   });
 
   it("should handle command redirections safely", () => {
-    const ast = parse('ls > file.txt');
+    const ast = parse("ls > file.txt");
     const output = transpile(ast);
 
     // Redirection should be safe
@@ -605,7 +604,7 @@ describe("Security - Subshell Safety", () => {
 
 describe("Security - Redirection Safety", () => {
   it("should handle output redirection to files safely", () => {
-    const ast = parse('echo data > /tmp/output.txt');
+    const ast = parse("echo data > /tmp/output.txt");
     const output = transpile(ast);
 
     assertStringIncludes(output, "$.echo({ silent: true }");
@@ -615,7 +614,7 @@ describe("Security - Redirection Safety", () => {
   });
 
   it("should handle append redirection safely", () => {
-    const ast = parse('echo data >> /tmp/output.txt');
+    const ast = parse("echo data >> /tmp/output.txt");
     const output = transpile(ast);
 
     assertStringIncludes(output, "$.echo({ silent: true }");
@@ -626,14 +625,14 @@ describe("Security - Redirection Safety", () => {
   });
 
   it("should handle input redirection safely", () => {
-    const ast = parse('cat < /tmp/input.txt');
+    const ast = parse("cat < /tmp/input.txt");
     const output = transpile(ast);
 
     assertStringIncludes(output, '.stdinFile("/tmp/input.txt")');
   });
 
   it("should prevent redirection to sensitive files", () => {
-    const ast = parse('echo malicious > /etc/passwd');
+    const ast = parse("echo malicious > /etc/passwd");
     const output = transpile(ast);
 
     // Should transpile (runtime will enforce permissions)
@@ -644,7 +643,7 @@ describe("Security - Redirection Safety", () => {
   });
 
   it("should handle stderr redirection safely", () => {
-    const ast = parse('cmd 2> /tmp/error.log');
+    const ast = parse("cmd 2> /tmp/error.log");
     const output = transpile(ast);
 
     // stderr redirection should be handled
@@ -652,7 +651,7 @@ describe("Security - Redirection Safety", () => {
   });
 
   it("should handle file descriptor duplication safely", () => {
-    const ast = parse('cmd 2>&1');
+    const ast = parse("cmd 2>&1");
     const output = transpile(ast);
 
     // FD duplication (2>&1) should be transpiled with mergeStreams option
@@ -678,7 +677,7 @@ describe("Security - Redirection Safety", () => {
   });
 
   it("should handle multiple redirections safely", () => {
-    const ast = parse('cmd < input.txt > output.txt 2> error.log');
+    const ast = parse("cmd < input.txt > output.txt 2> error.log");
     const output = transpile(ast);
 
     assertStringIncludes(output, '$.cmd("cmd")');
@@ -700,7 +699,7 @@ describe("Security - Complex Injection Scenarios", () => {
   });
 
   it("should handle injection via arithmetic expansion", () => {
-    const ast = parse('echo $((1 + 2))');
+    const ast = parse("echo $((1 + 2))");
     const output = transpile(ast);
 
     assertStringIncludes(output, "(1 + 2)");
@@ -716,7 +715,7 @@ describe("Security - Complex Injection Scenarios", () => {
   });
 
   it("should handle injection attempts in function names", () => {
-    const ast = parse('function test_func { echo safe; }');
+    const ast = parse("function test_func { echo safe; }");
     const output = transpile(ast);
 
     assertStringIncludes(output, "async function test_func(");
@@ -757,7 +756,7 @@ describe("Security - Complex Injection Scenarios", () => {
   });
 
   it("should handle brace expansion injection attempts", () => {
-    const ast = parse('echo {1..10}');
+    const ast = parse("echo {1..10}");
     const output = transpile(ast);
 
     // Brace expansion should be safe
@@ -766,7 +765,7 @@ describe("Security - Complex Injection Scenarios", () => {
   });
 
   it("should prevent injection via tilde expansion", () => {
-    const ast = parse('cat ~/file.txt');
+    const ast = parse("cat ~/file.txt");
     const output = transpile(ast);
 
     // Tilde should expand to home directory safely
@@ -774,7 +773,7 @@ describe("Security - Complex Injection Scenarios", () => {
   });
 
   it("should handle null command injection", () => {
-    const ast = parse(': test');
+    const ast = parse(": test");
     const output = transpile(ast);
 
     // SSH-578: `:` lowers to an inline no-op result — safer than the legacy
@@ -846,7 +845,7 @@ describe("Security - Escaping Edge Cases", () => {
   });
 
   it("should handle special regex characters in patterns", () => {
-    const ast = parse('case $x in *.txt) echo match;; esac');
+    const ast = parse("case $x in *.txt) echo match;; esac");
     const output = transpile(ast);
 
     // Glob should be converted to regex safely

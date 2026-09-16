@@ -1432,6 +1432,10 @@ export function visitCommand(
         `${indent}const ${resultVar} = await ${result.code};`,
         `${indent}const ${stdoutVar} = ${resultVar}.output ?? ${resultVar}.stdout;`,
         `${indent}if (${stdoutVar}) ${captureVar}.push(String(${stdoutVar}));`,
+        // SSH-705: record the captured command's OWN status. Capturing used to
+        // drop it, so a group's status was whatever happened to be in
+        // Deno.exitCode — `{ false; } > f` reported 0.
+        `${indent}__recStatus(${resultVar});`,
         `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
       ],
     };
@@ -2160,6 +2164,9 @@ ${inner}
 export function buildPipeline(
   pipeline: AST.Pipeline,
   ctx: VisitorContext,
+  // SSH-705: the pipeline's OUTPUT is consumed as a value (a `$( )` around it),
+  // so a group has to yield its stdout rather than print it.
+  options?: { valueConsumed?: boolean },
 ): ExpressionResult & {
   isStream?: boolean;
   isLineStream?: boolean;
@@ -2229,8 +2236,16 @@ export function buildPipeline(
       } else if (cmd.type === "Pipeline") {
         return buildPipeline(cmd, ctx);
       }
-      // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE
-      return { code: buildStatementAsExpression(cmd, ctx), async: true };
+      // For other statement types (BraceGroup, Subshell, etc.), wrap in async IIFE.
+      // SSH-705: when the value is consumed, the group's stdout IS the value —
+      // buildStatementAsExpression hardcodes `stdout: ''` and prints instead,
+      // which left `v=$({ echo a; })` empty with the text on the terminal.
+      return {
+        code: options?.valueConsumed
+          ? buildStatementAsCapturedExpression(cmd, ctx)
+          : buildStatementAsExpression(cmd, ctx),
+        async: true,
+      };
     }
 
     // SSH-594: `! cmd` in expression position — capture the result and flip
@@ -3178,6 +3193,39 @@ function visitNestedLogicalControlPipeline(
 /**
  * Visit a pipeline statement
  */
+/**
+ * SSH-705: a `{ ...; }` or `( ... )` carrying a trailing redirect — which
+ * SSH-481 parses into `redirections` — used to have that redirect DROPPED
+ * entirely: the body printed to the terminal and the file was never created.
+ *
+ * Build the group with its stdout CAPTURED, then write the file from the
+ * result, which is the route a redirected user-function call already takes
+ * (SSH-698). `__recStatus` reads the group's own status off that result, so
+ * `{ false; } > f; echo $?` still reports 1.
+ *
+ * Returns null for anything that is not such a group, leaving the statement on
+ * its normal path. `2>&1` on a group is still unhandled (SSH-707) —
+ * applyBuiltinRedirections covers `>`/`>>`/`>|`/`&>`, not the `>&` merge.
+ */
+function visitRedirectedGroup(
+  stmt: AST.Statement,
+  ctx: VisitorContext,
+): StatementResult | null {
+  if (stmt.type !== "BraceGroup" && stmt.type !== "Subshell") return null;
+  const redirections = stmt.redirections;
+  if (!redirections || redirections.length === 0) return null;
+  const expr = applyBuiltinRedirections(
+    buildStatementAsCapturedExpression(stmt, ctx),
+    redirections,
+    ctx,
+  );
+  // __printCmd, not a bare await: a redirect that consumed stdout leaves it
+  // empty, but one that did NOT touch stdout (`{ ...; } 2>f`, or the `2>&1`
+  // merge this route cannot apply yet — SSH-707) must still print it, as bash
+  // does. __printCmd also records the group's status off the result.
+  return { lines: [`${ctx.getIndent()}await __printCmd(${expr});`] };
+}
+
 export function visitPipeline(
   pipeline: AST.Pipeline,
   ctx: VisitorContext,
@@ -3193,7 +3241,9 @@ export function visitPipeline(
     // nested pipeline already applies it itself — only negate it once here.
     const negated = pipeline.negated && !(cmd.type === "Pipeline" && cmd.negated);
 
-    const result = cmd.type === "Command" ? visitCommand(cmd, ctx) : ctx.visitStatement(cmd);
+    const result = cmd.type === "Command"
+      ? visitCommand(cmd, ctx)
+      : (visitRedirectedGroup(cmd, ctx) ?? ctx.visitStatement(cmd));
     if (!negated) return result;
 
     // SSH-594: `! cmd` — run the command normally (it records its real status
@@ -3383,6 +3433,10 @@ export function visitPipeline(
           `${indent}const ${resultVar} = ${resultExpr};`,
           `${indent}const ${stdoutVar} = ${resultVar}.output ?? ${resultVar}.stdout;`,
           `${indent}if (${stdoutVar}) ${captureVar}.push(String(${stdoutVar}));`,
+          // SSH-705: record the captured command's OWN status. Capturing used to
+          // drop it, so a group's status was whatever happened to be in
+          // Deno.exitCode — `{ false; } > f` reported 0.
+          `${indent}__recStatus(${resultVar});`,
           `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
         ],
       };

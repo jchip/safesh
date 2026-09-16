@@ -107,6 +107,25 @@ const CORPUS: Record<string, Case[]> = {
     { src: '(exit 3); echo "rc=$?"' },
     { src: "echo $(( $(echo 2) + 3 ))" },
     { src: 'v=$(printf "x\\ny\\n" | sort -r); echo "$v"' },
+    // SSH-705: a group in a value position used to print its output — the
+    // redirect was DROPPED (the file never created) and a `$( )` capture came
+    // back empty. `rm -f` first so each engine starts from no file: without it
+    // bash's own write satisfies the readback and hides a dropped redirect.
+    { src: "rm -f @TMP@/g1; { echo hi; } > @TMP@/g1; od -c @TMP@/g1" },
+    { src: "rm -f @TMP@/g2; ( echo hi ) > @TMP@/g2; od -c @TMP@/g2" },
+    { src: "rm -f @TMP@/g3; { printf x; } > @TMP@/g3; od -c @TMP@/g3" },
+    { src: "rm -f @TMP@/g4; { echo a; echo b; } >> @TMP@/g4; od -c @TMP@/g4" },
+    { src: "rm -f @TMP@/g5; { echo a; } > @TMP@/g5; { echo b; } >> @TMP@/g5; od -c @TMP@/g5" },
+    { src: 'v=$({ printf x; }); printf "[%s]" "$v"; echo' },
+    { src: 'v=$({ echo a; echo b; }); printf "[%s]" "$v"; echo' },
+    { src: 'v=$( ( echo a ) ); printf "[%s]" "$v"; echo' },
+    { src: 'v=$({ echo a; }); echo "rc=$? v=[$v]"' },
+    // stdout redirected, stderr still goes to the terminal.
+    { src: "rm -f @TMP@/g6; { echo out; echo err >&2; } > @TMP@/g6; od -c @TMP@/g6" },
+    // The group's exit status must survive being captured (these pass today).
+    { src: '{ false; } > /dev/null; echo "rc=$?"' },
+    { src: 'v=$({ exit 3; }); echo "rc=$? v=[$v]"' },
+    { src: '{ echo hi; } > /dev/null; echo "rc=$?"' },
   ],
   redirection: [
     // Read back via `cat < f` (proven correct) so these isolate write/append/
@@ -283,12 +302,8 @@ const CORPUS: Record<string, Case[]> = {
     { src: "f() { echo hi; }; f > @TMP@/r2; od -c @TMP@/r2" },
     { src: 'f() { printf "a\\nb"; }; f | cat > @TMP@/r3; od -c @TMP@/r3' },
     { src: 'f() { echo a; echo b; }; v=$(f); printf "[%s]" "$v"; echo' },
-    // SSH-705: a BRACE GROUP in a value position still prints its output —
-    // SSH-698 taught only a function call to yield it. Pre-existing, and
-    // unrelated to SSH-703 (the file/`$( )` content is byte-correct; the
-    // output is additionally printed).
-    { src: "{ echo hi; } > @TMP@/b1; od -c @TMP@/b1", xfail: "SSH-705" },
-    { src: 'v=$({ printf x; }); printf "[%s]" "$v"; echo', xfail: "SSH-705" },
+    // SSH-705 (fixed) is covered by the `subshell` cases, which `rm -f` the
+    // target first so a dropped redirect cannot hide behind bash's own write.
     // SSH-706: the $.echo builtin path prints `-n` as text instead of honoring
     // it, captured and uncaptured alike.
     { src: "echo -n x; echo y", xfail: "SSH-706" },

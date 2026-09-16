@@ -191,7 +191,9 @@ export class BashTranspiler2 {
         if (stmt.type === "Command") {
           return handlers.buildCommand(stmt, this, { captureOutput: true });
         } else {
-          return handlers.buildPipeline(stmt, this);
+          // SSH-705: this entry point exists for VALUE positions (a `$( )`),
+          // so a group inside must yield its stdout, not print it.
+          return handlers.buildPipeline(stmt, this, { valueConsumed: true });
         }
       },
 

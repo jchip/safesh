@@ -139,8 +139,11 @@ export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLower
     // line, and pushing it unterminated is what used to make `{ echo x; }` and
     // `{ printf x; }` indistinguishable — both captured as `["x"]` — so a
     // downstream stage could never be fed the right number of bytes.
+    // SSH-705: yield 0, not `push`'s return value. The caller wraps this in
+    // `__recStatus(...)`, which was therefore recording the buffer's new
+    // LENGTH as the exit status — `{ echo hi; } > f` reported 1.
     return {
-      code: `${stdoutCaptureVar}.push(${capturedPrintArg(formattedArgs)} + "\\n")`,
+      code: `(${stdoutCaptureVar}.push(${capturedPrintArg(formattedArgs)} + "\\n"), 0)`,
       async: false,
     };
   }
