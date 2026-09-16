@@ -304,10 +304,32 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'f() { echo a; echo b; }; v=$(f); printf "[%s]" "$v"; echo' },
     // SSH-705 (fixed) is covered by the `subshell` cases, which `rm -f` the
     // target first so a dropped redirect cannot hide behind bash's own write.
-    // SSH-706: the $.echo builtin path prints `-n` as text instead of honoring
-    // it, captured and uncaptured alike.
-    { src: "echo -n x; echo y", xfail: "SSH-706" },
-    { src: "{ echo -n x; } | cat > @TMP@/e1; od -c @TMP@/e1", xfail: "SSH-706" },
+  ],
+  builtins: [
+    // SSH-706: `echo`'s flags used to reach $.echo as ordinary text, so the
+    // flag itself was printed. Only a LEADING `-n`/`-e`/`-E` (or a combination
+    // of those letters) is a flag.
+    { src: "echo -n x; echo y" },
+    { src: 'echo -e "a\\tb"' },
+    { src: 'echo -E "a\\tb"' },
+    { src: 'echo -ne "a\\tb"; echo END' },
+    { src: 'echo -en "a\\tb"; echo END' },
+    { src: 'echo -n -e "a\\tb"; echo END' },
+    { src: "echo -n; echo END" },
+    { src: "echo -n x | cat; echo END" },
+    // Captured and redirected, where the flag also decides the bytes.
+    { src: "{ echo -n x; } | cat > @TMP@/e1; od -c @TMP@/e1" },
+    { src: "rm -f @TMP@/e2; { echo -n x; } > @TMP@/e2; od -c @TMP@/e2" },
+    { src: 'v=$(echo -n x); printf "[%s]" "$v"; echo' },
+    { src: 'v=$(echo -e "a\\tb"); printf "[%s]" "$v"; echo' },
+    // NOT flags: not leading, not only flag letters, and echo has no `--`.
+    { src: "echo x -n" },
+    { src: "echo -nx" },
+    { src: "echo -- -n" },
+    { src: "echo x -e" },
+    // SSH-708: bash honors a flag that arrives from an EXPANSION, which the
+    // transpile-time flag scan cannot see.
+    { src: "f=-n; echo $f x; echo END", xfail: "SSH-708" },
   ],
   // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
   // purpose — the pre-fix failure mode was `wait` falling straight through, so
