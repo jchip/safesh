@@ -8,6 +8,7 @@ import { globToRegExp } from "@std/path";
 import type * as AST from "../../ast.ts";
 import type { StatementResult, VisitorContext } from "../types.ts";
 import { escapeForQuotes, sanitizeVarName } from "../utils/mod.ts";
+import { wholeArrayElementsExpression, wordWholeArraySplatName } from "./words.ts";
 
 function wordHasExpansion(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
@@ -142,6 +143,21 @@ export function visitForStatement(
     lines.push(`${indent}const ${tempVar} = [];`);
 
     for (const item of stmt.iterable) {
+      // SSH-700: `for v in "${a[@]}"` iterates the ELEMENTS. The quoted form
+      // used to fall through to the single-item branch below and iterate once
+      // over the space-joined whole; the unquoted form only worked by
+      // accident, via whitespace splitting of that joined string (which loses
+      // an element containing a space).
+      const splatName = wordWholeArraySplatName(item);
+      if (splatName !== null) {
+        const unquoted = item.type === "Word" && !item.quoted && !item.singleQuoted;
+        lines.push(
+          `${indent}${tempVar}.push(...${
+            wholeArrayElementsExpression(splatName, { split: unquoted })
+          });`,
+        );
+        continue;
+      }
       if (item.type === "ParameterExpansion" || item.type === "CommandSubstitution") {
         // Direct expansions are subject to bash word splitting in `for ... in`.
         const cmdSubExpr = ctx.visitWord(item);

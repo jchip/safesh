@@ -19,6 +19,70 @@ import {
 // Helper Functions
 // =============================================================================
 
+/** A parameter that embeds a whole-array subscript, e.g. `a[@]` or `a[*]`. */
+const WHOLE_ARRAY_PARAM = /^([A-Za-z_][A-Za-z0-9_]*)\[([@*])\]$/;
+
+/**
+ * SSH-697: the guarded read of a whole array, from whichever scope holds it.
+ * `typeof`-guarded because an unassigned name is a ReferenceError in JS but
+ * empty in bash.
+ */
+export function wholeArrayValueExpression(arrayName: string): string {
+  const js = sanitizeVarName(arrayName);
+  return `(typeof ${js} !== "undefined" ? ${js} : $.VARS?.${arrayName})`;
+}
+
+/**
+ * SSH-700: the JS array of WORDS a whole-array `${a[@]}` expands to. An IIFE
+ * binds the array once so the guarded read is not repeated four times.
+ *
+ * Semantics, all pinned by differential cases:
+ *   - a quoted `"${a[@]}"` keeps each element verbatim, empty ones included;
+ *   - an unquoted `${a[@]}` splits each element on whitespace and drops the
+ *     empties, as IFS word splitting does (`split: true`);
+ *   - an unset or empty array yields NO words;
+ *   - a scalar yields its own single value.
+ */
+export function wholeArrayElementsExpression(
+  arrayName: string,
+  opts: { split: boolean },
+): string {
+  const elements = `((__a) => Array.isArray(__a) ? __a.map(String) ` +
+    `: (__a === undefined || __a === null || __a === "" ? [] : [String(__a)]))` +
+    `(${wholeArrayValueExpression(arrayName)})`;
+  return opts.split
+    ? `${elements}.flatMap((__w) => __w.split(/\\s+/).filter((__s) => __s !== ""))`
+    : elements;
+}
+
+/**
+ * SSH-700: the array name when `word` is EXACTLY one `${a[@]}` expansion and
+ * nothing else — the form that expands to one argument PER ELEMENT.
+ *
+ * Returns null, leaving the word on the normal string-interpolating path, for:
+ *   - `[*]`, which is specified to join into one word;
+ *   - any modifier (`${a[@]:1}` etc. — those expand to one word, SSH-701);
+ *   - a word that glues text onto the expansion (`pre"${a[@]}"post`). bash
+ *     splits that at the seams (`pre1`, `2post`); not implemented (SSH-702).
+ */
+export function wordWholeArraySplatName(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+): string | null {
+  if (word.type !== "Word") return null;
+  if (word.parts.length !== 1) return null;
+  const part = word.parts[0];
+  if (!part || part.type !== "ParameterExpansion") return null;
+  const pe = part as AST.ParameterExpansion;
+  if (pe.modifier) return null;
+  const embedded = WHOLE_ARRAY_PARAM.exec(pe.parameter);
+  if (embedded) return embedded[2] === "@" ? embedded[1]! : null;
+  // Legacy shape: the subscript arrives in its own field (SSH-303).
+  if (pe.subscript === "@" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(pe.parameter)) {
+    return pe.parameter;
+  }
+  return null;
+}
+
 /**
  * Find the first unescaped slash in a string.
  * Returns the index of the first unescaped '/', or -1 if not found.
@@ -501,10 +565,8 @@ export function visitParameterExpansion(
       // array fell through to a branch that spliced the raw `a[@]` parameter
       // text in as a JS expression. An array assignment lowers to a real JS
       // array — the same shape PIPESTATUS has — so the whole array is
-      // available from whichever scope holds it. `typeof` guarded because an
-      // unassigned name is a ReferenceError in JS but empty in bash.
-      const arrayValue =
-        `(typeof ${jsArrayName} !== "undefined" ? ${jsArrayName} : $.VARS?.${arrayName})`;
+      // available from whichever scope holds it.
+      const arrayValue = wholeArrayValueExpression(arrayName);
 
       // `${#a[@]}` is the ELEMENT COUNT, and it has to be answered here: the
       // modifier switch below only ever sees the raw `a[@]` parameter text.
@@ -701,9 +763,7 @@ export function visitParameterExpansion(
       const idx = findFirstUnescapedSlash(modifierArg);
       const pat = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
       const rep = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${varExpr}.replace(/${globToParamRegex(pat, true)}/g, "${
-        escapeForQuotes(rep)
-      }")}`;
+      return `\${${varExpr}.replace(/${globToParamRegex(pat, true)}/g, "${escapeForQuotes(rep)}")}`;
     }
 
     case "substring": {

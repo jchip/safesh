@@ -151,12 +151,16 @@ describe("Parameter Expansion - Array Operations", () => {
   // subscript character — satisfied incidentally by the raw `arr[@]` text being
   // spliced in as a JS expression, which is exactly the defect. Both subscripts
   // now expand to the elements joined by a space.
-  it("should expand array with @ subscript", () => {
+  // SSH-700: `[@]` is one argument PER ELEMENT, so it emits a SPREAD of the
+  // elements — not the `.join(" ")` single string it used to (that assertion
+  // is what the `[*]` sibling below still pins, correctly).
+  it("should expand array with @ subscript as one argument per element", () => {
     const script = 'arr=(a b c); echo "${arr[@]}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, 'Array.isArray((typeof arr !== "undefined"');
-    assertStringIncludes(result, '.join(" ")');
+    assertStringIncludes(result, "$.echo(...");
+    assertStringIncludes(result, '(typeof arr !== "undefined" ? arr : $.VARS?.arr)');
+    assertEquals(result.includes('.join(" ")'), false);
   });
 
   it("should expand array with * subscript", () => {

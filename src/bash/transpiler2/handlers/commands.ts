@@ -26,6 +26,7 @@ import {
 } from "../utils/mod.ts";
 import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
 import { buildSubshellTestExpression } from "./control.ts";
+import { wholeArrayElementsExpression, wordWholeArraySplatName } from "./words.ts";
 
 // =============================================================================
 // Helpers
@@ -116,19 +117,38 @@ function wordIsUnquotedGlobLiteral(
 }
 
 /**
+ * SSH-700: the spread for a whole-array `${a[@]}` argument, which bash expands
+ * to one argument PER ELEMENT — for the quoted form too, that being the
+ * documented special case rather than a joined word. Returns null for every
+ * other word, leaving it on the normal string-interpolating path.
+ */
+function arraySplatSpread(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+): string | null {
+  const arrayName = wordWholeArraySplatName(word);
+  if (arrayName === null) return null;
+  const unquoted = word.type === "Word" && !word.quoted && !word.singleQuoted;
+  return `...${wholeArrayElementsExpression(arrayName, { split: unquoted })}`;
+}
+
+/**
  * SSH-642: format a command argument, emitting a runtime glob-expansion spread
  * for unquoted glob literals and a normal literal/template otherwise.
  *
  * The spread `...(await $.__expandGlob("pat"))` slots into the surrounding
  * comma-joined argument list, so a pattern that matches several files becomes
  * several arguments (like bash); no match yields the literal pattern.
+ *
+ * SSH-700: `arraySplat` is a pre-built spread that slots in the same way.
  */
 function formatCommandArg(
   arg: string,
   hasExpansion?: boolean,
   templateEscapedLiteral = false,
   isGlob = false,
+  arraySplat?: string | null,
 ): string {
+  if (arraySplat) return arraySplat;
   if (isGlob) {
     return `...(await $.__expandGlob("${escapeForQuotes(arg)}"))`;
   }
@@ -244,6 +264,7 @@ function handleTimeoutCommand(
   argExpansions?: boolean[],
   argTemplateEscapedLiterals?: boolean[],
   argIsGlob?: boolean[],
+  argArraySplat?: (string | null)[],
   assignments?: AST.VariableAssignment[],
   hasMergeStreams?: boolean,
 ): { code: string; async: boolean } | null {
@@ -290,6 +311,7 @@ function handleTimeoutCommand(
         argExpansions?.[i + 2],
         argTemplateEscapedLiterals?.[i + 2],
         argIsGlob?.[i + 2],
+        argArraySplat?.[i + 2],
       )
     )
       .join(", ")
@@ -317,6 +339,7 @@ function handleSpecializedCommand(
   argExpansions?: boolean[],
   argTemplateEscapedLiterals?: boolean[],
   argIsGlob?: boolean[],
+  argArraySplat?: (string | null)[],
 ): string {
   // Special handling for tmux send-keys
   if (name === "tmux") {
@@ -326,7 +349,13 @@ function handleSpecializedCommand(
 
   const argsArray = args.length > 0
     ? args.map((a, i) =>
-      formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i])
+      formatCommandArg(
+        a,
+        argExpansions?.[i],
+        argTemplateEscapedLiterals?.[i],
+        argIsGlob?.[i],
+        argArraySplat?.[i],
+      )
     )
       .join(", ")
     : "";
@@ -348,6 +377,7 @@ function handleStandardCommand(
   nameTemplateEscapedLiteral?: boolean,
   argTemplateEscapedLiterals?: boolean[],
   argIsGlob?: boolean[],
+  argArraySplat?: (string | null)[],
 ): string {
   // SSH-484: Use formatArg for command name to support variable expansion
   const formattedName = formatArg(name, nameHasExpansion, nameTemplateEscapedLiteral);
@@ -357,7 +387,13 @@ function handleStandardCommand(
     const envEntries = buildEnvEntries(assignments, ctx);
     const argsArray = args
       .map((a, i) =>
-        formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i])
+        formatCommandArg(
+          a,
+          argExpansions?.[i],
+          argTemplateEscapedLiterals?.[i],
+          argIsGlob?.[i],
+          argArraySplat?.[i],
+        )
       )
       .join(", ");
     // SSH-686: an env prefix and a 2>&1 both contribute to the SAME options
@@ -370,7 +406,13 @@ function handleStandardCommand(
 
   const argsArray = args.length > 0
     ? args.map((a, i) =>
-      formatCommandArg(a, argExpansions?.[i], argTemplateEscapedLiterals?.[i], argIsGlob?.[i])
+      formatCommandArg(
+        a,
+        argExpansions?.[i],
+        argTemplateEscapedLiterals?.[i],
+        argIsGlob?.[i],
+        argArraySplat?.[i],
+      )
     )
       .join(", ")
     : "";
@@ -403,6 +445,8 @@ interface CommandAnalysis {
   argTemplateEscapedLiterals: boolean[];
   /** SSH-642: Per-arg flags marking unquoted glob literals to expand at runtime */
   argIsGlob: boolean[];
+  /** SSH-700: Per-arg pre-built `${a[@]}` spread, null for a normal argument */
+  argArraySplat: (string | null)[];
 }
 
 /**
@@ -418,6 +462,7 @@ type CommandStrategy =
     argExpansions: boolean[];
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
+    argArraySplat: (string | null)[];
     // SSH-698: the call's output is needed as a value (a pipe stage consumes
     // it, a `$( )` captures it, or a redirect sends it somewhere), so the plain
     // `f()` call — which prints and returns nothing — will not do.
@@ -436,6 +481,7 @@ type CommandStrategy =
     argExpansions: boolean[];
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
+    argArraySplat: (string | null)[];
     hasRedirects: boolean;
   }
   | {
@@ -444,6 +490,7 @@ type CommandStrategy =
     argExpansions: boolean[];
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
+    argArraySplat: (string | null)[];
     // SSH-649: carry any env-prefix assignments (FOO=bar timeout ...) so they
     // reach the child process instead of being silently dropped.
     assignments: AST.VariableAssignment[];
@@ -459,6 +506,7 @@ type CommandStrategy =
     nameTemplateEscapedLiteral: boolean;
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
+    argArraySplat: (string | null)[];
   }
   | {
     type: "specialized";
@@ -468,6 +516,7 @@ type CommandStrategy =
     argExpansions: boolean[];
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
+    argArraySplat: (string | null)[];
   }
   | {
     type: "standard";
@@ -481,6 +530,7 @@ type CommandStrategy =
     nameTemplateEscapedLiteral: boolean;
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
+    argArraySplat: (string | null)[];
   };
 
 type CommandExpressionResult = ExpressionResult & {
@@ -617,6 +667,9 @@ function analyzeCommand(
   const argTemplateEscapedLiterals = command.args.map((arg) => wordIsTemplateEscapedLiteral(arg));
   // SSH-642: mark unquoted glob literals for runtime pathname expansion
   const argIsGlob = command.args.map((arg) => wordIsUnquotedGlobLiteral(arg));
+  // SSH-700: a `${a[@]}` argument is one argument per element, so it is
+  // pre-rendered as a spread rather than interpolated into a string.
+  const argArraySplat = command.args.map((arg) => arraySplatSpread(arg));
   const hasDynamicArgs = argExpansions.some(Boolean);
 
   return {
@@ -632,6 +685,7 @@ function analyzeCommand(
     nameTemplateEscapedLiteral,
     argTemplateEscapedLiterals,
     argIsGlob,
+    argArraySplat,
   };
 }
 
@@ -660,6 +714,7 @@ function selectCommandStrategy(
       argExpansions: analysis.argExpansions,
       argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       argIsGlob: analysis.argIsGlob,
+      argArraySplat: analysis.argArraySplat,
       needsValue: valueConsumed || analysis.hasRedirects,
       valueConsumed,
     };
@@ -686,6 +741,7 @@ function selectCommandStrategy(
       argExpansions: analysis.argExpansions,
       argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       argIsGlob: analysis.argIsGlob,
+      argArraySplat: analysis.argArraySplat,
       hasRedirects: false,
     };
   }
@@ -703,6 +759,7 @@ function selectCommandStrategy(
       argExpansions: analysis.argExpansions,
       argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       argIsGlob: analysis.argIsGlob,
+      argArraySplat: analysis.argArraySplat,
       hasRedirects: true,
     };
   }
@@ -715,6 +772,7 @@ function selectCommandStrategy(
       argExpansions: analysis.argExpansions,
       argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       argIsGlob: analysis.argIsGlob,
+      argArraySplat: analysis.argArraySplat,
       // SSH-649: preserve env-prefix assignments for the timed command.
       assignments: command.assignments,
       // SSH-686: preserve 2>&1 for the timed command.
@@ -748,6 +806,7 @@ function selectCommandStrategy(
       nameTemplateEscapedLiteral: analysis.nameTemplateEscapedLiteral,
       argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       argIsGlob: analysis.argIsGlob,
+      argArraySplat: analysis.argArraySplat,
     };
   }
 
@@ -761,6 +820,7 @@ function selectCommandStrategy(
       argExpansions: analysis.argExpansions,
       argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
       argIsGlob: analysis.argIsGlob,
+      argArraySplat: analysis.argArraySplat,
     };
   }
 
@@ -777,6 +837,7 @@ function selectCommandStrategy(
     nameTemplateEscapedLiteral: analysis.nameTemplateEscapedLiteral,
     argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
     argIsGlob: analysis.argIsGlob,
+    argArraySplat: analysis.argArraySplat,
   };
 }
 
@@ -821,6 +882,7 @@ function executeCommandStrategy(
             strategy.argExpansions?.[i],
             strategy.argTemplateEscapedLiterals?.[i],
             strategy.argIsGlob?.[i],
+            strategy.argArraySplat?.[i],
           )
         )
         .join(", ");
@@ -858,6 +920,7 @@ function executeCommandStrategy(
             strategy.argExpansions?.[i],
             strategy.argTemplateEscapedLiterals?.[i],
             strategy.argIsGlob?.[i],
+            strategy.argArraySplat?.[i],
           )
         ),
         hasRedirects: strategy.hasRedirects,
@@ -874,6 +937,7 @@ function executeCommandStrategy(
         strategy.argExpansions,
         strategy.argTemplateEscapedLiterals,
         strategy.argIsGlob,
+        strategy.argArraySplat,
         strategy.assignments,
         strategy.hasMergeStreams,
       );
@@ -897,6 +961,7 @@ function executeCommandStrategy(
         strategy.argTemplateEscapedLiterals[1],
         strategy.argTemplateEscapedLiterals.slice(2),
         strategy.argIsGlob.slice(2),
+        strategy.argArraySplat.slice(2),
       );
       return { code: cmdExpr, async: true };
     }
@@ -926,6 +991,7 @@ function executeCommandStrategy(
         strategy.nameTemplateEscapedLiteral,
         strategy.argTemplateEscapedLiterals,
         strategy.argIsGlob,
+        strategy.argArraySplat,
       );
       return { code: cmdExpr, async: true };
     }
@@ -938,6 +1004,7 @@ function executeCommandStrategy(
         strategy.argExpansions,
         strategy.argTemplateEscapedLiterals,
         strategy.argIsGlob,
+        strategy.argArraySplat,
       );
       return { code: cmdExpr, async: true };
     }
@@ -955,6 +1022,7 @@ function executeCommandStrategy(
         strategy.nameTemplateEscapedLiteral,
         strategy.argTemplateEscapedLiterals,
         strategy.argIsGlob,
+        strategy.argArraySplat,
       );
       return { code: cmdExpr, async: true };
     }

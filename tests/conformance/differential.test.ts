@@ -155,6 +155,34 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=(1 2 3); echo "${#a[@]}"' },
     { src: 'a=(); echo "[${a[@]}]"; echo "${#a[@]}"' },
     { src: 'a=hello; echo "${a[@]}"' },
+    // SSH-700: `[@]` is one argument PER ELEMENT — for the quoted form too,
+    // which is the documented special case. `[*]` joins, and stays joined.
+    // `printf` with a reused format is the probe: it reveals the argument
+    // COUNT, which `echo` hides by rejoining everything with spaces.
+    { src: 'a=(1 2 3); printf "[%s]" ${a[@]}; echo' },
+    { src: 'a=(1 2 3); printf "[%s]" "${a[@]}"; echo' },
+    { src: 'a=(1 2 3); printf "[%s]" "${a[*]}"; echo' },
+    // Quoted keeps an element's internal space; unquoted splits on it.
+    { src: 'a=("x y" z); printf "[%s]" "${a[@]}"; echo' },
+    { src: 'a=("x y" z); printf "[%s]" ${a[@]}; echo' },
+    // Empty and unset expand to ZERO arguments (bash prints `[]` because
+    // printf applies a format with no args once).
+    { src: 'a=(); printf "[%s]" "${a[@]}"; echo END' },
+    { src: 'printf "[%s]" "${u[@]}"; echo END' },
+    // A scalar answers with its own value, as one argument.
+    { src: 's=x; printf "[%s]" "${s[@]}"; echo' },
+    { src: 'a=(1 2 3); for v in "${a[@]}"; do echo "v=$v"; done' },
+    // SSH-701: a modifier other than `#` on a whole-array subscript. The two
+    // families differ — `:off:len` slices the ARRAY, everything else maps over
+    // the elements.
+    { src: 'a=(1 2 3); echo "${a[@]:1}"' },
+    { src: 'a=(1 2 3); echo "${a[@]:1:1}"' },
+    { src: 'a=(1 2 3); echo "${a[@]: -1}"' },
+    { src: 'a=(axx bx); echo "${a[@]/x/y}"' },
+    { src: 'a=(axx bx); echo "${a[@]//x/y}"' },
+    { src: 'a=(ax bx); echo "${a[@]#a}"' },
+    { src: 'a=(a.tar.gz b.tar.gz); echo "${a[@]%.gz}"' },
+    { src: 'a=(1 2 3); printf "[%s]" "${a[@]:1}"; echo' },
   ],
   functions: [
     // SSH-674: call-site arguments used to be dropped, and $N in the body read
@@ -183,6 +211,18 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'f() { echo out; return 3; }; v=$(f); echo "rc=$? v=$v"' },
     { src: "f() { echo hi; }; f > /dev/null; echo done" },
     { src: 'f() { return 3; }; f | cat; echo "rc=$?"' },
+    // The redirect form SSH-698 asked for by name: `> /dev/null` only proves
+    // the call does not throw, so round-trip through a real file to prove the
+    // body's output actually LANDS there.
+    { src: "f() { echo hi; }; f > @TMP@/fout; cat @TMP@/fout" },
+    { src: "f() { echo a; echo b; }; f > @TMP@/f2; wc -l < @TMP@/f2" },
+    // SSH-699: a redirect on a DOWNSTREAM stage of a captured upstream was
+    // ignored, so the output leaked to the terminal instead of the file. The
+    // brace-group form leaked identically, so it is pre-existing and shared.
+    { src: "f() { echo hi; }; f | cat > /dev/null; echo done" },
+    { src: "{ echo hi; } | cat > /dev/null; echo done" },
+    { src: "f() { echo hi; }; f | cat > @TMP@/p1; cat @TMP@/p1" },
+    { src: "{ echo hi; } | cat > @TMP@/p2; cat @TMP@/p2" },
   ],
   // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
   // purpose — the pre-fix failure mode was `wait` falling straight through, so
