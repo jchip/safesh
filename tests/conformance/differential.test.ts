@@ -247,11 +247,12 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=("x y" z); printf "[%s]" "pre"${a[@]}"post"; echo' },
     // A scalar in the same quote shape still concatenates into one word.
     { src: 'v=x; printf "[%s]" "pre"$v"post"; echo' },
-    // SSH-710: two whole-array expansions in one word.
-    {
-      src: 'a=(x z); printf "[%s]" pre"${a[@]}"mid"${a[@]}"; echo',
-      xfail: "SSH-710",
-    },
+    // SSH-710: two whole-array expansions fold left-to-right at each seam.
+    { src: 'a=(x z); printf "[%s]" pre"${a[@]}"mid"${a[@]}"; echo' },
+    { src: 'a=(x z); b=(1 2); printf "[%s]" pre"${a[@]}"mid"${b[@]}"post; echo' },
+    { src: 'a=(); b=(1 2); printf "[%s]" pre"${a[@]}"mid"${b[@]}"post; echo' },
+    { src: 'a=(x z); b=(); printf "[%s]" pre"${a[@]}"mid"${b[@]}"post; echo' },
+    { src: 'a=(); b=(); printf "[%s]" pre"${a[@]}"mid"${b[@]}"post; echo' },
   ],
   functions: [
     // SSH-674: call-site arguments used to be dropped, and $N in the body read

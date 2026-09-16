@@ -209,40 +209,22 @@ function wholeArrayAtName(pe: AST.ParameterExpansion): string | null {
   return null;
 }
 
-/**
- * SSH-700/702: locate the ONE whole-array `${a[@]}` expansion in `word`, with
- * whatever parts sit before and after it. A modifier is allowed — `"${a[@]:1}"`
- * is still one argument per surviving element.
- *
- * Returns null when the word holds no `[@]` expansion, or more than one
- * (`"${a[@]}${b[@]}"`): the glue below has room for exactly one element list,
- * and folding a word into an alternating sequence of literals and element
- * lists is SSH-710.
- */
-function wordArraySplat(
-  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
-): {
+interface WordArraySplat {
   arrayName: string;
   expansion: AST.ParameterExpansion;
-  before: AST.WordPart[];
-  after: AST.WordPart[];
-} | null {
-  if (word.type !== "Word") return null;
-  let found: { arrayName: string; expansion: AST.ParameterExpansion; index: number } | null = null;
+  index: number;
+}
+
+/** Locate every whole-array `${a[@]}` expansion in source order. */
+function wordArraySplats(word: AST.Word): WordArraySplat[] {
+  const found: WordArraySplat[] = [];
   for (const [index, part] of word.parts.entries()) {
     if (part.type !== "ParameterExpansion") continue;
     const arrayName = wholeArrayAtName(part);
     if (arrayName === null) continue;
-    if (found !== null) return null; // two `[@]` in one word — SSH-710
-    found = { arrayName, expansion: part, index };
+    found.push({ arrayName, expansion: part, index });
   }
-  if (found === null) return null;
-  return {
-    arrayName: found.arrayName,
-    expansion: found.expansion,
-    before: word.parts.slice(0, found.index),
-    after: word.parts.slice(found.index + 1),
-  };
+  return found;
 }
 
 /**
@@ -259,19 +241,17 @@ function wordArraySplat(
  * `${#a[@]}` returns null — it is a count, a single word, and
  * {@link wholeArrayModifiedElements} rejects it.
  *
- * KNOWN GAP (SSH-709): whether the elements word-split follows the EXPANSION's
- * own quoting (SSH-704), which the parser records on the part while the quote
- * characters are still in the word text. For a word the LEXER marks quoted
- * those characters are already gone, so `"pre"${a[@]}"post"` — where the
- * expansion is actually UNQUOTED — still reads as quoted here. Visible only
- * for an element containing whitespace.
+ * SSH-710: multiple whole-array expansions fold left-to-right across their
+ * seams. This is not a Cartesian product: the last current word joins only the
+ * first element of the next non-empty list.
  */
 export function arraySplatWords(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
   ctx: VisitorContext,
 ): string | null {
-  const splat = wordArraySplat(word);
-  if (splat === null) return null;
+  if (word.type !== "Word") return null;
+  const splats = wordArraySplats(word);
+  if (splats.length === 0) return null;
 
   // Two different questions, and conflating them leaves stray quote characters
   // in the arguments:
@@ -281,29 +261,58 @@ export function arraySplatWords(
   //   - SSH-704: the split is decided by the EXPANSION's own quoting. A
   //     partially quoted word (`pre"${a[@]}"post`) is not marked quoted, yet
   //     the expansion inside it is — the parser records that on the part.
-  const wordQuoted = word.type === "Word" && (word.quoted || word.singleQuoted);
-  const quoted = splat.expansion.quoted ?? wordQuoted;
-  const modifierArg = splat.expansion.modifierArg
-    ? visitWord(splat.expansion.modifierArg as AST.Word, ctx)
-    : "";
-  const elements = wholeArrayModifiedElements(
-    splat.arrayName,
-    splat.expansion.modifier,
-    modifierArg,
-    { split: !quoted },
-  );
-  if (elements === null) return null;
-  if (splat.before.length === 0 && splat.after.length === 0) return elements;
+  const wordQuoted = word.quoted || word.singleQuoted;
+  const elementsFor = (splat: WordArraySplat): string | null => {
+    const quoted = splat.expansion.quoted ?? wordQuoted;
+    const modifierArg = splat.expansion.modifierArg
+      ? visitWord(splat.expansion.modifierArg as AST.Word, ctx)
+      : "";
+    return wholeArrayModifiedElements(
+      splat.arrayName,
+      splat.expansion.modifier,
+      modifierArg,
+      { split: !quoted },
+    );
+  };
 
   // A literal part of a partially quoted word still carries its quote
   // characters (`pre"`), which visitWordPart strips for an unquoted word —
   // the same rendering visitWord itself does.
   const render = (parts: AST.WordPart[]) =>
     parts.map((part) => visitWordPart(part, ctx, wordQuoted)).join("");
-  return `((__els, __pre, __suf) => __els.length === 0 ? [__pre + __suf] ` +
-    `: __els.map((__e, __i) => (__i === 0 ? __pre : "") + __e ` +
-    `+ (__i === __els.length - 1 ? __suf : "")))` +
-    `(${elements}, \`${render(splat.before)}\`, \`${render(splat.after)}\`)`;
+
+  if (splats.length === 1) {
+    const splat = splats[0]!;
+    const elements = elementsFor(splat);
+    if (elements === null) return null;
+    const before = word.parts.slice(0, splat.index);
+    const after = word.parts.slice(splat.index + 1);
+    if (before.length === 0 && after.length === 0) return elements;
+    return `((__els, __pre, __suf) => __els.length === 0 ? [__pre + __suf] ` +
+      `: __els.map((__e, __i) => (__i === 0 ? __pre : "") + __e ` +
+      `+ (__i === __els.length - 1 ? __suf : "")))` +
+      `(${elements}, \`${render(before)}\`, \`${render(after)}\`)`;
+  }
+
+  const segments: string[] = [];
+  let cursor = 0;
+  for (const splat of splats) {
+    segments.push(`\`${render(word.parts.slice(cursor, splat.index))}\``);
+    const elements = elementsFor(splat);
+    if (elements === null) return null;
+    segments.push(elements);
+    cursor = splat.index + 1;
+  }
+  segments.push(`\`${render(word.parts.slice(cursor))}\``);
+
+  return `((__segs) => { const __out: string[] = []; let __pending = ""; ` +
+    `for (const __seg of __segs) { if (!Array.isArray(__seg)) { __pending += __seg; continue; } ` +
+    `if (__seg.length === 0) continue; const __first = __pending + String(__seg[0]); ` +
+    `__pending = ""; if (__out.length === 0) __out.push(__first); ` +
+    `else __out[__out.length - 1] += __first; ` +
+    `for (let __i = 1; __i < __seg.length; __i++) __out.push(String(__seg[__i])); } ` +
+    `if (__out.length === 0) return __pending ? [__pending] : []; ` +
+    `__out[__out.length - 1] += __pending; return __out; })([${segments.join(", ")}])`;
 }
 
 /**

@@ -163,6 +163,14 @@ describe("Parameter Expansion - Array Operations", () => {
     assertEquals(result.includes('.join(" ")'), false);
   });
 
+  it("should fold two whole-array expansions across their seams (SSH-710)", () => {
+    const script = 'a=(x z); b=(1 2); printf "[%s]" pre"${a[@]}"mid"${b[@]}"post';
+    const result = transpile(parse(script));
+    assertStringIncludes(result, '$.cmd("printf", "[%s]", ...');
+    assertStringIncludes(result, "__segs");
+    assertEquals(result.includes('.join(" ")'), false);
+  });
+
   // `[*]` joins into ONE word — the behaviour `[@]` no longer shares. SSH-701
   // routes it through the shared element-list builder, so the guarded read is
   // now inside that helper's IIFE rather than spelled out here.
