@@ -254,6 +254,18 @@ export interface ParameterExpansion extends BaseNode {
   // SSH-303: Array support
   subscript?: string | "@" | "*"; // Array subscript: ${arr[0]}, ${arr[@]}, ${arr[*]}
   indirection?: boolean; // ${!arr[@]} for array indices
+  /**
+   * SSH-704: this expansion sat inside double quotes WITHIN a partially quoted
+   * word — `pre"${a[@]}"post`, where the word itself is not marked `quoted`.
+   * It decides whether a `${a[@]}` splits into one argument per element, a
+   * question the word-level flag cannot answer: that flag means "the word
+   * began with a quote", not "this expansion was quoted".
+   *
+   * Only set when the scanner actually sees the quotes. A word the LEXER marks
+   * quoted has had them stripped already (SSH-709), so the word-level flag is
+   * the only signal there.
+   */
+  quoted?: boolean;
 }
 
 export type ParameterModifier =
@@ -413,7 +425,8 @@ export type UnaryTestOperator =
   | "-e" // exists
   | "-f" // regular file
   | "-d" // directory
-  | "-L" | "-h" // symbolic link
+  | "-L"
+  | "-h" // symbolic link
   | "-b" // block device
   | "-c" // character device
   | "-p" // named pipe
@@ -440,11 +453,20 @@ export interface BinaryTest extends BaseNode {
 }
 
 export type BinaryTestOperator =
-  | "=" | "==" // string equality
+  | "="
+  | "==" // string equality
   | "!=" // string inequality
-  | "<" | ">" // string comparison (lexicographic)
-  | "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge" // numeric comparison
-  | "-nt" | "-ot" | "-ef" // file comparison
+  | "<"
+  | ">" // string comparison (lexicographic)
+  | "-eq"
+  | "-ne"
+  | "-lt"
+  | "-le"
+  | "-gt"
+  | "-ge" // numeric comparison
+  | "-nt"
+  | "-ot"
+  | "-ef" // file comparison
   | "=~"; // regex match
 
 export interface LogicalTest extends BaseNode {

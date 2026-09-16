@@ -269,7 +269,16 @@ export function arraySplatWords(
   const splat = wordArraySplat(word);
   if (splat === null) return null;
 
-  const quoted = word.type === "Word" && (word.quoted || word.singleQuoted);
+  // Two different questions, and conflating them leaves stray quote characters
+  // in the arguments:
+  //   - `wordQuoted` renders the literal parts. A word the LEXER marks quoted
+  //     has had its quotes stripped; a partially quoted one has NOT, and
+  //     visitLiteralPart only strips shell quote syntax for an unquoted word.
+  //   - SSH-704: the split is decided by the EXPANSION's own quoting. A
+  //     partially quoted word (`pre"${a[@]}"post`) is not marked quoted, yet
+  //     the expansion inside it is — the parser records that on the part.
+  const wordQuoted = word.type === "Word" && (word.quoted || word.singleQuoted);
+  const quoted = splat.expansion.quoted === true || wordQuoted;
   const modifierArg = splat.expansion.modifierArg
     ? visitWord(splat.expansion.modifierArg as AST.Word, ctx)
     : "";
@@ -286,7 +295,7 @@ export function arraySplatWords(
   // characters (`pre"`), which visitWordPart strips for an unquoted word —
   // the same rendering visitWord itself does.
   const render = (parts: AST.WordPart[]) =>
-    parts.map((part) => visitWordPart(part, ctx, quoted)).join("");
+    parts.map((part) => visitWordPart(part, ctx, wordQuoted)).join("");
   return `((__els, __pre, __suf) => __els.length === 0 ? [__pre + __suf] ` +
     `: __els.map((__e, __i) => (__i === 0 ? __pre : "") + __e ` +
     `+ (__i === __els.length - 1 ? __suf : "")))` +

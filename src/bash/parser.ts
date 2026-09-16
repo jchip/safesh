@@ -1737,6 +1737,11 @@ export class Parser {
     const parts: AST.WordPart[] = [];
     let pos = 0;
     let literal = "";
+    // SSH-704: a partially quoted word keeps its quote characters in `value`
+    // (the lexer only strips them from a word it marks quoted), so track which
+    // side of a quote each expansion falls on. `${a[@]}` needs it: quoted, it
+    // is one argument per element; unquoted, the elements word-split too.
+    let inQuote = false;
 
     const flushLiteral = () => {
       if (literal) {
@@ -1759,11 +1764,24 @@ export class Parser {
         }
       }
 
+      // SSH-704: an unescaped quote flips the context for the parts that
+      // follow. The character itself stays in the literal, as it always has —
+      // visitLiteralPart strips shell quote syntax downstream.
+      if (char === '"') {
+        inQuote = !inQuote;
+        literal += char;
+        pos++;
+        continue;
+      }
+
       // Handle $ expansions
       if (char === "$") {
         const result = this.tryParseDollarExpansion(value, pos);
         if (result) {
           flushLiteral();
+          if (inQuote && result.part.type === "ParameterExpansion") {
+            result.part.quoted = true;
+          }
           parts.push(result.part);
           pos = result.newPos;
           continue;

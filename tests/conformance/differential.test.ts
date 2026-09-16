@@ -220,15 +220,30 @@ const CORPUS: Record<string, Case[]> = {
     // A glued expansion still composes with a modifier (SSH-701).
     { src: 'a=(ax bx); printf "[%s]" pre"${a[@]#a}"post; echo' },
     { src: 'a=(1 2); for v in pre"${a[@]}"post; do echo "v=$v"; done' },
-    // SSH-704: a glued word is never marked quoted in the AST, so its elements
-    // always word-split — visible only for an element containing whitespace.
-    // The unquoted glued form below is correct and guards against a fix that
-    // stops splitting altogether.
-    {
-      src: 'a=("x y" z); printf "[%s]" pre"${a[@]}"post; echo',
-      xfail: "SSH-704",
-    },
+    // SSH-704: whether a GLUED expansion word-splits depends on whether the
+    // expansion itself sat inside quotes, which the word-level `quoted` flag
+    // does not answer — it means "the word began with a quote". These need an
+    // element containing whitespace to be visible at all.
+    { src: 'a=("x y" z); printf "[%s]" pre"${a[@]}"post; echo' },
+    { src: 'a=("x y" z); printf "[%s]" pre"${a[@]}"; echo' },
+    { src: 'a=("x y" z); printf "[%s]" pre"${a[@]:0}"post; echo' },
+    // Unquoted SHOULD split — guards against a fix that stops splitting.
     { src: 'a=("x y" z); printf "[%s]" pre${a[@]}post; echo' },
+    { src: 'a=("x y" z); printf "[%s]" "pre${a[@]}post"; echo' },
+    { src: 'a=("x y" z); printf "[%s]" "${a[@]}"post; echo' },
+    { src: 'a=("x y" z); x=P; printf "[%s]" "$x${a[@]}"; echo' },
+    // SSH-709: the LEXER strips every quote from a word it marks quoted, so
+    // for `"pre"${a[@]}"post"` the expansion's own (un)quoting is gone before
+    // the parser runs — bash splits here, safesh does not.
+    {
+      src: 'a=("x y" z); printf "[%s]" "pre"${a[@]}"post"; echo',
+      xfail: "SSH-709",
+    },
+    // SSH-710: two whole-array expansions in one word.
+    {
+      src: 'a=(x z); printf "[%s]" pre"${a[@]}"mid"${a[@]}"; echo',
+      xfail: "SSH-710",
+    },
   ],
   functions: [
     // SSH-674: call-site arguments used to be dropped, and $N in the body read
