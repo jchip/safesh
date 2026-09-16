@@ -215,7 +215,9 @@ function wholeArrayAtName(pe: AST.ParameterExpansion): string | null {
  * is still one argument per surviving element.
  *
  * Returns null when the word holds no `[@]` expansion, or more than one
- * (`"${a[@]}${b[@]}"`, whose seam behaviour is not implemented).
+ * (`"${a[@]}${b[@]}"`): the glue below has room for exactly one element list,
+ * and folding a word into an alternating sequence of literals and element
+ * lists is SSH-710.
  */
 function wordArraySplat(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
@@ -231,7 +233,7 @@ function wordArraySplat(
     if (part.type !== "ParameterExpansion") continue;
     const arrayName = wholeArrayAtName(part);
     if (arrayName === null) continue;
-    if (found !== null) return null; // two `[@]` in one word — left as it was
+    if (found !== null) return null; // two `[@]` in one word — SSH-710
     found = { arrayName, expansion: part, index };
   }
   if (found === null) return null;
@@ -257,10 +259,12 @@ function wordArraySplat(
  * `${#a[@]}` returns null — it is a count, a single word, and
  * {@link wholeArrayModifiedElements} rejects it.
  *
- * KNOWN GAP (SSH-704): the glued form always word-splits its elements, because
- * the AST records quoting per WORD and a glued word is never marked quoted, so
- * `pre"${a[@]}"post` is indistinguishable here from `pre${a[@]}post`. That is
- * visible only for an element containing whitespace.
+ * KNOWN GAP (SSH-709): whether the elements word-split follows the EXPANSION's
+ * own quoting (SSH-704), which the parser records on the part while the quote
+ * characters are still in the word text. For a word the LEXER marks quoted
+ * those characters are already gone, so `"pre"${a[@]}"post"` — where the
+ * expansion is actually UNQUOTED — still reads as quoted here. Visible only
+ * for an element containing whitespace.
  */
 export function arraySplatWords(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
