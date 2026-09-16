@@ -14,12 +14,7 @@ import { collectStreamBytes, collectStreamBytesWithTimeout } from "../core/utils
 import { CMD_NAME_SYMBOL, type CommandFn } from "./command-init.ts";
 import { lines } from "./transforms.ts";
 import { getNativeCommand } from "./native-commands.ts";
-import {
-  JOB_MARKER,
-  CMD_ERROR_MARKER,
-  ENV_SHELL_ID,
-  ENV_SCRIPT_ID,
-} from "../core/constants.ts";
+import { CMD_ERROR_MARKER, ENV_SCRIPT_ID, ENV_SHELL_ID, JOB_MARKER } from "../core/constants.ts";
 
 /** Symbol the preamble uses to inject config onto globalThis.$ (SSH-629). */
 const CONFIG_SYMBOL = Symbol.for("safesh.config");
@@ -302,9 +297,7 @@ export class Command implements PromiseLike<CommandResult> {
    */
   private createCommand(hasStdin: boolean): Deno.Command {
     // Merge options.env with current Deno.env if provided, otherwise inherit
-    const env = this.options.env
-      ? { ...Deno.env.toObject(), ...this.options.env }
-      : undefined;
+    const env = this.options.env ? { ...Deno.env.toObject(), ...this.options.env } : undefined;
 
     return new Deno.Command(this.cmd, {
       args: this.args,
@@ -449,7 +442,9 @@ export class Command implements PromiseLike<CommandResult> {
       }
     }
 
-    throw new Error("pipe() requires a CommandFn from initCmds(), a Command object, or a Transform function.");
+    throw new Error(
+      "pipe() requires a CommandFn from initCmds(), a Command object, or a Transform function.",
+    );
   }
 
   /**
@@ -1113,7 +1108,9 @@ export class Command implements PromiseLike<CommandResult> {
           // SSH-565: If stream was NOT fully consumed (early break from head/take/first),
           // kill the subprocess and cancel streams so drainPromise/process.status don't hang.
           if (!streamFullyConsumed) {
-            try { process.kill("SIGTERM"); } catch { /* already exited */ }
+            try {
+              process.kill("SIGTERM");
+            } catch { /* already exited */ }
             // Cancel streams to release resources (reader lock must be released first)
             reader.releaseLock();
             await streamToRead.cancel().catch(() => {});
@@ -1155,6 +1152,19 @@ export class Command implements PromiseLike<CommandResult> {
    * await cmd("echo", ["more"]).stdout("output.txt", { append: true }).exec();
    * ```
    */
+  /**
+   * SSH-699: whether stdout is redirected to a file.
+   *
+   * A redirect CONSUMES the output: {@link Command.stream} writes a redirected
+   * stdout chunk to the file instead of yielding it. `exec()` writes the file
+   * too but still reports `stdout` in its result, so a BUFFERED consumer has to
+   * ask before forwarding that text on — otherwise what the script sent to the
+   * file also reaches the terminal.
+   */
+  get redirectsStdout(): boolean {
+    return this.options.stdoutFile !== undefined;
+  }
+
   stdout(): FluentStream<string>;
   stdout(file: string, options?: RedirectOptions): Command;
   stdout(file?: string, options?: RedirectOptions): FluentStream<string> | Command {
@@ -1417,20 +1427,20 @@ export function cmd(...params: unknown[]): Command {
 
 // Command helpers (git, docker, tmux, tmuxSubmit, str, bytes)
 export {
+  bytes,
   createCommandFactory,
-  git,
   docker,
+  git,
+  str,
   tmux,
   tmuxSubmit,
-  str,
-  bytes,
 } from "./command-helpers.ts";
 
 // Command transforms (toCmd, toCmdLines)
-export { toCmd, toCmdLines, execStreamToCmd } from "./command-transforms.ts";
+export { execStreamToCmd, toCmd, toCmdLines } from "./command-transforms.ts";
 
 // Command initialization (initCmds)
-export { initCmds, type CommandFn, CMD_NAME_SYMBOL } from "./command-init.ts";
+export { CMD_NAME_SYMBOL, type CommandFn, initCmds } from "./command-init.ts";
 
 // Legacy alias for backwards compatibility
 export { initCmds as init } from "./command-init.ts";

@@ -223,6 +223,15 @@ const CORPUS: Record<string, Case[]> = {
     { src: "{ echo hi; } | cat > /dev/null; echo done" },
     { src: "f() { echo hi; }; f | cat > @TMP@/p1; cat @TMP@/p1" },
     { src: "{ echo hi; } | cat > @TMP@/p2; cat @TMP@/p2" },
+    // SSH-703: the two cases above read the file back with `cat`, which re-adds
+    // a trailing newline and so hides that the FILE is a byte short. `od -c`
+    // formats identically on both sides (unlike `wc`, whose native adapter pads
+    // differently), so it pins the bytes.
+    {
+      src: "{ echo a; echo b; } | cat > @TMP@/nl; od -c @TMP@/nl",
+      xfail: "SSH-703",
+    },
+    { src: "echo a | cat > @TMP@/nl2; od -c @TMP@/nl2" },
   ],
   // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
   // purpose — the pre-fix failure mode was `wait` falling straight through, so

@@ -11,7 +11,14 @@
  * @module
  */
 
-import { cmd, Command, type CommandOptions, type CommandResult, type CommandFn, CMD_NAME_SYMBOL } from "./command.ts";
+import {
+  cmd,
+  CMD_NAME_SYMBOL,
+  Command,
+  type CommandFn,
+  type CommandOptions,
+  type CommandResult,
+} from "./command.ts";
 
 /**
  * Transform type for stream operations
@@ -56,12 +63,21 @@ export async function execStreamToCmd(
   if (commandFnOrCmd instanceof Command) {
     // SSH-4: Do not throw on non-zero exit. In bash pipelines (without pipefail),
     // a non-zero exit from an intermediate stage passes its stdout to the next stage.
-    return await commandFnOrCmd.stdin(input).exec();
+    const result = await commandFnOrCmd.stdin(input).exec();
+    // SSH-699: a stdout redirect consumed the output — the file is written, and
+    // reporting the text as well would have it printed downstream too. This is
+    // the path a pipeline whose UPSTREAM is captured takes (a shell function, a
+    // `{ ...; }` group, a subshell): `{ echo hi; } | cat > /dev/null` used to
+    // write the file AND print `hi`. Command.stream() already withholds a
+    // redirected chunk; match it here for the buffered path.
+    return commandFnOrCmd.redirectsStdout ? { ...result, stdout: "" } : result;
   }
 
   const command = commandFnOrCmd[CMD_NAME_SYMBOL];
   if (!command) {
-    throw new Error(`${fnName}() requires a CommandFn from initCmds(). Raw string command names are not allowed.`);
+    throw new Error(
+      `${fnName}() requires a CommandFn from initCmds(). Raw string command names are not allowed.`,
+    );
   }
 
   // SSH-4: Do not throw on non-zero exit - pass stdout through to downstream stages.
