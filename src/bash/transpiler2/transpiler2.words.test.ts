@@ -158,7 +158,7 @@ describe("Parameter Expansion - Array Operations", () => {
     const script = 'arr=(a b c); echo "${arr[@]}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, "$.echo(...");
+    assertStringIncludes(result, "$.echo({ parseShellFlags: true }, ...");
     assertStringIncludes(result, '(typeof arr !== "undefined" ? arr : $.VARS?.arr)');
     assertEquals(result.includes('.join(" ")'), false);
   });
