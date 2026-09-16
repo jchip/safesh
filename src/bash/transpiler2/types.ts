@@ -133,6 +133,12 @@ export interface VisitorContext {
   /** Set stdout capture variable name; null to disable */
   setStdoutCapture(varName: string | null): void;
 
+  /** Get stderr capture variable name (null if stderr should be printed) */
+  getStderrCapture(): string | null;
+
+  /** Set stderr capture variable name; null to print stderr normally */
+  setStderrCapture(varName: string | null): void;
+
   /** True while emitting inside a subshell body — `exit` must only leave the
    * subshell, not the process (SSH-584) */
   isInSubshell(): boolean;

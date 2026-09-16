@@ -154,6 +154,8 @@ export class BashTranspiler2 {
       getDiagnostics: () => ctx.getDiagnostics(),
       getStdoutCapture: () => ctx.getStdoutCapture(),
       setStdoutCapture: (varName) => ctx.setStdoutCapture(varName),
+      getStderrCapture: () => ctx.getStderrCapture(),
+      setStderrCapture: (varName) => ctx.setStderrCapture(varName),
       isInSubshell: () => subshellDepth > 0,
       enterSubshell: () => {
         subshellDepth++;

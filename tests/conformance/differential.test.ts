@@ -122,6 +122,16 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'v=$({ echo a; }); echo "rc=$? v=[$v]"' },
     // stdout redirected, stderr still goes to the terminal.
     { src: "rm -f @TMP@/g6; { echo out; echo err >&2; } > @TMP@/g6; od -c @TMP@/g6" },
+    // SSH-707: descriptor duplication on a redirected group must merge the
+    // captured streams rather than leaving stderr on the real process stream.
+    { src: "{ echo out; echo err >&2; } 2>&1" },
+    { src: "( echo out; echo err >&2 ) 2>&1" },
+    { src: "{ echo out; echo err >&2; } 2>&1 | grep err" },
+    { src: "{ echo out; } 1>&2" },
+    // Existing file redirects on either stream remain independent.
+    { src: "{ echo out; } 2>/dev/null" },
+    { src: "{ echo err >&2; } 2>/dev/null" },
+    { src: "rm -f @TMP@/g7; { echo err >&2; } 2> @TMP@/g7; od -c @TMP@/g7" },
     // The group's exit status must survive being captured (these pass today).
     { src: '{ false; } > /dev/null; echo "rc=$?"' },
     { src: 'v=$({ exit 3; }); echo "rc=$? v=[$v]"' },

@@ -1101,6 +1101,13 @@ function applyBuiltinRedirections(
       lines.push(
         `const ${targetVar} = ${target}; if (${targetVar} !== "/dev/null") Deno.writeTextFileSync(${targetVar}, __stdout + __stderr, ${optionsArg}); __stdout = ""; __stderr = "";`,
       );
+    } else if (redirect.operator === ">&" && typeof redirect.target === "number") {
+      const fd = redirect.fd ?? 1;
+      if (fd === 2 && redirect.target === 1) {
+        lines.push(`__stdout += __stderr; __stderr = "";`);
+      } else if (fd === 1 && redirect.target === 2) {
+        lines.push(`__stderr += __stdout; __stdout = "";`);
+      }
     }
   }
 
@@ -1420,6 +1427,7 @@ export function visitCommand(
   const result = buildCommand(command, ctx);
   const indent = ctx.getIndent();
   const captureVar = ctx.getStdoutCapture();
+  const stderrCaptureVar = ctx.getStderrCapture();
 
   // Wrap command execution with __printCmd to print output
   // This only applies to standalone commands (statements), not commands in pipelines/expressions
@@ -1436,7 +1444,9 @@ export function visitCommand(
         // drop it, so a group's status was whatever happened to be in
         // Deno.exitCode — `{ false; } > f` reported 0.
         `${indent}__recStatus(${resultVar});`,
-        `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
+        stderrCaptureVar
+          ? `${indent}if (${resultVar}.stderr) ${stderrCaptureVar}.push(String(${resultVar}.stderr));`
+          : `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
       ],
     };
   }
@@ -2054,9 +2064,25 @@ function buildUserFunctionAsCapturedExpression(
     `success: ${codeVar} === 0 }; })()`;
 }
 
-function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorContext): string {
+function buildStatementCaptureResult(
+  stmt: AST.Statement,
+  ctx: VisitorContext,
+  options: { stderrCapture?: "separate" | "stdout" } = {},
+): string {
   const captureVar = ctx.getTempVar("__out");
+  const stderrCaptureVar = options.stderrCapture === "stdout"
+    ? captureVar
+    : options.stderrCapture === "separate"
+    ? ctx.getTempVar("__err")
+    : null;
   const previousCapture = ctx.getStdoutCapture();
+  const previousStderrCapture = ctx.getStderrCapture();
+  const stderrDeclaration = stderrCaptureVar && stderrCaptureVar !== captureVar
+    ? ` const ${stderrCaptureVar}: string[] = [];`
+    : "";
+  const stderrResult = stderrCaptureVar && stderrCaptureVar !== captureVar
+    ? `${stderrCaptureVar}.join("")`
+    : '""';
 
   // SSH-677: this build used to hardcode `code: 0`, so a `( ... )` or `{ ...; }`
   // group feeding a pipe reported success no matter what it did, and
@@ -2071,33 +2097,58 @@ function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorCon
     // still lands in captureVar, then combine the two.
     const statusVar = ctx.getTempVar("__st");
     ctx.setStdoutCapture(captureVar);
+    ctx.setStderrCapture(stderrCaptureVar);
     let subshellExpr: string;
     try {
       subshellExpr = buildSubshellTestExpression(stmt, ctx);
     } finally {
       ctx.setStdoutCapture(previousCapture);
+      ctx.setStderrCapture(previousStderrCapture);
     }
-    return `(async () => { const ${captureVar}: string[] = []; const ${statusVar} = ${subshellExpr}; ` +
-      `return { code: ${statusVar}.code, stdout: ${captureVar}.join(""), stderr: "", ` +
+    return `(async () => { const ${captureVar}: string[] = [];${stderrDeclaration} const ${statusVar} = ${subshellExpr}; ` +
+      `return { code: ${statusVar}.code, stdout: ${captureVar}.join(""), stderr: ${stderrResult}, ` +
       `success: ${statusVar}.code === 0 }; })()`;
   }
 
   ctx.setStdoutCapture(captureVar);
+  ctx.setStderrCapture(stderrCaptureVar);
   let result: StatementResult;
   try {
     result = ctx.visitStatement(stmt);
   } finally {
     ctx.setStdoutCapture(previousCapture);
+    ctx.setStderrCapture(previousStderrCapture);
   }
 
   const lines = result.lines.map((line) => line.trim()).filter((line) => line.length > 0);
   // These forms emit inline (no nested IIFE), so reading Deno.exitCode right
   // after the body — synchronously — yields the group's real status.
   const codeVar = ctx.getTempVar("__code");
-  return `(async () => { const ${captureVar}: string[] = []; ${lines.join("; ")}; ` +
+  return `(async () => { const ${captureVar}: string[] = [];${stderrDeclaration} ${
+    lines.join("; ")
+  }; ` +
     `const ${codeVar} = Deno.exitCode; ` +
-    `return { code: ${codeVar}, stdout: ${captureVar}.join(""), stderr: "", ` +
+    `return { code: ${codeVar}, stdout: ${captureVar}.join(""), stderr: ${stderrResult}, ` +
     `success: ${codeVar} === 0 }; })()`;
+}
+
+function buildStatementAsCapturedExpression(stmt: AST.Statement, ctx: VisitorContext): string {
+  const redirections = stmt.type === "BraceGroup" || stmt.type === "Subshell"
+    ? stmt.redirections ?? []
+    : [];
+  if (redirections.length === 0) return buildStatementCaptureResult(stmt, ctx);
+
+  const mergesStderr = redirections.some((redirect) =>
+    redirect.operator === ">&" && (redirect.fd ?? 1) === 2 && redirect.target === 1
+  );
+  const capturesStderr = mergesStderr || redirections.some((redirect) =>
+    redirect.operator === "&>" || redirect.operator === "&>>" ||
+    redirect.fd === 2 || redirect.operator === ">&"
+  );
+  const result = buildStatementCaptureResult(stmt, ctx, {
+    stderrCapture: mergesStderr ? "stdout" : capturesStderr ? "separate" : undefined,
+  });
+  return applyBuiltinRedirections(result, redirections, ctx);
 }
 
 /**
@@ -3204,8 +3255,9 @@ function visitNestedLogicalControlPipeline(
  * `{ false; } > f; echo $?` still reports 1.
  *
  * Returns null for anything that is not such a group, leaving the statement on
- * its normal path. `2>&1` on a group is still unhandled (SSH-707) —
- * applyBuiltinRedirections covers `>`/`>>`/`>|`/`&>`, not the `>&` merge.
+ * its normal path. SSH-707: when a redirect touches stderr, capture it with the
+ * group's stdout so descriptor duplication and stderr file writes can be
+ * applied to the result instead of leaking to the real process stderr first.
  */
 function visitRedirectedGroup(
   stmt: AST.Statement,
@@ -3214,15 +3266,10 @@ function visitRedirectedGroup(
   if (stmt.type !== "BraceGroup" && stmt.type !== "Subshell") return null;
   const redirections = stmt.redirections;
   if (!redirections || redirections.length === 0) return null;
-  const expr = applyBuiltinRedirections(
-    buildStatementAsCapturedExpression(stmt, ctx),
-    redirections,
-    ctx,
-  );
+  const expr = buildStatementAsCapturedExpression(stmt, ctx);
   // __printCmd, not a bare await: a redirect that consumed stdout leaves it
-  // empty, but one that did NOT touch stdout (`{ ...; } 2>f`, or the `2>&1`
-  // merge this route cannot apply yet — SSH-707) must still print it, as bash
-  // does. __printCmd also records the group's status off the result.
+  // empty, but one that did NOT touch stdout (`{ ...; } 2>f`) must still print
+  // it, as bash does. __printCmd also records the group's status off the result.
   return { lines: [`${ctx.getIndent()}await __printCmd(${expr});`] };
 }
 
@@ -3411,6 +3458,7 @@ export function visitPipeline(
   }
 
   const captureVar = ctx.getStdoutCapture();
+  const stderrCaptureVar = ctx.getStderrCapture();
   if (captureVar) {
     if (result.isStream) {
       const streamExpr = result.async ? `await ${result.code}` : result.code;
@@ -3437,7 +3485,9 @@ export function visitPipeline(
           // drop it, so a group's status was whatever happened to be in
           // Deno.exitCode — `{ false; } > f` reported 0.
           `${indent}__recStatus(${resultVar});`,
-          `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
+          stderrCaptureVar
+            ? `${indent}if (${resultVar}.stderr) ${stderrCaptureVar}.push(String(${resultVar}.stderr));`
+            : `${indent}if (${resultVar}.stderr) await Deno.stderr.write(new TextEncoder().encode(${resultVar}.stderr));`,
         ],
       };
     }

@@ -53,6 +53,7 @@ export class TranspilerContext {
   private diagnostics: Diagnostic[] = [];
   private functionRegistry: FunctionRegistry;
   private stdoutCaptureVar: string | null = null;
+  private stderrCaptureVar: string | null = null;
   private readonly rootScope: VariableScope;
   private readonly hoistedVariables = new Set<string>();
 
@@ -251,6 +252,16 @@ export class TranspilerContext {
   /** Set stdout capture variable name; null to disable */
   setStdoutCapture(varName: string | null): void {
     this.stdoutCaptureVar = varName;
+  }
+
+  /** Get the current stderr capture variable name (null means print it) */
+  getStderrCapture(): string | null {
+    return this.stderrCaptureVar;
+  }
+
+  /** Set stderr capture variable name; null restores normal printing */
+  setStderrCapture(varName: string | null): void {
+    this.stderrCaptureVar = varName;
   }
 
   // ===========================================================================
