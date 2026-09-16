@@ -26,7 +26,7 @@ import {
 } from "../utils/mod.ts";
 import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
 import { buildSubshellTestExpression } from "./control.ts";
-import { wholeArrayElementsExpression, wordWholeArraySplatName } from "./words.ts";
+import { wholeArrayModifiedElements, wordWholeArraySplat } from "./words.ts";
 
 // =============================================================================
 // Helpers
@@ -124,11 +124,24 @@ function wordIsUnquotedGlobLiteral(
  */
 function arraySplatSpread(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+  ctx: VisitorContext,
 ): string | null {
-  const arrayName = wordWholeArraySplatName(word);
-  if (arrayName === null) return null;
+  const splat = wordWholeArraySplat(word);
+  if (splat === null) return null;
   const unquoted = word.type === "Word" && !word.quoted && !word.singleQuoted;
-  return `...${wholeArrayElementsExpression(arrayName, { split: unquoted })}`;
+  const modifierArg = splat.expansion.modifierArg
+    ? ctx.visitWord(splat.expansion.modifierArg as AST.Word)
+    : "";
+  // SSH-701: a modifier keeps the per-element split — `"${a[@]:1}"` is one
+  // argument per surviving element. null here means the form is not a list
+  // (`${#a[@]}` is a count), so the word stays on the normal path.
+  const elements = wholeArrayModifiedElements(
+    splat.arrayName,
+    splat.expansion.modifier,
+    modifierArg,
+    { split: unquoted },
+  );
+  return elements === null ? null : `...${elements}`;
 }
 
 /**
@@ -669,7 +682,7 @@ function analyzeCommand(
   const argIsGlob = command.args.map((arg) => wordIsUnquotedGlobLiteral(arg));
   // SSH-700: a `${a[@]}` argument is one argument per element, so it is
   // pre-rendered as a spread rather than interpolated into a string.
-  const argArraySplat = command.args.map((arg) => arraySplatSpread(arg));
+  const argArraySplat = command.args.map((arg) => arraySplatSpread(arg, ctx));
   const hasDynamicArgs = argExpansions.some(Boolean);
 
   return {

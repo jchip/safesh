@@ -163,12 +163,16 @@ describe("Parameter Expansion - Array Operations", () => {
     assertEquals(result.includes('.join(" ")'), false);
   });
 
-  it("should expand array with * subscript", () => {
+  // `[*]` joins into ONE word — the behaviour `[@]` no longer shares. SSH-701
+  // routes it through the shared element-list builder, so the guarded read is
+  // now inside that helper's IIFE rather than spelled out here.
+  it("should expand array with * subscript as a single joined word", () => {
     const script = 'arr=(a b c); echo "${arr[*]}"';
     const ast = parse(script);
     const result = transpile(ast);
-    assertStringIncludes(result, 'Array.isArray((typeof arr !== "undefined"');
+    assertStringIncludes(result, '(typeof arr !== "undefined" ? arr : $.VARS?.arr)');
     assertStringIncludes(result, '.join(" ")');
+    assertEquals(result.includes("$.echo(..."), false);
   });
 
   it("should expand array with numeric subscript", () => {

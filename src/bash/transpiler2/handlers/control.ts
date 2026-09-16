@@ -8,7 +8,7 @@ import { globToRegExp } from "@std/path";
 import type * as AST from "../../ast.ts";
 import type { StatementResult, VisitorContext } from "../types.ts";
 import { escapeForQuotes, sanitizeVarName } from "../utils/mod.ts";
-import { wholeArrayElementsExpression, wordWholeArraySplatName } from "./words.ts";
+import { wholeArrayModifiedElements, wordWholeArraySplat } from "./words.ts";
 
 function wordHasExpansion(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
@@ -148,14 +148,15 @@ export function visitForStatement(
       // over the space-joined whole; the unquoted form only worked by
       // accident, via whitespace splitting of that joined string (which loses
       // an element containing a space).
-      const splatName = wordWholeArraySplatName(item);
-      if (splatName !== null) {
-        const unquoted = item.type === "Word" && !item.quoted && !item.singleQuoted;
-        lines.push(
-          `${indent}${tempVar}.push(...${
-            wholeArrayElementsExpression(splatName, { split: unquoted })
-          });`,
-        );
+      const splat = wordWholeArraySplat(item);
+      const splatElements = splat === null ? null : wholeArrayModifiedElements(
+        splat.arrayName,
+        splat.expansion.modifier,
+        splat.expansion.modifierArg ? ctx.visitWord(splat.expansion.modifierArg as AST.Word) : "",
+        { split: item.type === "Word" && !item.quoted && !item.singleQuoted },
+      );
+      if (splatElements !== null) {
+        lines.push(`${indent}${tempVar}.push(...${splatElements});`);
         continue;
       }
       if (item.type === "ParameterExpansion" || item.type === "CommandSubstitution") {

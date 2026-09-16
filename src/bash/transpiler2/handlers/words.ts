@@ -50,35 +50,182 @@ export function wholeArrayElementsExpression(
   const elements = `((__a) => Array.isArray(__a) ? __a.map(String) ` +
     `: (__a === undefined || __a === null || __a === "" ? [] : [String(__a)]))` +
     `(${wholeArrayValueExpression(arrayName)})`;
-  return opts.split
-    ? `${elements}.flatMap((__w) => __w.split(/\\s+/).filter((__s) => __s !== ""))`
-    : elements;
+  return opts.split ? `${elements}${WORD_SPLIT_SUFFIX}` : elements;
+}
+
+/** IFS whitespace splitting of an element list, dropping the empties. */
+const WORD_SPLIT_SUFFIX = `.flatMap((__w) => __w.split(/\\s+/).filter((__s) => __s !== ""))`;
+
+/**
+ * SSH-624/625: the string transform a modifier applies, as an expression over
+ * `valueExpr`. Returns null for a modifier that is not a plain string
+ * transform — the default/assign/error families are about whether the value is
+ * SET, so they read the variable themselves and stay in the switch below.
+ *
+ * SSH-701: shared with the whole-array path, which applies the very same
+ * transform to each ELEMENT. It lives here, in one copy, so the regex tricks
+ * below cannot drift between the scalar and per-element paths.
+ */
+function stringModifierExpression(
+  modifier: string,
+  modifierArg: string,
+  valueExpr: string,
+): string | null {
+  switch (modifier) {
+    case "#":
+      // ${VAR#pattern} - remove shortest matching prefix. SSH-624: translate the
+      // bash glob to a regex (a glob `*` becomes the non-greedy `.*?` so the
+      // shortest prefix is stripped).
+      return `${valueExpr}.replace(/^${globToParamRegex(modifierArg, false)}/, "")`;
+
+    case "##":
+      // ${VAR##pattern} - remove longest matching prefix. SSH-624: a glob `*`
+      // becomes the greedy `.*` so the longest prefix is stripped. (No blanket
+      // trailing `.*` is appended — that over-matched literal patterns, e.g.
+      // ${v##prefix} would have wiped the whole string.)
+      return `${valueExpr}.replace(/^${globToParamRegex(modifierArg, true)}/, "")`;
+
+    case "%":
+      // ${VAR%pattern} - remove shortest matching suffix. SSH-624: the pattern
+      // is anchored at end via a leading greedy capture `(.*)` so the SHORTEST
+      // (right-most) suffix is removed; String.replace alone is left-most, which
+      // would over-strip (e.g. ${f%.*} on a.tar.gz must yield a.tar, not a).
+      return `${valueExpr}.replace(/(.*)${globToParamRegex(modifierArg, false)}$/, "$1")`;
+
+    case "%%":
+      // ${VAR%%pattern} - remove longest matching suffix. SSH-624: a leading
+      // non-greedy capture `(.*?)` makes the LONGEST suffix match (the kept
+      // prefix is as short as possible).
+      return `${valueExpr}.replace(/(.*?)${globToParamRegex(modifierArg, true)}$/, "$1")`;
+
+    case "^":
+      // ${VAR^} - uppercase first char.
+      return `(${valueExpr}).charAt(0).toUpperCase() + (${valueExpr}).slice(1)`;
+
+    case "^^":
+      // ${VAR^^} - uppercase all
+      return `(${valueExpr}).toUpperCase()`;
+
+    case ",":
+      // ${VAR,} - lowercase first char
+      return `(${valueExpr}).charAt(0).toLowerCase() + (${valueExpr}).slice(1)`;
+
+    case ",,":
+      // ${VAR,,} - lowercase all
+      return `(${valueExpr}).toLowerCase()`;
+
+    case "/": {
+      // ${VAR/pattern/replacement} - replace first match. SSH-624: the pattern
+      // is a glob, so translate it to a regex (bash matches greedily here, e.g.
+      // ${s/l*/L} on "hello" yields "heL").
+      // Find first unescaped / to split pattern from replacement.
+      const idx = findFirstUnescapedSlash(modifierArg);
+      const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
+      const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
+      return `${valueExpr}.replace(/${globToParamRegex(pattern, true)}/, "${
+        escapeForQuotes(replacement)
+      }")`;
+    }
+
+    case "//": {
+      // ${VAR//pattern/replacement} - replace all matches (global regex).
+      const idx = findFirstUnescapedSlash(modifierArg);
+      const pat = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
+      const rep = idx >= 0 ? modifierArg.slice(idx + 1) : "";
+      return `${valueExpr}.replace(/${globToParamRegex(pat, true)}/g, "${escapeForQuotes(rep)}")`;
+    }
+
+    default:
+      return null;
+  }
 }
 
 /**
- * SSH-700: the array name when `word` is EXACTLY one `${a[@]}` expansion and
- * nothing else — the form that expands to one argument PER ELEMENT.
+ * SSH-701: split a `substring` modifier argument ("offset" or "offset:length")
+ * into the two raw text pieces. The pieces are spliced into the emitted JS as
+ * written, so an arithmetic offset works the same as it does for a scalar.
+ */
+function splitSubstringArg(modifierArg: string): { offset: string; length?: string } {
+  const colonIdx = modifierArg.indexOf(":");
+  if (colonIdx < 0) return { offset: modifierArg.trim() };
+  return {
+    offset: modifierArg.slice(0, colonIdx).trim(),
+    length: modifierArg.slice(colonIdx + 1).trim(),
+  };
+}
+
+/**
+ * SSH-701: the element list for a whole-array `${a[@]}` expansion WITH its
+ * modifier applied. Returns null when the modifier is not supported here, so
+ * the caller can leave the expansion on its old path.
+ *
+ * The two modifier families differ, which is the whole point of this function:
+ *   - `:off:len` slices the ARRAY (element offset and count), not the string;
+ *   - everything else is a string transform applied to EACH element.
+ *
+ * `length` (`${#a[@]}`) is deliberately not handled — it is a count, a single
+ * word, and its caller answers it directly.
+ */
+export function wholeArrayModifiedElements(
+  arrayName: string,
+  modifier: string | undefined,
+  modifierArg: string,
+  opts: { split: boolean },
+): string | null {
+  // The modifier applies to the ELEMENTS, so any word splitting has to come
+  // after it — `${a[@]:1}` slices the array, and only then do the surviving
+  // elements split.
+  const elements = wholeArrayElementsExpression(arrayName, { split: false });
+  const modified = ((): string | null => {
+    if (!modifier) return elements;
+    if (modifier === "length") return null;
+
+    if (modifier === "substring") {
+      const { offset, length } = splitSubstringArg(modifierArg);
+      if (length === undefined) return `${elements}.slice(${offset})`;
+      // A negative length counts back from the end, as it does for a scalar.
+      if (length.startsWith("-")) return `${elements}.slice(${offset}, ${length})`;
+      return `${elements}.slice(${offset}, Number(${offset}) + Number(${length}))`;
+    }
+
+    const perElement = stringModifierExpression(modifier, modifierArg, "__e");
+    if (perElement === null) return null;
+    return `${elements}.map((__e) => ${perElement})`;
+  })();
+
+  if (modified === null) return null;
+  return opts.split ? `${modified}${WORD_SPLIT_SUFFIX}` : modified;
+}
+
+/**
+ * SSH-700: the whole-array expansion when `word` is EXACTLY one `${a[@]}` and
+ * nothing else — the form that expands to one argument PER ELEMENT. A modifier
+ * is allowed: `"${a[@]:1}"` is still one argument per surviving element.
  *
  * Returns null, leaving the word on the normal string-interpolating path, for:
  *   - `[*]`, which is specified to join into one word;
- *   - any modifier (`${a[@]:1}` etc. — those expand to one word, SSH-701);
  *   - a word that glues text onto the expansion (`pre"${a[@]}"post`). bash
  *     splits that at the seams (`pre1`, `2post`); not implemented (SSH-702).
+ *
+ * `${#a[@]}` is not rejected here — it is a count, and
+ * {@link wholeArrayModifiedElements} returns null for it, so the caller falls
+ * back to the single-word path on its own.
  */
-export function wordWholeArraySplatName(
+export function wordWholeArraySplat(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
-): string | null {
+): { arrayName: string; expansion: AST.ParameterExpansion } | null {
   if (word.type !== "Word") return null;
   if (word.parts.length !== 1) return null;
   const part = word.parts[0];
   if (!part || part.type !== "ParameterExpansion") return null;
   const pe = part as AST.ParameterExpansion;
-  if (pe.modifier) return null;
   const embedded = WHOLE_ARRAY_PARAM.exec(pe.parameter);
-  if (embedded) return embedded[2] === "@" ? embedded[1]! : null;
+  if (embedded) {
+    return embedded[2] === "@" ? { arrayName: embedded[1]!, expansion: pe } : null;
+  }
   // Legacy shape: the subscript arrives in its own field (SSH-303).
   if (pe.subscript === "@" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(pe.parameter)) {
-    return pe.parameter;
+    return { arrayName: pe.parameter, expansion: pe };
   }
   return null;
 }
@@ -573,16 +720,28 @@ export function visitParameterExpansion(
       if (modifier === "length") {
         return `\${Array.isArray(${arrayValue}) ? ${arrayValue}.length : 0}`;
       }
-      if (!modifier) {
-        // Both `[@]` and `[*]` print the elements separated by a space; they
-        // differ only in word splitting, which is not done here — an unquoted
-        // `${a[@]}` still reaches a command as one argument rather than one per
-        // element. A scalar answers with its own value, as in bash.
-        return `\${Array.isArray(${arrayValue}) ? ${arrayValue}.join(" ") : (${arrayValue} ?? "")}`;
+
+      // SSH-701: every other modifier applies to the element LIST — `:off:len`
+      // slices it, the rest map over it. Those forms used to fall through to
+      // the scalar switch below, which spliced the raw `a[@]` parameter text
+      // into the emitted JS, so the module failed to parse and the script
+      // produced nothing at all.
+      //
+      // Joining here is right for both `[@]` and `[*]`: in a STRING context
+      // bash separates the elements with a space either way. They differ only
+      // in word splitting, which the argument (SSH-700) and `for` paths handle
+      // by spreading this same element list instead of joining it.
+      const modifierText = expansion.modifierArg
+        ? visitWord(expansion.modifierArg as AST.Word, ctx)
+        : "";
+      const elements = wholeArrayModifiedElements(arrayName, modifier, modifierText, {
+        split: false,
+      });
+      if (elements !== null) {
+        return `\${${elements}.join(" ")}`;
       }
-      // Any other modifier on a whole-array subscript (`${a[@]:1}`,
-      // `${a[@]/x/y}`) is still unhandled — left on its old path rather than
-      // given a silently wrong value here.
+      // An unsupported modifier stays on its old path rather than being given
+      // a silently wrong value here.
     } else if (!modifier) {
       // SSH-694: an array subscript is an ARITHMETIC context in bash, so `$i`,
       // `i`, `1` and `i+1` are all valid and equivalent there. The raw subscript
@@ -700,71 +859,20 @@ export function visitParameterExpansion(
       // ReferenceError for the undeclared binding.
       return `\${${varExpr} ? "${escapeForQuotes(modifierArg)}" : ""}`;
 
+    // SSH-624/625: the plain string transforms all share one implementation
+    // with SSH-701's per-element path — see stringModifierExpression(), which
+    // carries the comments explaining each regex.
     case "#":
-      // ${VAR#pattern} - remove shortest matching prefix. SSH-624: translate the
-      // bash glob to a regex (a glob `*` becomes the non-greedy `.*?` so the
-      // shortest prefix is stripped); SSH-625: read via the guarded accessor.
-      return `\${${varExpr}.replace(/^${globToParamRegex(modifierArg, false)}/, "")}`;
-
     case "##":
-      // ${VAR##pattern} - remove longest matching prefix. SSH-624: a glob `*`
-      // becomes the greedy `.*` so the longest prefix is stripped. (No blanket
-      // trailing `.*` is appended — that over-matched literal patterns, e.g.
-      // ${v##prefix} would have wiped the whole string.)
-      return `\${${varExpr}.replace(/^${globToParamRegex(modifierArg, true)}/, "")}`;
-
     case "%":
-      // ${VAR%pattern} - remove shortest matching suffix. SSH-624: the pattern
-      // is anchored at end via a leading greedy capture `(.*)` so the SHORTEST
-      // (right-most) suffix is removed; String.replace alone is left-most, which
-      // would over-strip (e.g. ${f%.*} on a.tar.gz must yield a.tar, not a).
-      return `\${${varExpr}.replace(/(.*)${globToParamRegex(modifierArg, false)}$/, "$1")}`;
-
     case "%%":
-      // ${VAR%%pattern} - remove longest matching suffix. SSH-624: a leading
-      // non-greedy capture `(.*?)` makes the LONGEST suffix match (the kept
-      // prefix is as short as possible).
-      return `\${${varExpr}.replace(/(.*?)${globToParamRegex(modifierArg, true)}$/, "$1")}`;
-
     case "^":
-      // ${VAR^} - uppercase first char. SSH-625: guarded accessor so an unset
-      // variable yields "" rather than a ReferenceError on the bare binding.
-      return `\${(${varExpr}).charAt(0).toUpperCase() + (${varExpr}).slice(1)}`;
-
     case "^^":
-      // ${VAR^^} - uppercase all
-      return `\${(${varExpr}).toUpperCase()}`;
-
     case ",":
-      // ${VAR,} - lowercase first char
-      return `\${(${varExpr}).charAt(0).toLowerCase() + (${varExpr}).slice(1)}`;
-
     case ",,":
-      // ${VAR,,} - lowercase all
-      return `\${(${varExpr}).toLowerCase()}`;
-
-    case "/": {
-      // ${VAR/pattern/replacement} - replace first match. SSH-624: the pattern
-      // is a glob, so translate it to a regex (bash matches greedily here, e.g.
-      // ${s/l*/L} on "hello" yields "heL"); SSH-625: read via guarded accessor.
-      // Find first unescaped / to split pattern from replacement.
-      const idx = findFirstUnescapedSlash(modifierArg);
-      const pattern = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
-      const replacement = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${varExpr}.replace(/${globToParamRegex(pattern, true)}/, "${
-        escapeForQuotes(replacement)
-      }")}`;
-    }
-
-    case "//": {
-      // ${VAR//pattern/replacement} - replace all matches (global regex).
-      // SSH-624: glob pattern -> regex; SSH-625: guarded accessor.
-      // Find first unescaped / to split pattern from replacement.
-      const idx = findFirstUnescapedSlash(modifierArg);
-      const pat = idx >= 0 ? modifierArg.slice(0, idx) : modifierArg;
-      const rep = idx >= 0 ? modifierArg.slice(idx + 1) : "";
-      return `\${${varExpr}.replace(/${globToParamRegex(pat, true)}/g, "${escapeForQuotes(rep)}")}`;
-    }
+    case "/":
+    case "//":
+      return `\${${stringModifierExpression(modifier, modifierArg, varExpr)}}`;
 
     case "substring": {
       // ${VAR:offset} or ${VAR:offset:length}
