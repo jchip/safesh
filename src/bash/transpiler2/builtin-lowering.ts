@@ -72,9 +72,8 @@ interface EchoFlags {
  * no `--` either, so `echo -- -n` prints both words. `-E` turns escapes back
  * off, which matters only after an `-e`.
  *
- * Only a plain string literal is recognised here. A flag arriving from an
- * EXPANSION (`f=-n; echo $f x`) is honored by bash but needs runtime parsing,
- * so it stays on the text path (SSH-708).
+ * Only a plain string literal is recognized here. SSH-708 routes a dynamic
+ * operand through echo's opt-in runtime parser instead.
  */
 function splitEchoFlags(formattedArgs: string[]): EchoFlags {
   let noNewline = false;
@@ -99,6 +98,10 @@ function echoOptions(flags: EchoFlags, fixed: string[] = []): string {
   if (flags.noNewline) entries.push("noNewline: true");
   if (flags.escapes) entries.push("escapes: true");
   return `{ ${entries.join(", ")} }`;
+}
+
+function needsRuntimeEchoFlags(name: string, formattedArgs: string[]): boolean {
+  return name === "echo" && formattedArgs.some((arg) => !/^"(?:[^"\\]|\\.)*"$/.test(arg));
 }
 
 export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLoweringResult {
@@ -191,14 +194,18 @@ export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLower
     // `__recStatus(...)`, which was therefore recording the buffer's new
     // LENGTH as the exit status — `{ echo hi; } > f` reported 1.
     const flags = name === "echo" ? splitEchoFlags(formattedArgs) : null;
-    if (flags?.present) {
-      // SSH-706: with a flag in play, echo itself decides the bytes — whether
-      // the line is terminated and whether escapes are interpreted — so push
-      // its formatted output rather than re-deriving it here.
+    const runtimeFlags = needsRuntimeEchoFlags(name, formattedArgs);
+    if (runtimeFlags || flags?.present) {
       return {
         code: `(${stdoutCaptureVar}.push(String(${builtin.fn}(${
-          echoOptions(flags, ["silent: true"])
-        }${flags.rest.length > 0 ? `, ${argsArray(flags.rest)}` : ""}))), 0)`,
+          runtimeFlags
+            ? "{ silent: true, parseShellFlags: true }"
+            : echoOptions(flags!, ["silent: true"])
+        }${
+          (runtimeFlags ? formattedArgs : flags!.rest).length > 0
+            ? `, ${argsArray(runtimeFlags ? formattedArgs : flags!.rest)}`
+            : ""
+        }))), 0)`,
         async: false,
       };
     }
@@ -235,26 +242,32 @@ export function lowerShellBuiltin(options: BuiltinLoweringOptions): BuiltinLower
   }
 
   if (builtin.type === "prints") {
-    // SSH-706: honor echo's leading flags instead of printing them as text.
     const flags = name === "echo" ? splitEchoFlags(formattedArgs) : null;
+    const runtimeFlags = needsRuntimeEchoFlags(name, formattedArgs);
 
     if ((hasRedirects || captureOutput) && name === "echo") {
-      const args = flags?.present ? flags.rest : formattedArgs;
-      const options = flags ? echoOptions(flags, ["silent: true"]) : "{ silent: true }";
+      const args = runtimeFlags ? formattedArgs : flags?.present ? flags.rest : formattedArgs;
+      const echoOpts = runtimeFlags
+        ? "{ silent: true, parseShellFlags: true }"
+        : flags
+        ? echoOptions(flags, ["silent: true"])
+        : "{ silent: true }";
       return {
         code: args.length > 0
-          ? `${builtin.fn}(${options}, ${argsArray(args)})`
-          : `${builtin.fn}(${options})`,
+          ? `${builtin.fn}(${echoOpts}, ${argsArray(args)})`
+          : `${builtin.fn}(${echoOpts})`,
         async: false,
         isShellBuiltin: true,
       };
     }
 
-    if (flags?.present) {
+    if (runtimeFlags || flags?.present) {
+      const args = runtimeFlags ? formattedArgs : flags!.rest;
+      const echoOpts = runtimeFlags ? "{ parseShellFlags: true }" : echoOptions(flags!);
       return {
-        code: flags.rest.length > 0
-          ? `${builtin.fn}(${echoOptions(flags)}, ${argsArray(flags.rest)})`
-          : `${builtin.fn}(${echoOptions(flags)})`,
+        code: args.length > 0
+          ? `${builtin.fn}(${echoOpts}, ${argsArray(args)})`
+          : `${builtin.fn}(${echoOpts})`,
         async: false,
         isShellBuiltin: true,
       };

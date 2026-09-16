@@ -246,6 +246,38 @@ Deno.test("echo - escapes", () => {
   assertEquals(result.stdout, "hello\tworld\n");
 });
 
+Deno.test("echo - shell flags are opt-in for direct API callers", () => {
+  assertEquals(echo({ silent: true }, "-n", "hello").stdout, "-n hello\n");
+  assertEquals(echo({ silent: true, parseShellFlags: true }, "-n", "hello").stdout, "hello");
+  assertEquals(
+    echo({ silent: true, parseShellFlags: true }, "-e", "hello\\tworld").stdout,
+    "hello\tworld\n",
+  );
+});
+
+Deno.test("echo - shell flags are leading and ordered", () => {
+  assertEquals(
+    echo({ silent: true, parseShellFlags: true }, "-e", "-E", "a\\tb").stdout,
+    "a\\tb\n",
+  );
+  assertEquals(
+    echo({ silent: true, parseShellFlags: true }, "-E", "-e", "a\\tb").stdout,
+    "a\tb\n",
+  );
+  assertEquals(
+    echo({ silent: true, parseShellFlags: true }, "x", "-n").stdout,
+    "x -n\n",
+  );
+  assertEquals(
+    echo({ silent: true, parseShellFlags: true }, "-nx", "x").stdout,
+    "-nx x\n",
+  );
+  assertEquals(
+    echo({ silent: true, parseShellFlags: true }, "--", "-n").stdout,
+    "-- -n\n",
+  );
+});
+
 // pwd tests
 Deno.test("pwd - returns current directory", () => {
   const result = pwd();

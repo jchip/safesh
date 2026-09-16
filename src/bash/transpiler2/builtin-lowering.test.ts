@@ -42,6 +42,37 @@ Deno.test("builtin lowering silences echo in redirect or capture contexts", () =
   assertEquals(captured.code, '$.echo({ silent: true }, "hello")');
 });
 
+Deno.test("builtin lowering parses echo flags from dynamic shell operands at runtime", () => {
+  const formattedArgs = ["`${f}`", '"hello"'];
+  const direct = lowerShellBuiltin({
+    name: "echo",
+    builtin: SHELL_BUILTINS.echo!,
+    formattedArgs,
+  });
+  const redirected = lowerShellBuiltin({
+    name: "echo",
+    builtin: SHELL_BUILTINS.echo!,
+    formattedArgs,
+    hasRedirects: true,
+  });
+  const captured = lowerShellBuiltin({
+    name: "echo",
+    builtin: SHELL_BUILTINS.echo!,
+    formattedArgs,
+    stdoutCaptureVar: "__stdout",
+  });
+
+  assertEquals(direct.code, '$.echo({ parseShellFlags: true }, `${f}`, "hello")');
+  assertEquals(
+    redirected.code,
+    '$.echo({ silent: true, parseShellFlags: true }, `${f}`, "hello")',
+  );
+  assertEquals(
+    captured.code,
+    '(__stdout.push(String($.echo({ silent: true, parseShellFlags: true }, `${f}`, "hello"))), 0)',
+  );
+});
+
 Deno.test("builtin lowering wraps output builtins as command-style results for statements", () => {
   const result = lowerShellBuiltin({
     name: "pwd",

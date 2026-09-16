@@ -352,9 +352,11 @@ const CORPUS: Record<string, Case[]> = {
     { src: "echo -nx" },
     { src: "echo -- -n" },
     { src: "echo x -e" },
-    // SSH-708: bash honors a flag that arrives from an EXPANSION, which the
-    // transpile-time flag scan cannot see.
-    { src: "f=-n; echo $f x; echo END", xfail: "SSH-708" },
+    // SSH-708: flags are recognized after expansion, not only when literal.
+    { src: "f=-n; echo $f x; echo END" },
+    { src: 'f=-e; echo $f "a\\tb"' },
+    { src: 'f=-n; v=$({ echo $f x; }); printf "[%s]" "$v"; echo' },
+    { src: "f=-n; rm -f @TMP@/e3; echo $f x > @TMP@/e3; od -c @TMP@/e3" },
   ],
   // SSH-676: background jobs + `wait`. Every case here is ordering-sensitive on
   // purpose — the pre-fix failure mode was `wait` falling straight through, so

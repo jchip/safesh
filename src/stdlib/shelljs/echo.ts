@@ -17,6 +17,8 @@ export interface EchoOptions {
   escapes?: boolean;
   /** Return output without writing to stdout */
   silent?: boolean;
+  /** Parse leading bash-style -n/-e/-E operands (used by the bash transpiler) */
+  parseShellFlags?: boolean;
 }
 
 /**
@@ -47,10 +49,22 @@ export function echo(
   let text: string[];
 
   if (typeof first === "object" && first !== null && !Array.isArray(first)) {
-    options = first;
+    options = { ...first };
     text = rest;
   } else {
     text = [first as string, ...rest];
+  }
+
+  if (options.parseShellFlags) {
+    while (text.length > 0) {
+      const match = text[0]!.match(/^-([neE]+)$/);
+      if (!match) break;
+      text.shift();
+      for (const flag of match[1]!) {
+        if (flag === "n") options.noNewline = true;
+        else options.escapes = flag === "e";
+      }
+    }
   }
 
   let output = text.join(" ");
