@@ -14,6 +14,7 @@ import {
   escapeRegex,
   sanitizeVarName,
 } from "../utils/escape.ts";
+import { restoreCwdExpression } from "../utils/subshell.ts";
 
 // =============================================================================
 // Helper Functions
@@ -1033,18 +1034,22 @@ export function visitCommandSubstitution(
   ctx.enterSubshell();
   const innerCode = buildCapturableInnerCode(cs.command, ctx);
   ctx.exitSubshell();
+  const savedCwd = ctx.getTempVar("__subCwd");
+  const restoreCwd = restoreCwdExpression(savedCwd);
 
-  // Only when the body can actually throw the sentinel do we wrap the boundary
-  // to convert it into the substitution's status ($? = N) and the text captured
-  // before the exit — keeping the common no-exit case byte-identical.
+  // Only when the body can actually throw the sentinel do we add a catch that
+  // converts it into the substitution's status ($? = N) and captured text.
   if (innerCode.includes("__sshSubshellExit")) {
-    return `\${await (async () => { try { return await __cmdSubText(${innerCode}); } ` +
+    return `\${await (async () => { const ${savedCwd} = Deno.cwd(); ` +
+      `try { return await __cmdSubText(${innerCode}); } ` +
       `catch (__e) { if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) ` +
-      `{ __recStatus((__e as { __sshSubshellExit: number }).__sshSubshellExit); return ""; } throw __e; } })()}`;
+      `{ __recStatus((__e as { __sshSubshellExit: number }).__sshSubshellExit); return ""; } throw __e; } ` +
+      `finally { ${restoreCwd} } })()}`;
   }
 
   // Use __cmdSubText helper (defined in preamble) to extract text from result
-  return `\${await __cmdSubText(${innerCode})}`;
+  return `\${await (async () => { const ${savedCwd} = Deno.cwd(); ` +
+    `try { return await __cmdSubText(${innerCode}); } finally { ${restoreCwd} } })()}`;
 }
 
 // =============================================================================

@@ -1573,10 +1573,11 @@ describe("Command Substitution", () => {
     const ast = parse('git commit -m "$(cat README.md)"');
     const output = transpile(ast);
     // The arg containing command substitution should use backticks for template literal evaluation
-    assertStringIncludes(output, "`${await __cmdSubText");
+    assertStringIncludes(output, "`${await (async () => { const __subCwd");
+    assertStringIncludes(output, "return await __cmdSubText");
     // Should NOT have the command substitution wrapped in double quotes
     assert(
-      !output.includes('"${await __cmdSubText'),
+      !output.includes('"${await (async () => {'),
       "Command substitution should not be in double quotes",
     );
   });
@@ -1592,7 +1593,8 @@ EOF
     assertStringIncludes(output, ".stdin(");
     assertStringIncludes(output, "SSH-356: Fix something");
     // The arg should use backticks for template literal evaluation
-    assertStringIncludes(output, "`${await __cmdSubText");
+    assertStringIncludes(output, "`${await (async () => { const __subCwd");
+    assertStringIncludes(output, "return await __cmdSubText");
   });
 
   // SSH-495: Apostrophe in heredoc body inside $() should not corrupt parser state
@@ -1605,7 +1607,8 @@ EOF
     const output = transpile(ast);
     assertStringIncludes(output, ".stdin(");
     assertStringIncludes(output, "Don't wrap stream producers");
-    assertStringIncludes(output, "`${await __cmdSubText");
+    assertStringIncludes(output, "`${await (async () => { const __subCwd");
+    assertStringIncludes(output, "return await __cmdSubText");
   });
 
   it("should handle double-quote in heredoc body inside command substitution (SSH-495)", () => {

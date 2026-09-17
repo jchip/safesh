@@ -21,3 +21,5 @@ export {
   parseCountArg,
   parseTailCountArg,
 } from "./command-args.ts";
+
+export { restoreCwdExpression } from "./subshell.ts";

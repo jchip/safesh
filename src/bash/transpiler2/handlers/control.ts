@@ -7,7 +7,7 @@
 import { globToRegExp } from "@std/path";
 import type * as AST from "../../ast.ts";
 import type { StatementResult, VisitorContext } from "../types.ts";
-import { escapeForQuotes, sanitizeVarName } from "../utils/mod.ts";
+import { escapeForQuotes, restoreCwdExpression, sanitizeVarName } from "../utils/mod.ts";
 import { arraySplatWords } from "./words.ts";
 
 function wordHasExpansion(
@@ -453,6 +453,7 @@ export function visitSubshell(
     l.includes("Deno.env.set") || l.includes("Deno.env.delete")
   );
   const savedEnv = bodyWritesEnv ? ctx.getTempVar("__subEnv") : null;
+  const savedCwd = ctx.getTempVar("__subCwd");
 
   lines.push(`${indent}await (async () => {`);
   if (savedVariables) {
@@ -463,6 +464,7 @@ export function visitSubshell(
   if (savedEnv) {
     lines.push(`${bodyIndent}const ${savedEnv} = Deno.env.toObject();`);
   }
+  lines.push(`${bodyIndent}const ${savedCwd} = Deno.cwd();`);
   // SSH-584: `exit N` in the body throws a sentinel; convert it here to the
   // subshell's status so only the subshell terminates (bash parity)
   lines.push(`${bodyIndent}try {`);
@@ -472,15 +474,14 @@ export function visitSubshell(
     `${bodyIndent}  if (__e && typeof __e === "object" && "__sshSubshellExit" in __e) { __recStatus((__e as { __sshSubshellExit: number }).__sshSubshellExit); return; }`,
   );
   lines.push(`${bodyIndent}  throw __e;`);
-  if (savedVariables || savedEnv) {
-    lines.push(`${bodyIndent}} finally {`);
-    if (savedVariables) {
-      lines.push(`${bodyIndent}  [${inheritedBindings.join(", ")}] = ${savedVariables};`);
-    }
-    if (savedEnv) {
-      lines.push(`${bodyIndent}  ${restoreEnvExpression(savedEnv)}`);
-    }
+  lines.push(`${bodyIndent}} finally {`);
+  if (savedVariables) {
+    lines.push(`${bodyIndent}  [${inheritedBindings.join(", ")}] = ${savedVariables};`);
   }
+  if (savedEnv) {
+    lines.push(`${bodyIndent}  ${restoreEnvExpression(savedEnv)}`);
+  }
+  lines.push(`${bodyIndent}  ${restoreCwdExpression(savedCwd)}`);
   lines.push(`${bodyIndent}}`);
   ctx.dedent();
 
@@ -543,7 +544,8 @@ export function buildSubshellTestExpression(
   // (matching a `[ ]` test) — the if/while handler then sets $? from the result.
   const saved = ctx.getTempVar();
   const savedVariables = inheritedBindings.length > 0 ? ctx.getTempVar("__subVars") : null;
-  return `{ code: await (async () => { const ${saved} = Deno.exitCode;\n` +
+  const savedCwd = ctx.getTempVar("__subCwd");
+  return `{ code: await (async () => { const ${saved} = Deno.exitCode; const ${savedCwd} = Deno.cwd();\n` +
     (savedVariables
       ? `const ${savedVariables} = structuredClone([${inheritedBindings.join(", ")}]);\n`
       : "") +
@@ -557,6 +559,7 @@ export function buildSubshellTestExpression(
     `} finally {\n` +
     (savedVariables ? `[${inheritedBindings.join(", ")}] = ${savedVariables};\n` : "") +
     `Deno.exitCode = ${saved};\n` +
+    `${restoreCwdExpression(savedCwd)}\n` +
     `} })(), stdout: '', stderr: '' }`;
 }
 
