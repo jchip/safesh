@@ -40,6 +40,12 @@ This directory contains design documents, implementation notes, and guides for S
 | `SSH-119-workspace-config-design.md` | Workspace configuration |
 | `XRUN_ARCHITECTURE_ANALYSIS.md` | xrun task runner analysis |
 
+### Field Reports
+
+| File | Description |
+|------|-------------|
+| `field-issues-2026-10-02.md` | Unquoted `$VAR` not split or globbed (target: bash semantics), for-list globs never expanded, scratchpad script prompts, state-trailer `.` trips the worktree guard |
+
 ## Key Commands
 
 ```bash
