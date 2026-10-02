@@ -6,7 +6,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { expandGlobArg } from "./glob.ts";
+import { expandGlobArg, expandWordFields } from "./glob.ts";
 
 async function withFixture(
   files: string[],
@@ -72,5 +72,25 @@ Deno.test("expandGlobArg - explicit dot pattern includes dotfiles", async () => 
 Deno.test("expandGlobArg - directories are matched (includeDirs)", async () => {
   await withFixture(["a.js", "sub/d.js"], async (dir) => {
     assertEquals(await expandGlobArg("*", undefined, dir), ["a.js", "sub"]);
+  });
+});
+
+Deno.test("expandWordFields - unquoted expansion splits on IFS whitespace", async () => {
+  assertEquals(await expandWordFields([["pre", 1], [" a  b ", 2]]), ["pre", "a", "b"]);
+  assertEquals(await expandWordFields([["x", 0], ["a b", 2], ["y", 0]]), ["xa", "by"]);
+});
+
+Deno.test("expandWordFields - empty unquoted adds no field, empty quoted adds one", async () => {
+  assertEquals(await expandWordFields([["", 2]]), []);
+  assertEquals(await expandWordFields([["", 0]]), [""]);
+  assertEquals(await expandWordFields([["", 0], ["", 2]]), [""]);
+});
+
+Deno.test("expandWordFields - globs each field, quoted glob chars stay literal", async () => {
+  await withFixture(["a1", "a2", "a*1"], async (dir) => {
+    assertEquals(await expandWordFields([["a", 2], ["*", 1]], undefined, dir), ["a*1", "a1", "a2"]);
+    assertEquals(await expandWordFields([["a*", 0]], undefined, dir), ["a*"]);
+    assertEquals(await expandWordFields([["a*", 0], ["*", 1]], undefined, dir), ["a*1"]);
+    assertEquals(await expandWordFields([["zz", 2], ["*", 1]], undefined, dir), ["zz*"]);
   });
 });

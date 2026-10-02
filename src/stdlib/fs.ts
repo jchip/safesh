@@ -53,6 +53,7 @@ import { getDefaultConfig } from "../core/utils.ts";
 import {
   expandGlobAll,
   expandGlobArg,
+  expandWordFields,
   glob,
   globArray,
   globPaths,
@@ -64,6 +65,7 @@ import {
 export {
   expandGlobAll,
   expandGlobArg,
+  expandWordFields,
   glob,
   globArray,
   globPaths,

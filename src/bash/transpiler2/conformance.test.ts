@@ -72,10 +72,12 @@ async function executeTranspiled(bashScript: string): Promise<ExecutionResult> {
 
   // Get the path to shelljs module
   const shelljsPath = new URL("../../stdlib/shelljs/mod.ts", import.meta.url).pathname;
+  const globPath = new URL("../../stdlib/glob.ts", import.meta.url).pathname;
 
   // Wrap in SafeShell mock runtime that captures and prints stdout
   const fullCode = `
 // Import shelljs builtins
+import { expandWordFields as __wordFields } from "file://${globPath}";
 import { echo as __echo, cd as __cd, pwd as __pwd, pushd as __pushd, popd as __popd, dirs as __dirs, test as __testFn, which as __which, chmod as __chmod, ln as __ln, rm as __rm, cp as __cp, mv as __mv, mkdir as __mkdir, touch as __touch, ls as __ls } from "file://${shelljsPath}";
 
 // Wrap test to return result object expected by transpiler
@@ -187,6 +189,7 @@ const $ = {
   // reads dereference $.ENV non-optionally, SSH-610)
   ENV: {} as Record<string, string>,
   VARS: {} as Record<string, unknown>,
+  __wordFields,
   // Builtins mapped to imported functions
   echo: __echo,
   cd: __cd,

@@ -529,7 +529,8 @@ describe("Control Flow - Complex Scenarios", () => {
       assertStringIncludes(output, "for (const file of");
       // SSH-375: Should generate valid TypeScript with await and word splitting
       assertStringIncludes(output, "const _tmp");
-      assertStringIncludes(output, ".split(/\\s+/)");
+      assertStringIncludes(output, "$.__wordFields(");
+      assertStringIncludes(output, ", 2]");
       assertStringIncludes(output, "await __cmdSubText");
     });
 
@@ -570,7 +571,8 @@ describe("Control Flow - Complex Scenarios", () => {
       // Should build dynamic array with temp variable
       assertStringIncludes(output, "const _tmp");
       assertStringIncludes(output, ".push(`before`)");
-      assertStringIncludes(output, ".split(/\\s+/)");
+      assertStringIncludes(output, "$.__wordFields(");
+      assertStringIncludes(output, ", 2]");
       assertStringIncludes(output, ".push(`after`)");
       assertStringIncludes(output, "for (const item of _tmp");
     });
@@ -587,7 +589,8 @@ describe("Control Flow - Complex Scenarios", () => {
       // Should generate valid TypeScript
       assertStringIncludes(output, "const _tmp");
       assertStringIncludes(output, "await __cmdSubText");
-      assertStringIncludes(output, ".split(/\\s+/)");
+      assertStringIncludes(output, "$.__wordFields(");
+      assertStringIncludes(output, ", 2]");
       assertStringIncludes(output, "for (const branch of _tmp");
       // Should not have invalid syntax like ["${await ...}"]
       assertNotMatch(output, /\["\$\{await/);

@@ -291,6 +291,71 @@ export async function expandGlobArg(
 }
 
 /**
+ * One piece of a shell word: `[text, mode]`. Mode 0 is quoted text, 1 is
+ * unquoted literal text, and 2 is the result of an unquoted expansion.
+ */
+export type WordSegment = [string, 0 | 1 | 2];
+
+/**
+ * Expand one shell word into fields, as bash does after parameter expansion.
+ * Unquoted expansion results are split on IFS whitespace, then each field is
+ * pathname-expanded via {@link expandGlobArg}. Quoted text never splits or
+ * globs. An empty unquoted expansion adds no field, and an empty quoted one
+ * does. The canonical helper for `$.__wordFields` in transpiled code.
+ */
+export async function expandWordFields(
+  segments: WordSegment[],
+  config?: SafeShellConfig,
+  cwd?: string,
+): Promise<string[]> {
+  interface Field {
+    text: string;
+    pattern: string;
+    glob: boolean;
+  }
+  const fields: Field[] = [];
+  let cur: Field | null = null;
+  const add = (text: string, globbable: boolean) => {
+    cur ??= { text: "", pattern: "", glob: false };
+    cur.text += text;
+    if (globbable) {
+      cur.pattern += text;
+      if (/[*?[]/.test(text)) cur.glob = true;
+    } else {
+      cur.pattern += text.replace(/[*?[\]\\]/g, "\\$&");
+    }
+  };
+  const close = () => {
+    if (cur) fields.push(cur);
+    cur = null;
+  };
+
+  for (const [text, mode] of segments) {
+    if (mode !== 2) {
+      add(text, mode === 1);
+      continue;
+    }
+    text.split(/[ \t\n]+/).forEach((piece, i) => {
+      if (i > 0) close();
+      if (piece !== "") add(piece, true);
+    });
+  }
+  close();
+
+  const out: string[] = [];
+  for (const field of fields) {
+    if (!field.glob) {
+      out.push(field.text);
+      continue;
+    }
+    const matches = await expandGlobArg(field.pattern, config, cwd);
+    // No match keeps the word as written, without the quote escapes.
+    out.push(...(matches.length === 1 && matches[0] === field.pattern ? [field.text] : matches));
+  }
+  return out;
+}
+
+/**
  * SSH-642: expand a list of command operands, flattening each pattern's matches
  * in order (each via {@link expandGlobArg}). Used by fluent file commands such
  * as `cat` and `wc` that accept multiple operands. The canonical helper for

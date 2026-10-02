@@ -122,6 +122,8 @@ export interface Token {
   singleQuoted?: boolean;
   /** Boundary and quote state at each parameter expansion's normalized value offset */
   parameterExpansionQuotes?: Array<{ offset: number; length: number; quoted: boolean }>;
+  /** Per-char quote state of `value`: `q` quoted, `u` unquoted, `d` quote delimiter */
+  quoteMask?: string;
 }
 
 // =============================================================================
@@ -707,6 +709,10 @@ export class Lexer {
     let inDoubleQuote = false;
     let startsWithQuote = input[pos] === '"' || input[pos] === "'";
     const parameterExpansionQuotes: Array<{ offset: number; length: number; quoted: boolean }> = [];
+    // Quote state changes, keyed by `value` offset. Built into a quoteMask at
+    // the end so word expansion can tell quoted text from unquoted text.
+    const quoteMarks: Array<[number, "q" | "u" | "d"]> = [];
+    const mark = (state: "q" | "u" | "d") => quoteMarks.push([value.length, state]);
 
     while (pos < len) {
       const char = input[pos];
@@ -749,6 +755,7 @@ export class Lexer {
         inDoubleQuote = true;
         quoted = true;
         if (value === "") startsWithQuote = true;
+        mark("q");
         pos++;
         col++;
         continue;
@@ -758,15 +765,21 @@ export class Lexer {
       if (char === "'" && !inDoubleQuote) {
         if (inSingleQuote) {
           inSingleQuote = false;
-          if (!startsWithQuote) value += char;
+          if (!startsWithQuote) {
+            mark("d");
+            value += char;
+          }
+          mark("u");
         } else {
           inSingleQuote = true;
           if (startsWithQuote) {
             singleQuoted = true;
             quoted = true;
           } else {
+            mark("d");
             value += char;
           }
+          mark("q");
         }
         pos++;
         col++;
@@ -776,11 +789,19 @@ export class Lexer {
       if (char === '"' && !inSingleQuote) {
         if (inDoubleQuote) {
           inDoubleQuote = false;
-          if (!startsWithQuote) value += char;
+          if (!startsWithQuote) {
+            mark("d");
+            value += char;
+          }
+          mark("u");
         } else {
           inDoubleQuote = true;
           if (startsWithQuote) quoted = true;
-          else value += char;
+          else {
+            mark("d");
+            value += char;
+          }
+          mark("q");
         }
         pos++;
         col++;
@@ -808,11 +829,17 @@ export class Lexer {
             continue;
           }
         } else {
+          // An escaped char is quoted. A kept backslash is a delimiter.
           if (nextChar === '"' || nextChar === "'") {
-            value += char + nextChar;
+            mark("d");
+            value += char;
+            mark("q");
+            value += nextChar;
           } else {
+            mark("q");
             value += nextChar;
           }
+          mark("u");
           pos += 2;
           col += 2;
           continue;
@@ -906,9 +933,20 @@ export class Lexer {
     this.pos = pos;
     this.column = col;
     this.line = ln;
-    const expansionMetadata = parameterExpansionQuotes.length > 0
-      ? { parameterExpansionQuotes }
-      : {};
+    const expansionMetadata: Pick<Token, "parameterExpansionQuotes" | "quoteMask"> = {};
+    if (parameterExpansionQuotes.length > 0) {
+      expansionMetadata.parameterExpansionQuotes = parameterExpansionQuotes;
+    }
+    if (quoteMarks.length > 0) {
+      let quoteMask = "";
+      let state: "q" | "u" | "d" = "u";
+      let m = 0;
+      for (let i = 0; i < value.length; i++) {
+        while (m < quoteMarks.length && quoteMarks[m]![0] <= i) state = quoteMarks[m++]![1];
+        quoteMask += state;
+      }
+      expansionMetadata.quoteMask = quoteMask;
+    }
 
     if (value === "") {
       return { type: TokenType.WORD, value: "", start, end: pos, line, column, quoted, singleQuoted, ...expansionMetadata };

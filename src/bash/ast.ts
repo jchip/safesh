@@ -244,6 +244,12 @@ export type WordPart =
 export interface LiteralPart extends BaseNode {
   type: "LiteralPart";
   value: string;
+  /**
+   * One char per `value` char: `q` quoted (inside quotes or escaped), `u`
+   * unquoted, `d` a quote delimiter that quote removal drops. Absent when the
+   * lexer saw no quoting in the word, or the word was built without a lexer.
+   */
+  quoteMask?: string;
 }
 
 export interface ParameterExpansion extends BaseNode {
@@ -297,11 +303,15 @@ export interface CommandSubstitution extends BaseNode {
   type: "CommandSubstitution";
   command: Statement[];
   backtick: boolean; // true for `...`, false for $(...)
+  /** Whether the substitution sat inside double quotes. Same contract as ParameterExpansion. */
+  quoted?: boolean;
 }
 
 export interface ArithmeticExpansion extends BaseNode {
   type: "ArithmeticExpansion";
   expression: ArithmeticExpression;
+  /** Whether the expansion sat inside double quotes. Same contract as ParameterExpansion. */
+  quoted?: boolean;
 }
 
 export interface ProcessSubstitution extends BaseNode {

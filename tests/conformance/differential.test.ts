@@ -254,6 +254,46 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=(x z); b=(); printf "[%s]" pre"${a[@]}"mid"${b[@]}"post; echo' },
     { src: 'a=(); b=(); printf "[%s]" pre"${a[@]}"mid"${b[@]}"post; echo' },
   ],
+  // An unquoted expansion is IFS-split, and only its unquoted text splits.
+  // Quoted segments glue onto the neighboring fields.
+  splitting: [
+    { src: 's="a  b c"; printf "[%s]" $s; echo' },
+    { src: 's=" a b "; printf "[%s]" pre$s; echo' },
+    { src: 's="a b"; printf "[%s]" "x"$s"y"; echo' },
+    { src: 's="a b"; printf "[%s]" "$s"; echo' },
+    { src: 's="a   b"; echo $s' },
+    // An empty unquoted expansion is zero args; an empty quoted one is one.
+    { src: 's=; f() { echo $#; }; f $s; f "$s"; f x $s y' },
+    { src: 'printf "[%s]" $(echo a b); echo' },
+    { src: 'printf "[%s]" "$(echo a b)"; echo' },
+    { src: 'printf "[%s]" x$(echo a b)y; echo' },
+    // A plain `$a` on an array is its first element.
+    { src: 'a=(x y z); printf "[%s]" $a; echo' },
+    { src: 'a=("x y" z); printf "[%s]" $a; echo' },
+    { src: 'a=(x y z); printf "[%s]" "$a"; echo' },
+    { src: 's="a b"; for v in $s; do echo "v=$v"; done' },
+    { src: 'for v in $(echo a b); do echo "v=$v"; done' },
+  ],
+  // Pathname expansion runs on each field after splitting. Quoted glob
+  // characters stay literal, and a pattern with no match stays as written.
+  globbing: [
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1 $d/a2 $d/b1; printf "[%s]" $d/a*; echo' },
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1 $d/a2; printf "[%s]" "$d"/a*; echo' },
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1 $d/a2; printf "[%s]" "$d/"a*; echo' },
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1; printf "[%s]" "$d/a*"; echo' },
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1; printf "[%s]" $d/"a*"; echo' },
+    { src: 'd=@TMP@/w; mkdir -p $d; printf "[%s]" $d/zz*; echo' },
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1 $d/a2; p="$d/a*"; printf "[%s]" $p; echo' },
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1; p="$d/a*"; printf "[%s]" "$p"; echo' },
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1 $d/a2; for f in $d/a*; do echo "f=$f"; done' },
+    { src: 'd=@TMP@/w; mkdir -p $d; touch $d/a1 $d/a2; for f in "$d"/a*; do echo "f=$f"; done' },
+    { src: 'd=@TMP@/w; mkdir -p $d; for f in $d/zz*; do echo "f=$f"; done' },
+    { src: 'mkdir -p @TMP@/w; touch @TMP@/w/a1 @TMP@/w/a2; for f in @TMP@/w/a*; do echo "f=$f"; done' },
+    {
+      src:
+        'mkdir -p "@TMP@/s p"; touch "@TMP@/s p/a1"; d="@TMP@/s p"; for f in "$d"/a*; do echo "f=$f"; done',
+    },
+  ],
   functions: [
     // SSH-674: call-site arguments used to be dropped, and $N in the body read
     // an undeclared __POSITIONAL_PARAMS__ (ReferenceError). Arguments are now

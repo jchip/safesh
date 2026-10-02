@@ -26,7 +26,7 @@ import {
 } from "../utils/mod.ts";
 import { type BuiltinConfig, SHELL_BUILTINS } from "../builtins.ts";
 import { buildSubshellTestExpression } from "./control.ts";
-import { arraySplatWords } from "./words.ts";
+import { arraySplatWords, wordFieldsExpression } from "./words.ts";
 
 // =============================================================================
 // Helpers
@@ -668,7 +668,14 @@ function analyzeCommand(
   const argIsGlob = command.args.map((arg) => wordIsUnquotedGlobLiteral(arg));
   // SSH-700: a `${a[@]}` argument is one argument per element, so it is
   // pre-rendered as a spread rather than interpolated into a string.
-  const argArraySplat = command.args.map((arg) => arraySplatSpread(arg, ctx));
+  // An unquoted expansion splits and globs into any number of arguments, so it
+  // takes the same pre-built spread slot.
+  const argArraySplat = command.args.map((arg, i) => {
+    const splat = arraySplatSpread(arg, ctx);
+    if (splat !== null || argIsGlob[i]) return splat;
+    const fields = wordFieldsExpression(arg, ctx);
+    return fields === null ? null : `...${fields}`;
+  });
   const hasDynamicArgs = argExpansions.some(Boolean);
 
   return {

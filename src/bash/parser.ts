@@ -664,6 +664,7 @@ export class Parser {
           token.quoted || false,
           token.singleQuoted || false,
           token.parameterExpansionQuotes,
+          token.quoteMask,
         ),
       };
     } else {
@@ -755,6 +756,7 @@ export class Parser {
             token.quoted || false,
             token.singleQuoted || false,
             token.parameterExpansionQuotes,
+            token.quoteMask,
           ),
         });
       } else {
@@ -1700,6 +1702,7 @@ export class Parser {
         token.quoted || false,
         token.singleQuoted || false,
         token.parameterExpansionQuotes,
+        token.quoteMask,
       ),
     };
   }
@@ -1744,6 +1747,7 @@ export class Parser {
     _quoted: boolean,
     singleQuoted = false,
     parameterExpansionQuotes?: Array<{ offset: number; length: number; quoted: boolean }>,
+    quoteMask?: string,
   ): AST.WordPart[] {
     // Single-quoted strings have NO expansion at all - everything is literal
     if (singleQuoted) {
@@ -1758,13 +1762,27 @@ export class Parser {
     // side of a quote each expansion falls on. `${a[@]}` needs it: quoted, it
     // is one argument per element; unquoted, the elements word-split too.
     let inQuote = false;
+    // Quote state of each `literal` char, sliced from the lexer's quoteMask.
+    let literalMask = "";
 
     const flushLiteral = () => {
       if (literal) {
-        parts.push({ type: "LiteralPart", value: literal });
+        parts.push(
+          quoteMask
+            ? { type: "LiteralPart", value: literal, quoteMask: literalMask }
+            : { type: "LiteralPart", value: literal },
+        );
         literal = "";
+        literalMask = "";
       }
     };
+    const appendLiteral = (text: string, state: string | undefined) => {
+      literal += text;
+      if (quoteMask) literalMask += (state ?? "u").repeat(text.length);
+    };
+    // Whether an expansion starting at `at` sat inside double quotes.
+    const expansionQuoted = (at: number) =>
+      quoteMask ? quoteMask[at] === "q" : inQuote ? true : undefined;
 
     while (pos < value.length) {
       const char = value[pos];
@@ -1774,7 +1792,7 @@ export class Parser {
       if (char === "\\" && pos + 1 < value.length) {
         const nextChar = value[pos + 1];
         if (nextChar === "$" || nextChar === "`") {
-          literal += nextChar;
+          appendLiteral(nextChar, "q");
           pos += 2;
           continue;
         }
@@ -1785,7 +1803,7 @@ export class Parser {
       // visitLiteralPart strips shell quote syntax downstream.
       if (char === '"') {
         inQuote = !inQuote;
-        literal += char;
+        appendLiteral(char, quoteMask?.[pos]);
         pos++;
         continue;
       }
@@ -1803,13 +1821,19 @@ export class Parser {
           if (result.part.type === "ParameterExpansion") {
             if (recordedQuote) result.part.quoted = recordedQuote.quoted;
             else if (inQuote) result.part.quoted = true;
+          } else if (
+            result.part.type === "CommandSubstitution" ||
+            result.part.type === "ArithmeticExpansion"
+          ) {
+            const quoted = expansionQuoted(pos);
+            if (quoted !== undefined) result.part.quoted = quoted;
           }
           parts.push(result.part);
           pos = result.newPos;
           continue;
         }
         // Just a literal $
-        literal += char;
+        appendLiteral(char, quoteMask?.[pos]);
         pos++;
         continue;
       }
@@ -1818,6 +1842,10 @@ export class Parser {
       if (char === "`") {
         const result = this.tryParseBacktickSubstitution(value, pos);
         flushLiteral();
+        if (result.part.type === "CommandSubstitution") {
+          const quoted = expansionQuoted(pos);
+          if (quoted !== undefined) result.part.quoted = quoted;
+        }
         parts.push(result.part);
         pos = result.newPos;
         continue;
@@ -1826,7 +1854,7 @@ export class Parser {
       // Process substitution <() or >() is handled at the token level
       // by LESS_LPAREN and GREAT_LPAREN tokens
 
-      literal += char;
+      appendLiteral(char!, quoteMask?.[pos]);
       pos++;
     }
 

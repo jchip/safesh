@@ -8,7 +8,7 @@ import { globToRegExp } from "@std/path";
 import type * as AST from "../../ast.ts";
 import type { StatementResult, VisitorContext } from "../types.ts";
 import { escapeForQuotes, restoreCwdExpression, sanitizeVarName } from "../utils/mod.ts";
-import { arraySplatWords } from "./words.ts";
+import { arraySplatWords, wordFieldsExpression } from "./words.ts";
 
 function wordHasExpansion(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
@@ -120,18 +120,22 @@ export function visitForStatement(
   const lines: string[] = [];
   const indent = ctx.getIndent();
 
+  // Each list word splits and globs like a command argument.
+  const itemFields = stmt.iterable.map((item) => wordFieldsExpression(item, ctx));
+
   // Check if any item contains command substitution or other dynamic expansion
-  const hasDynamicExpansion = stmt.iterable.some((item) => {
-    if (item.type === "ParameterExpansion" || item.type === "CommandSubstitution") return true;
-    if (item.type === "Word" && item.parts.length > 0) {
-      return item.parts.some((part) =>
-        part.type === "CommandSubstitution" ||
-        part.type === "ParameterExpansion" ||
-        part.type === "ArithmeticExpansion"
-      );
-    }
-    return false;
-  });
+  const hasDynamicExpansion = itemFields.some((fields) => fields !== null) ||
+    stmt.iterable.some((item) => {
+      if (item.type === "ParameterExpansion" || item.type === "CommandSubstitution") return true;
+      if (item.type === "Word" && item.parts.length > 0) {
+        return item.parts.some((part) =>
+          part.type === "CommandSubstitution" ||
+          part.type === "ParameterExpansion" ||
+          part.type === "ArithmeticExpansion"
+        );
+      }
+      return false;
+    });
 
   let itemsExpr: string;
 
@@ -142,7 +146,7 @@ export function visitForStatement(
     const tempVar = ctx.getTempVar();
     lines.push(`${indent}const ${tempVar} = [];`);
 
-    for (const item of stmt.iterable) {
+    for (const [i, item] of stmt.iterable.entries()) {
       // SSH-700: `for v in "${a[@]}"` iterates the ELEMENTS. The quoted form
       // used to fall through to the single-item branch below and iterate once
       // over the space-joined whole; the unquoted form only worked by
@@ -153,6 +157,11 @@ export function visitForStatement(
         lines.push(`${indent}${tempVar}.push(...${splatElements});`);
         continue;
       }
+      const fields = itemFields[i];
+      if (fields) {
+        lines.push(`${indent}${tempVar}.push(...${fields});`);
+        continue;
+      }
       if (item.type === "ParameterExpansion" || item.type === "CommandSubstitution") {
         // Direct expansions are subject to bash word splitting in `for ... in`.
         const cmdSubExpr = ctx.visitWord(item);
@@ -161,33 +170,8 @@ export function visitForStatement(
           `${indent}${tempVar}.push(...(${innerExpr}).split(/\\s+/).filter(s => s.length > 0));`,
         );
       } else if (item.type === "Word" && item.parts.length > 0) {
-        // Check if the word contains command substitution
-        const hasCommandSub = item.parts.some((part) => part.type === "CommandSubstitution");
-
-        if (hasCommandSub) {
-          // Word with command substitution: evaluate and split
-          const wordExpr = ctx.visitWord(item);
-          // Build a template literal evaluation that handles expansion
-          lines.push(
-            `${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`,
-          );
-        } else {
-          // SSH-531: Check if word has unquoted parameter/arithmetic expansions
-          // In bash, `for i in $var` splits $var's value on whitespace
-          const hasParamExpansion = !item.quoted && !item.singleQuoted && item.parts.some(
-            (part) => part.type === "ParameterExpansion" || part.type === "ArithmeticExpansion",
-          );
-          const wordExpr = ctx.visitWord(item);
-          if (hasParamExpansion) {
-            // Unquoted expansion: word-split at runtime
-            lines.push(
-              `${indent}${tempVar}.push(...(\`${wordExpr}\`).split(/\\s+/).filter(s => s.length > 0));`,
-            );
-          } else {
-            // Quoted expansion or plain literal: keep as single item
-            lines.push(`${indent}${tempVar}.push(\`${wordExpr}\`);`);
-          }
-        }
+        // Nothing unquoted to split or glob: one item
+        lines.push(`${indent}${tempVar}.push(\`${ctx.visitWord(item)}\`);`);
       } else {
         // Plain word: add as string literal
         lines.push(`${indent}${tempVar}.push(${formatWordLiteral(item, ctx)});`);

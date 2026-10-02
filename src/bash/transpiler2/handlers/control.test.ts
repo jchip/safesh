@@ -21,15 +21,15 @@ describe("For Loop with Command Substitution (SSH-375)", () => {
     assertStringIncludes(output, "const _tmp");
     // Should await and extract text from command substitution
     assertStringIncludes(output, "await __cmdSubText");
-    // Should split by whitespace
-    assertStringIncludes(output, ".split(/\\s+/)");
-    // Should filter empty strings
-    assertStringIncludes(output, "filter(s => s.length > 0)");
+    // Unquoted expansion is split and globbed at runtime
+    assertStringIncludes(output, "$.__wordFields(");
+    assertStringIncludes(output, ", 2]");
+    assertStringIncludes(output, "$.__wordFields(");
     // Should iterate over the temp variable
     assertStringIncludes(output, "for (const item of _tmp");
 
     // Should NOT have invalid syntax like ["${await ...}"]
-    assertEquals(output.includes('[`${await'), false, "Should not have template literal in array literal");
+    assertEquals(output.includes("= [`${await"), false, "Should not have template literal in array literal");
   });
 
   it("should handle mixed list with command substitution", () => {
@@ -47,7 +47,8 @@ describe("For Loop with Command Substitution (SSH-375)", () => {
     assertStringIncludes(output, '.push(`before`)');
     assertStringIncludes(output, '.push(`after`)');
     // Should push split command substitution results
-    assertStringIncludes(output, ".split(/\\s+/)");
+    assertStringIncludes(output, "$.__wordFields(");
+    assertStringIncludes(output, ", 2]");
     assertStringIncludes(output, "await __cmdSubText");
   });
 
@@ -68,7 +69,8 @@ describe("For Loop with Command Substitution (SSH-375)", () => {
     assertStringIncludes(output, ".lines()");
     assertStringIncludes(output, ".pipe(");
     // Should split result
-    assertStringIncludes(output, ".split(/\\s+/)");
+    assertStringIncludes(output, "$.__wordFields(");
+    assertStringIncludes(output, ", 2]");
   });
 
   it("should handle plain word list without command substitution", () => {
@@ -99,7 +101,8 @@ describe("For Loop with Command Substitution (SSH-375)", () => {
     // Should use temp variable because of parameter expansion
     assertStringIncludes(output, "const _tmp");
     // SSH-531: Unquoted $FILES should word-split at runtime
-    assertStringIncludes(output, ".split(/\\s+/)");
+    assertStringIncludes(output, "$.__wordFields(");
+    assertStringIncludes(output, ", 2]");
     assertStringIncludes(output, "typeof FILES");
   });
 
@@ -114,8 +117,8 @@ describe("For Loop with Command Substitution (SSH-375)", () => {
 
     // Should use temp variable
     assertStringIncludes(output, "const _tmp");
-    // Should filter empty strings after split
-    assertStringIncludes(output, "filter(s => s.length > 0)");
+    // Runtime field splitting drops empty results
+    assertStringIncludes(output, "$.__wordFields(");
     // This means the loop won't execute if command returns empty string
   });
 });

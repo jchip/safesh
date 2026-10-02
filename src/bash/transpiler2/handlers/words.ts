@@ -317,6 +317,80 @@ export function arraySplatWords(
 }
 
 /**
+ * The JS expression for the fields a word expands to under bash word
+ * splitting and pathname expansion, via `$.__wordFields`. Returns null when the
+ * word has nothing to split or glob, leaving it on the plain string path.
+ *
+ * Each part becomes `[text, mode]` segments for the runtime. Literal text is
+ * cut at its quote boundaries using the lexer's quoteMask, so `"$d"/*` globs
+ * the `*` while `$d"*"` does not.
+ */
+export function wordFieldsExpression(
+  word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
+  ctx: VisitorContext,
+): string | null {
+  if (word.type !== "Word" || word.singleQuoted || word.parts.length === 0) return null;
+
+  const segments: string[] = [];
+  let needsFields = false;
+  const push = (rendered: string, mode: 0 | 1 | 2) => segments.push(`[\`${rendered}\`, ${mode}]`);
+
+  for (const [index, part] of word.parts.entries()) {
+    switch (part.type) {
+      case "LiteralPart": {
+        // ANSI-C `$'...'` decoding lives in visitLiteralPart; keep that path.
+        if (part.value.includes("$'")) return null;
+        for (const run of literalQuoteRuns(part, word.quoted)) {
+          if (run.quoted) {
+            push(escapeForTemplate(run.text), 0);
+            continue;
+          }
+          if (/[*?[]/.test(run.text)) needsFields = true;
+          // Tilde expansion applies only at the start of the word.
+          const atWordStart = index === 0 && run.start === 0;
+          const rendered = !atWordStart && run.text.startsWith("~")
+            ? escapeForTemplate(run.text)
+            : visitLiteralPart({ type: "LiteralPart", value: run.text }, ctx, false);
+          push(rendered, 1);
+        }
+        break;
+      }
+      case "ParameterExpansion":
+      case "CommandSubstitution":
+      case "ArithmeticExpansion": {
+        const quoted = part.quoted ?? word.quoted;
+        if (!quoted) needsFields = true;
+        push(visitWordPart(part, ctx, word.quoted), quoted ? 0 : 2);
+        break;
+      }
+      default:
+        return null;
+    }
+  }
+
+  return needsFields ? `(await $.__wordFields([${segments.join(", ")}]))` : null;
+}
+
+/** Split a literal into quoted and unquoted runs, dropping quote delimiters. */
+function literalQuoteRuns(
+  part: AST.LiteralPart,
+  wordQuoted: boolean,
+): Array<{ text: string; quoted: boolean; start: number }> {
+  const mask = part.quoteMask;
+  if (!mask) return [{ text: part.value, quoted: wordQuoted, start: 0 }];
+  const runs: Array<{ text: string; quoted: boolean; start: number }> = [];
+  for (let i = 0; i < part.value.length; i++) {
+    const state = mask[i];
+    if (state === "d") continue;
+    const quoted = state === "q";
+    const last = runs[runs.length - 1];
+    if (last && last.quoted === quoted) last.text += part.value[i];
+    else runs.push({ text: part.value[i]!, quoted, start: i });
+  }
+  return runs;
+}
+
+/**
  * Find the first unescaped slash in a string.
  * Returns the index of the first unescaped '/', or -1 if not found.
  */
@@ -888,7 +962,8 @@ export function visitParameterExpansion(
     // Simple expansion: ${VAR} or $VAR
     // SSH-484: Variable lookup order: local JS var > $.ENV (env vars) > $.VARS (shell vars)
     // SSH-489: Use sanitized name for JS identifiers, original for ENV/VARS property access
-    return `\${typeof ${jsParam} !== "undefined" ? ${jsParam} : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`;
+    // A plain `$a` on an array is its first element, as in bash.
+    return `\${typeof ${jsParam} !== "undefined" ? (Array.isArray(${jsParam}) ? ${jsParam}[0] ?? "" : ${jsParam}) : ($.ENV.${param} ?? $.VARS?.${param} ?? "")}`;
   }
 
   // Handle modifiers
