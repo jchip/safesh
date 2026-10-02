@@ -26,7 +26,10 @@ Follow-up tickets on the tasks server (project `safesh`):
 - SSH-717: an unquoted command name now splits (`c="git status"; $c`). Done.
 - SSH-718: a word that starts single-quoted now expands what follows (`'a b'$p`). Done.
 - SSH-719: word splitting now honors a custom IFS, including an empty one. Done.
-- SSH-720: piping into a shell function throws in `pipe()`. Found while filing these.
+- SSH-720: piping into a shell function now feeds it stdin. Done.
+- SSH-721 to SSH-725: open stdin and capture gaps found while landing SSH-720. Commands in a piped
+  function each re-read the whole input. `f <<< x` and `f < file` drop stdin. A captured function
+  ignores its inner stdout redirects. A lone `read x` doesn't set `x`. `| { group; }` throws.
 
 Still by design: a glob outside the sandbox's readable paths falls back to the literal word, as
 `$.__expandGlob` already does.
