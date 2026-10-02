@@ -9,6 +9,7 @@ import type * as AST from "../../ast.ts";
 import type { StatementResult, VisitorContext } from "../types.ts";
 import { escapeForQuotes, restoreCwdExpression, sanitizeVarName } from "../utils/mod.ts";
 import { arraySplatWords, wordFieldsExpression } from "./words.ts";
+import { buildStdinReadLoopExpression } from "./commands.ts";
 
 function wordHasExpansion(
   word: AST.Word | AST.ParameterExpansion | AST.CommandSubstitution,
@@ -242,6 +243,8 @@ export function visitWhileStatement(
   stmt: AST.WhileStatement,
   ctx: VisitorContext,
 ): StatementResult {
+  const readLoop = buildStdinReadLoopExpression(stmt, ctx);
+  if (readLoop) return { lines: [`${ctx.getIndent()}__recStatus(await ${readLoop});`] };
   return visitLoop(stmt, ctx, false);
 }
 

@@ -482,8 +482,9 @@ describe("Git Hooks", () => {
           fi
         done
       `);
-      assertStringIncludes(code, "while");
-      assertStringIncludes(code, '"read"');
+      // The loop reads stdin line by line into the three variables.
+      assertStringIncludes(code, "of $.__stdinLines()");
+      assertStringIncludes(code, "let refname = ");
       assertStringIncludes(code, '$.git("pull"');
     });
   });

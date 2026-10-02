@@ -1842,8 +1842,14 @@ function buildReadLoopConsumerExpression(
   };
 
   const upstream = buildPipeline(upstreamPipeline, ctx);
-  const lineStreamExpr = upstreamLineStreamExpression(upstream);
+  return buildReadLoopOverLines(readLoop, upstreamLineStreamExpression(upstream), ctx);
+}
 
+function buildReadLoopOverLines(
+  readLoop: ReadLoopConsumer,
+  lineStreamExpr: string,
+  ctx: VisitorContext,
+): string {
   const lineVar = ctx.getTempVar("line");
   const sourceVar = ctx.getTempVar("read");
   const partsVar = ctx.getTempVar("parts");
@@ -1866,6 +1872,20 @@ ${inner}
   }
   return { code: 0, stdout: '', stderr: '', success: true };
 })()`;
+}
+
+/**
+ * A `while read` loop with no pipe or redirect feeding it reads the shell's
+ * stdin: the inherited stdin inside a piped function, else the process stdin.
+ * Returns null when `stmt` is not such a loop.
+ */
+export function buildStdinReadLoopExpression(
+  stmt: AST.WhileStatement,
+  ctx: VisitorContext,
+): string | null {
+  if ((stmt.redirects?.length ?? 0) > 0) return null;
+  const readLoop = extractReadLoopConsumer(stmt);
+  return readLoop ? buildReadLoopOverLines(readLoop, "$.__stdinLines()", ctx) : null;
 }
 
 function buildReadGroupConsumerExpression(
@@ -2229,6 +2249,59 @@ ${inner}
 })()`;
 }
 
+/** The last stage after the first that calls a user function, or -1. */
+function lastUserFunctionStage(pipeline: AST.Pipeline, ctx: VisitorContext): number {
+  for (let i = pipeline.commands.length - 1; i >= 1; i--) {
+    const stage = pipeline.commands[i];
+    if (stage?.type !== "Command") continue;
+    const name = getStaticWordValue(stage.name);
+    if (name !== null && ctx.isFunction(name)) return i;
+  }
+  return -1;
+}
+
+/**
+ * `upstream | f [| downstream]` where f is a user function. The function's
+ * commands run with the upstream output as their inherited stdin, and its
+ * captured stdout feeds the downstream stages. Returns null when f's body
+ * can't be captured but downstream stages need its output.
+ */
+function buildFunctionConsumerExpression(
+  pipeline: AST.Pipeline,
+  index: number,
+  ctx: VisitorContext,
+): string | null {
+  const downstream = pipeline.commands.slice(index + 1);
+  const fn = buildCommand(pipeline.commands[index] as AST.Command, ctx, { valueConsumed: true });
+  if (!fn.isResultObject && downstream.length > 0) return null;
+  const fnExpr = fn.isResultObject
+    ? fn.code
+    : `(async () => { await ${fn.code}; const __c = Deno.exitCode ?? 0; ` +
+      `return { code: __c, stdout: "", stderr: "", success: __c === 0 }; })()`;
+
+  const upstream: AST.Pipeline = {
+    type: "Pipeline",
+    commands: pipeline.commands.slice(0, index),
+    operator: "|",
+    background: false,
+    negated: false,
+  };
+  const upstreamExpr = buildStatementAsCapturedExpression(upstream, ctx);
+  const inputVar = ctx.getTempVar("__in");
+  const resultVar = ctx.getTempVar("__res");
+  const captureVar = ctx.getTempVar("__out");
+  const tail = downstream.length === 0
+    ? `return ${resultVar};`
+    : `const ${captureVar} = [String(${resultVar}.stdout ?? "")];
+  return await ${buildDownstreamWithStdin(downstream, captureVar, ctx)};`;
+
+  return `(async () => {
+  const ${inputVar} = String((await ${upstreamExpr}).stdout ?? "");
+  const ${resultVar} = await $.__withStdin(${inputVar}, () => ${fnExpr});
+  ${tail}
+})()`;
+}
+
 /**
  * Build a pipeline expression (without await/semicolon)
  */
@@ -2275,6 +2348,14 @@ export function buildPipeline(
         isStream: false,
         isPrintable: false,
       };
+    }
+
+    const fnStage = lastUserFunctionStage(pipeline, ctx);
+    if (fnStage > 0) {
+      const code = buildFunctionConsumerExpression(pipeline, fnStage, ctx);
+      if (code) {
+        return { code, async: true, isStream: false, isPrintable: true, isResultObject: true };
+      }
     }
 
     // Check for while read in middle positions (index 1 to length-2).

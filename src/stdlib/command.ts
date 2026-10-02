@@ -15,6 +15,33 @@ import { CMD_NAME_SYMBOL, type CommandFn } from "./command-init.ts";
 import { lines } from "./transforms.ts";
 import { getNativeCommand } from "./native-commands.ts";
 import { CMD_ERROR_MARKER, ENV_SCRIPT_ID, ENV_SHELL_ID, JOB_MARKER } from "../core/constants.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+/**
+ * Stdin inherited by every command run inside a shell function that sits on
+ * the right of a pipe. A command with its own stdin (pipe, heredoc, `<`) keeps it.
+ */
+const pipedStdin = new AsyncLocalStorage<string>();
+
+/** Run `fn` with `data` as the inherited stdin of the commands it runs. */
+export function withPipedStdin<T>(data: string, fn: () => T): T {
+  return pipedStdin.run(data, fn);
+}
+
+/**
+ * The lines a `while read` loop consumes: the inherited stdin when inside a
+ * piped function, else the process stdin.
+ */
+export async function* stdinLines(): AsyncGenerator<string> {
+  const data = pipedStdin.getStore();
+  if (data !== undefined) {
+    const all = data.split("\n");
+    if (all[all.length - 1] === "") all.pop();
+    yield* all;
+    return;
+  }
+  yield* lines()(Deno.stdin.readable.pipeThrough(new TextDecoderStream()));
+}
 
 /** Symbol the preamble uses to inject config onto globalThis.$ (SSH-629). */
 const CONFIG_SYMBOL = Symbol.for("safesh.config");
@@ -1277,7 +1304,7 @@ export class Command implements PromiseLike<CommandResult> {
       // on failure, which exec()/stream() convert into a command failure.
       return await readStdinRedirect(this.options.stdinFile);
     }
-    return this.options.stdin;
+    return this.options.stdin ?? pipedStdin.getStore();
   }
 
   /**
