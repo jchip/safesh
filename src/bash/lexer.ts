@@ -109,6 +109,9 @@ export enum TokenType {
 // Token Interface
 // =============================================================================
 
+/** Quote state of one char in a word's value (see Token.quoteMask). */
+type QuoteState = "s" | "q" | "u" | "d";
+
 export interface Token {
   type: TokenType;
   value: string;
@@ -122,7 +125,10 @@ export interface Token {
   singleQuoted?: boolean;
   /** Boundary and quote state at each parameter expansion's normalized value offset */
   parameterExpansionQuotes?: Array<{ offset: number; length: number; quoted: boolean }>;
-  /** Per-char quote state of `value`: `q` quoted, `u` unquoted, `d` quote delimiter */
+  /**
+   * Per-char quote state of `value`: `s` single-quoted, `q` double-quoted or
+   * escaped, `u` unquoted, `d` quote delimiter
+   */
   quoteMask?: string;
 }
 
@@ -711,8 +717,8 @@ export class Lexer {
     const parameterExpansionQuotes: Array<{ offset: number; length: number; quoted: boolean }> = [];
     // Quote state changes, keyed by `value` offset. Built into a quoteMask at
     // the end so word expansion can tell quoted text from unquoted text.
-    const quoteMarks: Array<[number, "q" | "u" | "d"]> = [];
-    const mark = (state: "q" | "u" | "d") => quoteMarks.push([value.length, state]);
+    const quoteMarks: Array<[number, QuoteState]> = [];
+    const mark = (state: QuoteState) => quoteMarks.push([value.length, state]);
 
     while (pos < len) {
       const char = input[pos];
@@ -779,7 +785,7 @@ export class Lexer {
             mark("d");
             value += char;
           }
-          mark("q");
+          mark("s");
         }
         pos++;
         col++;
@@ -939,13 +945,16 @@ export class Lexer {
     }
     if (quoteMarks.length > 0) {
       let quoteMask = "";
-      let state: "q" | "u" | "d" = "u";
+      let state: QuoteState = "u";
       let m = 0;
       for (let i = 0; i < value.length; i++) {
         while (m < quoteMarks.length && quoteMarks[m]![0] <= i) state = quoteMarks[m++]![1];
         quoteMask += state;
       }
       expansionMetadata.quoteMask = quoteMask;
+      // `singleQuoted` means the WHOLE word is one literal. A word that only
+      // starts with a single quote still expands what follows it.
+      if (singleQuoted && /[^s]/.test(quoteMask)) singleQuoted = false;
     }
 
     if (value === "") {

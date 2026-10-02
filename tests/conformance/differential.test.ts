@@ -273,6 +273,23 @@ const CORPUS: Record<string, Case[]> = {
     { src: 'a=(x y z); printf "[%s]" "$a"; echo' },
     { src: 's="a b"; for v in $s; do echo "v=$v"; done' },
     { src: 'for v in $(echo a b); do echo "v=$v"; done' },
+    // The command name splits too: its first field is the command.
+    { src: 'c="printf [%s]"; $c a b; echo' },
+    { src: 'c="echo hi"; $c there' },
+    // A word that starts single-quoted still expands what follows the quote.
+    { src: "p=x; printf \"[%s]\" 'a b'$p; echo" },
+    { src: "p=x; printf \"[%s]\" 'a'\"$p\"'b'; echo" },
+    { src: "s=\"1 2\"; printf \"[%s]\" 'a'$s; echo" },
+    // Single-quoted text after a double-quoted start stays literal.
+    { src: "x=1; printf \"[%s]\" \"a\"'$x'; echo" },
+    { src: "printf \"[%s]\" 'a'\\''b'; echo" },
+    // A custom IFS splits on its own characters.
+    { src: 'IFS=,; s="a,b,,c"; printf "[%s]" $s; echo' },
+    { src: 'IFS=": "; s="a: b:c"; printf "[%s]" $s; echo' },
+    { src: 'IFS=,; s=",a,"; printf "[%s]" $s; echo' },
+    { src: 'IFS=; s="a b"; printf "[%s]" $s; echo' },
+    { src: 'IFS=,; s="a,b"; for v in $s; do echo "v=$v"; done' },
+    { src: 'IFS=,; unset IFS; s="a b"; printf "[%s]" $s; echo' },
   ],
   // Pathname expansion runs on each field after splitting. Quoted glob
   // characters stay literal, and a pattern with no match stays as written.

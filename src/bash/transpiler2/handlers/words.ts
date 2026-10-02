@@ -368,7 +368,11 @@ export function wordFieldsExpression(
     }
   }
 
-  return needsFields ? `(await $.__wordFields([${segments.join(", ")}]))` : null;
+  if (!needsFields) return null;
+  // The runtime can't see JS locals, so hand it the current IFS (undefined
+  // means unset, which splits on the default whitespace).
+  const ifs = `(typeof IFS !== "undefined" ? IFS : $.VARS?.IFS)`;
+  return `(await $.__wordFields([${segments.join(", ")}], ${ifs}))`;
 }
 
 /** Split a literal into quoted and unquoted runs, dropping quote delimiters. */
@@ -382,7 +386,7 @@ function literalQuoteRuns(
   for (let i = 0; i < part.value.length; i++) {
     const state = mask[i];
     if (state === "d") continue;
-    const quoted = state === "q";
+    const quoted = state !== "u";
     const last = runs[runs.length - 1];
     if (last && last.quoted === quoted) last.text += part.value[i];
     else runs.push({ text: part.value[i]!, quoted, start: i });
@@ -766,6 +770,13 @@ export function visitLiteralPart(
   let value = part.value;
 
   if (quoted) {
+    // A backslash kept before an escaped quote (`'a'\''b'`) is a delimiter.
+    const mask = part.quoteMask;
+    if (mask?.includes("d")) {
+      let kept = "";
+      for (let i = 0; i < value.length; i++) if (mask[i] !== "d") kept += value[i];
+      value = kept;
+    }
     return escapeForTemplate(value);
   }
 

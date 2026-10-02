@@ -377,9 +377,14 @@ function handleStandardCommand(
   argTemplateEscapedLiterals?: boolean[],
   argIsGlob?: boolean[],
   argArraySplat?: (string | null)[],
+  nameFields?: string | null,
 ): string {
-  // SSH-484: Use formatArg for command name to support variable expansion
-  const formattedName = formatArg(name, nameHasExpansion, nameTemplateEscapedLiteral);
+  // SSH-484: Use formatArg for command name to support variable expansion.
+  // An unquoted expansion splits: its first field is the command, the rest
+  // lead the args.
+  const formattedName = nameFields
+    ? `...${nameFields}`
+    : formatArg(name, nameHasExpansion, nameTemplateEscapedLiteral);
 
   if (hasAssignments) {
     // SSH-649: shared with the timeout handler via buildEnvEntries.
@@ -446,6 +451,8 @@ interface CommandAnalysis {
   argIsGlob: boolean[];
   /** SSH-700: Per-arg pre-built `${a[@]}` spread, null for a normal argument */
   argArraySplat: (string | null)[];
+  /** Fields expression for a command name that splits, else null */
+  nameFields: string | null;
 }
 
 /**
@@ -530,6 +537,7 @@ type CommandStrategy =
     argTemplateEscapedLiterals: boolean[];
     argIsGlob: boolean[];
     argArraySplat: (string | null)[];
+    nameFields: string | null;
   };
 
 type CommandExpressionResult = ExpressionResult & {
@@ -677,6 +685,7 @@ function analyzeCommand(
     return fields === null ? null : `...${fields}`;
   });
   const hasDynamicArgs = argExpansions.some(Boolean);
+  const nameFields = wordFieldsExpression(command.name, ctx);
 
   return {
     name,
@@ -692,6 +701,7 @@ function analyzeCommand(
     argTemplateEscapedLiterals,
     argIsGlob,
     argArraySplat,
+    nameFields,
   };
 }
 
@@ -844,6 +854,7 @@ function selectCommandStrategy(
     argTemplateEscapedLiterals: analysis.argTemplateEscapedLiterals,
     argIsGlob: analysis.argIsGlob,
     argArraySplat: analysis.argArraySplat,
+    nameFields: analysis.nameFields,
   };
 }
 
@@ -1029,6 +1040,7 @@ function executeCommandStrategy(
         strategy.argTemplateEscapedLiterals,
         strategy.argIsGlob,
         strategy.argArraySplat,
+        strategy.nameFields,
       );
       return { code: cmdExpr, async: true };
     }

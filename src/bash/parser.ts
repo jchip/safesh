@@ -1787,6 +1787,13 @@ export class Parser {
     while (pos < value.length) {
       const char = value[pos];
 
+      // Single-quoted text is literal: no escapes, quotes, or expansions.
+      if (quoteMask?.[pos] === "s") {
+        appendLiteral(char!, "s");
+        pos++;
+        continue;
+      }
+
       // SSH-486/487: Handle escape sequences in double-quoted context
       // \$ → literal $, \` → literal ` (no expansion)
       if (char === "\\" && pos + 1 < value.length) {

@@ -88,9 +88,18 @@ Deno.test("expandWordFields - empty unquoted adds no field, empty quoted adds on
 
 Deno.test("expandWordFields - globs each field, quoted glob chars stay literal", async () => {
   await withFixture(["a1", "a2", "a*1"], async (dir) => {
-    assertEquals(await expandWordFields([["a", 2], ["*", 1]], undefined, dir), ["a*1", "a1", "a2"]);
-    assertEquals(await expandWordFields([["a*", 0]], undefined, dir), ["a*"]);
-    assertEquals(await expandWordFields([["a*", 0], ["*", 1]], undefined, dir), ["a*1"]);
-    assertEquals(await expandWordFields([["zz", 2], ["*", 1]], undefined, dir), ["zz*"]);
+    assertEquals(await expandWordFields([["a", 2], ["*", 1]], undefined, undefined, dir), ["a*1", "a1", "a2"]);
+    assertEquals(await expandWordFields([["a*", 0]], undefined, undefined, dir), ["a*"]);
+    assertEquals(await expandWordFields([["a*", 0], ["*", 1]], undefined, undefined, dir), ["a*1"]);
+    assertEquals(await expandWordFields([["zz", 2], ["*", 1]], undefined, undefined, dir), ["zz*"]);
   });
+});
+
+Deno.test("expandWordFields - custom IFS follows bash field splitting", async () => {
+  assertEquals(await expandWordFields([["a,b,,c", 2]], ","), ["a", "b", "", "c"]);
+  assertEquals(await expandWordFields([[",a,", 2]], ","), ["", "a"]);
+  assertEquals(await expandWordFields([["a: b:c", 2]], ": "), ["a", "b", "c"]);
+  assertEquals(await expandWordFields([["pre", 1], [",a", 2]], ","), ["pre", "a"]);
+  assertEquals(await expandWordFields([["a b", 2]], ""), ["a b"]);
+  assertEquals(await expandWordFields([[" a  b ", 2]], undefined), ["a", "b"]);
 });

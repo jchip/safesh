@@ -298,13 +298,18 @@ export type WordSegment = [string, 0 | 1 | 2];
 
 /**
  * Expand one shell word into fields, as bash does after parameter expansion.
- * Unquoted expansion results are split on IFS whitespace, then each field is
+ * Unquoted expansion results are split on `ifs`, then each field is
  * pathname-expanded via {@link expandGlobArg}. Quoted text never splits or
  * globs. An empty unquoted expansion adds no field, and an empty quoted one
  * does. The canonical helper for `$.__wordFields` in transpiled code.
+ *
+ * IFS follows bash: unset means space, tab and newline; empty disables
+ * splitting. IFS whitespace collapses and is trimmed, while each other IFS
+ * char ends exactly one field, so `a,,b` with `IFS=,` gives an empty field.
  */
 export async function expandWordFields(
   segments: WordSegment[],
+  ifs?: string | null,
   config?: SafeShellConfig,
   cwd?: string,
 ): Promise<string[]> {
@@ -330,15 +335,39 @@ export async function expandWordFields(
     cur = null;
   };
 
+  const sep = ifs ?? " \t\n";
+  const isWs = (c: string) => (c === " " || c === "\t" || c === "\n") && sep.includes(c);
+  const isSep = (c: string) => sep.includes(c);
+  // A delimiter with a non-whitespace IFS char always ends a field, even an
+  // empty one. A whitespace-only delimiter just ends the current field.
+  const delimit = (hard: boolean) => {
+    if (hard && !cur) fields.push({ text: "", pattern: "", glob: false });
+    close();
+  };
+
   for (const [text, mode] of segments) {
-    if (mode !== 2) {
-      add(text, mode === 1);
+    if (mode !== 2 || sep === "") {
+      add(text, mode !== 0);
       continue;
     }
-    text.split(/[ \t\n]+/).forEach((piece, i) => {
-      if (i > 0) close();
-      if (piece !== "") add(piece, true);
-    });
+    let i = 0;
+    while (i < text.length) {
+      if (!isSep(text[i]!)) {
+        let j = i;
+        while (j < text.length && !isSep(text[j]!)) j++;
+        add(text.slice(i, j), true);
+        i = j;
+        continue;
+      }
+      let hard = false;
+      while (i < text.length && isWs(text[i]!)) i++;
+      if (i < text.length && isSep(text[i]!) && !isWs(text[i]!)) {
+        hard = true;
+        i++;
+        while (i < text.length && isWs(text[i]!)) i++;
+      }
+      delimit(hard);
+    }
   }
   close();
 

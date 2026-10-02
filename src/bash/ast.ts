@@ -245,8 +245,8 @@ export interface LiteralPart extends BaseNode {
   type: "LiteralPart";
   value: string;
   /**
-   * One char per `value` char: `q` quoted (inside quotes or escaped), `u`
-   * unquoted, `d` a quote delimiter that quote removal drops. Absent when the
+   * One char per `value` char: `s` single-quoted, `q` double-quoted or
+   * escaped, `u` unquoted, `d` a quote delimiter that quote removal drops. Absent when the
    * lexer saw no quoting in the word, or the word was built without a lexer.
    */
   quoteMask?: string;

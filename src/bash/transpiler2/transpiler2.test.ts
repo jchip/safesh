@@ -237,8 +237,8 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("$ANDROID_HOME/platform-tools/adb install app.apk");
     const output = transpile(ast);
 
-    // Command name should use template literal with proper env var lookup
-    assertStringIncludes(output, "$.cmd(`${");
+    // An unquoted command name splits, so it is spread from its fields
+    assertStringIncludes(output, "$.cmd(...(await $.__wordFields([[`${");
     assertStringIncludes(output, "$.ENV.ANDROID_HOME");
     assertStringIncludes(output, "/platform-tools/adb`");
     assertStringIncludes(output, '"install"');
@@ -249,8 +249,8 @@ describe("Transpiler2 - Simple Commands", () => {
     const ast = parse("${HOME}/bin/cmd arg");
     const output = transpile(ast);
 
-    // ${VAR} style should also use template literal with env var lookup
-    assertStringIncludes(output, "$.cmd(`${");
+    // ${VAR} style splits the same way, with env var lookup
+    assertStringIncludes(output, "$.cmd(...(await $.__wordFields([[`${");
     assertStringIncludes(output, "$.ENV.HOME");
   });
 });
