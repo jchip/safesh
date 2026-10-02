@@ -7,10 +7,12 @@
 
 import { assertEquals } from "@std/assert";
 import {
+  bashMayChangeCwd,
   extractCommands,
   parseHookInput,
   shouldPassthrough,
   stripLeadingAssignments,
+  tsMayChangeCwd,
 } from "./bash-prehook.ts";
 import { parse } from "../src/bash/mod.ts";
 
@@ -192,5 +194,25 @@ Deno.test("SSH-680: Antigravity toolCall input parses CommandLine and Cwd", () =
       isAntigravity: true,
     },
   );
+});
+
+Deno.test("bashMayChangeCwd: finds cd anywhere, and treats unknowns as a yes", () => {
+  const may = (script: string) => bashMayChangeCwd(parse(script));
+  assertEquals(may("echo hi | sort"), false);
+  assertEquals(may("export A=1; X=2; for f in a b; do echo $f; done"), false);
+  assertEquals(may("cd sub && ls"), true);
+  assertEquals(may("if true; then pushd /tmp; fi"), true);
+  assertEquals(may("f() { cd /tmp; }; f"), true);
+  assertEquals(may("for d in a b; do popd; done"), true);
+  assertEquals(may("source ./env.sh"), true);
+  assertEquals(may("eval \"$CMD\""), true);
+  assertEquals(may("$CMD /tmp"), true);
+});
+
+Deno.test("tsMayChangeCwd: loose match on cwd APIs", () => {
+  assertEquals(tsMayChangeCwd("console.log(1)"), false);
+  assertEquals(tsMayChangeCwd("Deno.chdir('/tmp')"), true);
+  assertEquals(tsMayChangeCwd("$.cd('/tmp')"), true);
+  assertEquals(tsMayChangeCwd("const abcd = 1"), false);
 });
 

@@ -47,7 +47,9 @@ import type { PendingCommand, SafeShellConfig } from "../src/core/types.ts";
 // New unified core modules (DRY refactoring)
 import { findProjectRoot, PROJECT_MARKERS } from "../src/core/project-root.ts";
 import { generatePendingId, writePendingCommand, writePendingPath } from "../src/core/pending.ts";
-import { getSessionAllowedCommands } from "../src/core/session.ts";
+import { addSessionCommands, getSessionAllowedCommands } from "../src/core/session.ts";
+import { isSessionScratchpadScript } from "../src/core/scratchpad.ts";
+import { resolve } from "@std/path";
 import { generateInlineErrorHandler, logExecutionError } from "../src/core/error-handlers.ts";
 import { readStdinFully } from "../src/core/io-utils.ts";
 import {
@@ -722,6 +724,24 @@ function hasDangerousCommands(ast: AST.Program): boolean {
   return false;
 }
 
+/** Commands that can move the calling shell's cwd. */
+const CWD_COMMANDS = new Set(["cd", "pushd", "popd", "source", ".", "eval"]);
+
+/**
+ * Whether a bash script may change the caller's cwd. A dynamic command name
+ * could be any of these, so it counts as a yes.
+ */
+export function bashMayChangeCwd(ast: AST.Program): boolean {
+  const commands = new Set<string>();
+  extractCommandsFromStatements(ast.body, commands, {}, newExtractionState());
+  return [...commands].some((cmd) => CWD_COMMANDS.has(cmd) || /[$`]/.test(cmd));
+}
+
+/** Loose text check for TypeScript; a false yes only keeps the trailer. */
+export function tsMayChangeCwd(code: string): boolean {
+  return /\b(?:chdir|cd|pushd|popd)\b/.test(code);
+}
+
 // getSessionAllowedCommands now imported from core/session.ts
 
 /**
@@ -757,6 +777,45 @@ async function getDisallowedCommands(
   }
 
   return disallowed;
+}
+
+/**
+ * Drop scripts in this session's Claude Code scratchpad from `disallowed`.
+ * They are recorded as session-allowed, so the desh run that follows (which
+ * re-checks permissions from the session file) allows them too.
+ */
+export async function allowScratchpadScripts(
+  disallowed: string[],
+  cwd: string,
+  commandCwds: CommandCwdMap | undefined,
+  sessionId: string | undefined,
+  projectDir: string | undefined,
+): Promise<string[]> {
+  if (!sessionId) return disallowed;
+  const kept: string[] = [];
+  const granted: string[] = [];
+  for (const cmd of disallowed) {
+    let path: string | undefined;
+    if (cmd.includes("/")) {
+      for (const base of candidateCwds(cmd, cwd, commandCwds?.get(cmd))) {
+        const candidate = resolve(base, cmd);
+        if (await isSessionScratchpadScript(candidate, sessionId)) {
+          path = candidate;
+          break;
+        }
+      }
+    }
+    if (path) {
+      debug(`Scratchpad script auto-allowed: ${path}`);
+      // Grant only the resolved path. A raw relative name like ./run.sh would
+      // match verbatim from any cwd.
+      granted.push(path);
+    } else {
+      kept.push(cmd);
+    }
+  }
+  if (granted.length > 0) await addSessionCommands(granted, projectDir);
+  return kept;
 }
 
 /**
@@ -1165,6 +1224,8 @@ interface DeshRewriteOptions {
   sessionId?: string;
   turnId?: string;
   isAntigravity?: boolean;
+  /** False when the script cannot move the caller's cwd; the trailer is then skipped. */
+  mayChangeCwd?: boolean;
   onRewrite?: (rewrite: BashPrehookRewrite) => void;
 }
 
@@ -1247,7 +1308,10 @@ async function outputRewriteToDeshFile(
   // tool's persistent shell — the same state owner passthrough commands use.
   // Skipped for background runs (no shell waits to apply state). The [ -O ]
   // ownership check guards against another user pre-creating the file.
-  if (options?.runInBackground) {
+  // Also skipped when the script cannot change cwd: Claude Code's Bash tool
+  // keeps only the cwd between calls, and its worktree guard refuses any
+  // command that sources a file.
+  if (options?.runInBackground || options?.mayChangeCwd === false) {
     outputHookResponse(`${DESH_CMD} -q -f ${tempFile}`, options);
     return;
   }
@@ -1622,6 +1686,7 @@ ${combinedTsCode}
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
         isDirectTs: true,
+        mayChangeCwd: bashMayChangeCwd(bashAst) || tsMayChangeCwd(hybrid.tsPart),
         hookEventName: parsed.hookEventName,
         cwd,
         sessionId: parsed.sessionId,
@@ -1636,6 +1701,7 @@ ${combinedTsCode}
     let tsCode = detectTypeScript(parsed.command);
     if (tsCode) {
       debug("TypeScript detected, rewriting to desh");
+      const mayChangeCwd = tsMayChangeCwd(tsCode);
 
       // Add error handlers for better error formatting (without storing original command)
       tsCode = generateInlineErrorHandler({
@@ -1650,6 +1716,7 @@ ${tsCode}
         timeout: parsed.timeout,
         runInBackground: parsed.runInBackground,
         isDirectTs: true,
+        mayChangeCwd,
         hookEventName: parsed.hookEventName,
         cwd,
         sessionId: parsed.sessionId,
@@ -1737,7 +1804,13 @@ ${tsCode}
 
     // Check which commands are not allowed, honoring static `cd` into
     // workspace directories.
-    const disallowed = await getDisallowedCommands(commands, config, cwd, analysis.commandCwds);
+    const disallowed = await allowScratchpadScripts(
+      await getDisallowedCommands(commands, config, cwd, analysis.commandCwds),
+      cwd,
+      analysis.commandCwds,
+      parsed.sessionId,
+      config.projectDir,
+    );
 
     if (
       policy.routeAllCommands !== true &&
@@ -1897,6 +1970,7 @@ ${tsCode}
       sessionId: parsed.sessionId,
       turnId: parsed.turnId,
       isAntigravity: parsed.isAntigravity,
+      mayChangeCwd: bashMayChangeCwd(ast),
       onRewrite: policy.onRewrite,
     });
     Deno.exit(0);

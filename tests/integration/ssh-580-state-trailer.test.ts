@@ -46,14 +46,49 @@ async function runInBashWrapper(
 }
 
 describe("SSH-580 state trailer", () => {
-  it("rewrites transpiled commands with a sourced state trailer", async () => {
+  it("rewrites a script that may cd with a sourced state trailer", async () => {
     await withTestDir("ssh580-format", async (projectDir) => {
       await Deno.mkdir(`${projectDir}/.git`, { recursive: true });
-      const rewritten = await getRewrittenCommand("echo ===", projectDir);
+      await Deno.mkdir(`${projectDir}/sub`, { recursive: true });
+      const rewritten = await getRewrittenCommand("cd sub && echo ===", projectDir);
       assert(rewritten.includes("--state-trailer"), `missing flag: ${rewritten}`);
       assert(rewritten.includes("&& . '"), `missing sourcing: ${rewritten}`);
       assert(rewritten.includes("[ -O '"), `missing ownership check: ${rewritten}`);
       assert(rewritten.includes("(exit $__safesh_rc)"), `missing exit chain: ${rewritten}`);
+    });
+  });
+
+  // The worktree guard refuses any command that sources a file, and Claude
+  // Code keeps only the cwd between calls, so only a cd needs the trailer.
+  for (const command of ["echo ===", "export SSH580_E=1 && echo ===", "X=1; echo === $X"]) {
+    it(`omits the trailer when the script cannot cd: ${command}`, async () => {
+      await withTestDir("ssh580-nocd", async (projectDir) => {
+        await Deno.mkdir(`${projectDir}/.git`, { recursive: true });
+        const rewritten = await getRewrittenCommand(command, projectDir);
+        assert(!rewritten.includes("--state-trailer"), `unexpected trailer: ${rewritten}`);
+        assert(!rewritten.includes(". '"), `unexpected sourcing: ${rewritten}`);
+      });
+    });
+  }
+
+  for (const command of ["/*#*/ console.log(1)", "/*#*/ Deno.chdir('/')"]) {
+    const wantTrailer = command.includes("chdir");
+    it(`${wantTrailer ? "keeps" : "omits"} the trailer for TypeScript: ${command}`, async () => {
+      await withTestDir("ssh580-ts", async (projectDir) => {
+        await Deno.mkdir(`${projectDir}/.git`, { recursive: true });
+        const rewritten = await getRewrittenCommand(command, projectDir);
+        assertEquals(rewritten.includes("--state-trailer"), wantTrailer, rewritten);
+      });
+    });
+  }
+
+  it("propagates the exit code without a trailer", async () => {
+    await withTestDir("ssh580-nocd-exit", async (projectDir) => {
+      await Deno.mkdir(`${projectDir}/.git`, { recursive: true });
+      const rewritten = await getRewrittenCommand("echo === && exit 7", projectDir);
+      assert(!rewritten.includes("--state-trailer"), `unexpected trailer: ${rewritten}`);
+      const out = await runInBashWrapper(rewritten, projectDir, 'echo "RC=$?"');
+      assert(out.includes("RC=7"), `exit code not preserved: ${out}`);
     });
   });
 
@@ -86,7 +121,8 @@ describe("SSH-580 state trailer", () => {
   it("preserves the desh exit code through the trailer chain", async () => {
     await withTestDir("ssh580-exit", async (projectDir) => {
       await Deno.mkdir(`${projectDir}/.git`, { recursive: true });
-      const rewritten = await getRewrittenCommand("echo === && exit 7", projectDir);
+      const rewritten = await getRewrittenCommand("cd . && echo === && exit 7", projectDir);
+      assert(rewritten.includes("--state-trailer"), `missing trailer: ${rewritten}`);
       const out = await runInBashWrapper(rewritten, projectDir, 'echo "RC=$?"');
       assert(out.includes("RC=7"), `exit code not preserved: ${out}`);
     });
@@ -95,7 +131,8 @@ describe("SSH-580 state trailer", () => {
   it("leaves shell state untouched when the script changes nothing", async () => {
     await withTestDir("ssh580-noop", async (projectDir) => {
       await Deno.mkdir(`${projectDir}/.git`, { recursive: true });
-      const rewritten = await getRewrittenCommand("echo ===", projectDir);
+      // `cd .` keeps the trailer step but leaves the cwd as it was.
+      const rewritten = await getRewrittenCommand("cd . && echo ===", projectDir);
       const out = await runInBashWrapper(rewritten, projectDir, 'echo "PWD=$(pwd)"');
       const lines = out.trim().split("\n");
       assertEquals(lines[lines.length - 1], `PWD=${await Deno.realPath(projectDir)}`);
