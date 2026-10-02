@@ -21,12 +21,15 @@ cleared on reboot, so the key lines are copied below.
   `popd`, `source`, `.`, `eval`, or a dynamic command name). Export and var lines no longer
   persist for scripts without a cwd change.
 
-Remaining gaps, all pre-existing and not covered by these fixes:
-- An unquoted command name isn't split (`CMD="git status"; $CMD`).
-- `'a b'$p` is parsed as one single-quoted literal, so `$p` is never expanded.
-- Only the default IFS is supported.
-- Globs outside the sandbox's readable paths fall back to the literal word, as `$.__expandGlob`
-  already does.
+Follow-up tickets on the tasks server (project `safesh`):
+- SSH-714, SSH-715, SSH-716: the fixes above. Done.
+- SSH-717: an unquoted command name now splits (`c="git status"; $c`). Done.
+- SSH-718: a word that starts single-quoted now expands what follows (`'a b'$p`). Done.
+- SSH-719: word splitting now honors a custom IFS, including an empty one. Done.
+- SSH-720: piping into a shell function throws in `pipe()`. Found while filing these.
+
+Still by design: a glob outside the sandbox's readable paths falls back to the literal word, as
+`$.__expandGlob` already does.
 
 ## 1. Unquoted `$VAR` always becomes exactly one arg (bug)
 
