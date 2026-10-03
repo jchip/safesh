@@ -218,6 +218,23 @@ Options:
 - Or apply the deltas some way the guard can read, such as literal `cd`/`export` text in the
   command line, instead of sourcing a file.
 
+## 6. "Allow for session" on a binary doesn't stick (bug)
+
+The agent built a spike binary and ran it with different args. The user chose 3, allow for
+session, and `desh retry --id=1790995951441-94597 --choice=3` printed:
+
+```
+[safesh] Added to session-allow: /Users/joel.chen/dev/fynjs-rlink/.temp/untar-spike/target/release/untar-spike
+```
+
+The next four runs of that binary were each blocked again with the same 1–5 prompt. That included
+one with the exact args of the run just approved. Each `desh retry ... --choice=3` printed the same
+"Added to session-allow" line, and the binary still prompted on its next run.
+
+So either the allow isn't saved to the store the next check reads, or it's keyed on something that
+changes per call. Issue 3 notes session allows are an exact-string `Set` in `src/core/session.ts`,
+which doesn't explain blocking an identical command.
+
 ## Not safesh
 
 These came up in the same session and look like safesh at first, but aren't:

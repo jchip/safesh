@@ -44,7 +44,7 @@ This directory contains design documents, implementation notes, and guides for S
 
 | File | Description |
 |------|-------------|
-| `field-issues-2026-10-02.md` | Unquoted `$VAR` not split or globbed (target: bash semantics), for-list globs never expanded, scratchpad script prompts, state-trailer `.` trips the worktree guard |
+| `field-issues-2026-10-02.md` | Unquoted `$VAR` not split or globbed (target: bash semantics), for-list globs never expanded, scratchpad script prompts, state-trailer `.` trips the worktree guard, session allow for a binary doesn't stick |
 
 ## Key Commands
 
